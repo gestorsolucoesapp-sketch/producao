@@ -144,6 +144,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 /* versão + links no login */
 .ver-tag{text-align:center;font-size:11px;color:#9FB6CC;margin-top:16px;letter-spacing:.3px}
 .login-links{display:flex;justify-content:space-between;margin-top:14px;gap:10px}
+.lembrar{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--cinza);margin:2px 0 14px;cursor:pointer;user-select:none}
+.lembrar input{width:17px;height:17px;accent-color:var(--verde)}
 .login-links button{font-size:13px;font-weight:600;color:var(--navy);background:none;padding:6px 2px}
 .login-links button:active{opacity:.6}
 .login-msg{background:#E8F6EE;color:var(--verde-esc);font-size:13px;padding:10px 12px;border-radius:9px;margin-bottom:12px;display:none}
@@ -247,6 +249,9 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <input type="password" id="inSenha2" autocomplete="new-password" placeholder="••••••••">
     </div>
 
+    <!-- lembrar (só no login) -->
+    <label class="lembrar" id="campoLembrar"><input type="checkbox" id="inLembrar" checked> Lembrar e-mail e senha</label>
+
     <!-- botão principal (muda conforme o modo) -->
     <button class="btn btn-verde" id="btnEntrar" onclick="acaoLogin()">Entrar</button>
 
@@ -258,7 +263,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.9.6</div>
+    <div class="ver-tag" id="verTag">versão 1.9.7</div>
   </div>
 </div>
 
@@ -298,7 +303,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.9.6</span>
+        <span class="ver-badge" id="verBadge">v1.9.7</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -762,7 +767,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.9.6';
+const APP_VER = '1.9.7';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -814,6 +819,7 @@ function modoLogin(modo) {
   // nome + confirmar senha só no cadastro
   $('campoNome').classList.toggle('oculto', modo !== 'cadastro');
   $('campoSenha2').classList.toggle('oculto', modo !== 'cadastro');
+  $('campoLembrar').classList.toggle('oculto', modo !== 'login');
   // senha some no reset (só e-mail)
   $('campoSenha').classList.toggle('oculto', modo === 'reset');
   // links
@@ -839,9 +845,37 @@ async function entrar() {
     erroLogin(error.message.includes('Invalid') ? 'E-mail ou senha incorretos.' : 'Erro ao entrar: ' + error.message);
     return;
   }
+  salvarCredenciais();
   await posLogin();
   btn.disabled = false; btn.textContent = 'Entrar';
 }
+
+// lembrar e-mail/senha no aparelho
+function salvarCredenciais() {
+  try {
+    if ($('inLembrar') && $('inLembrar').checked) {
+      localStorage.setItem('rp_lembrar', '1');
+      localStorage.setItem('rp_email', $('inEmail').value.trim());
+      localStorage.setItem('rp_senha', $('inSenha').value);
+    } else {
+      localStorage.setItem('rp_lembrar', '0');
+      localStorage.removeItem('rp_senha');
+    }
+  } catch (_) {}
+}
+function preencherCredenciais() {
+  try {
+    const lembrar = localStorage.getItem('rp_lembrar') !== '0';
+    if ($('inLembrar')) $('inLembrar').checked = lembrar;
+    const e = localStorage.getItem('rp_email');
+    if (e && $('inEmail')) $('inEmail').value = e;
+    if (lembrar) {
+      const s = localStorage.getItem('rp_senha');
+      if (s && $('inSenha')) $('inSenha').value = s;
+    }
+  } catch (_) {}
+}
+preencherCredenciais();
 
 async function cadastrar() {
   limpaMsgs();
@@ -1007,11 +1041,16 @@ function revelarPosSplash() {
   if (emRecovery || /type=recovery/.test(HASH_INICIAL)) {
     mostrarNovaSenha(); fim(); return;
   }
-  const SPLASH_MS = 2600; // deixa a vinheta tocar por inteiro
-  sb.auth.getSession().then(async ({ data }) => {
-    if (data.session) await posLogin();
-    else $('telaLogin').classList.remove('oculto');
-    setTimeout(() => { sp && sp.classList.add('ir'); setTimeout(fim, 600); }, SPLASH_MS);
+  const SPLASH_MS = 2600; // deixa a vinheta tocar por inteiro (mesmo já logado)
+  sb.auth.getSession().then(({ data }) => {
+    setTimeout(() => {
+      sp && sp.classList.add('ir');           // começa a saída da vinheta
+      setTimeout(async () => {
+        fim();                                 // remove a vinheta
+        if (data.session) await posLogin();    // só então entra no app
+        else $('telaLogin').classList.remove('oculto');
+      }, 520);
+    }, SPLASH_MS);
   });
 }
 if (document.readyState === 'complete') revelarPosSplash();
