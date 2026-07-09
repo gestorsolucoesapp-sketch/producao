@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker
-const CACHE = 'producao-rioplastic-v1.0.0';
+const CACHE = 'producao-rioplastic-v1.1.0';
 const ARQUIVOS = ['./', './index.html'];
 
 self.addEventListener('install', e => {
