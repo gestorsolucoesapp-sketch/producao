@@ -156,6 +156,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .usr-acoes button.aprovar{background:var(--verde);color:#fff;border-color:var(--verde)}
 .usr-acoes button.bloquear{color:var(--perigo);border-color:#F3C9C9}
 .usr-acoes button:active{opacity:.7}
+.gestao-btns{display:flex;flex-direction:column;gap:10px}
+.gestao-btns .btn{font-size:14.5px;padding:13px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}#splash{display:none}}
 </style>
 </head>
@@ -207,7 +209,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.4.0</div>
+    <div class="ver-tag" id="verTag">versão 1.5.0</div>
   </div>
 </div>
 
@@ -229,7 +231,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.4.0</span>
+        <span class="ver-badge" id="verBadge">v1.5.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -270,6 +272,15 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 
     <!-- USUÁRIOS (admin) -->
     <section id="abaUsuarios" class="oculto">
+      <div class="card">
+        <div class="titulo-sec">Gestão de dados</div>
+        <p class="desc" id="infoUltima" style="margin-bottom:12px">Carregando…</p>
+        <div class="gestao-btns">
+          <button class="btn btn-navy" onclick="atualizarUltima()">🔄 Atualizar última importação</button>
+          <button class="btn btn-borda" onclick="apagarUltima()">🗑️ Apagar última importação</button>
+          <button class="btn btn-perigo" onclick="comecarDoZero()">⚠️ Começar do zero</button>
+        </div>
+      </div>
       <div class="card">
         <div class="titulo-sec">Tempo de sessão</div>
         <p class="desc" style="margin-bottom:10px">Desconecta automaticamente após este tempo sem uso. Use <b>0</b> para nunca desconectar.</p>
@@ -662,7 +673,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.4.0';
+const APP_VER = '1.5.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -906,6 +917,7 @@ const fmtDataHora = iso => {
 
 async function carregarUsuarios() {
   if (!perfil || perfil.papel !== 'admin') return;
+  atualizarInfoUltima();
   const box = $('listaUsuarios');
   box.innerHTML = '<p class="desc">Carregando…</p>';
   // timeout no campo
@@ -979,6 +991,61 @@ async function salvarTimeout() {
   if (error) { toast('Erro: ' + error.message); return; }
   timeoutMin = v; resetarIdle();
   toast(v === 0 ? 'Logout automático desligado.' : 'Sessão: ' + v + ' min de inatividade.');
+}
+
+/* ===== GESTÃO DE DADOS (admin) ===== */
+async function ultimaImportacao() {
+  const { data } = await sb.from('importacoes')
+    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros, created_at')
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return data || null;
+}
+async function totalImportacoes() {
+  const { count } = await sb.from('importacoes').select('id', { count: 'exact', head: true });
+  return count || 0;
+}
+async function atualizarInfoUltima() {
+  const el = $('infoUltima');
+  const [u, n] = await Promise.all([ultimaImportacao(), totalImportacoes()]);
+  if (!u) { el.innerHTML = 'Nenhuma importação no banco.'; return; }
+  el.innerHTML = `<b>${n}</b> importação(ões) no total.<br>Última: <b>RPCP${u.rotina || '—'}</b> · ${fmtData(u.periodo_de)}`
+    + ` · ${fmt(u.registros, 0)} registros<br><span class="desc">${u.arquivo || ''} · ${new Date(u.created_at).toLocaleString('pt-BR')}</span>`;
+}
+
+function nomeImp(u) { return `RPCP${u.rotina || '—'} de ${fmtData(u.periodo_de)} (${fmt(u.registros, 0)} reg.)`; }
+
+async function apagarUltima() {
+  const u = await ultimaImportacao();
+  if (!u) { toast('Não há importação para apagar.'); return; }
+  if (!confirm(`Apagar a última importação?\n\n${nomeImp(u)}\n\nTodos os registros dela serão removidos.`)) return;
+  const { error } = await sb.from('importacoes').delete().eq('id', u.id);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('Última importação apagada.');
+  atualizarInfoUltima(); carregarHistorico();
+}
+
+async function atualizarUltima() {
+  const u = await ultimaImportacao();
+  if (!u) { toast('Não há importação para atualizar. Vá em Importar.'); trocarAba('importar'); return; }
+  if (!confirm(`Atualizar a última importação?\n\n${nomeImp(u)}\n\nEla será removida e você reenvia o PDF corrigido na tela de Importar.`)) return;
+  const { error } = await sb.from('importacoes').delete().eq('id', u.id);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('Pronto — reenvie o PDF atualizado.');
+  atualizarInfoUltima(); carregarHistorico();
+  trocarAba('importar');
+}
+
+async function comecarDoZero() {
+  const n = await totalImportacoes();
+  if (!n) { toast('O banco já está vazio.'); return; }
+  if (!confirm(`⚠️ COMEÇAR DO ZERO\n\nIsso apaga TODAS as ${n} importações e todos os dados de produção, perdas, paradas e consumo.\n\nNão dá para desfazer. Continuar?`)) return;
+  if (!confirm('Tem certeza mesmo? Digite OK na próxima tela para confirmar.') ) return;
+  const txt = prompt('Para confirmar, digite:  ZERAR');
+  if (txt !== 'ZERAR') { toast('Cancelado.'); return; }
+  const { error } = await sb.from('importacoes').delete().gte('created_at', '1970-01-01');
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('Banco zerado. Tudo pronto para recomeçar.');
+  atualizarInfoUltima(); carregarHistorico();
 }
 
 /* ================= IMPORTAÇÃO ================= */
