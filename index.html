@@ -158,6 +158,11 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .usr-acoes button:active{opacity:.7}
 .gestao-btns{display:flex;flex-direction:column;gap:10px}
 .gestao-btns .btn{font-size:14.5px;padding:13px}
+/* barra "gravar todos" */
+#barraLote{background:var(--card);border:1px solid var(--borda);border-radius:var(--radius);box-shadow:var(--sombra);padding:14px;margin-bottom:14px}
+.lote-info{font-size:13.5px;font-weight:600;color:var(--navy);margin-bottom:10px}
+.lote-btns{display:flex;gap:10px}
+.lote-btns .btn{flex:1;padding:13px;font-size:14.5px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}#splash{display:none}}
 </style>
 </head>
@@ -209,7 +214,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.6.0</div>
+    <div class="ver-tag" id="verTag">versão 1.7.0</div>
   </div>
 </div>
 
@@ -231,7 +236,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.6.0</span>
+        <span class="ver-badge" id="verBadge">v1.7.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -259,6 +264,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
           </div>
         </div>
       </div>
+      <div id="barraLote" class="oculto"></div>
       <div id="listaPreviews"></div>
     </section>
 
@@ -673,7 +679,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.6.0';
+const APP_VER = '1.7.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1110,6 +1116,7 @@ function renderPreview(id, dup) {
 
   const ehDup = !!dup;
   div.classList.toggle('dup', ehDup);
+  previews[id].dup = ehDup;
   div.innerHTML = `
     <div class="prev-top">
       <div><div class="rotina">RPCP${r.rotina} — ${r.nome}</div><div class="arq">${nomeArquivo} · ${fmtData(r.periodo.de)}${r.periodo.ate && r.periodo.ate !== r.periodo.de ? ' a ' + fmtData(r.periodo.ate) : ''}</div></div>
@@ -1123,9 +1130,47 @@ function renderPreview(id, dup) {
       <button class="btn btn-borda" onclick="descartar('${id}')">Descartar</button>
       <button class="btn btn-verde" id="${id}Btn" onclick="gravar('${id}')" ${ehDup ? 'disabled' : ''}>${ehDup ? 'Duplicado' : 'Confirmar e gravar'}</button>
     </div>`;
+  atualizarBarraLote();
 }
 
-function descartar(id) { delete previews[id]; $(id)?.remove(); }
+/* ===== barra "gravar / descartar todos" ===== */
+function previewsGravaveis() {
+  return Object.keys(previews).filter(id => previews[id] && !previews[id].dup);
+}
+function atualizarBarraLote() {
+  const bar = $('barraLote');
+  const total = Object.keys(previews).length;
+  const prontos = previewsGravaveis();
+  if (total < 2) { bar.classList.add('oculto'); bar.innerHTML = ''; return; }
+  const dups = total - prontos.length;
+  bar.classList.remove('oculto');
+  bar.innerHTML = `
+    <div class="lote-info">${prontos.length} pronto(s) para gravar${dups ? ` · ${dups} já importado(s)` : ''}</div>
+    <div class="lote-btns">
+      <button class="btn btn-borda" onclick="descartarTodos()">Descartar todos</button>
+      <button class="btn btn-verde" id="btnGravarTodos" onclick="gravarTodos()" ${prontos.length ? '' : 'disabled'}>Gravar todos (${prontos.length})</button>
+    </div>`;
+}
+async function gravarTodos() {
+  const ids = previewsGravaveis();
+  if (!ids.length) return;
+  const b = $('btnGravarTodos');
+  if (b) { b.disabled = true; b.innerHTML = '<span class="spin"></span>Gravando…'; }
+  let ok = 0;
+  for (const id of ids) {
+    if (previews[id] && !previews[id].dup) { const r = await gravar(id); if (r) ok++; }
+  }
+  atualizarBarraLote();
+  toast(`✅ ${ok} de ${ids.length} arquivo(s) gravado(s).`);
+}
+function descartarTodos() {
+  if (!Object.keys(previews).length) return;
+  if (!confirm('Descartar todos os arquivos lidos que ainda não foram gravados?')) return;
+  Object.keys(previews).forEach(id => descartar(id));
+  atualizarBarraLote();
+}
+
+function descartar(id) { delete previews[id]; $(id)?.remove(); atualizarBarraLote(); }
 
 async function gravar(id) {
   const { resultado: r, hash, nomeArquivo } = previews[id];
@@ -1155,10 +1200,13 @@ async function gravar(id) {
     toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}`);
     descartar(id);
     carregarHistorico();
+    return true;
   } catch (e) {
     toast('❌ ' + e.message);
     btn.disabled = false; btn.textContent = 'Confirmar e gravar';
     barra.classList.add('oculto');
+    atualizarBarraLote();
+    return false;
   }
 }
 
