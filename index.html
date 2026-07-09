@@ -263,7 +263,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.9.7</div>
+    <div class="ver-tag" id="verTag">versão 1.9.8</div>
   </div>
 </div>
 
@@ -303,7 +303,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.9.7</span>
+        <span class="ver-badge" id="verBadge">v1.9.8</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -767,7 +767,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.9.7';
+const APP_VER = '1.9.8';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1130,15 +1130,18 @@ async function carregarPainel() {
       const [producao, paradas, consumo, imps] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso'),
         fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,tempo_exato'),
-        fetchTudo('consumo', 'dia,recurso_cod,peso,unidade'),
+        fetchTudo('consumo', 'dia,recurso_cod,componente_desc,peso,unidade'),
         carregarInfoImports()
       ]);
       dadosPainel = { producao, paradas, consumo, info: imps };
-      // popular filtro de setores presentes na produção
+      // filtro: setores principais sempre + "Outros" se houver máquinas não mapeadas
       const sel = $('fSetor');
-      const presentes = SETORES.filter(s => producao.some(p => setorDe(p.recurso_cod) === s));
+      const base = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
+      const temOutros = producao.some(p => setorDe(p.recurso_cod) === 'Outros')
+        || consumo.some(c => setorDe(c.recurso_cod) === 'Outros');
+      const lista = temOutros ? base.concat('Outros') : base;
       sel.innerHTML = '<option value="">Todos (resumo geral)</option>' +
-        presentes.map(s => `<option value="${s}">${s}</option>`).join('');
+        lista.map(s => `<option value="${s}">${s}</option>`).join('');
     } catch (e) {
       box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar: ${escapeHtml(e.message)}</p></div>`;
       return;
@@ -1212,18 +1215,26 @@ function renderPainel() {
   if (setor) prod = prod.filter(p => setorDe(p.recurso_cod) === setor);
   const val = r => (metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0));
 
+  // ---- BOBINA: consumo (646) e aproveitamento vs. produção da Termoformagem ----
+  const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
+  const consBobina = dadosPainel.consumo.filter(ehBobina);
+  const consumoBob = (consBobina.length ? consBobina : dadosPainel.consumo).reduce((a, c) => a + (c.peso || 0), 0);
+  const prodTermoKg = dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem')
+    .reduce((a, r) => a + (r.peso || 0), 0);
+  // aproveitamento de bobina = consumo de bobina ÷ produção da Termoformagem (kg/kg)
+  const fatorBobina = (consumoBob > 0 && prodTermoKg > 0) ? (consumoBob / prodTermoKg) : null;
+
+  // Extrusão não tem produção no 621 (ela produz a bobina). Mostra a visão de bobina.
+  if (setor === 'Extrusão') { box.innerHTML = cabecalhoInfo() + painelBobina(); return; }
+
   if (!prod.length) { box.innerHTML = cabecalhoInfo() + '<div class="grafico"><p class="vazio-painel">Sem dados de produção para este filtro.</p></div>'; return; }
 
   // KPIs
   const totalV = prod.reduce((a, r) => a + val(r), 0);
   const dias = [...new Set(prod.map(r => r.dia))];
   const maquinas = [...new Set(prod.map(r => r.recurso_cod))];
-  // aproveitamento bobina (peso): consumo(kg) ÷ produção(kg) — só faz sentido com peso
-  let cons = dadosPainel.consumo;
-  if (setor) cons = cons.filter(c => setorDe(c.recurso_cod) === setor);
-  const consKg = cons.reduce((a, c) => a + (c.peso || 0), 0);
-  const prodKg = prod.reduce((a, r) => a + (r.peso || 0), 0);
-  const fator = prodKg > 0 && consKg > 0 ? (consKg / prodKg) : null;
+  // fator de bobina só aparece no resumo geral e na Termoformagem
+  const fator = (!setor || setor === 'Termoformagem') ? fatorBobina : null;
   // paradas
   let par = dadosPainel.paradas;
   if (setor) par = par.filter(p => setorDe(p.recurso_cod) === setor);
@@ -1234,7 +1245,7 @@ function renderPainel() {
     <div class="kpi"><div class="v">${dias.length}</div><div class="l">Dias</div></div>
     <div class="kpi"><div class="v">${maquinas.length}</div><div class="l">Máquinas</div></div>
     <div class="kpi"><div class="v">${fmtNum(horasParada)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
-    ${fator ? `<div class="kpi" style="grid-column:1/-1"><div class="v">${fator.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span style="font-size:13px">kg bobina / kg produzido</span></div><div class="l">Aproveitamento de bobina (consumo ÷ produção)</div></div>` : ''}
+    ${fator ? `<div class="kpi" style="grid-column:1/-1"><div class="v">${fator.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span style="font-size:13px">kg bobina / kg produzido</span></div><div class="l">Aproveitamento de bobina · consumo (${fmtKg(consumoBob)}) ÷ produção Termoformagem</div></div>` : ''}
   </div>`;
 
   // produção por dia
@@ -1283,6 +1294,32 @@ function renderPainel() {
     + `<div class="grafico"><h3>Produção por dia</h3><div class="sub">${metrica === 'peso' ? 'peso (kg)' : 'quantidade'}${setor ? ' · ' + setor : ''}</div>${gDia}</div>`
     + `<div class="grafico"><h3>Produção por turno</h3><div class="sub">Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)</div>${gTurno}</div>`
     + cardSetor + cardMaq + cardParada;
+}
+
+function painelBobina() {
+  const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
+  const consBobina = dadosPainel.consumo.filter(ehBobina);
+  const base = consBobina.length ? consBobina : dadosPainel.consumo;
+  const consumoBob = base.reduce((a, c) => a + (c.peso || 0), 0);
+  const prodTermoKg = dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem')
+    .reduce((a, r) => a + (r.peso || 0), 0);
+  const fator = (consumoBob > 0 && prodTermoKg > 0) ? (consumoBob / prodTermoKg) : null;
+  const dias = [...new Set(base.map(c => c.dia))];
+
+  // consumo de bobina por dia
+  const porDia = {};
+  base.forEach(c => { porDia[c.dia] = (porDia[c.dia] || 0) + (c.peso || 0); });
+  const diasOrd = Object.keys(porDia).sort();
+  const gBob = barrasVertical(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtKg(porDia[d]) })));
+
+  const kpis = `<div class="kpis">
+    <div class="kpi destaque"><div class="v">${fmtKg(consumoBob)}</div><div class="l">Bobina consumida</div></div>
+    <div class="kpi"><div class="v">${fmtKg(prodTermoKg)}</div><div class="l">Produção Termoformagem</div></div>
+    ${fator ? `<div class="kpi" style="grid-column:1/-1"><div class="v">${fator.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} <span style="font-size:13px">kg bobina / kg produzido</span></div><div class="l">Aproveitamento de bobina · consumo ÷ produção Termoformagem</div></div>` : ''}
+  </div>`;
+  return kpis
+    + `<div class="grafico"><p class="desc" style="margin:0 0 8px">A Extrusão produz a bobina consumida pela Termoformagem — por isso o setor é acompanhado pelo consumo de bobina (RPCP646).</p></div>`
+    + `<div class="grafico"><h3>Consumo de bobina por dia</h3><div class="sub">peso (kg)</div>${gBob}</div>`;
 }
 
 function cabecalhoInfo() {
