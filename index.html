@@ -269,7 +269,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.0.2</div>
+    <div class="ver-tag" id="verTag">versão 2.1.0</div>
   </div>
 </div>
 
@@ -309,7 +309,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.0.2</span>
+        <span class="ver-badge" id="verBadge">v2.1.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -773,7 +773,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.0.2';
+const APP_VER = '2.1.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1125,6 +1125,18 @@ function setorDe(cod) {
 const SETORES = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Outros'];
 const CORES = ['#00964D', '#28348E', '#E8A13D', '#3CA96E', '#6C7BD1', '#D64545', '#9AA6B2'];
 const blocoTurno = t => (t === 1 || t === 3) ? 'Manhã' : (t === 2 || t === 4) ? 'Tarde' : 'Noite';
+// deriva o bloco (Manhã/Tarde/Noite) pela hora do consumo (646 não traz turno)
+function blocoPorHora(h) {
+  if (!h) return null;
+  const p = String(h).split(':'); const t = (+p[0]) * 60 + (+(p[1] || 0));
+  const m = (a, b) => a * 60 + b;
+  if (t >= m(6, 0) && t <= m(12, 0)) return 'Manhã';    // T1
+  if (t >= m(12, 1) && t <= m(13, 36)) return 'Tarde';  // T2
+  if (t >= m(13, 37) && t <= m(15, 10)) return 'Manhã'; // T3
+  if (t >= m(15, 11) && t <= m(20, 50)) return 'Tarde'; // T4
+  return 'Noite';                                        // T5
+}
+const META_APROV = 47.5;
 
 let dadosPainel = null; // cache: { producao, paradas, consumo }
 let usuariosCarregados = []; // cache da lista de usuários (admin)
@@ -1149,7 +1161,7 @@ async function carregarPainel() {
       const [producao, paradas, consumo, imps] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso'),
         fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,tempo_exato'),
-        fetchTudo('consumo', 'dia,recurso_cod,componente_desc,peso,unidade'),
+        fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade'),
         carregarInfoImports()
       ]);
       dadosPainel = { producao, paradas, consumo, info: imps };
@@ -1309,10 +1321,49 @@ function renderPainel() {
     cardParada = `<div class="grafico"><h3>Principais paradas</h3><div class="sub">horas paradas por motivo</div>${barrasHorizontal(parArr, '')}</div>`;
   }
 
+  // ---- APROVEITAMENTO DE BOBINA por turno e por máquina (Termo) ----
+  let cardAprovTurno = '', cardAprovMaq = '';
+  if ((!setor || setor === 'Termoformagem') && consumoBob > 0) {
+    const bob = consBobina.length ? consBobina : dadosPainel.consumo;
+    const termo = dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem');
+    // por turno (bloco)
+    const pT = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, cT = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+    termo.forEach(r => { pT[blocoTurno(r.turno)] += (r.peso || 0); });
+    bob.forEach(c => { const b = blocoPorHora(c.hora); if (b) cT[b] += (c.peso || 0); });
+    const dadosT = ['Manhã', 'Tarde', 'Noite'].map(b => ({ l: b, v: cT[b] > 0 ? (pT[b] / cT[b] * 100) : 0 }));
+    const temTurno = dadosT.some(d => d.v > 0);
+    if (temTurno) {
+      const gAT = barrasVertical(dadosT.map(d => ({ l: d.l, v: d.v, rot: d.v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' })),
+        (d) => d.v >= META_APROV ? 'var(--verde)' : '#D64545');
+      cardAprovTurno = `<div class="grafico"><h3>Aproveitamento por turno</h3><div class="sub">produção Termo ÷ consumo bobina · meta ${META_APROV.toLocaleString('pt-BR')}%</div>${gAT}</div>`;
+    }
+    // por máquina
+    const pM = {}, cM = {}, nome = {};
+    termo.forEach(r => { pM[r.recurso_cod] = (pM[r.recurso_cod] || 0) + (r.peso || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+    bob.forEach(c => { cM[c.recurso_cod] = (cM[c.recurso_cod] || 0) + (c.peso || 0); if (!nome[c.recurso_cod]) nome[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
+    const maqA = Object.keys(cM).filter(cod => cM[cod] > 0 && pM[cod] > 0)
+      .map(cod => ({ l: nome[cod], v: pM[cod] / cM[cod] * 100 }))
+      .sort((a, b) => b.v - a.v);
+    if (maqA.length) {
+      cardAprovMaq = `<div class="grafico"><h3>Aproveitamento por máquina</h3><div class="sub">% de aproveitamento · meta ${META_APROV.toLocaleString('pt-BR')}% (verde ≥ meta)</div>${barrasAprov(maqA)}</div>`;
+    }
+  }
+
   box.innerHTML = cabecalhoInfo() + kpis
     + `<div class="grafico"><h3>Produção por dia</h3><div class="sub">${metrica === 'peso' ? 'peso (kg)' : 'quantidade'}${setor ? ' · ' + setor : ''}</div>${gDia}</div>`
     + `<div class="grafico"><h3>Produção por turno</h3><div class="sub">Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)</div>${gTurno}</div>`
-    + cardSetor + cardMaq + cardParada;
+    + cardAprovTurno + cardAprovMaq + cardSetor + cardMaq + cardParada;
+}
+
+// barras horizontais de aproveitamento (%) com escala 0–100 e cor pela meta
+function barrasAprov(dados) {
+  return dados.map(d => {
+    const pct = Math.max(0, Math.min(100, d.v));
+    const cor = d.v >= META_APROV ? 'var(--verde)' : '#D64545';
+    return `<div class="bh-row"><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
+      <div class="bh-bar" style="width:${pct.toFixed(1)}%;background:${cor}"></div>
+      <div class="bh-val">${d.v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</div></div>`;
+  }).join('');
 }
 
 function cabecalhoInfo() {
