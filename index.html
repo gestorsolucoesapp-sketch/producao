@@ -181,6 +181,10 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .bh-bar{height:16px;border-radius:5px;background:var(--verde);min-width:2px}
 .bh-val{font-size:12px;font-weight:700;color:var(--navy);white-space:nowrap;font-variant-numeric:tabular-nums}
 .vazio-painel{padding:20px;text-align:center;color:var(--cinza);font-size:13.5px}
+.atualiz-faixa{background:#EAF0FF;border:1px solid #D3DEF7;border-radius:var(--radius);padding:12px 14px;margin-bottom:14px}
+.atualiz-faixa .af-ic{margin-right:4px}
+.atualiz-faixa b{color:var(--azul-marca)}
+.atualiz-faixa .af-sub{font-size:11.5px;color:var(--cinza);margin-top:4px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}#splash{display:none}}
 </style>
 </head>
@@ -232,7 +236,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.9.0</div>
+    <div class="ver-tag" id="verTag">versão 1.9.1</div>
   </div>
 </div>
 
@@ -254,7 +258,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.9.0</span>
+        <span class="ver-badge" id="verBadge">v1.9.1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -718,7 +722,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.9.0';
+const APP_VER = '1.9.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -998,12 +1002,13 @@ async function carregarPainel() {
   if (!dadosPainel) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
     try {
-      const [producao, paradas, consumo] = await Promise.all([
+      const [producao, paradas, consumo, imps] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso'),
         fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,tempo_exato'),
-        fetchTudo('consumo', 'dia,recurso_cod,peso,unidade')
+        fetchTudo('consumo', 'dia,recurso_cod,peso,unidade'),
+        carregarInfoImports()
       ]);
-      dadosPainel = { producao, paradas, consumo };
+      dadosPainel = { producao, paradas, consumo, info: imps };
       // popular filtro de setores presentes na produção
       const sel = $('fSetor');
       const presentes = SETORES.filter(s => producao.some(p => setorDe(p.recurso_cod) === s));
@@ -1017,6 +1022,25 @@ async function carregarPainel() {
   renderPainel();
 }
 function recarregarPainel() { dadosPainel = null; carregarPainel(); }
+
+// resumo das importações para o topo do painel
+async function carregarInfoImports() {
+  let r = await sb.from('importacoes').select('rotina,periodo_de,periodo_ate,criado_em');
+  if (r.error) r = await sb.from('importacoes').select('rotina,periodo_de,periodo_ate'); // fallback sem criado_em
+  const dados = r.data || [];
+  if (!dados.length) return null;
+  const datas = dados.map(d => d.criado_em).filter(Boolean).sort();
+  const des = dados.map(d => d.periodo_de).filter(Boolean).sort();
+  const ates = dados.map(d => d.periodo_ate || d.periodo_de).filter(Boolean).sort();
+  const rotinas = [...new Set(dados.map(d => 'RPCP' + d.rotina))].sort();
+  return {
+    atualizado: datas.length ? datas[datas.length - 1] : null,
+    periodoDe: des[0] || null,
+    periodoAte: ates[ates.length - 1] || null,
+    total: dados.length,
+    rotinas
+  };
+}
 
 // --- geradores de gráfico (SVG/HTML) ---
 const fmtKg = n => (n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(n).toLocaleString('pt-BR') + ' kg');
@@ -1063,7 +1087,7 @@ function renderPainel() {
   if (setor) prod = prod.filter(p => setorDe(p.recurso_cod) === setor);
   const val = r => (metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0));
 
-  if (!prod.length) { box.innerHTML = '<div class="grafico"><p class="vazio-painel">Sem dados de produção para este filtro.</p></div>'; return; }
+  if (!prod.length) { box.innerHTML = cabecalhoInfo() + '<div class="grafico"><p class="vazio-painel">Sem dados de produção para este filtro.</p></div>'; return; }
 
   // KPIs
   const totalV = prod.reduce((a, r) => a + val(r), 0);
@@ -1127,10 +1151,21 @@ function renderPainel() {
     cardParada = `<div class="grafico"><h3>Principais paradas</h3><div class="sub">horas paradas por motivo</div>${barrasHorizontal(parArr, '')}</div>`;
   }
 
-  box.innerHTML = kpis
+  box.innerHTML = cabecalhoInfo() + kpis
     + `<div class="grafico"><h3>Produção por dia</h3><div class="sub">${metrica === 'peso' ? 'peso (kg)' : 'quantidade'}${setor ? ' · ' + setor : ''}</div>${gDia}</div>`
     + `<div class="grafico"><h3>Produção por turno</h3><div class="sub">Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)</div>${gTurno}</div>`
     + cardSetor + cardMaq + cardParada;
+}
+
+function cabecalhoInfo() {
+  const i = dadosPainel && dadosPainel.info;
+  if (!i) return '';
+  const quando = i.atualizado ? new Date(i.atualizado).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  const periodo = i.periodoDe ? `${fmtData(i.periodoDe)}${i.periodoAte && i.periodoAte !== i.periodoDe ? ' a ' + fmtData(i.periodoAte) : ''}` : '—';
+  return `<div class="atualiz-faixa">
+    <div><span class="af-ic">🕒</span> Atualizado em <b>${quando}</b></div>
+    <div class="af-sub">Período dos dados: ${periodo} · ${i.total} importação(ões) · ${i.rotinas.join(', ')}</div>
+  </div>`;
 }
 
 /* ================= ADMIN: USUÁRIOS ================= */
