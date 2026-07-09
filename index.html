@@ -239,7 +239,25 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.9.2</div>
+    <div class="ver-tag" id="verTag">versão 1.9.3</div>
+  </div>
+</div>
+
+<!-- ============ NOVA SENHA (recuperação) ============ -->
+<div id="telaNovaSenha" class="oculto">
+  <div class="login-box">
+    <img class="logo-login" src="logo_full.png" alt="Rioplastic">
+    <h2 id="loginTitulo2" style="color:var(--cinza);font-size:15px;font-weight:600;margin:0 0 20px;text-align:center">Definir nova senha</h2>
+    <div class="erro-login" id="erroNova"></div>
+    <div class="campo">
+      <label for="inNova1">Nova senha</label>
+      <input type="password" id="inNova1" autocomplete="new-password" placeholder="••••••••">
+    </div>
+    <div class="campo">
+      <label for="inNova2">Confirmar nova senha</label>
+      <input type="password" id="inNova2" autocomplete="new-password" placeholder="••••••••">
+    </div>
+    <button class="btn btn-verde" id="btnNovaSenha" onclick="salvarNovaSenha()">Salvar nova senha</button>
   </div>
 </div>
 
@@ -261,7 +279,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.9.2</span>
+        <span class="ver-badge" id="verBadge">v1.9.3</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -725,10 +743,16 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.9.2';
+const APP_VER = '1.9.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
+// captura logo no início se o link é de recuperação de senha
+const HASH_INICIAL = location.hash || '';
+let emRecovery = /type=recovery/.test(HASH_INICIAL);
+sb.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') { emRecovery = true; mostrarNovaSenha(); }
+});
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -830,13 +854,35 @@ async function recuperarSenha() {
   if (!email) return erroLogin('Informe o e-mail para recuperar a senha.');
   const btn = $('btnEntrar'); btn.disabled = true;
   btn.innerHTML = '<span class="spin"></span>Enviando…';
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    redirectTo: location.origin + location.pathname
-  });
+  // volta para a raiz do app (precisa estar liberado em Auth > URL Configuration)
+  const destino = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: destino });
   btn.disabled = false; btn.textContent = 'Enviar link';
   if (error) { erroLogin('Erro: ' + error.message); return; }
   modoLogin('login');
-  okLogin('Enviamos um link de recuperação para ' + email + '.');
+  okLogin('Enviamos um link de recuperação para ' + email + '. Abra o link e defina a nova senha.');
+}
+
+/* ===== recuperação: definir nova senha ===== */
+function mostrarNovaSenha() {
+  $('splash') && $('splash').remove();
+  ['telaLogin', 'telaApp', 'telaEspera'].forEach(id => $(id) && $(id).classList.add('oculto'));
+  $('telaNovaSenha').classList.remove('oculto');
+}
+async function salvarNovaSenha() {
+  const e = $('erroNova'); e.style.display = 'none';
+  const s1 = $('inNova1').value, s2 = $('inNova2').value;
+  if (s1.length < 6) { e.textContent = 'A senha precisa de ao menos 6 caracteres.'; e.style.display = 'block'; return; }
+  if (s1 !== s2) { e.textContent = 'As senhas não conferem.'; e.style.display = 'block'; return; }
+  const btn = $('btnNovaSenha'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Salvando…';
+  const { error } = await sb.auth.updateUser({ password: s1 });
+  btn.disabled = false; btn.textContent = 'Salvar nova senha';
+  if (error) { e.textContent = 'Erro: ' + error.message; e.style.display = 'block'; return; }
+  history.replaceState(null, '', location.pathname + location.search); // limpa o token da URL
+  emRecovery = false;
+  toast('Senha atualizada!');
+  $('telaNovaSenha').classList.add('oculto');
+  await posLogin();
 }
 
 /* ======= PERFIL / ACESSO / TIMEOUT ======= */
@@ -938,6 +984,10 @@ window.addEventListener('pagehide', () => { navigator.sendBeacon && acessoId && 
 function revelarPosSplash() {
   const sp = $('splash');
   const fim = () => { if (sp) sp.remove(); };
+  // link de recuperação de senha: abre a tela de nova senha e para aqui
+  if (emRecovery || /type=recovery/.test(HASH_INICIAL)) {
+    mostrarNovaSenha(); fim(); return;
+  }
   sb.auth.getSession().then(async ({ data }) => {
     if (data.session) {
       await posLogin();
