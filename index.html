@@ -284,21 +284,39 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
   }
 
   // ---------- RPCP621: produção resumida Dia x Turno x Recurso ----------
+  // v1.1: parse por COLUNAS (itens X do pdf.js) em vez de regex sobre o texto
+  // concatenado. Corrige: (a) linha com quantidade em branco (ex.: "710 - ...
+  // TAMPA 10  CX 2,200") não rouba mais número do nome da máquina; (b) cada
+  // registro carrega o dia REAL informado no PDF (bug do dia fixo).
+  const UNIDADES_621 = ['CX', 'KG', 'MIL', 'UN', 'PC', 'PÇ', 'RL', 'FD'];
   function parse621(linhas) {
     const out = [];
     let dia = null, turno = null;
-    const rx = /^(\d+) - (.+?) ([\d.,]+) (CX|KG|MIL|UN) ([\d.,]+)$/;
     for (const l of linhas) {
       let m;
       if ((m = /^Dia: (\d{2}\/\d{2}\/\d{4})$/.exec(l.texto))) { dia = dataBR(m[1]); continue; }
       if ((m = /^Turno: (\d)$/.exec(l.texto))) { turno = +m[1]; continue; }
       if (!dia || !turno) continue;
-      if ((m = rx.exec(l.texto))) {
-        out.push({
-          dia, turno, ...splitRecurso(m[1], m[2]),
-          quantidade: numBR(m[3]), unidade: m[4], peso: numBR(m[5])
-        });
-      }
+      if (/^(Total|Recurso |Recurso$|Quantidade)/.test(l.texto)) continue;
+      const its = l.itens;
+      if (!its || its.length < 3) continue;
+      // primeiro item: "COD - NOME" na margem esquerda
+      const mCod = /^(\d+) - (.+)$/.exec(its[0].s);
+      if (!mCod || its[0].x > 100) continue;
+      // do fim: peso (número) e unidade; quantidade é opcional (coluna à direita)
+      const peso = its[its.length - 1].s;
+      const uni = its[its.length - 2].s;
+      if (!/^[\d.,]+$/.test(peso) || !UNIDADES_621.includes(uni)) continue;
+      let qtd = 0, fimNome = its.length - 2;
+      const antes = its[its.length - 3];
+      if (antes && /^[\d.,]+$/.test(antes.s) && antes.x > 300) { qtd = numBR(antes.s); fimNome = its.length - 3; }
+      // nome pode quebrar em vários itens entre o código e as colunas numéricas
+      let nome = mCod[2];
+      for (let i = 1; i < fimNome; i++) nome += ' ' + its[i].s;
+      out.push({
+        dia, turno, ...splitRecurso(mCod[1], nome),
+        quantidade: qtd, unidade: uni, peso: numBR(peso)
+      });
     }
     return out;
   }
@@ -529,7 +547,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.0.0';
+const APP_VER = '1.1.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
