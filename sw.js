@@ -1,6 +1,6 @@
 // Produção Rioplastic — service worker (auto-update)
-const CACHE = 'producao-rioplastic-v1.2.0';
-const APP_SHELL = ['./index.html'];
+const CACHE = 'producao-rioplastic-v1.3.0';
+const APP_SHELL = ['./index.html', './logo_full.png', './logo_mark.png'];
 
 self.addEventListener('install', e => {
   // baixa a casca nova já na instalação
