@@ -176,6 +176,10 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .usr-acoes button.aprovar{background:var(--verde);color:#fff;border-color:var(--verde)}
 .usr-acoes button.bloquear{color:var(--perigo);border-color:#F3C9C9}
 .usr-acoes button:active{opacity:.7}
+.usr-telas{margin-top:10px;font-size:12.5px;color:var(--cinza);display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.usr-telas .tl-tit{font-weight:700;color:var(--navy)}
+.usr-telas label{display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--texto)}
+.usr-telas input{width:16px;height:16px;accent-color:var(--verde)}
 .gestao-btns{display:flex;flex-direction:column;gap:10px}
 .gestao-btns .btn{font-size:14.5px;padding:13px}
 /* barra "gravar todos" */
@@ -263,7 +267,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.9.8</div>
+    <div class="ver-tag" id="verTag">versão 1.9.9</div>
   </div>
 </div>
 
@@ -303,7 +307,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.9.8</span>
+        <span class="ver-badge" id="verBadge">v1.9.9</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -767,7 +771,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.9.8';
+const APP_VER = '1.9.9';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -942,6 +946,8 @@ async function salvarNovaSenha() {
 let perfil = null;        // perfil do usuário logado
 let souAdmin = false;     // admin por perfil OU por e-mail (fallback)
 const ADMIN_EMAILS = ['joaopaulo@rioplastic.com.br', 'jpferreira1356@icloud.com'];
+let abasPermitidas = ['painel'];
+const ABAS = [{ id: 'painel', nome: 'Painel' }, { id: 'importar', nome: 'Importar' }, { id: 'historico', nome: 'Histórico' }];
 let acessoId = null;      // id do registro de acesso atual
 let timeoutMin = 60;      // minutos de inatividade (0 = desligado)
 let idleTimer = null;
@@ -1025,10 +1031,18 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  // aba Usuários só para admin
-  const ehAdmin = souAdmin;
-  $('abaBtnUsuarios').classList.toggle('oculto', !ehAdmin);
-  carregarPainel();
+  // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
+  if (souAdmin) abasPermitidas = ['painel', 'importar', 'historico', 'usuarios'];
+  else abasPermitidas = (perfil && Array.isArray(perfil.abas) && perfil.abas.length) ? perfil.abas.slice() : ['painel'];
+  // mostra/oculta os botões de aba conforme permissão
+  document.querySelectorAll('.aba').forEach(a => {
+    const id = a.dataset.aba;
+    const ok = id === 'usuarios' ? souAdmin : abasPermitidas.includes(id);
+    a.classList.toggle('oculto', !ok);
+  });
+  // abre a primeira aba permitida
+  const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
+  trocarAba(primeira);
 }
 // fecha o acesso ao fechar/atualizar a aba
 window.addEventListener('pagehide', () => { navigator.sendBeacon && acessoId && fecharAcesso(); });
@@ -1079,6 +1093,8 @@ function addOlho(id) {
 
 /* ================= ABAS ================= */
 function trocarAba(qual) {
+  if (qual === 'usuarios' && !souAdmin) return;
+  if (qual !== 'usuarios' && !abasPermitidas.includes(qual)) return;
   document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === qual));
   $('abaPainel').classList.toggle('oculto', qual !== 'painel');
   $('abaImportar').classList.toggle('oculto', qual !== 'importar');
@@ -1109,6 +1125,7 @@ const CORES = ['#00964D', '#28348E', '#E8A13D', '#3CA96E', '#6C7BD1', '#D64545',
 const blocoTurno = t => (t === 1 || t === 3) ? 'Manhã' : (t === 2 || t === 4) ? 'Tarde' : 'Noite';
 
 let dadosPainel = null; // cache: { producao, paradas, consumo }
+let usuariosCarregados = []; // cache da lista de usuários (admin)
 
 async function fetchTudo(tabela, colunas) {
   const passo = 1000; let de = 0, tudo = [];
@@ -1368,6 +1385,7 @@ async function carregarUsuarios() {
   if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário cadastrado ainda.</p>'; return; }
   const meuId = perfil && perfil.id;
 
+  usuariosCarregados = perfis;
   box.innerHTML = perfis.map(u => {
     const admin = u.papel === 'admin';
     const eu = u.id === meuId;
@@ -1383,6 +1401,11 @@ async function carregarUsuarios() {
         ? `<button onclick="usrPapel('${u.id}','operador')">Tornar operador</button>`
         : `<button onclick="usrPapel('${u.id}','admin')">Tornar admin</button>`);
     }
+    const abasU = Array.isArray(u.abas) && u.abas.length ? u.abas : ['painel'];
+    const telas = admin
+      ? '<div class="usr-telas desc">Admin vê todas as telas</div>'
+      : `<div class="usr-telas"><span class="tl-tit">Telas liberadas:</span>${ABAS.map(a =>
+          `<label><input type="checkbox" ${abasU.includes(a.id) ? 'checked' : ''} onchange="usrAbas('${u.id}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>`;
     return `<div class="usr">
       <div class="usr-topo">
         <div>
@@ -1392,6 +1415,7 @@ async function carregarUsuarios() {
         <div style="text-align:right">${tagPapel}<br>${tagStatus}</div>
       </div>
       <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])} · ${cont[u.id] || 0} acesso(s)</div>
+      ${telas}
       ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
     </div>`;
   }).join('');
@@ -1412,6 +1436,19 @@ async function usrPapel(id, papel) {
   const { error } = await sb.from('perfis').update({ papel, ...extra }).eq('id', id);
   toast(error ? 'Erro: ' + error.message : 'Papel atualizado.');
   carregarUsuarios();
+}
+async function usrAbas(id, abaId, on) {
+  const u = usuariosCarregados.find(x => x.id === id);
+  const atual = new Set(Array.isArray(u && u.abas) && u.abas.length ? u.abas : ['painel']);
+  if (on) atual.add(abaId); else atual.delete(abaId);
+  const arr = [...atual];
+  const { error } = await sb.from('perfis').update({ abas: arr }).eq('id', id);
+  if (error) {
+    toast(/column .*abas/.test(error.message) ? 'Rode o SQL de permissões (coluna "abas").' : 'Erro: ' + error.message);
+    carregarUsuarios(); return;
+  }
+  if (u) u.abas = arr;
+  toast('Acesso às telas atualizado.');
 }
 async function salvarTimeout() {
   const v = Math.max(0, parseInt($('inTimeout').value, 10) || 0);
