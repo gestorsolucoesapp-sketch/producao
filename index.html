@@ -215,7 +215,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.7.1</div>
+    <div class="ver-tag" id="verTag">versão 1.7.2</div>
   </div>
 </div>
 
@@ -237,7 +237,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.7.1</span>
+        <span class="ver-badge" id="verBadge">v1.7.2</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -680,7 +680,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.7.1';
+const APP_VER = '1.7.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -796,6 +796,8 @@ async function recuperarSenha() {
 
 /* ======= PERFIL / ACESSO / TIMEOUT ======= */
 let perfil = null;        // perfil do usuário logado
+let souAdmin = false;     // admin por perfil OU por e-mail (fallback)
+const ADMIN_EMAIL = 'jpferreira1356@icloud.com';
 let acessoId = null;      // id do registro de acesso atual
 let timeoutMin = 60;      // minutos de inatividade (0 = desligado)
 let idleTimer = null;
@@ -814,14 +816,16 @@ function telaEspera(titulo, msg, icone) {
 async function posLogin() {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return;
-  // busca o perfil (o trigger pode demorar 1 instante logo após o cadastro)
+  // busca o perfil (pode não existir ainda se o SQL 04 não foi rodado)
   let p = null;
   for (let i = 0; i < 3 && !p; i++) {
-    const { data } = await sb.from('perfis').select('*').eq('id', user.id).maybeSingle();
-    p = data;
-    if (!p) await new Promise(r => setTimeout(r, 700));
+    try { const { data } = await sb.from('perfis').select('*').eq('id', user.id).maybeSingle(); p = data; } catch (_) {}
+    if (!p) await new Promise(r => setTimeout(r, 500));
   }
   perfil = p;
+  // admin: pelo perfil OU pelo e-mail (fallback, funciona mesmo sem SQL 04)
+  const email = (user.email || '').toLowerCase();
+  souAdmin = (perfil && perfil.papel === 'admin') || email === ADMIN_EMAIL.toLowerCase();
   // Sem etapa de aprovação: entra direto. Só barra se o admin bloquear (ativo=false).
   if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
   await registrarAcesso();
@@ -878,7 +882,7 @@ async function mostrarApp() {
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
   // aba Usuários só para admin
-  const ehAdmin = perfil && perfil.papel === 'admin';
+  const ehAdmin = souAdmin;
   $('abaBtnUsuarios').classList.toggle('oculto', !ehAdmin);
   carregarHistorico();
 }
@@ -925,7 +929,7 @@ const fmtDataHora = iso => {
 };
 
 async function carregarUsuarios() {
-  if (!perfil || perfil.papel !== 'admin') return;
+  if (!souAdmin) return;
   atualizarInfoUltima();
   const box = $('listaUsuarios');
   box.innerHTML = '<p class="desc">Carregando…</p>';
@@ -939,17 +943,21 @@ async function carregarUsuarios() {
     sb.from('perfis').select('*').order('criado_em', { ascending: true }),
     sb.from('acessos').select('user_id, entrou_em').order('entrou_em', { ascending: false }).limit(1000)
   ]);
-  if (e1) { box.innerHTML = '<p class="desc">Erro ao carregar: ' + escapeHtml(e1.message) + '</p>'; return; }
+  if (e1) {
+    box.innerHTML = '<p class="desc">A lista de usuários precisa do SQL 04 rodado no Supabase.<br><span class="desc">(' + escapeHtml(e1.message) + ')</span></p>';
+    return;
+  }
   const ultimo = {}, cont = {};
   (acessos || []).forEach(a => {
     if (!ultimo[a.user_id]) ultimo[a.user_id] = a.entrou_em;
     cont[a.user_id] = (cont[a.user_id] || 0) + 1;
   });
-  if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário ainda.</p>'; return; }
+  if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário cadastrado ainda.</p>'; return; }
+  const meuId = perfil && perfil.id;
 
   box.innerHTML = perfis.map(u => {
     const admin = u.papel === 'admin';
-    const eu = u.id === perfil.id;
+    const eu = u.id === meuId;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
     const tagStatus = !u.ativo ? '<span class="tag tag-block">BLOQUEADO</span>'
       : '<span class="tag tag-ok">ATIVO</span>';
