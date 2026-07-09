@@ -1,26 +1,51 @@
-// Produção Rioplastic — service worker
-const CACHE = 'producao-rioplastic-v1.1.0';
-const ARQUIVOS = ['./', './index.html'];
+// Produção Rioplastic — service worker (auto-update)
+const CACHE = 'producao-rioplastic-v1.2.0';
+const APP_SHELL = ['./index.html'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
+  // baixa a casca nova já na instalação
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(APP_SHELL)).catch(() => {}));
+  // NÃO pula a espera sozinho aqui — quem manda pular é a página (mensagem),
+  // garantindo o reload controlado (uma vez só).
 });
+
+self.addEventListener('message', e => {
+  if (e.data === 'ATIVAR_AGORA') self.skipWaiting();
+});
+
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    caches.keys()
+      .then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
-// network-first para o app, cache como fallback offline
+
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return; // CDNs e Supabase seguem direto
+  if (url.origin !== location.origin) return; // CDNs / Supabase seguem direto
+
+  const ehNavegacao = e.request.mode === 'navigate' ||
+    url.pathname.endsWith('/') || url.pathname.endsWith('index.html') ||
+    url.pathname.endsWith('sw.js');
+
+  if (ehNavegacao) {
+    // NETWORK-FIRST sempre pega a versão mais nova; cache só como fallback offline
+    e.respondWith(
+      fetch(e.request, { cache: 'no-store' })
+        .then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put('./index.html', c)); return r; })
+        .catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+  // demais assets: cache-first com atualização em segundo plano
   e.respondWith(
-    fetch(e.request).then(r => {
-      const clone = r.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return r;
-    }).catch(() => caches.match(e.request))
+    caches.match(e.request).then(cacheado => {
+      const rede = fetch(e.request).then(r => {
+        const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r;
+      }).catch(() => cacheado);
+      return cacheado || rede;
+    })
   );
 });
