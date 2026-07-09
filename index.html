@@ -207,6 +207,15 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .bh-bar{height:16px;border-radius:5px;background:var(--verde);min-width:2px}
 .bh-val{font-size:12px;font-weight:700;color:var(--navy);white-space:nowrap;font-variant-numeric:tabular-nums}
 .vazio-painel{padding:20px;text-align:center;color:var(--cinza);font-size:13.5px}
+.aprov-tab{width:100%;border-collapse:separate;border-spacing:0 4px;font-size:12px}
+.aprov-tab th{color:var(--cinza);font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:2px 4px;font-weight:700}
+.aprov-tab th.t-man{color:#C68A12}.aprov-tab th.t-tar{color:#4E8A32}.aprov-tab th.t-noi{color:#3E72B0}
+.aprov-tab td{padding:2px}
+.aprov-tab td.nome{text-align:left;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--navy);padding-right:8px}
+.aprov-tab .cel{display:block;border-radius:5px;font-weight:700;color:#fff;padding:6px 2px;text-align:center;min-width:52px}
+.aprov-tab .cel.ok{background:var(--verde)}
+.aprov-tab .cel.baixo{background:#D64545}
+.aprov-tab .cel.vazio{background:#EEF2F6;color:var(--cinza)}
 .atualiz-faixa{background:#EAF0FF;border:1px solid #D3DEF7;border-radius:var(--radius);padding:12px 14px;margin-bottom:14px}
 .atualiz-faixa .af-ic{margin-right:4px}
 .atualiz-faixa b{color:var(--azul-marca)}
@@ -269,7 +278,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.1.0</div>
+    <div class="ver-tag" id="verTag">versão 2.1.1</div>
   </div>
 </div>
 
@@ -309,7 +318,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.1.0</span>
+        <span class="ver-badge" id="verBadge">v2.1.1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -773,7 +782,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.1.0';
+const APP_VER = '2.1.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1337,15 +1346,24 @@ function renderPainel() {
         (d) => d.v >= META_APROV ? 'var(--verde)' : '#D64545');
       cardAprovTurno = `<div class="grafico"><h3>Aproveitamento por turno</h3><div class="sub">produção Termo ÷ consumo bobina · meta ${META_APROV.toLocaleString('pt-BR')}%</div>${gAT}</div>`;
     }
-    // por máquina
-    const pM = {}, cM = {}, nome = {};
-    termo.forEach(r => { pM[r.recurso_cod] = (pM[r.recurso_cod] || 0) + (r.peso || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
-    bob.forEach(c => { cM[c.recurso_cod] = (cM[c.recurso_cod] || 0) + (c.peso || 0); if (!nome[c.recurso_cod]) nome[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
-    const maqA = Object.keys(cM).filter(cod => cM[cod] > 0 && pM[cod] > 0)
-      .map(cod => ({ l: nome[cod], v: pM[cod] / cM[cod] * 100 }))
-      .sort((a, b) => b.v - a.v);
-    if (maqA.length) {
-      cardAprovMaq = `<div class="grafico"><h3>Aproveitamento por máquina</h3><div class="sub">% de aproveitamento · meta ${META_APROV.toLocaleString('pt-BR')}% (verde ≥ meta)</div>${barrasAprov(maqA)}</div>`;
+    // por máquina × turno (tabela, estilo planilha)
+    const cel = {}, nomeM = {};
+    const ini = (cod) => { if (!cel[cod]) cel[cod] = { 'Manhã': { p: 0, c: 0 }, 'Tarde': { p: 0, c: 0 }, 'Noite': { p: 0, c: 0 } }; };
+    termo.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)].p += (r.peso || 0); nomeM[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+    bob.forEach(c => { const b = blocoPorHora(c.hora); if (!b) return; ini(c.recurso_cod); cel[c.recurso_cod][b].c += (c.peso || 0); if (!nomeM[c.recurso_cod]) nomeM[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
+    // só máquinas que consumiram bobina em algum turno
+    const linhas = Object.keys(cel).filter(cod => ['Manhã', 'Tarde', 'Noite'].some(b => cel[cod][b].c > 0))
+      .map(cod => {
+        const t = {}; let pTot = 0, cTot = 0;
+        ['Manhã', 'Tarde', 'Noite'].forEach(b => { const o = cel[cod][b]; t[b] = o.c > 0 ? (o.p / o.c * 100) : null; pTot += o.p; cTot += o.c; });
+        return { nome: nomeM[cod], m: t['Manhã'], ta: t['Tarde'], n: t['Noite'], tot: cTot > 0 ? (pTot / cTot * 100) : null };
+      }).sort((a, b) => (b.tot || 0) - (a.tot || 0));
+    if (linhas.length) {
+      const celHtml = v => v == null ? '<td><span class="cel vazio">—</span></td>'
+        : `<td><span class="cel ${v >= META_APROV ? 'ok' : 'baixo'}">${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span></td>`;
+      const rows = linhas.map(l => `<tr><td class="nome" title="${escapeHtml(l.nome)}">${escapeHtml(l.nome)}</td>${celHtml(l.m)}${celHtml(l.ta)}${celHtml(l.n)}${celHtml(l.tot)}</tr>`).join('');
+      cardAprovMaq = `<div class="grafico"><h3>Aproveitamento por máquina e turno</h3><div class="sub">% de aproveitamento · meta ${META_APROV.toLocaleString('pt-BR')}% (verde ≥ meta)</div>
+        <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
     }
   }
 
