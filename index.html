@@ -209,7 +209,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.5.0</div>
+    <div class="ver-tag" id="verTag">versão 1.6.0</div>
   </div>
 </div>
 
@@ -231,7 +231,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.5.0</span>
+        <span class="ver-badge" id="verBadge">v1.6.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -673,7 +673,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.5.0';
+const APP_VER = '1.6.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -815,9 +815,8 @@ async function posLogin() {
     if (!p) await new Promise(r => setTimeout(r, 700));
   }
   perfil = p;
-  if (!perfil) { telaEspera('Aguardando liberação', 'Conta criada. Assim que o administrador liberar, você poderá entrar.', '⏳'); return; }
-  if (!perfil.ativo)    { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
-  if (!perfil.aprovado) { telaEspera('Aguardando liberação', 'Sua conta está aguardando o administrador liberar o acesso.', '⏳'); return; }
+  // Sem etapa de aprovação: entra direto. Só barra se o admin bloquear (ativo=false).
+  if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
   await registrarAcesso();
   await carregarTimeout();
   mostrarApp();
@@ -825,8 +824,11 @@ async function posLogin() {
 
 async function registrarAcesso() {
   try {
+    const { data: { user } } = await sb.auth.getUser();
+    const uid = (perfil && perfil.id) || (user && user.id);
+    if (!uid) { acessoId = null; return; }
     const { data } = await sb.from('acessos')
-      .insert({ user_id: perfil.id, dispositivo: navigator.userAgent.slice(0, 120) })
+      .insert({ user_id: uid, dispositivo: navigator.userAgent.slice(0, 120) })
       .select('id').single();
     acessoId = data ? data.id : null;
   } catch (_) { acessoId = null; }
@@ -943,10 +945,8 @@ async function carregarUsuarios() {
     const eu = u.id === perfil.id;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
     const tagStatus = !u.ativo ? '<span class="tag tag-block">BLOQUEADO</span>'
-      : u.aprovado ? '<span class="tag tag-ok">LIBERADO</span>'
-      : '<span class="tag tag-pend">PENDENTE</span>';
+      : '<span class="tag tag-ok">ATIVO</span>';
     const acoes = [];
-    if (!u.aprovado && u.ativo) acoes.push(`<button class="aprovar" onclick="usrAprovar('${u.id}')">Aprovar</button>`);
     if (!eu) {
       acoes.push(u.ativo
         ? `<button class="bloquear" onclick="usrBloquear('${u.id}',false)">Bloquear</button>`
