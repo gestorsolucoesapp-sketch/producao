@@ -163,6 +163,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .lote-info{font-size:13.5px;font-weight:600;color:var(--navy);margin-bottom:10px}
 .lote-btns{display:flex;gap:10px}
 .lote-btns .btn{flex:1;padding:13px;font-size:14.5px}
+.erro-card{background:#FDEBEB;color:var(--perigo);font-size:13px;font-weight:600;padding:10px 12px;border-radius:9px;margin:8px 0 12px;word-break:break-word}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}#splash{display:none}}
 </style>
 </head>
@@ -214,7 +215,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.7.0</div>
+    <div class="ver-tag" id="verTag">versão 1.7.1</div>
   </div>
 </div>
 
@@ -236,7 +237,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.7.0</span>
+        <span class="ver-badge" id="verBadge">v1.7.1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -679,7 +680,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.7.0';
+const APP_VER = '1.7.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1156,12 +1157,14 @@ async function gravarTodos() {
   if (!ids.length) return;
   const b = $('btnGravarTodos');
   if (b) { b.disabled = true; b.innerHTML = '<span class="spin"></span>Gravando…'; }
-  let ok = 0;
+  let ok = 0, falhou = 0;
   for (const id of ids) {
-    if (previews[id] && !previews[id].dup) { const r = await gravar(id); if (r) ok++; }
+    if (!previews[id] || previews[id].dup) continue;
+    try { if (await gravar(id)) ok++; else falhou++; }
+    catch (e) { falhou++; toast('❌ ' + (e.message || e)); }
   }
   atualizarBarraLote();
-  toast(`✅ ${ok} de ${ids.length} arquivo(s) gravado(s).`);
+  toast(falhou ? `Gravados ${ok}, com erro ${falhou}. Veja a mensagem em cada card.` : `✅ ${ok} arquivo(s) gravado(s).`);
 }
 function descartarTodos() {
   if (!Object.keys(previews).length) return;
@@ -1173,11 +1176,15 @@ function descartarTodos() {
 function descartar(id) { delete previews[id]; $(id)?.remove(); atualizarBarraLote(); }
 
 async function gravar(id) {
-  const { resultado: r, hash, nomeArquivo } = previews[id];
-  const btn = $(id + 'Btn'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gravando…';
-  const barra = $(id + 'Prog'); barra.classList.remove('oculto');
+  const prev = previews[id];
+  if (!prev) return false;
+  const { resultado: r, hash, nomeArquivo } = prev;
+  const btn = $(id + 'Btn'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Gravando…'; }
+  const barra = $(id + 'Prog'); if (barra) barra.classList.remove('oculto');
+  const errBox = $(id + 'Err'); if (errBox) errBox.remove();
   const mapa = MAPA[r.rotina];
   try {
+    if (!mapa) throw new Error('Relatório RPCP' + r.rotina + ' ainda não tem tabela mapeada.');
     // 1) registra a importação (hash único barra duplicados)
     const { data: imp, error: e1 } = await sb.from('importacoes').insert({
       hash, rotina: r.rotina, arquivo: nomeArquivo,
@@ -1195,7 +1202,7 @@ async function gravar(id) {
         await sb.from('importacoes').delete().eq('id', imp.id); // desfaz (cascade)
         throw new Error(`Falha ao gravar em ${mapa.tabela}: ` + e2.message);
       }
-      barra.firstElementChild.style.width = Math.round(Math.min(100, ((i + 400) / linhas.length) * 100)) + '%';
+      if (barra) barra.firstElementChild.style.width = Math.round(Math.min(100, ((i + 400) / linhas.length) * 100)) + '%';
     }
     toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}`);
     descartar(id);
@@ -1203,8 +1210,17 @@ async function gravar(id) {
     return true;
   } catch (e) {
     toast('❌ ' + e.message);
-    btn.disabled = false; btn.textContent = 'Confirmar e gravar';
-    barra.classList.add('oculto');
+    // erro fixo no card (não some como o toast)
+    const card = $(id);
+    if (card && !$(id + 'Err')) {
+      const p = document.createElement('div');
+      p.id = id + 'Err'; p.className = 'erro-card';
+      p.textContent = '❌ ' + e.message;
+      const acoes = card.querySelector('.prev-acoes');
+      acoes ? card.insertBefore(p, acoes) : card.appendChild(p);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Tentar de novo'; }
+    if (barra) barra.classList.add('oculto');
     atualizarBarraLote();
     return false;
   }
