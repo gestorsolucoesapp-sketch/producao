@@ -215,7 +215,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 1.8.0</div>
+    <div class="ver-tag" id="verTag">versão 1.8.1</div>
   </div>
 </div>
 
@@ -237,7 +237,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v1.8.0</span>
+        <span class="ver-badge" id="verBadge">v1.8.1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -680,7 +680,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '1.8.0';
+const APP_VER = '1.8.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1010,10 +1010,14 @@ async function salvarTimeout() {
 
 /* ===== GESTÃO DE DADOS (admin) ===== */
 async function ultimaImportacao() {
-  const { data } = await sb.from('importacoes')
-    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros, created_at')
-    .order('created_at', { ascending: false }).limit(1).maybeSingle();
-  return data || null;
+  const cols = 'id, rotina, arquivo, periodo_de, periodo_ate, registros, criado_em';
+  const { data, error } = await sb.from('importacoes').select(cols)
+    .order('criado_em', { ascending: false }).limit(1).maybeSingle();
+  if (!error) return data || null;
+  // fallback: coluna criado_em ainda não existe
+  const { data: d2 } = await sb.from('importacoes')
+    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros').limit(1).maybeSingle();
+  return d2 || null;
 }
 async function totalImportacoes() {
   const { count } = await sb.from('importacoes').select('id', { count: 'exact', head: true });
@@ -1024,7 +1028,7 @@ async function atualizarInfoUltima() {
   const [u, n] = await Promise.all([ultimaImportacao(), totalImportacoes()]);
   if (!u) { el.innerHTML = 'Nenhuma importação no banco.'; return; }
   el.innerHTML = `<b>${n}</b> importação(ões) no total.<br>Última: <b>RPCP${u.rotina || '—'}</b> · ${fmtData(u.periodo_de)}`
-    + ` · ${fmt(u.registros, 0)} registros<br><span class="desc">${u.arquivo || ''} · ${new Date(u.created_at).toLocaleString('pt-BR')}</span>`;
+    + ` · ${fmt(u.registros, 0)} registros<br><span class="desc">${u.arquivo || ''} · ${new Date(u.criado_em).toLocaleString('pt-BR')}</span>`;
 }
 
 function nomeImp(u) { return `RPCP${u.rotina || '—'} de ${fmtData(u.periodo_de)} (${fmt(u.registros, 0)} reg.)`; }
@@ -1057,7 +1061,7 @@ async function comecarDoZero() {
   if (!confirm('Tem certeza mesmo? Digite OK na próxima tela para confirmar.') ) return;
   const txt = prompt('Para confirmar, digite:  ZERAR');
   if (txt !== 'ZERAR') { toast('Cancelado.'); return; }
-  const { error } = await sb.from('importacoes').delete().gte('created_at', '1970-01-01');
+  const { error } = await sb.from('importacoes').delete().not('id', 'is', null);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Banco zerado. Tudo pronto para recomeçar.');
   atualizarInfoUltima(); carregarHistorico();
@@ -1096,7 +1100,7 @@ async function processarArquivos(arquivos) {
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
       const resultado = await RioParsers.parseDocumento(pdf);
       // já importado?
-      const { data: dup } = await sb.from('importacoes').select('id, criado_em:created_at').eq('hash', hash).maybeSingle();
+      const { data: dup } = await sb.from('importacoes').select('id, criado_em').eq('hash', hash).maybeSingle();
       previews[id] = { resultado, hash, nomeArquivo: arq.name };
       renderPreview(id, dup);
     } catch (e) {
@@ -1263,16 +1267,21 @@ async function gravar(id, substituir = false) {
 /* ================= HISTÓRICO ================= */
 async function carregarHistorico() {
   const alvo = $('listaImportacoes');
-  const { data, error } = await sb.from('importacoes')
-    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros, created_at')
-    .order('created_at', { ascending: false }).limit(40);
+  let { data, error } = await sb.from('importacoes')
+    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros, criado_em')
+    .order('criado_em', { ascending: false }).limit(40);
+  if (error) { // fallback: sem a coluna criado_em
+    const r2 = await sb.from('importacoes')
+      .select('id, rotina, arquivo, periodo_de, periodo_ate, registros').limit(40);
+    data = r2.data; error = r2.error;
+  }
   if (error) { alvo.innerHTML = `<p class="desc">Erro ao carregar: ${error.message}</p>`; return; }
   if (!data.length) { alvo.innerHTML = '<p class="desc">Nenhuma importação ainda. Comece pela aba Importar.</p>'; return; }
   alvo.innerHTML = data.map(i => `
     <div class="imp-item">
       <div>
         <div class="t">RPCP${i.rotina || '—'} · ${fmtData(i.periodo_de)}</div>
-        <div class="s">${i.arquivo || ''} · ${fmt(i.registros, 0)} registros · ${new Date(i.created_at).toLocaleString('pt-BR')}</div>
+        <div class="s">${i.arquivo || ''} · ${fmt(i.registros, 0)} registros${i.criado_em ? ' · ' + new Date(i.criado_em).toLocaleString('pt-BR') : ''}</div>
       </div>
       <button class="apagar" onclick="apagarImportacao('${i.id}', 'RPCP${i.rotina} de ${fmtData(i.periodo_de)}')">Apagar</button>
     </div>`).join('');
