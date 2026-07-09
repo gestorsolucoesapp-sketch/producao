@@ -217,6 +217,9 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .aprov-tab .cel.ok{background:var(--verde)}
 .aprov-tab .cel.baixo{background:#D64545}
 .aprov-tab .cel.vazio{background:#EEF2F6;color:var(--cinza)}
+.aprov-tab .cel.neutra{background:#EEF3F8;color:var(--navy)}
+.secao-tit{font-size:12px;font-weight:800;color:#fff;background:var(--navy);text-transform:uppercase;letter-spacing:.5px;padding:8px 14px;border-radius:10px;margin:6px 0 12px}
+.bh-val .acum{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;color:var(--cinza)}
 .atualiz-faixa{background:#EAF0FF;border:1px solid #D3DEF7;border-radius:var(--radius);padding:12px 14px;margin-bottom:14px}
 .atualiz-faixa .af-ic{margin-right:4px}
 .atualiz-faixa b{color:var(--azul-marca)}
@@ -279,7 +282,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.1.3</div>
+    <div class="ver-tag" id="verTag">versão 2.2.0</div>
   </div>
 </div>
 
@@ -319,7 +322,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.1.3</span>
+        <span class="ver-badge" id="verBadge">v2.2.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -783,7 +786,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.1.3';
+const APP_VER = '2.2.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1168,13 +1171,14 @@ async function carregarPainel() {
   if (!dadosPainel) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
     try {
-      const [producao, paradas, consumo, imps] = await Promise.all([
+      const [producao, paradas, consumo, perdas, imps] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso'),
-        fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,tempo_exato'),
+        fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio'),
         fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade'),
+        fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso'),
         carregarInfoImports()
       ]);
-      dadosPainel = { producao, paradas, consumo, info: imps };
+      dadosPainel = { producao, paradas, consumo, perdas, info: imps };
       // filtro: setores principais sempre + "Outros" se houver máquinas não mapeadas
       const sel = $('fSetor');
       const base = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
@@ -1243,148 +1247,214 @@ function barrasHorizontal(dados, unidade) {
   }).join('');
 }
 
+/* ================= HELPERS DE AGREGAÇÃO ================= */
+const ultimoDiaDe = rows => { const d = rows.map(r => r.dia).filter(Boolean).sort(); return d[d.length - 1] || null; };
+const noSetor = (rows, setor) => setor ? rows.filter(r => setorDe(r.recurso_cod) === setor) : rows;
+const somaPor = (rows, keyFn, valFn) => { const o = {}; rows.forEach(r => { const k = keyFn(r); if (k == null || k === '') return; o[k] = (o[k] || 0) + (valFn(r) || 0); }); return o; };
+// turno (bloco) das paradas, derivado da hora de início
+const blocoParada = p => { const h = p.inicio ? String(p.inicio).slice(11, 16) : null; return blocoPorHora(h); };
+
+// barras verticais por turno (peso) com cores da planilha
+const COR_TURNO = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
+function gTurnoPeso(rows, valFn, fmtBar) {
+  const b = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+  rows.forEach(r => { b[blocoTurno(r.turno)] += (valFn(r) || 0); });
+  return barrasVertical(['Manhã', 'Tarde', 'Noite'].map(k => ({ l: k, v: b[k], rot: fmtBar(b[k]) })), d => COR_TURNO[d.l] || 'var(--verde)');
+}
+// top máquinas (horizontal)
+function gMaqPeso(rows, valFn, uni, n = 12) {
+  const o = {}; const nome = {};
+  rows.forEach(r => { o[r.recurso_cod] = (o[r.recurso_cod] || 0) + (valFn(r) || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+  const arr = Object.keys(o).map(c => ({ l: nome[c], v: o[c] })).filter(d => d.v > 0).sort((a, b) => b.v - a.v).slice(0, n);
+  return barrasHorizontal(arr, uni);
+}
+// Pareto (barras ordenadas + % acumulado)
+function paretoHorizontal(dados, fmtVal, cor) {
+  const arr = [...dados].filter(d => d.v > 0).sort((a, b) => b.v - a.v);
+  if (!arr.length) return '<p class="vazio-painel">Sem dados.</p>';
+  const tot = arr.reduce((a, d) => a + d.v, 0) || 1, max = arr[0].v || 1; let ac = 0;
+  return arr.map(d => { ac += d.v; const pa = ac / tot * 100;
+    return `<div class="bh-row"><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
+      <div class="bh-bar" style="width:${(d.v / max * 100).toFixed(1)}%;background:${cor || 'var(--alerta)'}"></div>
+      <div class="bh-val">${fmtVal(d.v)}<span class="acum">${pa.toFixed(0)}%</span></div></div>`;
+  }).join('');
+}
+// tabela máquina × turno (Manhã/Tarde/Noite/Total)
+function tabelaMaqTurno(rows, { valFn, fmtCel, corCel }) {
+  const cel = {}, nome = {};
+  const ini = c => { if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
+  rows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)] += (valFn(r) || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+  const linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c], m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; })
+    .filter(l => l.tot > 0).sort((a, b) => b.tot - a.tot);
+  if (!linhas.length) return '<p class="vazio-painel">Sem dados.</p>';
+  const cH = v => `<td><span class="cel ${corCel ? corCel(v) : 'neutra'}">${fmtCel(v)}</span></td>`;
+  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}</td>${cH(l.m)}${cH(l.ta)}${cH(l.n)}${cH(l.tot)}</tr>`).join('');
+  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
+}
+// tabela de aproveitamento máquina × turno (produção termo ÷ consumo bobina)
+function tabelaAprov(termoRows, bobRows) {
+  const cel = {}, nome = {};
+  const ini = c => { if (!cel[c]) cel[c] = { 'Manhã': { p: 0, c: 0 }, 'Tarde': { p: 0, c: 0 }, 'Noite': { p: 0, c: 0 } }; };
+  termoRows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)].p += (r.peso || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+  bobRows.forEach(c => { const b = blocoPorHora(c.hora); if (!b) return; ini(c.recurso_cod); cel[c.recurso_cod][b].c += (c.peso || 0); if (!nome[c.recurso_cod]) nome[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
+  const linhas = Object.keys(cel).filter(c => ['Manhã', 'Tarde', 'Noite'].some(b => cel[c][b].c > 0)).map(c => {
+    const t = {}; let pT = 0, cT = 0;
+    ['Manhã', 'Tarde', 'Noite'].forEach(b => { const o = cel[c][b]; t[b] = o.c > 0 ? o.p / o.c * 100 : null; pT += o.p; cT += o.c; });
+    return { cod: c, nome: nome[c], m: t['Manhã'], ta: t['Tarde'], n: t['Noite'], tot: cT > 0 ? pT / cT * 100 : null };
+  }).sort((a, b) => (b.tot || 0) - (a.tot || 0));
+  if (!linhas.length) return '';
+  const cH = v => v == null ? '<td><span class="cel vazio">—</span></td>' : `<td><span class="cel ${v >= META_APROV ? 'ok' : 'baixo'}">${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span></td>`;
+  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}</td>${cH(l.m)}${cH(l.ta)}${cH(l.n)}${cH(l.tot)}</tr>`).join('');
+  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
+}
+const card = (titulo, sub, conteudo) => `<div class="grafico"><h3>${titulo}</h3>${sub ? `<div class="sub">${sub}</div>` : ''}${conteudo}</div>`;
+const secao = txt => `<div class="secao-tit">${txt}</div>`;
+
+/* ================= PAINEL ================= */
 function renderPainel() {
   if (!dadosPainel) return;
   const box = $('painelConteudo');
   const setor = $('fSetor').value;
-  const metrica = $('fMetrica').value; // 'peso' | 'quantidade'
+  const metrica = $('fMetrica').value;
   const uni = metrica === 'peso' ? 'kg' : '';
   const fmtV = metrica === 'peso' ? fmtKg : fmtNum;
+  const val = r => metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0);
+  const fmtBar = metrica === 'peso' ? fmtKg : (n => n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(n).toLocaleString('pt-BR'));
 
-  // filtra produção pelo setor selecionado
-  let prod = dadosPainel.producao;
-  if (setor) prod = prod.filter(p => setorDe(p.recurso_cod) === setor);
-  const val = r => (metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0));
-
-  // ---- BOBINA: consumo (646, pelas máquinas da Termoformagem) e aproveitamento em % ----
+  const D = dadosPainel;
   const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
-  const bobTermo = dadosPainel.consumo.filter(c => ehBobina(c) && setorDe(c.recurso_cod) === 'Termoformagem');
-  const bobAll = dadosPainel.consumo.filter(ehBobina);
-  const consBobina = bobTermo.length ? bobTermo : (bobAll.length ? bobAll : dadosPainel.consumo);
-  const consumoBob = consBobina.reduce((a, c) => a + (c.peso || 0), 0);
-  const prodTermoKg = dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem')
-    .reduce((a, r) => a + (r.peso || 0), 0);
-  // aproveitamento de bobina = produção Termoformagem ÷ consumo de bobina (%) — meta 47,5%
-  const aprovPct = (consumoBob > 0 && prodTermoKg > 0) ? (prodTermoKg / consumoBob * 100) : null;
+  let html = cabecalhoInfo();
 
-  if (!prod.length) { box.innerHTML = cabecalhoInfo() + '<div class="grafico"><p class="vazio-painel">Sem dados de produção para este filtro.</p></div>'; return; }
-
-  // KPIs
-  const totalV = prod.reduce((a, r) => a + val(r), 0);
-  const dias = [...new Set(prod.map(r => r.dia))];
-  const maquinas = [...new Set(prod.map(r => r.recurso_cod))];
-  // aproveitamento aparece no resumo geral e na Termoformagem
-  const fator = (!setor || setor === 'Termoformagem') ? aprovPct : null;
-  // paradas
-  let par = dadosPainel.paradas;
-  if (setor) par = par.filter(p => setorDe(p.recurso_cod) === setor);
-  const horasParada = par.reduce((a, p) => a + (p.tempo_horas || 0), 0);
-
-  const kpis = `<div class="kpis">
-    <div class="kpi destaque"><div class="v">${fmtV(totalV)}</div><div class="l">${metrica === 'peso' ? 'Produção total' : 'Qtd. produzida'}</div></div>
-    <div class="kpi"><div class="v">${dias.length}</div><div class="l">Dias</div></div>
-    <div class="kpi"><div class="v">${maquinas.length}</div><div class="l">Máquinas</div></div>
-    <div class="kpi"><div class="v">${fmtNum(horasParada)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
-    ${fator != null ? `<div class="kpi ${fator >= 47.5 ? 'destaque' : 'abaixo'}" style="grid-column:1/-1">
-      <div class="v">${fator.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% <span style="font-size:12px;font-weight:600">meta 47,5%</span></div>
-      <div class="l">Aproveitamento de bobina · produção Termo ${fmtKg(prodTermoKg)} ÷ consumo bobina ${fmtKg(consumoBob)}</div></div>` : ''}
-  </div>`;
-
-  // produção por dia
-  const fmtBar = metrica === 'peso'
-    ? fmtKg
-    : (n) => n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(n).toLocaleString('pt-BR');
-  const porDia = {};
-  prod.forEach(r => { porDia[r.dia] = (porDia[r.dia] || 0) + val(r); });
-  const diasOrd = Object.keys(porDia).sort();
-  const gDia = barrasVertical(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]) })));
-
-  // produção por turno (3 blocos) — tons da planilha: Manhã âmbar, Tarde verde, Noite azul
-  const COR_TURNO = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
-  const porBloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
-  prod.forEach(r => { porBloco[blocoTurno(r.turno)] += val(r); });
-  const gTurno = barrasVertical(['Manhã', 'Tarde', 'Noite'].map((b) => ({ l: b, v: porBloco[b], rot: fmtBar(porBloco[b]) })),
-    (d) => COR_TURNO[d.l] || 'var(--verde)');
-
-  // produção por setor (só no resumo geral)
-  let cardSetor = '';
   if (!setor) {
-    const porSetor = {};
-    dadosPainel.producao.forEach(r => { const s = setorDe(r.recurso_cod); porSetor[s] = (porSetor[s] || 0) + val(r); });
-    const arr = Object.keys(porSetor).map((s, i) => ({ l: s, v: porSetor[s], cor: CORES[SETORES.indexOf(s) % CORES.length] }))
-      .sort((a, b) => b.v - a.v);
-    cardSetor = `<div class="grafico"><h3>Produção por setor</h3><div class="sub">${metrica === 'peso' ? 'peso total' : 'quantidade total'}</div>${barrasHorizontal(arr, uni)}</div>`;
+    // ===== RESUMO GERAL: todos os setores =====
+    const totalV = D.producao.reduce((a, r) => a + val(r), 0);
+    const dias = [...new Set(D.producao.map(r => r.dia))];
+    const horasParada = D.paradas.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+    const pesoProd = D.producao.reduce((a, r) => a + (r.peso || 0), 0);
+    const pesoPerda = D.perdas.reduce((a, r) => a + (r.peso || 0), 0);
+    const perdaPct = (pesoProd + pesoPerda) > 0 ? pesoPerda / (pesoProd + pesoPerda) * 100 : null;
+    const bob = D.consumo.filter(c => ehBobina(c) && setorDe(c.recurso_cod) === 'Termoformagem');
+    const consumoBob = (bob.length ? bob : D.consumo.filter(ehBobina)).reduce((a, c) => a + (c.peso || 0), 0);
+    const prodTermo = noSetor(D.producao, 'Termoformagem').reduce((a, r) => a + (r.peso || 0), 0);
+    const aprov = (consumoBob > 0 && prodTermo > 0) ? prodTermo / consumoBob * 100 : null;
+
+    html += `<div class="kpis">
+      <div class="kpi destaque"><div class="v">${fmtV(totalV)}</div><div class="l">${metrica === 'peso' ? 'Produção total' : 'Qtd. produzida'}</div></div>
+      <div class="kpi"><div class="v">${dias.length}</div><div class="l">Dias</div></div>
+      <div class="kpi"><div class="v">${fmtNum(horasParada)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
+      <div class="kpi"><div class="v">${perdaPct != null ? perdaPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda (refugo)</div></div>
+      ${aprov != null ? `<div class="kpi ${aprov >= META_APROV ? 'destaque' : 'abaixo'}" style="grid-column:1/-1"><div class="v">${aprov.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% <span style="font-size:12px;font-weight:600">meta 47,5%</span></div><div class="l">Aproveitamento de bobina (Termoformagem)</div></div>` : ''}
+    </div>`;
+
+    // produção por setor
+    const porSetor = somaPor(D.producao, r => setorDe(r.recurso_cod), val);
+    const arrS = Object.keys(porSetor).map(s => ({ l: s, v: porSetor[s], cor: CORES[SETORES.indexOf(s) % CORES.length] })).sort((a, b) => b.v - a.v);
+    html += card('Produção por setor', metrica === 'peso' ? 'peso total' : 'quantidade total', barrasHorizontal(arrS, uni));
+
+    // produção por dia
+    const porDia = somaPor(D.producao, r => r.dia, val);
+    const diasOrd = Object.keys(porDia).sort();
+    html += card('Produção por dia', metrica === 'peso' ? 'peso (kg)' : 'quantidade',
+      barrasVertical(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]) }))));
+
+    // produção por turno
+    html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)', gTurnoPeso(D.producao, val, fmtBar));
+
+    // Pareto de paradas (todos os setores)
+    const porMotivo = somaPor(D.paradas, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
+    html += card('Pareto de paradas · todos os setores', 'horas paradas · % acumulado',
+      paretoHorizontal(Object.keys(porMotivo).map(m => ({ l: m, v: porMotivo[m] })), v => fmtNum(v) + 'h', 'var(--alerta)'));
+
+    // Pareto de perdas (todos os setores)
+    const porTipo = somaPor(D.perdas, r => r.tipo_perda_desc || '—', r => r.peso || 0);
+    html += card('Pareto de perdas · todos os setores', 'peso perdido · % acumulado',
+      paretoHorizontal(Object.keys(porTipo).map(t => ({ l: t, v: porTipo[t] })), v => fmtKg(v), '#D64545'));
+
+    box.innerHTML = html;
+    return;
   }
 
-  // top máquinas
-  const porMaq = {};
-  prod.forEach(r => { const k = r.recurso_cod + '§' + (r.recurso_nome || r.recurso_cod); porMaq[k] = (porMaq[k] || 0) + val(r); });
-  const maqArr = Object.entries(porMaq).map(([k, v]) => ({ l: k.split('§')[1], v }))
-    .sort((a, b) => b.v - a.v).slice(0, 12);
-  const cardMaq = `<div class="grafico"><h3>Top máquinas${setor ? ' · ' + setor : ''}</h3><div class="sub">${metrica === 'peso' ? 'peso' : 'quantidade'} — maiores produtoras</div>${barrasHorizontal(maqArr, uni)}</div>`;
+  // ===== SETOR ESPECÍFICO =====
+  const prodS = noSetor(D.producao, setor);
+  if (!prodS.length && setor !== 'Termoformagem') {
+    box.innerHTML = html + card('', '', '<p class="vazio-painel">Sem dados de produção para ' + escapeHtml(setor) + '.</p>');
+    return;
+  }
+  const parS = noSetor(D.paradas, setor);
+  const perS = noSetor(D.perdas, setor);
+  const ehTermo = setor === 'Termoformagem';
+  const bobS = D.consumo.filter(c => ehBobina(c) && setorDe(c.recurso_cod) === 'Termoformagem');
 
-  // top paradas por motivo (horas)
-  let cardParada = '';
-  if (par.length) {
-    const porMotivo = {};
-    par.forEach(p => { const m = p.motivo_desc || '—'; porMotivo[m] = (porMotivo[m] || 0) + (p.tempo_horas || 0); });
-    const parArr = Object.entries(porMotivo).map(([l, v]) => ({ l, v, cor: 'var(--alerta)' }))
-      .sort((a, b) => b.v - a.v).slice(0, 10);
-    cardParada = `<div class="grafico"><h3>Principais paradas</h3><div class="sub">horas paradas por motivo</div>${barrasHorizontal(parArr, '')}</div>`;
+  const ud = ultimoDiaDe(prodS.length ? prodS : D.producao);
+  const udTxt = ud ? fmtData(ud) : '—';
+  const prodUD = prodS.filter(r => r.dia === ud);
+  const parUD = parS.filter(p => p.dia === ud);
+  const perUD = perS.filter(r => r.dia === ud);
+  const bobUD = bobS.filter(c => c.dia === ud);
+
+  // ---------- ÚLTIMO DIA ----------
+  html += secao('Último dia · ' + udTxt);
+  if (prodUD.length) {
+    html += card('Produção por turno', metrica === 'peso' ? 'peso (kg)' : 'quantidade', gTurnoPeso(prodUD, val, fmtBar));
+    html += card('Produção por máquina', metrica === 'peso' ? 'peso' : 'quantidade', gMaqPeso(prodUD, val, uni));
+  }
+  // perda % do último dia
+  const pProdUD = prodUD.reduce((a, r) => a + (r.peso || 0), 0);
+  const pPerdaUD = perUD.reduce((a, r) => a + (r.peso || 0), 0);
+  const perdaUDpct = (pProdUD + pPerdaUD) > 0 ? pPerdaUD / (pProdUD + pPerdaUD) * 100 : null;
+  html += `<div class="kpis"><div class="kpi ${perdaUDpct != null && perdaUDpct > 0 ? '' : ''}"><div class="v">${perdaUDpct != null ? perdaUDpct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda do dia (refugo)</div></div>
+    <div class="kpi"><div class="v">${fmtNum(parUD.reduce((a, p) => a + (p.tempo_horas || 0), 0))}<span style="font-size:13px"> h</span></div><div class="l">Paradas do dia</div></div></div>`;
+  // paradas do último dia
+  if (parUD.length) {
+    const mUD = somaPor(parUD, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
+    html += card('Paradas do dia', 'horas por motivo', paretoHorizontal(Object.keys(mUD).map(m => ({ l: m, v: mUD[m] })), v => fmtNum(v) + 'h'));
+  }
+  if (ehTermo && (prodUD.length && bobUD.length)) {
+    const t = tabelaAprov(prodUD, bobUD);
+    if (t) html += card('Aproveitamento por máquina e turno · dia', 'meta ' + META_APROV.toLocaleString('pt-BR') + '% (verde ≥ meta)', t);
   }
 
-  // ---- APROVEITAMENTO DE BOBINA por turno e por máquina (Termo) ----
-  let cardAprovTurno = '', cardAprovMaq = '';
-  if ((!setor || setor === 'Termoformagem') && consumoBob > 0) {
-    const bob = consBobina;
-    const termo = dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem');
-    // por turno (bloco)
-    const pT = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, cT = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
-    termo.forEach(r => { pT[blocoTurno(r.turno)] += (r.peso || 0); });
-    bob.forEach(c => { const b = blocoPorHora(c.hora); if (b) cT[b] += (c.peso || 0); });
-    const dadosT = ['Manhã', 'Tarde', 'Noite'].map(b => ({ l: b, v: cT[b] > 0 ? (pT[b] / cT[b] * 100) : 0 }));
-    const temTurno = dadosT.some(d => d.v > 0);
-    if (temTurno) {
-      const gAT = barrasVertical(dadosT.map(d => ({ l: d.l, v: d.v, rot: d.v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' })),
-        (d) => d.v >= META_APROV ? 'var(--verde)' : '#D64545');
-      cardAprovTurno = `<div class="grafico"><h3>Aproveitamento por turno</h3><div class="sub">produção Termo ÷ consumo bobina · meta ${META_APROV.toLocaleString('pt-BR')}%</div>${gAT}</div>`;
-    }
-    // por máquina × turno (tabela, estilo planilha)
-    const cel = {}, nomeM = {};
-    const ini = (cod) => { if (!cel[cod]) cel[cod] = { 'Manhã': { p: 0, c: 0 }, 'Tarde': { p: 0, c: 0 }, 'Noite': { p: 0, c: 0 } }; };
-    termo.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)].p += (r.peso || 0); nomeM[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
-    bob.forEach(c => { const b = blocoPorHora(c.hora); if (!b) return; ini(c.recurso_cod); cel[c.recurso_cod][b].c += (c.peso || 0); if (!nomeM[c.recurso_cod]) nomeM[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
-    // só máquinas que consumiram bobina em algum turno
-    const linhas = Object.keys(cel).filter(cod => ['Manhã', 'Tarde', 'Noite'].some(b => cel[cod][b].c > 0))
-      .map(cod => {
-        const t = {}; let pTot = 0, cTot = 0;
-        ['Manhã', 'Tarde', 'Noite'].forEach(b => { const o = cel[cod][b]; t[b] = o.c > 0 ? (o.p / o.c * 100) : null; pTot += o.p; cTot += o.c; });
-        return { cod, nome: nomeM[cod], m: t['Manhã'], ta: t['Tarde'], n: t['Noite'], tot: cTot > 0 ? (pTot / cTot * 100) : null };
-      }).sort((a, b) => (b.tot || 0) - (a.tot || 0));
-    if (linhas.length) {
-      const celHtml = v => v == null ? '<td><span class="cel vazio">—</span></td>'
-        : `<td><span class="cel ${v >= META_APROV ? 'ok' : 'baixo'}">${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</span></td>`;
-      const rows = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}</td>${celHtml(l.m)}${celHtml(l.ta)}${celHtml(l.n)}${celHtml(l.tot)}</tr>`).join('');
-      cardAprovMaq = `<div class="grafico"><h3>Aproveitamento por máquina e turno</h3><div class="sub">% de aproveitamento · meta ${META_APROV.toLocaleString('pt-BR')}% (verde ≥ meta)</div>
-        <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
-    }
+  // ---------- PERÍODO ----------
+  html += secao('Período · ' + udTxt.slice(0, 5) + ' ← ' + (D.info && D.info.periodoDe ? fmtData(D.info.periodoDe) : ''));
+  const totalP = prodS.reduce((a, r) => a + val(r), 0);
+  const maquinas = [...new Set(prodS.map(r => r.recurso_cod))].length;
+  const horasP = parS.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const pProdP = prodS.reduce((a, r) => a + (r.peso || 0), 0);
+  const pPerdaP = perS.reduce((a, r) => a + (r.peso || 0), 0);
+  const perdaPpct = (pProdP + pPerdaP) > 0 ? pPerdaP / (pProdP + pPerdaP) * 100 : null;
+  html += `<div class="kpis">
+    <div class="kpi destaque"><div class="v">${fmtV(totalP)}</div><div class="l">Produção período</div></div>
+    <div class="kpi"><div class="v">${maquinas}</div><div class="l">Máquinas</div></div>
+    <div class="kpi"><div class="v">${fmtNum(horasP)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
+    <div class="kpi"><div class="v">${perdaPpct != null ? perdaPpct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda período</div></div>`;
+  if (ehTermo) {
+    const consB = bobS.reduce((a, c) => a + (c.peso || 0), 0);
+    const aprovP = (consB > 0 && pProdP > 0) ? pProdP / consB * 100 : null;
+    if (aprovP != null) html += `<div class="kpi ${aprovP >= META_APROV ? 'destaque' : 'abaixo'}" style="grid-column:1/-1"><div class="v">${aprovP.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% <span style="font-size:12px;font-weight:600">meta 47,5%</span></div><div class="l">Aproveitamento de bobina · ${fmtKg(pProdP)} ÷ ${fmtKg(consB)}</div></div>`;
+  }
+  html += `</div>`;
+
+  html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar));
+  html += card('Produção por máquina e turno', metrica === 'peso' ? 'peso (kg)' : 'quantidade',
+    tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—' }));
+
+  // paradas por máquina (período)
+  if (parS.length) {
+    const pm = somaPor(parS, p => p.recurso_nome || p.recurso_cod || '—', p => p.tempo_horas || 0);
+    html += card('Paradas por máquina', 'horas · % acumulado', paretoHorizontal(Object.keys(pm).map(m => ({ l: m, v: pm[m] })), v => fmtNum(v) + 'h'));
+  }
+  // perdas por máquina e turno (período)
+  if (perS.length) {
+    html += card('Perdas por máquina e turno', 'peso perdido (kg)',
+      tabelaMaqTurno(perS, { valFn: r => r.peso || 0, fmtCel: v => v > 0 ? fmtKg(v) : '—', corCel: v => v > 0 ? 'baixo' : 'vazio' }));
+  }
+  // aproveitamento período por máquina e turno (Termo)
+  if (ehTermo) {
+    const t = tabelaAprov(noSetor(D.producao, 'Termoformagem'), bobS);
+    if (t) html += card('Aproveitamento por máquina e turno · período', 'meta ' + META_APROV.toLocaleString('pt-BR') + '% (verde ≥ meta)', t);
   }
 
-  box.innerHTML = cabecalhoInfo() + kpis
-    + `<div class="grafico"><h3>Produção por dia</h3><div class="sub">${metrica === 'peso' ? 'peso (kg)' : 'quantidade'}${setor ? ' · ' + setor : ''}</div>${gDia}</div>`
-    + `<div class="grafico"><h3>Produção por turno</h3><div class="sub">Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)</div>${gTurno}</div>`
-    + cardAprovTurno + cardAprovMaq + cardSetor + cardMaq + cardParada;
-}
-
-// barras horizontais de aproveitamento (%) com escala 0–100 e cor pela meta
-function barrasAprov(dados) {
-  return dados.map(d => {
-    const pct = Math.max(0, Math.min(100, d.v));
-    const cor = d.v >= META_APROV ? 'var(--verde)' : '#D64545';
-    return `<div class="bh-row"><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
-      <div class="bh-bar" style="width:${pct.toFixed(1)}%;background:${cor}"></div>
-      <div class="bh-val">${d.v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</div></div>`;
-  }).join('');
+  box.innerHTML = html;
 }
 
 function cabecalhoInfo() {
