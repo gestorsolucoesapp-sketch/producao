@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.6.5</div>
+    <div class="ver-tag" id="verTag">versão 2.6.6</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.6.5</span>
+        <span class="ver-badge" id="verBadge">v2.6.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -535,7 +535,10 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
   <div class="ia-sheet">
     <div class="ia-head">
       <div style="display:flex;align-items:center;gap:10px"><img src="ia-logo.png" alt="IA" style="width:32px;height:32px;border-radius:8px"><div><b>Assistente de Produção</b><small>IA · Rioplastic</small></div></div>
-      <button onclick="fecharIA()" aria-label="Fechar">✕</button>
+      <div style="display:flex;align-items:center;gap:2px">
+        <button id="iaVozBtn" onclick="toggleVozSaida()" aria-label="Voz da IA" title="Voz da IA" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">🔊</button>
+        <button onclick="fecharIA()" aria-label="Fechar">✕</button>
+      </div>
     </div>
     <div id="iaMsgs" class="ia-msgs"></div>
     <div class="ia-input">
@@ -917,7 +920,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.6.5';
+const APP_VER = '2.6.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1817,13 +1820,15 @@ function renderAnalise() {
 let iaHist = [];
 function abrirIA() {
   $('iaOverlay').classList.remove('oculto');
+  primeTTS(); atualizaBtnVozSaida();
   ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
   setTimeout(() => $('iaInput').focus(), 100);
 }
-function fecharIA() { $('iaOverlay').classList.add('oculto'); }
+function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
 function addIA(quem, txt) {
   const d = document.createElement('div'); d.className = 'ia-msg ' + quem; d.textContent = txt;
+  if (quem === 'assistente') { d.style.cursor = 'pointer'; d.title = 'Toque para ouvir'; d.onclick = () => falarIA(d.textContent); }
   $('iaMsgs').appendChild(d); $('iaMsgs').scrollTop = $('iaMsgs').scrollHeight; return d;
 }
 function contextoIA() {
@@ -1920,6 +1925,7 @@ let vozRec = null, vozAtiva = false;
 function toggleVoz() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Seu navegador não suporta voz. No iPhone use o Safari.'); return; }
+  primeTTS();
   if (vozAtiva) { try { vozRec.stop(); } catch (_) {} return; }
   vozRec = new SR();
   vozRec.lang = 'pt-BR';
@@ -1944,8 +1950,46 @@ function toggleVoz() {
   try { vozRec.start(); } catch (_) {}
 }
 
+/* ===== voz de saída (a IA fala a resposta) — SpeechSynthesis pt-BR ===== */
+let iaVozOn = true;
+try { iaVozOn = localStorage.getItem('rp_ia_voz') !== '0'; } catch (_) {}
+let ttsVoz = null, ttsPrimed = false;
+function carregaVozes() {
+  if (!window.speechSynthesis) return;
+  const vs = speechSynthesis.getVoices() || [];
+  ttsVoz = vs.find(v => /pt[-_]BR/i.test(v.lang)) || vs.find(v => /^pt/i.test(v.lang)) || null;
+}
+if (window.speechSynthesis) { carregaVozes(); speechSynthesis.onvoiceschanged = carregaVozes; }
+function primeTTS() { // desbloqueia a voz no iOS (precisa rodar dentro de um toque)
+  if (ttsPrimed || !window.speechSynthesis) return;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); ttsPrimed = true; } catch (_) {}
+}
+function pararFala() { try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {} }
+function falarIA(txt) {
+  if (!iaVozOn || !window.speechSynthesis || !txt) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(txt));
+    u.lang = 'pt-BR'; if (ttsVoz) u.voice = ttsVoz; u.rate = 1.02; u.pitch = 1;
+    speechSynthesis.speak(u);
+  } catch (_) {}
+}
+function toggleVozSaida() {
+  iaVozOn = !iaVozOn;
+  try { localStorage.setItem('rp_ia_voz', iaVozOn ? '1' : '0'); } catch (_) {}
+  if (iaVozOn) { primeTTS(); toast('Voz da IA ligada'); } else { pararFala(); toast('Voz da IA desligada'); }
+  atualizaBtnVozSaida();
+}
+function atualizaBtnVozSaida() {
+  const b = $('iaVozBtn'); if (!b) return;
+  b.textContent = iaVozOn ? '🔊' : '🔇';
+  b.title = iaVozOn ? 'Voz da IA ligada (toque p/ silenciar)' : 'Voz da IA desligada (toque p/ ativar)';
+  b.style.opacity = iaVozOn ? '1' : '.55';
+}
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
+  pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   const carregando = addIA('assistente', '…');
   try {
@@ -1957,6 +2001,7 @@ async function enviarIA() {
     const d = await r.json();
     const txt = d.texto || d.error || 'Não consegui responder agora.';
     carregando.textContent = txt; iaHist.push({ role: 'assistant', content: txt });
+    falarIA(txt);
   } catch (e) { carregando.textContent = 'Erro de conexão com a IA. Verifique se a função ai-chat foi publicada no Supabase.'; }
 }
 
