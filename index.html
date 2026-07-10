@@ -237,6 +237,12 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .ia-head small{display:block;font-size:11px;color:#9FB6CC}
 .ia-head button{color:#fff;font-size:20px;padding:4px 8px}
 .ia-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.ia-uso{padding:10px 14px;border-bottom:1px solid var(--borda);background:var(--fundo)}
+.iauso-top{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;color:var(--cinza);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
+.iauso-meta{border:none;background:none;color:var(--verde-esc);font-weight:700;font-size:11px;font-family:inherit;cursor:pointer;padding:0}
+.iauso-track{height:9px;background:var(--borda);border-radius:6px;overflow:hidden}
+.iauso-fill{height:100%;border-radius:6px;transition:width .3s ease}
+.iauso-lbl{font-size:12px;color:var(--cinza);margin-top:5px;text-align:right}
 .ia-msg{max-width:85%;padding:10px 13px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap}
 .ia-msg.user{align-self:flex-end;background:var(--navy);color:#fff;border-bottom-right-radius:4px}
 .ia-msg.assistente{align-self:flex-start;background:#fff;border:1px solid var(--borda);color:var(--texto);border-bottom-left-radius:4px}
@@ -540,6 +546,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         <button onclick="fecharIA()" aria-label="Fechar">✕</button>
       </div>
     </div>
+    <div id="iaUso" class="ia-uso"></div>
     <div id="iaMsgs" class="ia-msgs"></div>
     <div class="ia-input">
       <button id="iaMic" class="ia-mic" onclick="toggleVoz()" aria-label="Falar" title="Falar">🎤</button>
@@ -920,7 +927,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.6.7';
+const APP_VER = '2.6.8';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1821,9 +1828,52 @@ let iaHist = [];
 function abrirIA() {
   $('iaOverlay').classList.remove('oculto');
   primeTTS(); atualizaBtnVozSaida();
+  carregarTokensIA(); atualizaBarraTokens();
   ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
   setTimeout(() => $('iaInput').focus(), 100);
+}
+const IA_TOK_KEY = 'rpcp_ia_tokens';
+let iaTokens = {};
+function carregarTokensIA(){ try { iaTokens = JSON.parse(localStorage.getItem(IA_TOK_KEY) || '{}') || {}; } catch (_) { iaTokens = {}; } }
+function salvarTokensIA(){ try { localStorage.setItem(IA_TOK_KEY, JSON.stringify(iaTokens)); } catch (_) {} }
+function mesAtualRio(){ return new Date().toISOString().slice(0, 7); }
+function estTokens(t){ return Math.ceil(String(t || '').length / 4); }
+function fmtTok(n){
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' mi';
+  if (n >= 1e3) return (n / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil';
+  return String(Math.round(n));
+}
+function tokMes(){ return Number(iaTokens[mesAtualRio()]) || 0; }
+function metaTok(){ return Number(iaTokens.meta) || 500000; }
+function atualizaBarraTokens(){
+  const el = $('iaUso'); if (!el) return;
+  const u = tokMes(), m = metaTok();
+  const pct = m > 0 ? Math.min(100, u / m * 100) : 0;
+  const cor = pct >= 90 ? 'var(--perigo)' : (pct >= 70 ? 'var(--alerta)' : 'var(--verde)');
+  el.innerHTML = `<div class="iauso-top"><span>Tokens este mês (estimativa)</span><button class="iauso-meta" onclick="editarMetaTokens()">meta ${fmtTok(m)} ✏️</button></div>
+    <div class="iauso-track"><div class="iauso-fill" style="width:${pct.toFixed(1)}%;background:${cor}"></div></div>
+    <div class="iauso-lbl">${fmtTok(u)} de ${fmtTok(m)} tokens · ${pct.toFixed(0)}%</div>`;
+}
+function registrarTokensIA(q, resp){
+  const mes = mesAtualRio();
+  iaTokens[mes] = (Number(iaTokens[mes]) || 0) + 1200 + estTokens(q) + estTokens(resp);
+  salvarTokensIA(); atualizaBarraTokens();
+}
+function editarMetaTokens(){
+  const el = $('iaUso'); if (!el) return;
+  el.innerHTML = `<div class="iauso-top"><span>Definir meta mensal (tokens)</span></div>
+    <div style="display:flex;gap:8px;margin-top:2px">
+      <input id="iaMetaInp" type="number" inputmode="numeric" value="${metaTok()}" style="flex:1;border:1.5px solid var(--borda);border-radius:10px;padding:9px 11px;font-family:inherit">
+      <button class="btn btn-verde" style="width:auto;padding:9px 14px" onclick="salvarMetaTokens()">OK</button>
+      <button class="btn btn-borda" style="width:auto;padding:9px 12px" onclick="atualizaBarraTokens()">✕</button>
+    </div>`;
+  $('iaMetaInp').focus();
+}
+function salvarMetaTokens(){
+  const n = Math.max(1000, parseInt($('iaMetaInp').value) || 0);
+  iaTokens.meta = n; salvarTokensIA(); atualizaBarraTokens();
 }
 function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
 function addIA(quem, txt) {
@@ -2002,6 +2052,7 @@ async function enviarIA() {
     const txt = d.texto || d.error || 'Não consegui responder agora.';
     carregando.textContent = txt; iaHist.push({ role: 'assistant', content: txt });
     falarIA(txt);
+    registrarTokensIA(q, txt);
   } catch (e) { carregando.textContent = 'Erro de conexão com a IA. Verifique se a função ai-chat foi publicada no Supabase.'; }
 }
 
