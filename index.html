@@ -333,7 +333,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.5.3</div>
+    <div class="ver-tag" id="verTag">versão 2.5.4</div>
   </div>
 </div>
 
@@ -373,7 +373,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.5.3</span>
+        <span class="ver-badge" id="verBadge">v2.5.4</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -911,7 +911,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.5.3';
+const APP_VER = '2.5.4';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1523,28 +1523,28 @@ function abrirSetor(s) {
   const sel = $('fSetor');
   if ([...sel.options].some(o => o.value === s)) { sel.value = s; renderPainel(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 }
+async function ensureAnalise() {
+  if (dadosAnalise) return true;
+  try {
+    const [rows, paradas] = await Promise.all([
+      fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso'),
+      fetchTudo('paradas', 'motivo_desc,tempo_horas')
+    ]);
+    // duração média de um SETUP (do 643)
+    const set = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
+    const horasSet = set.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+    setupInfo = set.length ? { media: horasSet / set.length, eventos: set.length, horas: horasSet } : null;
+    rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
+    dadosAnalise = rows.filter(r => String(r.item_cod || '').startsWith('1'));
+    return true;
+  } catch (e) { return e.message || false; }
+}
 async function carregarAnalise() {
   const box = $('analiseConteudo');
   if (!dadosAnalise) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando produção detalhada (622)…</p>';
-    try {
-      const [rows, paradas] = await Promise.all([
-        fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso'),
-        fetchTudo('paradas', 'motivo_desc,tempo_horas')
-      ]);
-      dadosAnalise = rows;
-      // duração média de um SETUP (do 643)
-      const set = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
-      const horasSet = set.reduce((a, p) => a + (p.tempo_horas || 0), 0);
-      setupInfo = set.length ? { media: horasSet / set.length, eventos: set.length, horas: horasSet } : null;
-      // usa a data real do registro (data_inicio) quando disponível
-      dadosAnalise.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
-      // só produtos (código começando com 1); bobinas 3xxxxx e outros ficam fora
-      dadosAnalise = dadosAnalise.filter(r => String(r.item_cod || '').startsWith('1'));
-    } catch (e) {
-      box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar: ${escapeHtml(e.message)}</p></div>`;
-      return;
-    }
+    const ok = await ensureAnalise();
+    if (ok !== true) { box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar: ${escapeHtml(String(ok))}</p></div>`; return; }
   }
   renderAnalise();
 }
@@ -1669,6 +1669,7 @@ function renderAnalise() {
 let iaHist = [];
 function abrirIA() {
   $('iaOverlay').classList.remove('oculto');
+  ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
   setTimeout(() => $('iaInput').focus(), 100);
 }
@@ -1684,7 +1685,6 @@ function contextoIA() {
   const par = filtraParadas(D.paradas);
   const nome = c => (D.nomeMaq && D.nomeMaq[c]) || c;
 
-  // totais e por setor
   const porSetor = {}; D.producao.forEach(r => { const s = setorDe(r.recurso_cod); porSetor[s] = (porSetor[s] || 0) + (r.peso || 0); });
   const tot = D.producao.reduce((a, r) => a + (r.peso || 0), 0);
   const perda = D.perdas.reduce((a, r) => a + (r.peso || 0), 0);
@@ -1692,14 +1692,20 @@ function contextoIA() {
   const perdaPct = (tot + perda) > 0 ? (perda / (tot + perda) * 100).toFixed(1) : '—';
   const setores = Object.entries(porSetor).sort((a, b) => b[1] - a[1]).map(([s, k]) => `${s} ${kg1(k)}`).join('; ');
 
-  // produção por dia e por turno
   const porDia = {}; D.producao.forEach(r => { porDia[r.dia] = (porDia[r.dia] || 0) + (r.peso || 0); });
-  const diasTxt = Object.keys(porDia).sort().map(d => `${d.slice(8)}/${d.slice(5, 7)} ${kg1(porDia[d])}`).join('; ');
+  const diasOrd = Object.keys(porDia).sort();
+  const diasTxt = diasOrd.map(d => `${d.slice(8)}/${d.slice(5, 7)} ${kg1(porDia[d])}`).join('; ');
   const porBloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
   D.producao.forEach(r => { porBloco[blocoTurno(r.turno)] += (r.peso || 0); });
   const turnosTxt = Object.entries(porBloco).map(([b, k]) => `${b} ${kg1(k)}`).join('; ');
 
-  // aproveitamento por máquina (Termoformagem): produção ÷ consumo de bobina
+  const ud = diasOrd[diasOrd.length - 1];
+  const prodUD = D.producao.filter(r => r.dia === ud);
+  const udKg = prodUD.reduce((a, r) => a + (r.peso || 0), 0);
+  const udCx = prodUD.reduce((a, r) => a + (r.quantidade || 0), 0);
+  const udMaq = {}; prodUD.forEach(r => { udMaq[r.recurso_cod] = (udMaq[r.recurso_cod] || 0) + (r.peso || 0); });
+  const udMaqTxt = Object.entries(udMaq).sort((a, b) => b[1] - a[1]).map(([c, k]) => `${c} ${nome(c)} ${Math.round(k)}kg`).join('; ');
+
   const bob = D.consumo.filter(c => /BOBINA/i.test(c.componente_desc || '') && setorDe(c.recurso_cod) === 'Termoformagem');
   const consumoBob = bob.reduce((a, c) => a + (c.peso || 0), 0);
   const prodTermo = D.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem');
@@ -1711,35 +1717,55 @@ function contextoIA() {
   const aprovMaq = Object.keys(cM).filter(c => cM[c] > 0 && pM[c] > 0)
     .map(c => ({ c, v: pM[c] / cM[c] * 100 })).sort((a, b) => b.v - a.v)
     .map(o => `${o.c} ${nome(o.c)} ${o.v.toFixed(1)}%`).join('; ');
+  const pMT = {}, cMT = {};
+  prodTermo.forEach(r => { const k = r.recurso_cod + '|' + blocoTurno(r.turno); pMT[k] = (pMT[k] || 0) + (r.peso || 0); });
+  bob.forEach(c => { const b2 = blocoPorHora(c.hora); if (!b2) return; const k = c.recurso_cod + '|' + b2; cMT[k] = (cMT[k] || 0) + (c.peso || 0); });
+  const aprovMT = {};
+  Object.keys(cMT).forEach(k => { if (cMT[k] > 0 && pMT[k] > 0) { const parts = k.split('|'); const c = parts[0], b2 = parts[1]; (aprovMT[c] = aprovMT[c] || {})[b2] = (pMT[k] / cMT[k] * 100).toFixed(0); } });
+  const aprovMTtxt = Object.keys(aprovMT).map(c => `${c} M${aprovMT[c]['Manhã'] || '—'} T${aprovMT[c]['Tarde'] || '—'} N${aprovMT[c]['Noite'] || '—'}`).join('; ');
 
-  // produção por máquina (todas, top 20)
   const prodMaq = {}; D.producao.forEach(r => { prodMaq[r.recurso_cod] = (prodMaq[r.recurso_cod] || 0) + (r.peso || 0); });
-  const prodMaqTxt = Object.entries(prodMaq).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  const prodMaqTxt = Object.entries(prodMaq).sort((a, b) => b[1] - a[1])
     .map(([c, k]) => `${c} ${nome(c)} ${kg1(k)}`).join('; ');
 
-  // paradas: por motivo e por máquina
   const parMot = {}; par.forEach(p => { const m = p.motivo_desc || '—'; parMot[m] = (parMot[m] || 0) + (p.tempo_horas || 0); });
-  const topPar = Object.entries(parMot).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, h]) => `${m} ${Math.round(h)}h`).join('; ');
+  const topPar = Object.entries(parMot).sort((a, b) => b[1] - a[1]).map(([m, h]) => `${m} ${Math.round(h)}h`).join('; ');
   const parMaq = {}; par.forEach(p => { parMaq[p.recurso_cod] = (parMaq[p.recurso_cod] || 0) + (p.tempo_horas || 0); });
-  const parMaqTxt = Object.entries(parMaq).sort((a, b) => b[1] - a[1]).slice(0, 12)
+  const parMaqTxt = Object.entries(parMaq).sort((a, b) => b[1] - a[1])
     .map(([c, h]) => `${c} ${nome(c)} ${Math.round(h)}h`).join('; ');
 
-  // perdas: por tipo e por máquina
   const perd = {}; D.perdas.forEach(r => { const t = r.tipo_perda_desc || '—'; perd[t] = (perd[t] || 0) + (r.peso || 0); });
-  const topPerd = Object.entries(perd).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t, k]) => `${t} ${Math.round(k)}kg`).join('; ');
+  const topPerd = Object.entries(perd).sort((a, b) => b[1] - a[1]).map(([t, k]) => `${t} ${Math.round(k)}kg`).join('; ');
   const perdMaq = {}; D.perdas.forEach(r => { perdMaq[r.recurso_cod] = (perdMaq[r.recurso_cod] || 0) + (r.peso || 0); });
-  const perdMaqTxt = Object.entries(perdMaq).sort((a, b) => b[1] - a[1]).slice(0, 12)
+  const perdMaqTxt = Object.entries(perdMaq).sort((a, b) => b[1] - a[1])
     .map(([c, k]) => `${c} ${nome(c)} ${Math.round(k)}kg`).join('; ');
+
+  let itensTxt = '';
+  if (dadosAnalise && dadosAnalise.length) {
+    const it = {};
+    dadosAnalise.forEach(r => {
+      const c = String(r.item_cod);
+      if (!it[c]) it[c] = { d: r.item_desc || c, kg: 0, dias: new Set(), ops: new Set() };
+      it[c].kg += (r.peso || 0); if (r.dia) it[c].dias.add(r.dia); if (r.op) it[c].ops.add(r.op);
+      if (r.item_desc && r.item_desc.length > it[c].d.length) it[c].d = r.item_desc;
+    });
+    const arr = Object.entries(it).map(([c, o]) => ({ c, ...o })).sort((a, b) => b.kg - a.kg);
+    const topItens = arr.slice(0, 30).map(i => `${i.c} ${i.d.slice(0, 40)} ${kg1(i.kg)} (${i.dias.size}d/${i.ops.size}op)`).join('; ');
+    const nRep = arr.filter(i => i.dias.size > 1).length;
+    itensTxt = `\nItens produzidos (622): ${arr.length} itens, ${nRep} repetem em 2+ dias. Top 30 por volume: ${topItens}.`;
+    if (setupInfo) itensTxt += ` Setup médio (643): ${setupInfo.media.toFixed(1)}h em ${setupInfo.eventos} eventos.`;
+  }
 
   const per = D.info ? `${fmtData(D.info.periodoDe)} a ${fmtData(D.info.periodoAte)}` : '';
   const excl = paradasExcluidas.size ? ` (paradas ignoradas no painel: ${[...paradasExcluidas].join(', ')})` : '';
   return `Período: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
 Produção por dia: ${diasTxt}.
 Produção por turno: ${turnosTxt}.
-Produção por máquina (top): ${prodMaqTxt}.
+Último dia ${ud ? ud.slice(8) + '/' + ud.slice(5, 7) : '—'}: ${kg1(udKg)} e ${Math.round(udCx)} cxs. Por máquina no último dia: ${udMaqTxt}.
+Produção por máquina (período, todas): ${prodMaqTxt}.
 Perda total ${Math.round(perda)}kg (${perdaPct}% refugo). Perdas por tipo: ${topPerd}. Perdas por máquina: ${perdMaqTxt}.
-Horas paradas ${Math.round(horas)}h${excl}. Paradas por motivo: ${topPar}. Paradas por máquina: ${parMaqTxt}.
-Aproveitamento de bobina Termoformagem geral: ${aprovGeral}% (meta 47,5%). Aproveitamento por máquina (produção÷consumo bobina): ${aprovMaq}.`;
+Horas paradas ${Math.round(horas)}h${excl}. Paradas por motivo (todas): ${topPar}. Paradas por máquina (todas): ${parMaqTxt}.
+Aproveitamento de bobina Termoformagem geral: ${aprovGeral}% (meta 47,5%). Por máquina: ${aprovMaq}. Por máquina×turno (M=manhã T=tarde N=noite, %): ${aprovMTtxt}.${itensTxt}`;
 }
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
