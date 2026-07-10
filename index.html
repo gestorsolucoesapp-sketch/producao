@@ -336,7 +336,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.5.7</div>
+    <div class="ver-tag" id="verTag">versão 2.5.8</div>
   </div>
 </div>
 
@@ -376,7 +376,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.5.7</span>
+        <span class="ver-badge" id="verBadge">v2.5.8</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -915,7 +915,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.5.7';
+const APP_VER = '2.5.8';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1529,6 +1529,48 @@ function abrirSetor(s) {
   const sel = $('fSetor');
   if ([...sel.options].some(o => o.value === s)) { sel.value = s; renderPainel(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 }
+
+// detalhe da PERDA de um dia: motivos/tipos e quantidades (peso e cxs)
+function detPerda(setor, dia) {
+  if (!dadosPainel) return;
+  let per = dadosPainel.perdas.filter(r => r.dia === dia);
+  if (setor) per = per.filter(r => setorDe(r.recurso_cod) === setor);
+  const prod = (setor ? dadosPainel.producao.filter(r => setorDe(r.recurso_cod) === setor) : dadosPainel.producao).filter(r => r.dia === dia);
+  const pProd = prod.reduce((a, r) => a + (r.peso || 0), 0);
+  const totKg = per.reduce((a, r) => a + (r.peso || 0), 0);
+  const totCx = per.reduce((a, r) => a + (r.quantidade || 0), 0);
+  const pct = (pProd + totKg) > 0 ? (totKg / (pProd + totKg) * 100) : 0;
+  // agrupa por tipo de perda
+  const tp = {};
+  per.forEach(r => { const t = r.tipo_perda_desc || '—'; if (!tp[t]) tp[t] = { kg: 0, cx: 0 }; tp[t].kg += (r.peso || 0); tp[t].cx += (r.quantidade || 0); });
+  const linhas = Object.entries(tp).sort((a, b) => b[1].kg - a[1].kg);
+  $('itemDetTitulo').textContent = 'Perda ' + fmtData(dia);
+  if (!linhas.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Sem perdas registradas neste dia' + (setor ? ' para ' + setor : '') + '.</p>'; $('itemDetOverlay').classList.remove('oculto'); return; }
+  $('itemDetCorpo').innerHTML = `
+    <p class="idet-desc">${setor || 'Todos os setores'} · refugo ${pct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% · total ${fmtKg(totKg)} (${fmtNum(totCx)} cxs)</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Motivo da perda</th><th>Peso</th><th>Cxs</th><th>%</th></tr></thead><tbody>
+    ${linhas.map(([t, o]) => `<tr><td class="nome">${escapeHtml(t)}</td><td><span class="cel baixo">${fmtKg(o.kg)}</span></td><td><span class="cel neutra">${fmtNum(o.cx)}</span></td><td><span class="cel neutra">${totKg > 0 ? (o.kg / totKg * 100).toFixed(0) : 0}%</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('itemDetOverlay').classList.remove('oculto');
+}
+// detalhe das PARADAS de um dia: motivos e horas
+function detParadasDia(setor, dia) {
+  if (!dadosPainel) return;
+  let par = filtraParadas(dadosPainel.paradas).filter(p => p.dia === dia);
+  if (setor) par = par.filter(p => setorDe(p.recurso_cod) === setor);
+  const tot = par.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const mot = {};
+  par.forEach(p => { const m = p.motivo_desc || '—'; mot[m] = (mot[m] || 0) + (p.tempo_horas || 0); });
+  const linhas = Object.entries(mot).sort((a, b) => b[1] - a[1]);
+  $('itemDetTitulo').textContent = 'Paradas ' + fmtData(dia);
+  if (!linhas.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Sem paradas registradas neste dia' + (setor ? ' para ' + setor : '') + '.</p>'; $('itemDetOverlay').classList.remove('oculto'); return; }
+  $('itemDetCorpo').innerHTML = `
+    <p class="idet-desc">${setor || 'Todos os setores'} · total ${Math.round(tot)} h paradas</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Motivo</th><th>Horas</th><th>%</th></tr></thead><tbody>
+    ${linhas.map(([m, h]) => `<tr><td class="nome">${escapeHtml(m)}</td><td><span class="cel cel-tot">${Math.round(h)}h</span></td><td><span class="cel neutra">${tot > 0 ? (h / tot * 100).toFixed(0) : 0}%</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('itemDetOverlay').classList.remove('oculto');
+}
 async function ensureAnalise() {
   if (dadosAnalise) return true;
   try {
@@ -2092,8 +2134,8 @@ function renderPainel() {
   const pProdUD = prodUD.reduce((a, r) => a + (r.peso || 0), 0);
   const pPerdaUD = perUD.reduce((a, r) => a + (r.peso || 0), 0);
   const perdaUDpct = (pProdUD + pPerdaUD) > 0 ? pPerdaUD / (pProdUD + pPerdaUD) * 100 : null;
-  html += `<div class="kpis pbloco" data-k="k:ud-perda"><div class="kpi ${perdaUDpct != null && perdaUDpct > 0 ? '' : ''}"><div class="v">${perdaUDpct != null ? perdaUDpct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda do dia (refugo)</div></div>
-    <div class="kpi"><div class="v">${fmtNum(parUD.reduce((a, p) => a + (p.tempo_horas || 0), 0))}<span style="font-size:13px"> h</span></div><div class="l">Paradas do dia</div></div></div>`;
+  html += `<div class="kpis pbloco" data-k="k:ud-perda"><div class="kpi" style="cursor:pointer" onclick="detPerda('${setor}','${ud}')"><div class="v">${perdaUDpct != null ? perdaUDpct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda do dia (refugo) ›</div></div>
+    <div class="kpi" style="cursor:pointer" onclick="detParadasDia('${setor}','${ud}')"><div class="v">${fmtNum(parUD.reduce((a, p) => a + (p.tempo_horas || 0), 0))}<span style="font-size:13px"> h</span></div><div class="l">Paradas do dia ›</div></div></div>`;
   // paradas do último dia
   if (parUD.length) {
     const mUD = somaPor(parUD, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
