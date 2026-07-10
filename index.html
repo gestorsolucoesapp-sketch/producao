@@ -332,7 +332,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.4.9</div>
+    <div class="ver-tag" id="verTag">versão 2.5.0</div>
   </div>
 </div>
 
@@ -372,7 +372,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.4.9</span>
+        <span class="ver-badge" id="verBadge">v2.5.0</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -909,7 +909,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.4.9';
+const APP_VER = '2.5.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1430,6 +1430,8 @@ function verItem(ix) {
       <div><b>${i.maqs.size}</b><span>máquina(s): ${escapeHtml([...i.maqs].join(', '))}</span></div>
       <div><b>${fmtKg(i.kg)}</b><span>peso total</span></div>
       <div><b>${fmtNum(i.cx)} cxs</b><span>quantidade total</span></div>
+      ${i.entradas ? `<div><b>${i.entradas}</b><span>entrada(s) em máquina${i.reent ? ` · <b style="color:#D64545">${i.reent} re-entrada(s)</b> (nova regulagem)` : ' · sem re-entrada'}</span></div>` : ''}
+      ${(i.entradasDet || []).map(t => `<div><b>↩︎</b><span>${escapeHtml(t)}</span></div>`).join('')}
     </div>`;
   $('itemDetOverlay').classList.remove('oculto');
 }
@@ -1514,20 +1516,56 @@ function renderAnalise() {
   else if (grupo) rows = rows.filter(r => String(r.item_cod).startsWith(grupo));
   if (!rows.length) { box.innerHTML = '<div class="grafico"><p class="vazio-painel">Nenhum item encontrado para este filtro.</p></div>'; return; }
 
-  // agrega por item
+  // agrega por item (com dias por máquina para detectar re-entradas)
   const it = {};
   rows.forEach(r => {
     const c = String(r.item_cod);
-    if (!it[c]) it[c] = { cod: c, desc: r.item_desc || c, v: 0, kg: 0, cx: 0, dias: new Set(), ops: new Set(), maqs: new Set() };
+    if (!it[c]) it[c] = { cod: c, desc: r.item_desc || c, v: 0, kg: 0, cx: 0, dias: new Set(), ops: new Set(), maqs: new Set(), porMaq: {} };
     it[c].v += val(r); it[c].kg += (r.peso || 0); it[c].cx += (r.quantidade || 0);
     if (r.dia) it[c].dias.add(r.dia);
     if (r.op) it[c].ops.add(r.op);
-    if (r.recurso_cod) it[c].maqs.add(r.recurso_cod);
+    if (r.recurso_cod) {
+      it[c].maqs.add(r.recurso_cod);
+      const mq = String(r.recurso_cod);
+      if (!it[c].porMaq[mq]) it[c].porMaq[mq] = new Set();
+      if (r.dia) it[c].porMaq[mq].add(r.dia);
+    }
     if (r.item_desc && r.item_desc.length > (it[c].desc || '').length) it[c].desc = r.item_desc;
+  });
+  // calendário de atividade de cada máquina (todos os itens, sem filtro)
+  const maqDias = {};
+  dadosAnalise.forEach(r => {
+    const mq = String(r.recurso_cod || ''); if (!mq || !r.dia) return;
+    if (!maqDias[mq]) maqDias[mq] = new Set();
+    maqDias[mq].add(r.dia);
+  });
+  const maqDiasOrd = {}; Object.keys(maqDias).forEach(mq => { maqDiasOrd[mq] = [...maqDias[mq]].sort(); });
+  // entradas = blocos de dias consecutivos (no calendário da máquina); re-entrada = bloco extra
+  Object.values(it).forEach(i => {
+    i.entradas = 0; i.reent = 0; i.entradasDet = [];
+    Object.keys(i.porMaq).forEach(mq => {
+      const cal = maqDiasOrd[mq] || [];
+      const idx = [...i.porMaq[mq]].map(d => cal.indexOf(d)).filter(x => x >= 0).sort((a, b) => a - b);
+      if (!idx.length) return;
+      let blocos = 1;
+      const seq = [[cal[idx[0]]]];
+      for (let k = 1; k < idx.length; k++) {
+        if (idx[k] === idx[k - 1] + 1) seq[seq.length - 1].push(cal[idx[k]]);
+        else { blocos++; seq.push([cal[idx[k]]]); }
+      }
+      i.entradas += blocos;
+      if (blocos > 1) {
+        i.reent += blocos - 1;
+        const per = seq.map(b => b.length > 1 ? fmtData(b[0]).slice(0, 5) + '–' + fmtData(b[b.length - 1]).slice(0, 5) : fmtData(b[0]).slice(0, 5)).join(' · ');
+        i.entradasDet.push(mq + ': ' + blocos + ' entradas (' + per + ')');
+      }
+    });
   });
   const itens = Object.values(it).sort((a, b) => b.v - a.v);
   const totalV = itens.reduce((a, i) => a + i.v, 0);
   const repetem = itens.filter(i => i.dias.size > 1);
+  const comReent = itens.filter(i => i.reent > 0).sort((a, b) => b.reent - a.reent);
+  const totReent = comReent.reduce((a, i) => a + i.reent, 0);
   const diasPeriodo = new Set(rows.map(r => r.dia)).size;
 
   // KPIs
@@ -1536,7 +1574,15 @@ function renderAnalise() {
     <div class="kpi"><div class="v">${fmtV(totalV)}</div><div class="l">Volume total</div></div>
     <div class="kpi"><div class="v">${repetem.length}</div><div class="l">Itens que repetem (2+ dias)</div></div>
     <div class="kpi"><div class="v">${itens.length ? Math.round(repetem.length / itens.length * 100) : 0}%</div><div class="l">Taxa de repetição</div></div>
+    ${totReent ? `<div class="kpi abaixo" style="grid-column:1/-1"><div class="v">${comReent.length} itens · ${totReent} re-entrada(s)</div><div class="l">Saíram e voltaram à máquina — nova regulagem/setup</div></div>` : ''}
   </div>`;
+
+  // itens que saíram e voltaram (regulagem extra)
+  if (comReent.length) {
+    const arrRe = comReent.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.reent }));
+    html += card('Saíram e voltaram · nova regulagem', 'nº de re-entradas em máquina (toque no item na tabela p/ detalhes)',
+      barrasHorizontal(arrRe, ''));
+  }
 
   // maiores volumes (top 15)
   const top = itens.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.v }));
