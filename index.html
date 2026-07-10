@@ -339,7 +339,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.8.2</div>
+    <div class="ver-tag" id="verTag">versão 2.8.3</div>
   </div>
 </div>
 
@@ -379,7 +379,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.8.2</span>
+        <span class="ver-badge" id="verBadge">v2.8.3</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -997,7 +997,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.8.2';
+const APP_VER = '2.8.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2350,7 +2350,7 @@ async function carregarInfoImports() {
 const fmtKg = n => (n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(n).toLocaleString('pt-BR') + ' kg');
 const fmtNum = n => Math.round(n).toLocaleString('pt-BR');
 
-function barrasVertical(dados, corFn) {
+function barrasVertical(dados, corFn, opts) {
   const max = Math.max(1, ...dados.map(d => d.v));
   const W = Math.max(280, dados.length * 46), H = 170, base = 140, padL = 4;
   const bw = (W - padL) / dados.length * 0.62, gap = (W - padL) / dados.length;
@@ -2368,12 +2368,28 @@ function barrasVertical(dados, corFn) {
     bars += g1;
     labs += `<text x="${(x + bw / 2).toFixed(1)}" y="${base + 16}" text-anchor="middle" font-size="10.5" fill="#5C7186">${d.l}</text>`;
   });
-  return `<svg viewBox="0 0 ${W} ${H}"><line x1="${padL}" y1="${base}" x2="${W}" y2="${base}" stroke="#DEE6ED"/>${bars}${labs}</svg>`;
+  let extra = '';
+  if (opts && (opts.media || opts.trend) && dados.length) {
+    const centros = dados.map((d, i) => padL + i * gap + (gap - bw) / 2 + bw / 2);
+    const topoY = (v) => base - (v > 0 ? Math.max(2, (v / max) * (base - 20)) : 0);
+    if (opts.trend && dados.length > 1) {
+      const pts = dados.map((d, i) => `${centros[i].toFixed(1)},${topoY(d.v).toFixed(1)}`).join(' ');
+      extra += `<polyline points="${pts}" fill="none" stroke="#16283A" stroke-width="1.6" stroke-opacity="0.5"/>`;
+      dados.forEach((d, i) => { extra += `<circle cx="${centros[i].toFixed(1)}" cy="${topoY(d.v).toFixed(1)}" r="2.4" fill="#16283A" fill-opacity="0.6"/>`; });
+    }
+    if (opts.media) {
+      const media = dados.reduce((a, d) => a + d.v, 0) / dados.length;
+      const ym = topoY(media);
+      extra += `<line x1="${padL}" y1="${ym.toFixed(1)}" x2="${W}" y2="${ym.toFixed(1)}" stroke="#D64545" stroke-width="1.3" stroke-dasharray="5 4"/>`;
+      extra += `<text x="${(W - 3).toFixed(1)}" y="${(ym - 4).toFixed(1)}" text-anchor="end" font-size="10" font-weight="700" fill="#D64545">média ${opts.fmt ? opts.fmt(media) : Math.round(media)}</text>`;
+    }
+  }
+  return `<svg viewBox="0 0 ${W} ${H}"><line x1="${padL}" y1="${base}" x2="${W}" y2="${base}" stroke="#DEE6ED"/>${bars}${labs}${extra}</svg>`;
 }
 // versão rolável (largura em px real) — para muitos dias, arrasta pro lado sem apertar
-function barrasVerticalScroll(dados, corFn) {
+function barrasVerticalScroll(dados, corFn, opts) {
   const W = Math.max(280, dados.length * 46);
-  const svg = barrasVertical(dados, corFn).replace('<svg ', `<svg width="${W}" height="184" `);
+  const svg = barrasVertical(dados, corFn, opts).replace('<svg ', `<svg width="${W}" height="184" `);
   return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px">${svg}</div>`;
 }
 
@@ -2582,8 +2598,8 @@ function renderPainel() {
     // produção por dia
     const porDia = somaPor(D.producao, r => r.dia, val);
     const diasOrd = Object.keys(porDia).sort();
-    html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
-      barrasVerticalScroll(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: `detDia('','${d}')` }))));
+    html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado → · linha vermelha = média',
+      barrasVerticalScroll(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: `detDia('','${d}')` })), null, { media: true, trend: true, fmt: fmtBar }));
 
     // produção por turno
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)', gTurnoPeso(D.producao, val, fmtBar, ''));
@@ -2678,8 +2694,8 @@ function renderPainel() {
 
   html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar, setor));
   { const porDiaS = somaPor(prodS, r => r.dia, val); const diasOrdS = Object.keys(porDiaS).sort();
-    if (diasOrdS.length) html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
-      barrasVerticalScroll(diasOrdS.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDiaS[d], rot: fmtBar(porDiaS[d]), click: `detDia('${setor}','${d}')` })))); }
+    if (diasOrdS.length) html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado → · linha vermelha = média',
+      barrasVerticalScroll(diasOrdS.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDiaS[d], rot: fmtBar(porDiaS[d]), click: `detDia('${setor}','${d}')` })), null, { media: true, trend: true, fmt: fmtBar })); }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
@@ -2749,9 +2765,22 @@ async function carregarUsuarios() {
   });
   if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário cadastrado ainda.</p>'; return; }
   const meuId = perfil && perfil.id;
+  // ordena: quem acessou por último (que não seja você) sempre no topo; você por último
+  perfis.sort((a, b) => {
+    const aMe = a.id === meuId, bMe = b.id === meuId;
+    if (aMe !== bMe) return aMe ? 1 : -1;
+    const ta = ultimo[a.id] || '', tb = ultimo[b.id] || '';
+    return ta < tb ? 1 : ta > tb ? -1 : 0;
+  });
+  // gráfico: quem mais acessa
+  const rank = perfis.map(u => ({ nome: u.nome, id: u.id, n: cont[u.id] || 0 }))
+    .filter(x => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 12);
+  const chartHtml = rank.length
+    ? card('Quem mais acessa', 'nº de acessos registrados', barrasHorizontal(rank.map(x => ({ l: x.nome + (x.id === meuId ? ' (você)' : ''), v: x.n })), ''))
+    : '';
 
   usuariosCarregados = perfis;
-  box.innerHTML = perfis.map(u => {
+  box.innerHTML = chartHtml + perfis.map(u => {
     const admin = u.papel === 'admin';
     const eu = u.id === meuId;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
