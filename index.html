@@ -241,6 +241,9 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .ia-msg.assistente{align-self:flex-start;background:#fff;border:1px solid var(--borda);color:var(--texto);border-bottom-left-radius:4px}
 .ia-input{display:flex;gap:8px;padding:12px;background:#fff;border-top:1px solid var(--borda)}
 .ia-input input{flex:1;border:1.5px solid var(--borda);border-radius:11px;padding:12px}
+.ia-mic{width:46px;height:46px;flex:0 0 auto;border-radius:11px;background:#EEF3F8;border:1.5px solid var(--borda);font-size:20px;display:grid;place-items:center;cursor:pointer}
+.ia-mic.gravando{background:#FDE7E7;border-color:#E7A1A1;animation:micPulse 1s infinite}
+@keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(214,69,69,.5)}50%{box-shadow:0 0 0 8px rgba(214,69,69,0)}}
 /* filtro de paradas */
 .fpar-lista{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:4px;background:var(--fundo)}
 .fpar-item{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--borda);border-radius:10px;padding:10px 12px;font-size:13.5px;color:var(--texto)}
@@ -333,7 +336,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.5.5</div>
+    <div class="ver-tag" id="verTag">versão 2.5.6</div>
   </div>
 </div>
 
@@ -373,7 +376,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.5.5</span>
+        <span class="ver-badge" id="verBadge">v2.5.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -534,7 +537,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     </div>
     <div id="iaMsgs" class="ia-msgs"></div>
     <div class="ia-input">
-      <input id="iaInput" placeholder="Pergunte sobre a produção…" autocomplete="off" onkeydown="if(event.key==='Enter')enviarIA()">
+      <button id="iaMic" class="ia-mic" onclick="toggleVoz()" aria-label="Falar" title="Falar">🎤</button>
+      <input id="iaInput" placeholder="Pergunte ou fale…" autocomplete="off" onkeydown="if(event.key==='Enter')enviarIA()">
       <button class="btn btn-verde" style="width:auto;padding:11px 16px" onclick="enviarIA()">Enviar</button>
     </div>
   </div>
@@ -911,7 +915,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.5.5';
+const APP_VER = '2.5.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1769,6 +1773,35 @@ Perda total ${Math.round(perda)}kg (${perdaPct}% refugo). Perdas por tipo: ${top
 Horas paradas ${Math.round(horas)}h${excl}. Paradas por motivo (todas): ${topPar}. Paradas por máquina (todas): ${parMaqTxt}.
 Aproveitamento de bobina Termoformagem geral: ${aprovGeral}% (meta 47,5%). Por máquina: ${aprovMaq}. Por máquina×turno (M=manhã T=tarde N=noite, %): ${aprovMTtxt}.${itensTxt}`;
 }
+/* ===== comando de voz (reconhecimento nativo) ===== */
+let vozRec = null, vozAtiva = false;
+function toggleVoz() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Seu navegador não suporta voz. No iPhone use o Safari.'); return; }
+  if (vozAtiva) { try { vozRec.stop(); } catch (_) {} return; }
+  vozRec = new SR();
+  vozRec.lang = 'pt-BR';
+  vozRec.interimResults = true;
+  vozRec.continuous = false;
+  const mic = $('iaMic'), inp = $('iaInput');
+  let finalTxt = '';
+  vozRec.onstart = () => { vozAtiva = true; mic.classList.add('gravando'); inp.placeholder = 'Ouvindo… fale agora'; };
+  vozRec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalTxt += t; else interim += t;
+    }
+    inp.value = (finalTxt + interim).trim();
+  };
+  vozRec.onerror = (e) => { toast(e.error === 'not-allowed' ? 'Permita o microfone nas configurações do Safari.' : 'Não consegui ouvir. Tente de novo.'); };
+  vozRec.onend = () => {
+    vozAtiva = false; mic.classList.remove('gravando'); inp.placeholder = 'Pergunte ou fale…';
+    if (inp.value.trim()) enviarIA(); // envia automaticamente ao terminar de falar
+  };
+  try { vozRec.start(); } catch (_) {}
+}
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
