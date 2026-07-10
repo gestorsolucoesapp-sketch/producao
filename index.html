@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.7.1</div>
+    <div class="ver-tag" id="verTag">versão 2.7.2</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.7.1</span>
+        <span class="ver-badge" id="verBadge">v2.7.2</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -894,6 +894,34 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     '646': 'Consumo de componentes (Dia × Recurso)'
   };
 
+  // ---------- leitura dos TOTAIS declarados no rodapé do PDF (p/ conferência) ----------
+  // Números do rodapé podem vir com "." também como decimal (ex.: 3.849.139.366 = 3.849.139,366).
+  // Regra: o ÚLTIMO separador ( . ou , ) seguido de 1–3 dígitos é o decimal; os demais são milhar.
+  function numAmb(s) {
+    if (!s) return null;
+    s = String(s).trim();
+    const mDec = /[.,](\d{1,3})$/.exec(s);
+    let dec = '', intp = s;
+    if (mDec) { dec = mDec[1]; intp = s.slice(0, s.length - mDec[0].length); }
+    intp = intp.replace(/[.,]/g, '');
+    const v = parseFloat(intp + (dec ? '.' + dec : ''));
+    return isNaN(v) ? null : v;
+  }
+  function acharTotaisPDF(linhas, rotina) {
+    const t = { registros: null, quantidade: null, peso: null, tempo: null };
+    for (const l of linhas) {
+      const tx = (l.texto || '').trim();
+      let m;
+      if ((m = /Total Geral de Registros:\s*(\d[\d.]*)/i.exec(tx))) t.registros = parseInt(m[1].replace(/\D/g, ''), 10);
+      if ((m = /^Total Geral:\s*([\d.,]+)(?:\s+([\d.,]+))?(?:\s+([\d.,]+))?/i.exec(tx))) {
+        const nums = [m[1], m[2], m[3]].filter(Boolean).map(numAmb);
+        if (rotina === '643') t.tempo = nums[0];
+        else { t.quantidade = nums[0]; if (nums[1] != null) t.peso = nums[1]; }
+      }
+    }
+    return t;
+  }
+
   async function parseDocumento(pdf) {
     const linhas = await extrairLinhas(pdf);
     const rotina = detectarRotina(linhas);
@@ -915,7 +943,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         linhas: registros.length,
         total_quantidade: +soma('quantidade').toFixed(3),
         total_peso: +soma('peso').toFixed(3),
-        total_tempo: +soma('tempo_horas').toFixed(2)
+        total_tempo: +soma('tempo_horas').toFixed(2),
+        pdf: acharTotaisPDF(linhas, rotina)
       }
     };
   }
@@ -926,7 +955,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.7.1';
+const APP_VER = '2.7.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2668,6 +2697,32 @@ function renderPreview(id, dup) {
     res.total_tempo ? { l: 'Horas parada', v: fmt(res.total_tempo, 2) } : null
   ].filter(Boolean).map(t => `<div class="tot"><div class="v mono">${t.v}</div><div class="l">${t.l}</div></div>`).join('');
 
+  // conferência automática contra o "Total Geral" do rodapé do PDF
+  const pdf = res.pdf || {};
+  const cmp = (app, pdfv) => {
+    if (pdfv == null || app == null) return null;
+    const tol = Math.max(1.05, Math.abs(pdfv) * 0.00002);
+    return { ok: Math.abs(app - pdfv) <= tol, app, pdfv };
+  };
+  const dec = nome => nome === 'Registros' ? 0 : nome === 'Horas' ? 2 : 3;
+  const linhasConf = [
+    ['Registros', cmp(res.linhas, pdf.registros)],
+    ['Quantidade', cmp(res.total_quantidade, pdf.quantidade)],
+    ['Peso', cmp(res.total_peso, pdf.peso)],
+    ['Horas', cmp(res.total_tempo, pdf.tempo)]
+  ].filter(x => x[1]);
+  let confereHtml;
+  if (!linhasConf.length) {
+    confereHtml = `<div class="confere">✔️ Confira: os totais acima devem bater com o rodapé "Total Geral" do PDF antes de gravar.</div>`;
+  } else if (!linhasConf.some(x => !x[1].ok)) {
+    confereHtml = `<div class="confere" style="background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7">✅ Confere com o "Total Geral" do PDF (${linhasConf.map(x => x[0].toLowerCase()).join(', ')}).</div>`;
+  } else {
+    const ruins = linhasConf.filter(x => !x[1].ok);
+    confereHtml = `<div class="confere" style="background:#fdecea;color:#b71c1c;border-color:#f5c6cb">⚠️ <b>Diverge do "Total Geral" do PDF:</b><br>` +
+      ruins.map(x => `${x[0]}: PDF <b>${fmt(x[1].pdfv, dec(x[0]))}</b> · lido <b>${fmt(x[1].app, dec(x[0]))}</b>`).join('<br>') +
+      `<br><span style="opacity:.85">Confira o PDF antes de gravar.</span></div>`;
+  }
+
   const regs = r.registros.slice(0, 5);
   const colunas = Object.keys(regs[0] || {}).slice(0, 7);
   const tabela = `<div class="amostra"><table><tr>${colunas.map(c => `<th>${c}</th>`).join('')}</tr>
@@ -2682,7 +2737,7 @@ function renderPreview(id, dup) {
       <span class="badge ${ehDup ? 'dup' : 'ok'}">${ehDup ? 'JÁ IMPORTADO' : 'PRONTO'}</span>
     </div>
     <div class="tot-grid">${tots}</div>
-    <div class="confere">✔️ Confira: os totais acima devem bater com o rodapé "Total Geral" do PDF antes de gravar.</div>
+    ${confereHtml}
     ${tabela}
     <div class="prog oculto" id="${id}Prog"><div></div></div>
     <div class="prev-acoes">
