@@ -336,7 +336,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.6.1</div>
+    <div class="ver-tag" id="verTag">versão 2.6.2</div>
   </div>
 </div>
 
@@ -376,7 +376,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.6.1</span>
+        <span class="ver-badge" id="verBadge">v2.6.2</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -420,6 +420,18 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <section id="abaAnalise" class="oculto">
       <div class="card">
         <div class="painel-filtros">
+          <div class="campo" style="margin:0;flex:1">
+            <label for="anSetor">Setor</label>
+            <select id="anSetor" onchange="renderAnalise()">
+              <option value="">Todos os setores</option>
+              <option value="Termoformagem">Termoformagem</option>
+              <option value="Impressão">Impressão</option>
+              <option value="Extrusão">Extrusão</option>
+              <option value="Rotulagem">Rotulagem</option>
+              <option value="Sleeve">Sleeve</option>
+              <option value="Embaladeiras">Embaladeiras</option>
+            </select>
+          </div>
           <div class="campo" style="margin:0;flex:1">
             <label for="anGrupo">Itens</label>
             <select id="anGrupo" onchange="renderAnalise()">
@@ -915,7 +927,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.6.1';
+const APP_VER = '2.6.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1469,7 +1481,7 @@ function atualizarBadgeFiltroPar() {
 
 /* ================= ANÁLISE (622) ================= */
 let dadosAnalise = null;
-let setupInfo = null; // duração média de um SETUP (643)
+let setupInfo = null, setupParadas = []; // setup médio (643)
 let itensRender = [];
 function verItem(ix) {
   const i = itensRender[ix]; if (!i) return;
@@ -1669,16 +1681,18 @@ async function ensureAnalise() {
   try {
     const [rows, paradas] = await Promise.all([
       fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso'),
-      fetchTudo('paradas', 'motivo_desc,tempo_horas')
+      fetchTudo('paradas', 'motivo_desc,tempo_horas,recurso_cod')
     ]);
-    // duração média de um SETUP (do 643)
-    const set = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
-    const horasSet = set.reduce((a, p) => a + (p.tempo_horas || 0), 0);
-    setupInfo = set.length ? { media: horasSet / set.length, eventos: set.length, horas: horasSet } : null;
+    setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
     dadosAnalise = rows.filter(r => String(r.item_cod || '').startsWith('1'));
     return true;
   } catch (e) { return e.message || false; }
+}
+function calcSetup(setor) {
+  const arr = setor ? setupParadas.filter(p => setorDe(p.recurso_cod) === setor) : setupParadas;
+  const h = arr.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  setupInfo = arr.length ? { media: h / arr.length, eventos: arr.length, horas: h } : null;
 }
 async function carregarAnalise() {
   const box = $('analiseConteudo');
@@ -1698,6 +1712,9 @@ function renderAnalise() {
   const fmtV = metrica === 'peso' ? fmtKg : (n => fmtNum(n) + ' cxs');
 
   let rows = dadosAnalise.filter(r => r.item_cod);
+  const anSetor = $('anSetor') ? $('anSetor').value : '';
+  calcSetup(anSetor);
+  if (anSetor) rows = rows.filter(r => setorDe(r.recurso_cod) === anSetor);
   const ehKit = r => /\bKIT\b/i.test(r.item_desc || '');
   const ehSleeve = r => setorDe(r.recurso_cod) === 'Sleeve' || /SLEEVE/i.test(r.item_desc || '');
   const ehRot = r => setorDe(r.recurso_cod) === 'Rotulagem' || /ROTUL/i.test(r.item_desc || '');
