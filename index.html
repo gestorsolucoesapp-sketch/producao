@@ -339,7 +339,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.8.0</div>
+    <div class="ver-tag" id="verTag">versão 2.8.1</div>
   </div>
 </div>
 
@@ -379,7 +379,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.8.0</span>
+        <span class="ver-badge" id="verBadge">v2.8.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -997,7 +997,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.8.0';
+const APP_VER = '2.8.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2228,10 +2228,84 @@ function atualizaBtnVozSaida() {
   b.style.opacity = iaVozOn ? '1' : '.55';
 }
 
+/* ===== IA controla as telas: interpreta comandos de navegação (texto/voz) ===== */
+const _norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const _MESES = { janeiro: '01', jan: '01', fevereiro: '02', fev: '02', marco: '03', mar: '03', abril: '04', abr: '04', maio: '05', mai: '05', junho: '06', jun: '06', julho: '07', jul: '07', agosto: '08', ago: '08', setembro: '09', set: '09', outubro: '10', out: '10', novembro: '11', nov: '11', dezembro: '12', dez: '12' };
+const _SETORES = { termoformagem: 'Termoformagem', termo: 'Termoformagem', impressao: 'Impressão', impressora: 'Impressão', extrusao: 'Extrusão', extrusora: 'Extrusão', rotulagem: 'Rotulagem', rotulo: 'Rotulagem', sleeve: 'Sleeve', posimec: 'Sleeve', embaladeira: 'Embaladeiras', embaladeiras: 'Embaladeiras' };
+function interpretarComando(q) {
+  const s = _norm(q), cmd = {};
+  if (/\b(agenda|avisos?|calendario|feriado)/.test(s)) cmd.agenda = true;
+  else if (/\b(painel|inicio|dashboard|resumo geral|tela inicial)/.test(s)) cmd.aba = 'painel';
+  else if (/\b(itens|item|repetibilidade|re-?entrada)/.test(s)) cmd.aba = 'analise';
+  else if (/\b(importar|importacao|importacoes)/.test(s)) cmd.aba = 'importar';
+  else if (/\bhistorico/.test(s)) cmd.aba = 'historico';
+  else if (/\busuarios/.test(s)) cmd.aba = 'usuarios';
+  for (const k in _SETORES) if (new RegExp('\\b' + k).test(s)) { cmd.setor = _SETORES[k]; break; }
+  for (const k in _MESES) if (new RegExp('\\b' + k + '\\b').test(s)) { cmd.periodo = 'mes:2026-' + _MESES[k]; break; }
+  if (/\b(ano|anual)\b/.test(s)) cmd.periodo = 'ano:2026';
+  if (/\b(tudo|todo o historico|desde o comeco)\b/.test(s)) cmd.periodo = 'tudo';
+  if (/(mes (vigente|atual|corrente)|este mes)/.test(s)) cmd.periodo = 'mesatual';
+  if (/\b(peso|kg|quilo|tonelada)/.test(s)) cmd.metrica = 'peso';
+  if (/\b(caixa|cxs|cx|quantidade)/.test(s)) cmd.metrica = 'quantidade';
+  const verboNav = /\b(abr[ea]|abrir|mostr[ae]|mostrar|v[ai]|ir (para|pra)|va (para|pra)|leva|leve|troca|trocar|muda|mudar|filtra|filtrar|selecion|exib[ae]|exibir|coloca|poe|abre a|ver)\b/.test(s);
+  const pergunta = /\b(quanto|qual|quais|quantos|quantas|por que|porque|media|melhor|pior|compar|analis|explica|resum[ae])\b|\?/.test(s);
+  if (cmd.aba || cmd.agenda) return cmd;                                   // alvo de tela explícito
+  if ((cmd.setor || cmd.periodo || cmd.metrica) && verboNav && !pergunta) return cmd; // filtro c/ verbo
+  return null;                                                            // caso contrário, é pergunta → IA
+}
+async function executarComando(cmd) {
+  if (cmd.agenda) { fecharIA(); abrirAgenda(); return 'Abrindo a Agenda 📅'; }
+  if (cmd.periodo) {
+    const v = cmd.periodo === 'mesatual'
+      ? ('mes:' + ((infoImports && infoImports.periodoAte) ? infoImports.periodoAte.slice(0, 7) : hojeISO().slice(0, 7)))
+      : cmd.periodo;
+    aplicarPeriodo(v);
+  }
+  const aba = cmd.aba || ((cmd.setor || cmd.periodo || cmd.metrica) ? 'painel' : null);
+  if (!aba) return 'Diga qual tela abrir: painel, itens, importar, histórico, usuários ou agenda.';
+  if (aba === 'usuarios' && !souAdmin) return 'Você não tem acesso à tela de Usuários.';
+  if (aba !== 'usuarios' && !abasPermitidas.includes(aba)) return 'Você não tem acesso a essa tela.';
+  fecharIA();
+  document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === aba));
+  $('abaPainel').classList.toggle('oculto', aba !== 'painel');
+  $('abaAnalise').classList.toggle('oculto', aba !== 'analise');
+  $('abaImportar').classList.toggle('oculto', aba !== 'importar');
+  $('abaHistorico').classList.toggle('oculto', aba !== 'historico');
+  $('abaUsuarios').classList.toggle('oculto', aba !== 'usuarios');
+  const partes = [];
+  if (aba === 'painel') {
+    await carregarPainel();
+    if (cmd.setor && $('fSetor')) $('fSetor').value = cmd.setor;
+    if (cmd.metrica && $('fMetrica')) $('fMetrica').value = cmd.metrica;
+    renderPainel();
+    if (periodoSel) partes.push(periodoSel.label);
+    if (cmd.setor) partes.push(cmd.setor);
+    if (cmd.metrica) partes.push(cmd.metrica === 'peso' ? 'peso' : 'cxs');
+  } else if (aba === 'analise') {
+    await carregarAnalise();
+    if (cmd.setor && $('anSetor')) $('anSetor').value = cmd.setor;
+    if (cmd.metrica && $('anMetrica')) $('anMetrica').value = cmd.metrica;
+    renderAnalise();
+    if (periodoSel) partes.push(periodoSel.label);
+    if (cmd.setor) partes.push(cmd.setor);
+  } else if (aba === 'historico') { await carregarHistorico(); }
+  else if (aba === 'usuarios') { await carregarUsuarios(); }
+  const nomeAba = { painel: 'Painel', analise: 'Itens', importar: 'Importar', historico: 'Histórico', usuarios: 'Usuários' }[aba];
+  return `Pronto — abri ${nomeAba}${partes.length ? ' · ' + partes.join(' · ') : ''}.`;
+}
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
+  const cmd = interpretarComando(q);
+  if (cmd) {
+    let resp;
+    try { resp = await executarComando(cmd); }
+    catch (e) { resp = 'Não consegui abrir isso agora.'; }
+    addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
+    return;
+  }
   const carregando = addIA('assistente', '…');
   try {
     const r = await fetch(SB_URL + '/functions/v1/ai-chat', {
