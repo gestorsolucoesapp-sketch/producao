@@ -152,6 +152,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .login-msg{background:#E8F6EE;color:var(--verde-esc);font-size:13px;padding:10px 12px;border-radius:9px;margin-bottom:12px;display:none}
 .link-voltar{display:block;text-align:center;font-size:13px;color:var(--cinza);margin-top:14px;background:none;width:100%;padding:8px}
 .ver-badge{font-size:9.5px;color:#9FB6CC;font-weight:600;background:rgba(255,255,255,.08);padding:2px 7px;border-radius:99px;margin-left:8px;letter-spacing:.3px}
+.online-badge{cursor:pointer;background:rgba(0,150,77,.25)!important;border:1px solid rgba(0,150,77,.55);color:#CFEFD9!important}
 .pw-wrap{position:relative}
 .pw-wrap input{padding-right:46px}
 .olho{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;line-height:1;padding:8px;cursor:pointer;opacity:.7}
@@ -332,7 +333,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.5.1</div>
+    <div class="ver-tag" id="verTag">versão 2.5.2</div>
   </div>
 </div>
 
@@ -372,7 +373,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.5.1</span>
+        <span class="ver-badge" id="verBadge">v2.5.2</span>
+        <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -909,7 +911,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.5.1';
+const APP_VER = '2.5.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1118,7 +1120,47 @@ async function posLogin() {
   if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
   await registrarAcesso();
   await carregarTimeout();
+  iniciarPresenca(user);
   mostrarApp();
+}
+
+/* ===== presença em tempo real (quem está no app agora) ===== */
+let presCanal = null, presPronto = false, presUsuarios = {};
+function iniciarPresenca(user) {
+  if (presCanal) return;
+  try {
+    const nome = (perfil && perfil.nome) || (user.email || '').split('@')[0];
+    presCanal = sb.channel('online-app', { config: { presence: { key: user.id } } });
+    presCanal.on('presence', { event: 'sync' }, () => {
+      presUsuarios = presCanal.presenceState();
+      atualizarOnline();
+      presPronto = true; // depois do primeiro sync, joins geram aviso
+    });
+    presCanal.on('presence', { event: 'join' }, ({ key, newPresences }) => {
+      if (!presPronto || key === user.id) return;
+      const quem = (newPresences && newPresences[0] && newPresences[0].nome) || 'Alguém';
+      toast('🟢 ' + quem + ' entrou no app');
+      if (navigator.vibrate) navigator.vibrate(120);
+    });
+    presCanal.on('presence', { event: 'leave' }, () => atualizarOnline());
+    presCanal.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') await presCanal.track({ nome, email: user.email, desde: new Date().toISOString() });
+    });
+  } catch (_) {}
+}
+function atualizarOnline() {
+  const n = Object.keys(presUsuarios || {}).length;
+  const b = $('onlineBadge'); if (!b) return;
+  b.textContent = '🟢 ' + n;
+  b.classList.toggle('oculto', n < 1);
+}
+function mostrarOnline() {
+  const lista = Object.values(presUsuarios || {}).map(arr => arr[0]).filter(Boolean);
+  if (!lista.length) { toast('Ninguém online agora.'); return; }
+  $('itemDetTitulo').textContent = '🟢 Online agora (' + lista.length + ')';
+  $('itemDetCorpo').innerHTML = '<div class="idet-grid">' + lista.map(u =>
+    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>`).join('') + '</div>';
+  $('itemDetOverlay').classList.remove('oculto');
 }
 
 async function registrarAcesso() {
