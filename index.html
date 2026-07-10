@@ -332,7 +332,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.5.0</div>
+    <div class="ver-tag" id="verTag">versão 2.5.1</div>
   </div>
 </div>
 
@@ -372,7 +372,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.5.0</span>
+        <span class="ver-badge" id="verBadge">v2.5.1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -909,7 +909,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.5.0';
+const APP_VER = '2.5.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1417,6 +1417,7 @@ function atualizarBadgeFiltroPar() {
 
 /* ================= ANÁLISE (622) ================= */
 let dadosAnalise = null;
+let setupInfo = null; // duração média de um SETUP (643)
 let itensRender = [];
 function verItem(ix) {
   const i = itensRender[ix]; if (!i) return;
@@ -1430,7 +1431,7 @@ function verItem(ix) {
       <div><b>${i.maqs.size}</b><span>máquina(s): ${escapeHtml([...i.maqs].join(', '))}</span></div>
       <div><b>${fmtKg(i.kg)}</b><span>peso total</span></div>
       <div><b>${fmtNum(i.cx)} cxs</b><span>quantidade total</span></div>
-      ${i.entradas ? `<div><b>${i.entradas}</b><span>entrada(s) em máquina${i.reent ? ` · <b style="color:#D64545">${i.reent} re-entrada(s)</b> (nova regulagem)` : ' · sem re-entrada'}</span></div>` : ''}
+      ${i.entradas ? `<div><b>${i.entradas}</b><span>entrada(s) em máquina${i.reent ? ` · <b style="color:#D64545">${i.reent} re-entrada(s)</b>${setupInfo ? ` ≈ ${(i.reent * setupInfo.media).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h de setup extra` : ''}` : ' · sem re-entrada'}</span></div>` : ''}
       ${(i.entradasDet || []).map(t => `<div><b>↩︎</b><span>${escapeHtml(t)}</span></div>`).join('')}
     </div>`;
   $('itemDetOverlay').classList.remove('oculto');
@@ -1485,7 +1486,15 @@ async function carregarAnalise() {
   if (!dadosAnalise) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando produção detalhada (622)…</p>';
     try {
-      dadosAnalise = await fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso');
+      const [rows, paradas] = await Promise.all([
+        fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso'),
+        fetchTudo('paradas', 'motivo_desc,tempo_horas')
+      ]);
+      dadosAnalise = rows;
+      // duração média de um SETUP (do 643)
+      const set = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
+      const horasSet = set.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+      setupInfo = set.length ? { media: horasSet / set.length, eventos: set.length, horas: horasSet } : null;
       // usa a data real do registro (data_inicio) quando disponível
       dadosAnalise.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
       // só produtos (código começando com 1); bobinas 3xxxxx e outros ficam fora
@@ -1574,7 +1583,7 @@ function renderAnalise() {
     <div class="kpi"><div class="v">${fmtV(totalV)}</div><div class="l">Volume total</div></div>
     <div class="kpi"><div class="v">${repetem.length}</div><div class="l">Itens que repetem (2+ dias)</div></div>
     <div class="kpi"><div class="v">${itens.length ? Math.round(repetem.length / itens.length * 100) : 0}%</div><div class="l">Taxa de repetição</div></div>
-    ${totReent ? `<div class="kpi abaixo" style="grid-column:1/-1"><div class="v">${comReent.length} itens · ${totReent} re-entrada(s)</div><div class="l">Saíram e voltaram à máquina — nova regulagem/setup</div></div>` : ''}
+    ${totReent ? `<div class="kpi abaixo" style="grid-column:1/-1"><div class="v">${comReent.length} itens · ${totReent} re-entrada(s)${setupInfo ? ` · ≈ ${(totReent * setupInfo.media).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} h` : ''}</div><div class="l">Saíram e voltaram — nova regulagem${setupInfo ? ` · estimativa: ${totReent} setups extras × ${setupInfo.media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h (setup médio do 643)` : ''}</div></div>` : ''}
   </div>`;
 
   // itens que saíram e voltaram (regulagem extra)
