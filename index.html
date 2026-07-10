@@ -363,6 +363,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
   </header>
   <nav><div class="abas">
     <button class="aba ativa" data-aba="painel" onclick="trocarAba('painel')">Painel</button>
+    <button class="aba" data-aba="analise" onclick="trocarAba('analise')">Análise</button>
     <button class="aba" data-aba="importar" onclick="trocarAba('importar')">Importar</button>
     <button class="aba" data-aba="historico" onclick="trocarAba('historico')">Histórico</button>
     <button class="aba oculto" id="abaBtnUsuarios" data-aba="usuarios" onclick="trocarAba('usuarios')">Usuários</button>
@@ -392,6 +393,29 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         </div>
       </div>
       <div id="painelConteudo"><p class="desc" style="padding:20px;text-align:center">Carregando dados…</p></div>
+    </section>
+
+    <!-- ANÁLISE (622) -->
+    <section id="abaAnalise" class="oculto">
+      <div class="card">
+        <div class="painel-filtros">
+          <div class="campo" style="margin:0;flex:1">
+            <label for="anGrupo">Itens</label>
+            <select id="anGrupo" onchange="renderAnalise()">
+              <option value="160">Só itens 160… </option>
+              <option value="">Todos os itens</option>
+            </select>
+          </div>
+          <div class="campo" style="margin:0;flex:1">
+            <label for="anMetrica">Métrica</label>
+            <select id="anMetrica" onchange="renderAnalise()">
+              <option value="peso">Peso (kg)</option>
+              <option value="quantidade">Cxs</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="analiseConteudo"><p class="desc" style="padding:20px;text-align:center">Carregando…</p></div>
     </section>
 
     <!-- IMPORTAR -->
@@ -1032,7 +1056,7 @@ let perfil = null;        // perfil do usuário logado
 let souAdmin = false;     // admin por perfil OU por e-mail (fallback)
 const ADMIN_EMAILS = ['joaopaulo@rioplastic.com.br', 'jpferreira1356@icloud.com'];
 let abasPermitidas = ['painel'];
-const ABAS = [{ id: 'painel', nome: 'Painel' }, { id: 'importar', nome: 'Importar' }, { id: 'historico', nome: 'Histórico' }];
+const ABAS = [{ id: 'painel', nome: 'Painel' }, { id: 'analise', nome: 'Análise' }, { id: 'importar', nome: 'Importar' }, { id: 'historico', nome: 'Histórico' }];
 let acessoId = null;      // id do registro de acesso atual
 let timeoutMin = 60;      // minutos de inatividade (0 = desligado)
 let idleTimer = null;
@@ -1117,7 +1141,7 @@ async function mostrarApp() {
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
-  if (souAdmin) abasPermitidas = ['painel', 'importar', 'historico', 'usuarios'];
+  if (souAdmin) abasPermitidas = ['painel', 'analise', 'importar', 'historico', 'usuarios'];
   else abasPermitidas = (perfil && Array.isArray(perfil.abas) && perfil.abas.length) ? perfil.abas.slice() : ['painel'];
   // mostra/oculta os botões de aba conforme permissão
   document.querySelectorAll('.aba').forEach(a => {
@@ -1184,10 +1208,12 @@ function trocarAba(qual) {
   if (qual !== 'usuarios' && !abasPermitidas.includes(qual)) return;
   document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === qual));
   $('abaPainel').classList.toggle('oculto', qual !== 'painel');
+  $('abaAnalise').classList.toggle('oculto', qual !== 'analise');
   $('abaImportar').classList.toggle('oculto', qual !== 'importar');
   $('abaHistorico').classList.toggle('oculto', qual !== 'historico');
   $('abaUsuarios').classList.toggle('oculto', qual !== 'usuarios');
   if (qual === 'painel') carregarPainel();
+  if (qual === 'analise') carregarAnalise();
   if (qual === 'historico') carregarHistorico();
   if (qual === 'usuarios')  carregarUsuarios();
 }
@@ -1348,6 +1374,86 @@ function atualizarBadgeFiltroPar() {
   b.textContent = n ? `🚫 Paradas (${n} oculto${n > 1 ? 's' : ''})` : '🚫 Filtrar paradas';
   b.classList.toggle('btn-navy', n > 0);
   b.classList.toggle('btn-borda', n === 0);
+}
+
+/* ================= ANÁLISE (622) ================= */
+let dadosAnalise = null;
+async function carregarAnalise() {
+  const box = $('analiseConteudo');
+  if (!dadosAnalise) {
+    box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando produção detalhada (622)…</p>';
+    try {
+      dadosAnalise = await fetchTudo('producao', 'dia,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso');
+    } catch (e) {
+      box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar: ${escapeHtml(e.message)}</p></div>`;
+      return;
+    }
+  }
+  renderAnalise();
+}
+function renderAnalise() {
+  if (!dadosAnalise) return;
+  const box = $('analiseConteudo');
+  const grupo = $('anGrupo').value;               // '160' ou ''
+  const metrica = $('anMetrica').value;           // peso | quantidade
+  const val = r => metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0);
+  const fmtV = metrica === 'peso' ? fmtKg : (n => fmtNum(n) + ' cxs');
+
+  let rows = dadosAnalise.filter(r => r.item_cod);
+  if (grupo) rows = rows.filter(r => String(r.item_cod).startsWith(grupo));
+  if (!rows.length) { box.innerHTML = '<div class="grafico"><p class="vazio-painel">Nenhum item encontrado para este filtro.</p></div>'; return; }
+
+  // agrega por item
+  const it = {};
+  rows.forEach(r => {
+    const c = String(r.item_cod);
+    if (!it[c]) it[c] = { cod: c, desc: r.item_desc || c, v: 0, kg: 0, cx: 0, dias: new Set(), ops: new Set(), maqs: new Set() };
+    it[c].v += val(r); it[c].kg += (r.peso || 0); it[c].cx += (r.quantidade || 0);
+    if (r.dia) it[c].dias.add(r.dia);
+    if (r.op) it[c].ops.add(r.op);
+    if (r.recurso_cod) it[c].maqs.add(r.recurso_cod);
+    if (r.item_desc && r.item_desc.length > (it[c].desc || '').length) it[c].desc = r.item_desc;
+  });
+  const itens = Object.values(it).sort((a, b) => b.v - a.v);
+  const totalV = itens.reduce((a, i) => a + i.v, 0);
+  const repetem = itens.filter(i => i.dias.size > 1);
+  const diasPeriodo = new Set(rows.map(r => r.dia)).size;
+
+  // KPIs
+  let html = `<div class="kpis">
+    <div class="kpi destaque"><div class="v">${itens.length}</div><div class="l">Itens ${grupo ? grupo + '…' : 'no período'}</div></div>
+    <div class="kpi"><div class="v">${fmtV(totalV)}</div><div class="l">Volume total</div></div>
+    <div class="kpi"><div class="v">${repetem.length}</div><div class="l">Itens que repetem (2+ dias)</div></div>
+    <div class="kpi"><div class="v">${itens.length ? Math.round(repetem.length / itens.length * 100) : 0}%</div><div class="l">Taxa de repetição</div></div>
+  </div>`;
+
+  // maiores volumes (top 15)
+  const top = itens.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.v }));
+  html += card('Maiores volumes', (metrica === 'peso' ? 'peso' : 'cxs') + ' · top 15' + (grupo ? ' · itens ' + grupo + '…' : ''),
+    barrasHorizontal(top, metrica === 'peso' ? 'kg' : 'cxs'));
+
+  // repetibilidade — tabela: item | dias | OPs | máquinas | volume
+  const linhas = itens.slice(0, 60).map(i => {
+    const rep = i.dias.size > 1;
+    return `<tr>
+      <td class="nome"><span class="cod">${escapeHtml(i.cod)}</span> ${escapeHtml(i.desc)}</td>
+      <td><span class="cel ${rep ? 'cel-tot' : 'vazio'}">${i.dias.size}/${diasPeriodo}</span></td>
+      <td><span class="cel neutra">${i.ops.size}</span></td>
+      <td><span class="cel neutra">${i.maqs.size}</span></td>
+      <td><span class="cel ${rep ? 'ok' : 'neutra'}">${fmtV(i.v)}</span></td>
+    </tr>`;
+  }).join('');
+  html += card('Repetibilidade por item', 'dias em que rodou / dias do período · OPs · máquinas · volume',
+    `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Item</th><th>Dias</th><th>OPs</th><th>Máq.</th><th>Volume</th></tr></thead><tbody>${linhas}</tbody></table></div>`);
+
+  // itens que repetem — visão rápida
+  if (repetem.length) {
+    const arrRep = repetem.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc + ' (' + i.dias.size + ' dias)', v: i.v }));
+    html += card('Itens repetidos · maiores volumes', 'rodaram em 2+ dias do período',
+      barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
+  }
+
+  box.innerHTML = html;
 }
 
 /* ================= IA ================= */
@@ -1836,7 +1942,7 @@ async function apagarUltima() {
   const { error } = await sb.from('importacoes').delete().eq('id', u.id);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Última importação apagada.');
-  dadosPainel = null; atualizarInfoUltima(); carregarHistorico();
+  dadosPainel = null; dadosAnalise = null; atualizarInfoUltima(); carregarHistorico();
 }
 
 async function atualizarUltima() {
@@ -1846,7 +1952,7 @@ async function atualizarUltima() {
   const { error } = await sb.from('importacoes').delete().eq('id', u.id);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Pronto — reenvie o PDF atualizado.');
-  dadosPainel = null; atualizarInfoUltima(); carregarHistorico();
+  dadosPainel = null; dadosAnalise = null; atualizarInfoUltima(); carregarHistorico();
   trocarAba('importar');
 }
 
@@ -1860,7 +1966,7 @@ async function comecarDoZero() {
   const { error } = await sb.from('importacoes').delete().not('id', 'is', null);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Banco zerado. Tudo pronto para recomeçar.');
-  dadosPainel = null; atualizarInfoUltima(); carregarHistorico();
+  dadosPainel = null; dadosAnalise = null; atualizarInfoUltima(); carregarHistorico();
 }
 
 /* ================= IMPORTAÇÃO ================= */
@@ -2034,7 +2140,7 @@ async function gravar(id, substituir = false) {
     toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}`);
     if (previews[id]) previews[id].dupErro = false;
     descartar(id);
-    dadosPainel = null; carregarHistorico();
+    dadosPainel = null; dadosAnalise = null; carregarHistorico();
     return true;
   } catch (e) {
     const ehDup = !!e.dup;
@@ -2087,7 +2193,7 @@ async function apagarImportacao(id, nome) {
   const { error } = await sb.from('importacoes').delete().eq('id', id);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Importação apagada');
-  dadosPainel = null; carregarHistorico();
+  dadosPainel = null; dadosAnalise = null; carregarHistorico();
 }
 
 /* ================= SERVICE WORKER ================= */
