@@ -326,7 +326,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.4.3</div>
+    <div class="ver-tag" id="verTag">versão 2.4.4</div>
   </div>
 </div>
 
@@ -366,7 +366,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.4.3</span>
+        <span class="ver-badge" id="verBadge">v2.4.4</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -900,7 +900,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.4.3';
+const APP_VER = '2.4.4';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1415,6 +1415,50 @@ function verItem(ix) {
   $('itemDetOverlay').classList.remove('oculto');
 }
 function fecharItemDet() { $('itemDetOverlay').classList.add('oculto'); }
+
+// resumo rápido de um setor (toque no gráfico de setores)
+function resumoSetor(s) {
+  if (!dadosPainel) return;
+  const D = dadosPainel;
+  const prod = D.producao.filter(r => setorDe(r.recurso_cod) === s);
+  const par = filtraParadas(D.paradas).filter(p => setorDe(p.recurso_cod) === s);
+  const per = D.perdas.filter(r => setorDe(r.recurso_cod) === s);
+  const kg = prod.reduce((a, r) => a + (r.peso || 0), 0);
+  const cx = prod.reduce((a, r) => a + (r.quantidade || 0), 0);
+  const horas = par.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const pKg = per.reduce((a, r) => a + (r.peso || 0), 0);
+  const perdaPct = (kg + pKg) > 0 ? (pKg / (kg + pKg) * 100) : null;
+  const totalMaq = (SETOR_MAQ[s] || []).length;
+  const ativas = new Set(prod.map(r => r.recurso_cod)).size;
+  // top máquina
+  const pm = {}; const nm = {};
+  prod.forEach(r => { pm[r.recurso_cod] = (pm[r.recurso_cod] || 0) + (r.peso || 0); nm[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
+  const topCod = Object.keys(pm).sort((a, b) => pm[b] - pm[a])[0];
+  let extra = '';
+  if (s === 'Termoformagem') {
+    const bob = D.consumo.filter(c => /BOBINA/i.test(c.componente_desc || '') && setorDe(c.recurso_cod) === 'Termoformagem')
+      .reduce((a, c) => a + (c.peso || 0), 0);
+    const ap = (bob > 0 && kg > 0) ? (kg / bob * 100) : null;
+    if (ap != null) extra = `<div><b style="color:${ap >= META_APROV ? 'var(--verde)' : '#D64545'}">${ap.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</b><span>aproveitamento de bobina (meta 47,5%)</span></div>`;
+  }
+  $('itemDetTitulo').textContent = s;
+  $('itemDetCorpo').innerHTML = `
+    <div class="idet-grid">
+      <div><b>${fmtKg(kg)}</b><span>produção (${fmtNum(cx)} cxs)</span></div>
+      <div><b>${ativas}/${totalMaq}</b><span>máquinas com produção</span></div>
+      <div><b>${fmtNum(horas)} h</b><span>horas paradas</span></div>
+      <div><b>${perdaPct != null ? perdaPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</b><span>perda (refugo)</span></div>
+      ${topCod ? `<div><b>${escapeHtml(nm[topCod])}</b><span>maior produtora · ${fmtKg(pm[topCod])}</span></div>` : ''}
+      ${extra}
+    </div>
+    <button class="btn btn-verde" style="margin-top:14px" onclick="abrirSetor('${s}')">Abrir painel de ${s}</button>`;
+  $('itemDetOverlay').classList.remove('oculto');
+}
+function abrirSetor(s) {
+  fecharItemDet();
+  const sel = $('fSetor');
+  if ([...sel.options].some(o => o.value === s)) { sel.value = s; renderPainel(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+}
 async function carregarAnalise() {
   const box = $('analiseConteudo');
   if (!dadosAnalise) {
@@ -1594,7 +1638,8 @@ function barrasHorizontal(dados, unidade) {
     const pct = (d.v / max) * 100;
     const cor = d.cor || 'var(--verde)';
     const val = d.v <= 0 ? '—' : (unidade === 'kg' ? fmtKg(d.v) : unidade === 'cxs' ? fmtNum(d.v) + ' cxs' : fmtNum(d.v));
-    return `<div class="bh-row"><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
+    const clique = d.click ? ` onclick="${d.click}" style="cursor:pointer"` : '';
+    return `<div class="bh-row"${clique}><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
       <div class="bh-bar" style="width:${Math.max(0.5, pct).toFixed(1)}%;background:${d.v <= 0 ? '#E3EAF1' : cor}"></div>
       <div class="bh-val">${val}</div></div>`;
   }).join('');
@@ -1713,10 +1758,10 @@ function renderPainel() {
     // produção por setor — mostra TODOS os setores, mesmo com produção zero
     const porSetor = somaPor(D.producao, r => setorDe(r.recurso_cod), val);
     const ordemSet = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
-    const arrS = ordemSet.map(s => ({ l: s, v: porSetor[s] || 0, cor: CORES[SETORES.indexOf(s) % CORES.length] }));
+    const arrS = ordemSet.map(s => ({ l: s, v: porSetor[s] || 0, cor: CORES[SETORES.indexOf(s) % CORES.length], click: `resumoSetor('${s}')` }));
     if (porSetor['Outros']) arrS.push({ l: 'Outros', v: porSetor['Outros'], cor: CORES[6] });
     arrS.sort((a, b) => b.v - a.v);
-    html += card('Produção por setor', metrica === 'peso' ? 'peso total · todos os setores' : 'quantidade total · todos os setores', barrasHorizontal(arrS, uni));
+    html += card('Produção por setor', (metrica === 'peso' ? 'peso total' : 'cxs total') + ' · toque num setor para ver o resumo', barrasHorizontal(arrS, uni));
 
     // produção por dia
     const porDia = somaPor(D.producao, r => r.dia, val);
