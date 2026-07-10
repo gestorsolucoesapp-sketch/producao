@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.7.3</div>
+    <div class="ver-tag" id="verTag">versão 2.7.4</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.7.3</span>
+        <span class="ver-badge" id="verBadge">v2.7.4</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -909,11 +909,16 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
   }
   function acharTotaisPDF(linhas, rotina) {
     const t = { registros: null, quantidade: null, peso: null, tempo: null };
-    // 054 não tem "Total Geral": usa o 1º "Totais:" (bloco Resumo por Etapa = peso total da perda).
-    // (o bloco "Subgrupo de Componentes" é outra conta e vem por último — não é usado.)
+    // 054 não tem "Total Geral". O peso total da perda é o "Totais:" do bloco final
+    // "Resumo por Etapa" / "Resumo por Tipo de Perda" (que ficam NO FIM do relatório).
+    // NÃO usar o 1º "Totais:" (há subtotais por página no meio) nem o bloco "Subgrupo".
     if (rotina === '054') {
+      let dentro = false;
       for (const l of linhas) {
-        const m = /^Totais:\s*([\d.,]+)/i.exec((l.texto || '').trim());
+        const tx = (l.texto || '').trim();
+        if (/^Resumo por (Etapa|Tipo de Perda)/i.test(tx)) { dentro = true; continue; }
+        if (/^Resumo por Subgrupo/i.test(tx)) { dentro = false; continue; }
+        const m = dentro && /^Totais:\s*([\d.,]+)/i.exec(tx);
         if (m) { t.peso = numAmb(m[1]); break; }
       }
       return t;
@@ -964,7 +969,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.7.3';
+const APP_VER = '2.7.4';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2706,12 +2711,17 @@ function renderPreview(id, dup) {
     res.total_tempo ? { l: 'Horas parada', v: fmt(res.total_tempo, 2) } : null
   ].filter(Boolean).map(t => `<div class="tot"><div class="v mono">${t.v}</div><div class="l">${t.l}</div></div>`).join('');
 
-  // conferência automática contra o "Total Geral" do rodapé do PDF
+  // conferência automática contra o "Total Geral" do rodapé do PDF (com níveis de tolerância)
   const pdf = res.pdf || {};
   const cmp = (app, pdfv) => {
     if (pdfv == null || app == null) return null;
-    const tol = Math.max(1.05, Math.abs(pdfv) * 0.00002);
-    return { ok: Math.abs(app - pdfv) <= tol, app, pdfv };
+    const diff = Math.abs(app - pdfv);
+    const pct = Math.abs(pdfv) > 0 ? diff / Math.abs(pdfv) : (diff > 0 ? 1 : 0);
+    let nivel; // 0 = bate · 1 = diferença mínima · 2 = diverge
+    if (diff <= 1.05 || pct <= 0.0005) nivel = 0;       // ≤0,05%
+    else if (pct <= 0.005) nivel = 1;                   // ≤0,5%
+    else nivel = 2;
+    return { nivel, app, pdfv, pct };
   };
   const dec = nome => nome === 'Registros' ? 0 : nome === 'Horas' ? 2 : 3;
   const linhasConf = [
@@ -2720,16 +2730,23 @@ function renderPreview(id, dup) {
     ['Peso', cmp(res.total_peso, pdf.peso)],
     ['Horas', cmp(res.total_tempo, pdf.tempo)]
   ].filter(x => x[1]);
+  const linha1 = (x) => `${x[0]}: PDF <b>${fmt(x[1].pdfv, dec(x[0]))}</b> · lido <b>${fmt(x[1].app, dec(x[0]))}</b> <span style="opacity:.75">(${(x[1].pct * 100).toFixed(3)}%)</span>`;
   let confereHtml;
   if (!linhasConf.length) {
     confereHtml = `<div class="confere">✔️ Confira: os totais acima devem bater com o rodapé "Total Geral" do PDF antes de gravar.</div>`;
-  } else if (!linhasConf.some(x => !x[1].ok)) {
-    confereHtml = `<div class="confere" style="background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7">✅ Confere com o "Total Geral" do PDF (${linhasConf.map(x => x[0].toLowerCase()).join(', ')}).</div>`;
   } else {
-    const ruins = linhasConf.filter(x => !x[1].ok);
-    confereHtml = `<div class="confere" style="background:#fdecea;color:#b71c1c;border-color:#f5c6cb">⚠️ <b>Diverge do "Total Geral" do PDF:</b><br>` +
-      ruins.map(x => `${x[0]}: PDF <b>${fmt(x[1].pdfv, dec(x[0]))}</b> · lido <b>${fmt(x[1].app, dec(x[0]))}</b>`).join('<br>') +
-      `<br><span style="opacity:.85">Confira o PDF antes de gravar.</span></div>`;
+    const maxN = Math.max(...linhasConf.map(x => x[1].nivel));
+    if (maxN === 0) {
+      confereHtml = `<div class="confere" style="background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7">✅ Confere com o "Total Geral" do PDF (${linhasConf.map(x => x[0].toLowerCase()).join(', ')}).</div>`;
+    } else if (maxN === 1) {
+      const leves = linhasConf.filter(x => x[1].nivel >= 1);
+      confereHtml = `<div class="confere" style="background:#fff8e1;color:#8a6d00;border-color:#ffe082">🟡 <b>Quase igual — diferença mínima</b> (provável arredondamento, ok pra gravar):<br>` +
+        leves.map(linha1).join('<br>') + `</div>`;
+    } else {
+      const graves = linhasConf.filter(x => x[1].nivel >= 2);
+      confereHtml = `<div class="confere" style="background:#fdecea;color:#b71c1c;border-color:#f5c6cb">⚠️ <b>Diverge do "Total Geral" do PDF:</b><br>` +
+        graves.map(linha1).join('<br>') + `<br><span style="opacity:.85">Confira o PDF antes de gravar.</span></div>`;
+    }
   }
 
   const regs = r.registros.slice(0, 5);
