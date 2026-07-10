@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.7.5</div>
+    <div class="ver-tag" id="verTag">versão 2.7.6</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.7.5</span>
+        <span class="ver-badge" id="verBadge">v2.7.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -975,7 +975,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.7.5';
+const APP_VER = '2.7.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1376,14 +1376,28 @@ const CORES = ['#00964D', '#28348E', '#E8A13D', '#3CA96E', '#6C7BD1', '#D64545',
 let cutover5; // undefined=não carregado · null=nunca houve 5º turno · 'YYYY-MM-DD'=data da virada
 async function getCutover5() {
   if (cutover5 !== undefined) return cutover5;
+  cutover5 = null;
+  // tentativa barata: menor dia com 4º/5º turno
   try {
-    const { data } = await sb.from('producao_resumo').select('dia').gte('turno', 4)
-      .order('dia', { ascending: true }).limit(1).maybeSingle();
-    cutover5 = data && data.dia ? data.dia : null;
+    const { data, error } = await sb.from('producao_resumo')
+      .select('dia').gte('turno', 4)
+      .order('dia', { ascending: true }).limit(1);
+    if (!error && Array.isArray(data) && data.length && data[0].dia) {
+      cutover5 = data[0].dia;
+      return cutover5;
+    }
+  } catch (_) {}
+  // fallback robusto (turno textual ou falha na query acima): varre dia+turno
+  try {
+    const rows = await fetchTudo('producao_resumo', 'dia,turno');
+    let min = null;
+    for (const r of rows) if (Number(r.turno) >= 4 && r.dia && (!min || r.dia < min)) min = r.dia;
+    cutover5 = min;
   } catch (_) { cutover5 = null; }
   return cutover5;
 }
 const blocoTurno = (t, dia) => {
+  t = Number(t);
   let cinco;
   if (cutover5 === null) cinco = false;      // nenhum 5º turno em todo o histórico → 3 turnos
   else if (!cutover5 || !dia) cinco = true;  // sem virada carregada / sem data → assume era atual (5)
