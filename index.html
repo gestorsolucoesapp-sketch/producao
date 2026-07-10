@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.7.4</div>
+    <div class="ver-tag" id="verTag">versão 2.7.5</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.7.4</span>
+        <span class="ver-badge" id="verBadge">v2.7.5</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -426,6 +426,12 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- ANÁLISE (622) -->
     <section id="abaAnalise" class="oculto">
       <div class="card">
+        <div class="painel-filtros" style="margin-bottom:12px">
+          <div class="campo" style="margin:0;flex:1">
+            <label for="anPeriodo">Período</label>
+            <select id="anPeriodo" onchange="mudarPeriodoAnalise()"></select>
+          </div>
+        </div>
         <div class="painel-filtros">
           <div class="campo" style="margin:0;flex:1">
             <label for="anSetor">Setor</label>
@@ -969,7 +975,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.7.4';
+const APP_VER = '2.7.5';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1418,11 +1424,12 @@ async function fetchTudo(tabela, colunas, de, ate) {
 
 /* ===== recorte de período (mês vigente / ano / tudo) ===== */
 let periodoSel = null; // {tipo:'mes'|'ano'|'tudo', de, ate, label, ym?, ano?}
+let infoImports = null; // cache do resumo de importações (período min/max)
 const MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 function mesLabel(ym) { const [a, m] = ym.split('-'); return MES_ABREV[+m - 1] + '/' + a; }
 function ultimoDiaMes(ym) { const [a, m] = ym.split('-').map(Number); const d = new Date(a, m, 0).getDate(); return `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
-function montarSeletorPeriodo(imps) {
-  const sel = $('fPeriodo'); if (!sel) return;
+function montarSeletorPeriodo(imps, selId) {
+  const sel = $(selId || 'fPeriodo'); if (!sel) return;
   const wrap = sel.closest('.campo');
   if (!imps || !imps.periodoDe) { if (wrap) wrap.style.display = 'none'; return; }
   if (wrap) wrap.style.display = '';
@@ -1439,13 +1446,14 @@ function montarSeletorPeriodo(imps) {
   sel.innerHTML = html;
   sel.value = periodoSel.tipo === 'mes' ? `mes:${periodoSel.ym}` : periodoSel.tipo === 'ano' ? `ano:${periodoSel.ano}` : 'tudo';
 }
-function mudarPeriodo() {
-  const v = $('fPeriodo').value;
+function aplicarPeriodo(v) {
   if (v === 'tudo') periodoSel = { tipo: 'tudo', de: null, ate: null, label: 'Todo o histórico' };
   else if (v.startsWith('ano:')) { const a = v.slice(4); periodoSel = { tipo: 'ano', ano: a, de: a + '-01-01', ate: a + '-12-31', label: 'Ano ' + a }; }
   else if (v.startsWith('mes:')) { const ym = v.slice(4); periodoSel = { tipo: 'mes', ym, de: ym + '-01', ate: ultimoDiaMes(ym), label: 'Mês ' + mesLabel(ym) }; }
-  dadosPainel = null; carregarPainel();
+  dadosPainel = null; dadosAnalise = null; // recorte muda os dois
 }
+function mudarPeriodo() { aplicarPeriodo($('fPeriodo').value); carregarPainel(); }
+function mudarPeriodoAnalise() { aplicarPeriodo($('anPeriodo').value); carregarAnalise(); }
 
 async function carregarPainel() {
   const box = $('painelConteudo');
@@ -1453,7 +1461,8 @@ async function carregarPainel() {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
     try {
       const imps = await carregarInfoImports();
-      montarSeletorPeriodo(imps);
+      infoImports = imps;
+      montarSeletorPeriodo(imps, 'fPeriodo');
       const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
       const [producao, paradas, consumo, perdas] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ate),
@@ -1777,9 +1786,10 @@ function detParadasDia(setor, dia) {
 async function ensureAnalise() {
   if (dadosAnalise) return true;
   try {
+    const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
     const [rows, paradas] = await Promise.all([
-      fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso'),
-      fetchTudo('paradas', 'motivo_desc,tempo_horas,recurso_cod')
+      fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso', de, ate),
+      fetchTudo('paradas', 'motivo_desc,tempo_horas,recurso_cod', de, ate)
     ]);
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
@@ -1794,6 +1804,8 @@ function calcSetup(setor) {
 }
 async function carregarAnalise() {
   const box = $('analiseConteudo');
+  if (!infoImports) infoImports = await carregarInfoImports();
+  montarSeletorPeriodo(infoImports, 'anPeriodo'); // define recorte padrão e popula o seletor
   if (!dadosAnalise) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando produção detalhada (622)…</p>';
     const ok = await ensureAnalise();
@@ -1886,14 +1898,14 @@ function renderAnalise() {
 
   // itens que saíram e voltaram (regulagem extra)
   if (comReent.length) {
-    const arrRe = comReent.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.reent }));
-    html += card('Saíram e voltaram · nova regulagem', 'nº de re-entradas em máquina (toque no item na tabela p/ detalhes)',
+    const arrRe = comReent.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.reent, click: `verItem(${itens.indexOf(i)})` }));
+    html += card('Saíram e voltaram · nova regulagem', 'nº de re-entradas em máquina (toque na barra p/ detalhes)',
       barrasHorizontal(arrRe, ''));
   }
 
   // maiores volumes (top 15)
-  const top = itens.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc, v: i.v }));
-  html += card('Maiores volumes', (metrica === 'peso' ? 'peso' : 'cxs') + ' · top 15' + (grupo === 'kit' ? ' · KITs' : grupo === 'sleeve' ? ' · Sleeve' : grupo === 'rotulagem' ? ' · Rotulagem' : grupo === 'impresso' ? ' · Impressos' : grupo ? ' · itens ' + grupo + '…' : ''),
+  const top = itens.slice(0, 15).map((i, k) => ({ l: i.cod + ' · ' + i.desc, v: i.v, click: `verItem(${k})` }));
+  html += card('Maiores volumes', (metrica === 'peso' ? 'peso' : 'cxs') + ' · top 15 · toque p/ detalhes' + (grupo === 'kit' ? ' · KITs' : grupo === 'sleeve' ? ' · Sleeve' : grupo === 'rotulagem' ? ' · Rotulagem' : grupo === 'impresso' ? ' · Impressos' : grupo ? ' · itens ' + grupo + '…' : ''),
     barrasHorizontal(top, metrica === 'peso' ? 'kg' : 'cxs'));
 
   // repetibilidade — tabela: item | dias | OPs | máquinas | volume (toque mostra descrição completa)
@@ -1913,8 +1925,8 @@ function renderAnalise() {
 
   // itens que repetem — visão rápida
   if (repetem.length) {
-    const arrRep = repetem.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc + ' (' + i.dias.size + ' dias)', v: i.v }));
-    html += card('Itens repetidos · maiores volumes', 'rodaram em 2+ dias do período',
+    const arrRep = repetem.slice(0, 15).map(i => ({ l: i.cod + ' · ' + i.desc + ' (' + i.dias.size + ' dias)', v: i.v, click: `verItem(${itens.indexOf(i)})` }));
+    html += card('Itens repetidos · maiores volumes', 'rodaram em 2+ dias do período · toque p/ detalhes',
       barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
   }
 
