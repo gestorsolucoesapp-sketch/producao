@@ -337,7 +337,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.7.6</div>
+    <div class="ver-tag" id="verTag">versão 2.7.7</div>
   </div>
 </div>
 
@@ -377,7 +377,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.7.6</span>
+        <span class="ver-badge" id="verBadge">v2.7.7</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -975,7 +975,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.7.6';
+const APP_VER = '2.7.7';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -992,6 +992,9 @@ if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
 const $ = (id) => document.getElementById(id);
 const fmt = (n, d = 3) => n == null ? '—' : Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: d });
 const fmtData = (iso) => iso ? iso.split('-').reverse().join('/') : '—';
+const DIAS_SEM = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+const diaSemana = (iso) => { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return isNaN(d) ? '' : DIAS_SEM[d.getDay()]; };
+const fmtDataSem = (iso) => { const s = diaSemana(iso); return (s ? s + ', ' : '') + fmtData(iso); };
 let toastTimer;
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.add('mostrar');
@@ -1641,7 +1644,7 @@ function detDia(setor, dia) {
   const topMaq = Object.entries(maq).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const per = (setor ? noSetor(D.perdas, setor) : D.perdas).filter(r => r.dia === dia).reduce((a, r) => a + (r.peso || 0), 0);
   const perdaPct = (kg + per) > 0 ? (per / (kg + per) * 100).toFixed(1) : '0';
-  abreDet('Dia ' + fmtData(dia), `
+  abreDet('Dia ' + fmtDataSem(dia), `
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${fmtNum(cx)} cxs · perda ${perdaPct}%</p>
     ${tabSimples(['Turno', 'Peso'], ['Manhã', 'Tarde', 'Noite'].map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${fmtKg(bloco[t])}</span></td></tr>`).join(''))}
     <div style="height:8px"></div>
@@ -2180,6 +2183,12 @@ function barrasVertical(dados, corFn) {
   });
   return `<svg viewBox="0 0 ${W} ${H}"><line x1="${padL}" y1="${base}" x2="${W}" y2="${base}" stroke="#DEE6ED"/>${bars}${labs}</svg>`;
 }
+// versão rolável (largura em px real) — para muitos dias, arrasta pro lado sem apertar
+function barrasVerticalScroll(dados, corFn) {
+  const W = Math.max(280, dados.length * 46);
+  const svg = barrasVertical(dados, corFn).replace('<svg ', `<svg width="${W}" height="184" `);
+  return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px">${svg}</div>`;
+}
 
 function barrasHorizontal(dados, unidade) {
   const max = Math.max(1, ...dados.map(d => d.v));
@@ -2386,8 +2395,8 @@ function renderPainel() {
     // produção por dia
     const porDia = somaPor(D.producao, r => r.dia, val);
     const diasOrd = Object.keys(porDia).sort();
-    html += card('Produção por dia', metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)',
-      barrasVertical(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: `detDia('','${d}')` }))));
+    html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
+      barrasVerticalScroll(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: `detDia('','${d}')` }))));
 
     // produção por turno
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)', gTurnoPeso(D.producao, val, fmtBar, ''));
@@ -2426,13 +2435,14 @@ function renderPainel() {
 
   const ud = ultimoDiaDe(prodS.length ? prodS : D.producao);
   const udTxt = ud ? fmtData(ud) : '—';
+  const udSemTxt = ud ? fmtDataSem(ud) : '—';
   const prodUD = prodS.filter(r => r.dia === ud);
   const parUD = parS.filter(p => p.dia === ud);
   const perUD = perS.filter(r => r.dia === ud);
   const bobUD = bobS.filter(c => c.dia === ud);
 
   // ---------- ÚLTIMO DIA ----------
-  html += secao('ultimo-dia', 'Último dia · ' + udTxt);
+  html += secao('ultimo-dia', 'Último dia · ' + udSemTxt);
   const kgDia = prodUD.reduce((a, r) => a + (r.peso || 0), 0);
   const cxDia = prodUD.reduce((a, r) => a + (r.quantidade || 0), 0);
   html += `<div class="kpis pbloco" data-k="k:ud-total">
@@ -2480,6 +2490,9 @@ function renderPainel() {
   html += `</div>`;
 
   html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar, setor));
+  { const porDiaS = somaPor(prodS, r => r.dia, val); const diasOrdS = Object.keys(porDiaS).sort();
+    if (diasOrdS.length) html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
+      barrasVerticalScroll(diasOrdS.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDiaS[d], rot: fmtBar(porDiaS[d]), click: `detDia('${setor}','${d}')` })))); }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
