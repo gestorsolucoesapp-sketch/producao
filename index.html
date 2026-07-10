@@ -310,7 +310,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.3.6</div>
+    <div class="ver-tag" id="verTag">versão 2.3.7</div>
   </div>
 </div>
 
@@ -350,7 +350,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.3.6</span>
+        <span class="ver-badge" id="verBadge">v2.3.7</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
     </div>
@@ -831,7 +831,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.3.6';
+const APP_VER = '2.3.7';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1224,6 +1224,12 @@ async function carregarPainel() {
         carregarInfoImports()
       ]);
       dadosPainel = { producao, paradas, consumo, perdas, info: imps };
+      // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
+      const nomeMaq = {};
+      [producao, perdas, paradas, consumo].forEach(arr => (arr || []).forEach(r => {
+        const c = r.recurso_cod; if (c && r.recurso_nome && !nomeMaq[c]) nomeMaq[c] = r.recurso_nome;
+      }));
+      dadosPainel.nomeMaq = nomeMaq;
       // filtro: setores principais sempre + "Outros" se houver máquinas não mapeadas
       const sel = $('fSetor');
       const base = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
@@ -1411,12 +1417,14 @@ function paretoHorizontal(dados, fmtVal, cor) {
   }).join('');
 }
 // tabela máquina × turno (Manhã/Tarde/Noite/Total)
-function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno }) {
+function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes }) {
   const cel = {}, nome = {};
-  const ini = c => { if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
-  rows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)] += (valFn(r) || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
-  const linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c], m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; })
-    .filter(l => l.tot > 0).sort((a, b) => b.tot - a.tot);
+  const ini = c => { c = String(c); if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
+  if (incluirCods) incluirCods.forEach(c => { ini(c); if (nomes && nomes[c]) nome[String(c)] = nomes[c]; });
+  rows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno)] += (valFn(r) || 0); nome[r.recurso_cod] = r.recurso_nome || nome[r.recurso_cod] || r.recurso_cod; });
+  let linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; });
+  if (!incluirCods) linhas = linhas.filter(l => l.tot > 0);
+  linhas.sort((a, b) => b.tot - a.tot);
   if (!linhas.length) return '<p class="vazio-painel">Sem dados.</p>';
   const clsCol = ['cel-man', 'cel-tar', 'cel-noi', 'cel-tot'];
   const cH = (v, i) => {
@@ -1482,10 +1490,13 @@ function renderPainel() {
       ${aprov != null ? `<div class="kpi ${aprov >= META_APROV ? 'destaque' : 'abaixo'}" style="grid-column:1/-1"><div class="v">${aprov.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% <span style="font-size:12px;font-weight:600">meta 47,5%</span></div><div class="l">Aproveitamento de bobina (Termoformagem)</div></div>` : ''}
     </div>`;
 
-    // produção por setor
+    // produção por setor — mostra TODOS os setores, mesmo com produção zero
     const porSetor = somaPor(D.producao, r => setorDe(r.recurso_cod), val);
-    const arrS = Object.keys(porSetor).map(s => ({ l: s, v: porSetor[s], cor: CORES[SETORES.indexOf(s) % CORES.length] })).sort((a, b) => b.v - a.v);
-    html += card('Produção por setor', metrica === 'peso' ? 'peso total' : 'quantidade total', barrasHorizontal(arrS, uni));
+    const ordemSet = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
+    const arrS = ordemSet.map(s => ({ l: s, v: porSetor[s] || 0, cor: CORES[SETORES.indexOf(s) % CORES.length] }));
+    if (porSetor['Outros']) arrS.push({ l: 'Outros', v: porSetor['Outros'], cor: CORES[6] });
+    arrS.sort((a, b) => b.v - a.v);
+    html += card('Produção por setor', metrica === 'peso' ? 'peso total · todos os setores' : 'quantidade total · todos os setores', barrasHorizontal(arrS, uni));
 
     // produção por dia
     const porDia = somaPor(D.producao, r => r.dia, val);
@@ -1576,8 +1587,8 @@ function renderPainel() {
   html += `</div>`;
 
   html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar));
-  html += card('Produção por máquina e turno', metrica === 'peso' ? 'peso (kg) · cores por turno' : 'quantidade · cores por turno',
-    tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true }));
+  html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade') + ' · todas as máquinas do setor',
+    tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
   // paradas por máquina (período)
   if (parS.length) {
