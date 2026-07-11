@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.2.4</div>
+    <div class="ver-tag" id="verTag">versão 3.2.5</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.2.4</span>
+        <span class="ver-badge" id="verBadge">v3.2.5</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.2.4';
+const APP_VER = '3.2.5';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2841,6 +2841,16 @@ async function carregarInfoImports() {
 const fmtKg = n => (n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(n).toLocaleString('pt-BR') + ' kg');
 const fmtNum = n => Math.round(n).toLocaleString('pt-BR');
 
+
+// períodos longos (> 45 dias): gráfico diário agrega por mês
+function serieProducao(porDia, diasOrd, fmtBar, clickFn) {
+  if (diasOrd.length <= 45) {
+    return { titulo: 'Produção por dia', dados: diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: clickFn ? clickFn(d) : undefined })), porMes: false };
+  }
+  const porMes = {}; diasOrd.forEach(d => { const m = d.slice(0, 7); porMes[m] = (porMes[m] || 0) + porDia[d]; });
+  const meses = Object.keys(porMes).sort();
+  return { titulo: 'Produção por mês', dados: meses.map(m => ({ l: mesLabel(m), v: porMes[m], rot: fmtBar(porMes[m]) })), porMes: true };
+}
 function barrasVertical(dados, corFn, opts) {
   const margem = (opts && opts.margemEsq) ? opts.margemEsq : 0;
   const max = Math.max(1, ...dados.map(d => d.v), (opts && opts.meta) ? opts.meta : 0);
@@ -3106,8 +3116,9 @@ function renderPainel() {
     const porDia = somaPor(D.producao, r => r.dia, val);
     const diasOrd = Object.keys(porDia).sort();
     const mediaDiaG = diasOrd.length ? diasOrd.reduce((a, d) => a + porDia[d], 0) / diasOrd.length : 0;
-    html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
-      barrasVerticalScroll(diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: `detDia('','${d}')` })), null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (metrica === 'peso') ? metaDiariaSetor('') : null }));
+    { const sG = serieProducao(porDia, diasOrd, fmtBar, d => `detDia('','${d}')`);
+      html += card(sG.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sG.porMes ? ' · linha = média mensal' : ''),
+        barrasVerticalScroll(sG.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sG.porMes && metrica === 'peso') ? metaDiariaSetor('') : null }), 'Produção por dia'); }
 
     // produção por turno
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)', gTurnoPeso(D.producao, val, fmtBar, ''));
@@ -3205,8 +3216,9 @@ function renderPainel() {
   html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar, setor), 'Produção por turno · período');
   { const porDiaS = somaPor(prodS, r => r.dia, val); const diasOrdS = Object.keys(porDiaS).sort();
     const mediaDiaS = diasOrdS.length ? diasOrdS.reduce((a, d) => a + porDiaS[d], 0) / diasOrdS.length : 0;
-    if (diasOrdS.length) html += card('Produção por dia', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →',
-      barrasVerticalScroll(diasOrdS.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDiaS[d], rot: fmtBar(porDiaS[d]), click: `detDia('${setor}','${d}')` })), null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (metrica === 'peso') ? metaDiariaSetor(setor) : null })); }
+    if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`);
+      html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : ''),
+        barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaDiariaSetor(setor) : null }), 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
