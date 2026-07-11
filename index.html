@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.2.2</div>
+    <div class="ver-tag" id="verTag">versão 3.2.3</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.2.2</span>
+        <span class="ver-badge" id="verBadge">v3.2.3</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.2.2';
+const APP_VER = '3.2.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2543,7 +2543,31 @@ function contextoIA() {
 
   const per = D.info ? `${fmtData(D.info.periodoDe)} a ${fmtData(D.info.periodoAte)}` : '';
   const excl = paradasExcluidas.size ? ` (paradas ignoradas no painel: ${[...paradasExcluidas].join(', ')})` : '';
-  return `Período: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
+  // ===== metas vs realizado + raio-X do último dia (para análises de causa e plano de ação) =====
+  const tipoUD = tipoDia(ud);
+  const nomeTipo = { util: 'dia normal (23,92h)', sabado: 'sábado reduzido (10,98h)', reduzido: 'feriado/horário reduzido (10,98h)', folga: 'folga', domingo: 'domingo' }[tipoUD] || tipoUD;
+  const fatorH = (tipoUD === 'sabado' || tipoUD === 'reduzido') ? (10.98 / 23.92) : 1; // meta proporcional em dia reduzido
+  let metasVsTxt = '';
+  if (metasData) {
+    const linhas = [];
+    Object.keys(SETOR_MAQ).forEach(s => {
+      let metaS = 0; (SETOR_MAQ[s] || []).forEach(c => { const m = metasData[String(c)]; if (m) ['Manhã', 'Tarde', 'Noite'].forEach(b => metaS += (m[b] || 0)); });
+      if (!metaS) return;
+      const metaAj = metaS * fatorH;
+      const realS = prodUD.filter(r => setorDe(r.recurso_cod) === s).reduce((a, r) => a + (r.peso || 0), 0);
+      const pct = metaAj > 0 ? (realS / metaAj * 100).toFixed(0) : '—';
+      linhas.push(`${s}: real ${Math.round(realS)}kg vs meta ${Math.round(metaAj)}kg (${pct}%${realS < metaAj ? ' — NÃO ATINGIU' : ' — atingiu'})`);
+    });
+    if (linhas.length) metasVsTxt = `\nÚltimo dia é ${nomeTipo}${fatorH < 1 ? ' (meta ajustada proporcionalmente às horas)' : ''}. Meta × realizado por setor no último dia: ${linhas.join('; ')}.`;
+  }
+  const parUD = par.filter(p => p.dia === ud);
+  const parUDMot = {}; parUD.forEach(p => { const k = setorDe(p.recurso_cod) + ' · ' + (p.motivo_desc || '—'); parUDMot[k] = (parUDMot[k] || 0) + (p.tempo_horas || 0); });
+  const parUDTxt = Object.entries(parUDMot).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([m, h]) => `${m} ${h.toFixed(1)}h`).join('; ');
+  const perdUDt = {}; D.perdas.filter(r => r.dia === ud).forEach(r => { const k = setorDe(r.recurso_cod) + ' · ' + (r.tipo_perda_desc || '—'); perdUDt[k] = (perdUDt[k] || 0) + (r.peso || 0); });
+  const perdUDTxt = Object.entries(perdUDt).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([t, k]) => `${t} ${Math.round(k)}kg`).join('; ');
+  const raioXUD = `${metasVsTxt}\nParadas do último dia (setor · motivo · horas): ${parUDTxt || 'nenhuma'}.\nPerdas do último dia (setor · tipo · kg): ${perdUDTxt || 'nenhuma'}.`;
+
+  return raioXUD + `\nPeríodo: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
 Produção por dia: ${diasTxt}.
 Produção por turno: ${turnosTxt}.
 Último dia ${ud ? ud.slice(8) + '/' + ud.slice(5, 7) : '—'}: ${kg1(udKg)} e ${Math.round(udCx)} cxs. Por máquina no último dia: ${udMaqTxt}.
