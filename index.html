@@ -339,7 +339,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.9.5</div>
+    <div class="ver-tag" id="verTag">versão 2.9.6</div>
   </div>
 </div>
 
@@ -379,7 +379,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.9.5</span>
+        <span class="ver-badge" id="verBadge">v2.9.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1013,7 +1013,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.9.5';
+const APP_VER = '2.9.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1686,6 +1686,7 @@ async function carregarPainel() {
       ]);
       await getCutover5();
       await getMetas();
+      await getLayoutPadrao();
       dadosPainel = { producao, paradas, consumo, perdas, info: imps };
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
@@ -1718,15 +1719,33 @@ function mudarSetor() {
 
 /* ===== organizar (arrastar) e travar os blocos do painel ===== */
 let reorgAtivo = false, sortableInst = null;
+let layoutPadrao = null; // ordem padrão (definida pelo admin) por escopo: {geral:[...], Termoformagem:[...]}
 const ordemChave = () => 'rp_ordem_' + ($('fSetor').value || 'geral');
+const layoutEscopo = () => $('fSetor').value || 'geral';
+async function getLayoutPadrao() {
+  if (layoutPadrao) return layoutPadrao;
+  layoutPadrao = {};
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'layout_padrao').maybeSingle();
+    if (data && data.valor) layoutPadrao = JSON.parse(data.valor) || {};
+  } catch (_) {}
+  return layoutPadrao;
+}
 function salvarOrdem() {
   const box = $('painelConteudo');
   const ordem = [...box.children].map(el => el.dataset.k).filter(Boolean);
   try { localStorage.setItem(ordemChave(), JSON.stringify(ordem)); } catch (_) {}
+  // admin: o layout travado vira o padrão de todos
+  if (souAdmin) {
+    if (!layoutPadrao) layoutPadrao = {};
+    layoutPadrao[layoutEscopo()] = ordem;
+    sb.from('app_config').update({ valor: JSON.stringify(layoutPadrao) }).eq('chave', 'layout_padrao').then(() => {});
+  }
 }
 function aplicarOrdem() {
   const box = $('painelConteudo');
   let ordem = []; try { ordem = JSON.parse(localStorage.getItem(ordemChave()) || '[]'); } catch (_) {}
+  if (!ordem.length && layoutPadrao && Array.isArray(layoutPadrao[layoutEscopo()])) ordem = layoutPadrao[layoutEscopo()];
   if (!ordem.length) return;
   const mapa = {}; [...box.children].forEach(el => { if (el.dataset.k) mapa[el.dataset.k] = el; });
   ordem.forEach(k => { if (mapa[k]) box.appendChild(mapa[k]); });
@@ -1751,7 +1770,7 @@ function toggleReorg() {
   if (reorgAtivo) {
     toast('Segure e arraste um bloco para mover. Toque em Travar quando terminar.');
     posRenderPainel();
-  } else if (sortableInst) { sortableInst.destroy(); sortableInst = null; }
+  } else if (sortableInst) { sortableInst.destroy(); sortableInst = null; if (souAdmin) toast('✅ Layout travado e salvo como padrão para todos.'); }
 }
 
 /* ===== filtro de motivos de parada ===== */
@@ -2792,7 +2811,9 @@ function renderPainel() {
   }
 
   // ---------- PERÍODO ----------
-  html += secao('periodo', 'Período · ' + (D.info && D.info.periodoDe ? fmtData(D.info.periodoDe) : '') + ' → ' + udTxt);
+  const perDe = (periodoSel && periodoSel.de) ? periodoSel.de : (D.info && D.info.periodoDe);
+  const perAte = (periodoSel && periodoSel.ate) ? periodoSel.ate : ud;
+  html += secao('periodo', 'Período · ' + (perDe ? fmtData(perDe) : '') + ' → ' + (perAte ? fmtData(perAte) : udTxt) + (periodoSel ? ' · ' + periodoSel.label : ''));
   const totalP = prodS.reduce((a, r) => a + val(r), 0);
   const maquinas = [...new Set(prodS.map(r => r.recurso_cod))].length;
   const horasP = parS.reduce((a, p) => a + (p.tempo_horas || 0), 0);
