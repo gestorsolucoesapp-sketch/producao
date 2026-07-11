@@ -339,7 +339,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.9.4</div>
+    <div class="ver-tag" id="verTag">versão 2.9.5</div>
   </div>
 </div>
 
@@ -379,7 +379,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.9.4</span>
+        <span class="ver-badge" id="verBadge">v2.9.5</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1013,7 +1013,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.9.4';
+const APP_VER = '2.9.5';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2394,10 +2394,15 @@ async function executarComando(cmd) {
   return `Pronto — abri ${nomeAba}${partes.length ? ' · ' + partes.join(' · ') : ''}.`;
 }
 
+async function registrarUsoIA(pergunta) {
+  try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: String(pergunta || '').slice(0, 300) }); } catch (_) {}
+}
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
+  registrarUsoIA(q);
   const cmd = interpretarComando(q);
   if (cmd) {
     let resp;
@@ -2879,6 +2884,12 @@ async function carregarUsuarios() {
     cont[a.user_id] = (cont[a.user_id] || 0) + 1;
   });
   if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário cadastrado ainda.</p>'; return; }
+  // uso da IA (resiliente: se a tabela não existir, ignora)
+  const iaCont = {}, iaUltimo = {};
+  try {
+    const ri = await sb.from('ia_uso').select('user_id, criado_em').order('criado_em', { ascending: false }).limit(3000);
+    (ri.data || []).forEach(a => { if (!iaUltimo[a.user_id]) iaUltimo[a.user_id] = a.criado_em; iaCont[a.user_id] = (iaCont[a.user_id] || 0) + 1; });
+  } catch (_) {}
   const meuId = perfil && perfil.id;
   // ordena: quem acessou por último (que não seja você) sempre no topo; você por último
   perfis.sort((a, b) => {
@@ -2893,9 +2904,15 @@ async function carregarUsuarios() {
   const chartHtml = rank.length
     ? card('Quem mais acessa', 'nº de acessos registrados', barrasHorizontal(rank.map(x => ({ l: x.nome + (x.id === meuId ? ' (você)' : ''), v: x.n })), ''))
     : '';
+  // gráfico: quem mais usa a IA
+  const rankIA = perfis.map(u => ({ nome: u.nome, id: u.id, n: iaCont[u.id] || 0 }))
+    .filter(x => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 12);
+  const chartIA = rankIA.length
+    ? card('🤖 Quem mais usa a IA', 'nº de interações com o assistente', barrasHorizontal(rankIA.map(x => ({ l: x.nome + (x.id === meuId ? ' (você)' : ''), v: x.n })), ''))
+    : '';
 
   usuariosCarregados = perfis;
-  box.innerHTML = chartHtml + perfis.map(u => {
+  box.innerHTML = chartHtml + chartIA + perfis.map(u => {
     const admin = u.papel === 'admin';
     const eu = u.id === meuId;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
@@ -2924,7 +2941,7 @@ async function carregarUsuarios() {
         </div>
         <div style="text-align:right">${tagPapel}<br>${tagStatus}</div>
       </div>
-      <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])} · ${cont[u.id] || 0} acesso(s)</div>
+      <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])} · ${cont[u.id] || 0} acesso(s) · 🤖 IA: ${iaCont[u.id] || 0} uso(s)</div>
       ${telas}
       ${metasTog}
       ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
