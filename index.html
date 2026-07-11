@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.2.6</div>
+    <div class="ver-tag" id="verTag">versão 3.3.0</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.2.6</span>
+        <span class="ver-badge" id="verBadge">v3.3.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.2.6';
+const APP_VER = '3.3.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2308,6 +2308,12 @@ async function carregarAnalise() {
   }
   renderAnalise();
 }
+
+/* boca do item: primeiro número dentro dos parênteses — ex.: "(75X122)" -> 75 */
+function bocaDe(desc) {
+  const m = /\((\d{2,4})\s*[xX×]\s*\d{2,4}\s*\)/.exec(String(desc || ''));
+  return m ? m[1] : null;
+}
 function renderAnalise() {
   if (!dadosAnalise) return;
   const box = $('analiseConteudo');
@@ -2402,6 +2408,50 @@ function renderAnalise() {
   const top = itens.slice(0, 15).map((i, k) => ({ l: i.cod + ' · ' + i.desc, v: i.v, click: `verItem(${k})` }));
   html += card('Maiores volumes', (metrica === 'peso' ? 'peso' : 'cxs') + ' · top 15 · toque p/ detalhes' + (grupo === 'kit' ? ' · KITs' : grupo === 'sleeve' ? ' · Sleeve' : grupo === 'rotulagem' ? ' · Rotulagem' : grupo === 'impresso' ? ' · Impressos' : grupo ? ' · itens ' + grupo + '…' : ''),
     barrasHorizontal(top, metrica === 'peso' ? 'kg' : 'cxs'));
+
+  // ===== análise por BOCA (Impressão) =====
+  if (anSetor === 'Impressão') {
+    const bo = {}; let semBoca = 0;
+    rows.forEach(r => {
+      const b = bocaDe(r.item_desc);
+      if (!b) { semBoca += val(r); return; }
+      if (!bo[b]) bo[b] = { v: 0, itens: new Set(), ops: new Set(), dias: new Set(), maqs: new Set() };
+      bo[b].v += val(r);
+      if (r.item_cod) bo[b].itens.add(String(r.item_cod));
+      if (r.op) bo[b].ops.add(r.op);
+      if (r.dia) bo[b].dias.add(r.dia);
+      if (r.recurso_cod) bo[b].maqs.add(String(r.recurso_cod));
+    });
+    const bocas = Object.keys(bo).sort((a, b) => bo[b].v - bo[a].v);
+    if (bocas.length) {
+      // trocas de boca: por máquina × dia, nº de bocas distintas − 1 (mínimo de trocas)
+      const md = {};
+      rows.forEach(r => { const b = bocaDe(r.item_desc); if (!b || !r.dia || !r.recurso_cod) return; const k = r.recurso_cod + '|' + r.dia; (md[k] = md[k] || new Set()).add(b); });
+      const trocasMaq = {};
+      Object.keys(md).forEach(k => { const c = k.split('|')[0]; const n = md[k].size - 1; if (n > 0) trocasMaq[c] = (trocasMaq[c] || 0) + n; });
+      const totTrocas = Object.values(trocasMaq).reduce((a, n) => a + n, 0);
+
+      html += card('Produção por boca · Impressão', (metrica === 'peso' ? 'peso' : 'cxs') + ' · boca = 1º número dos parênteses, ex.: (75x122) → 75' + (semBoca > 0 ? ` · ${fmtV(semBoca)} sem boca na descrição` : ''),
+        barrasHorizontal(bocas.map(b => ({ l: 'Boca ' + b, v: bo[b].v })), metrica === 'peso' ? 'kg' : 'cxs'));
+
+      const linhasB = bocas.map(b => `<tr>
+        <td class="nome" style="text-align:left"><span class="cod">${escapeHtml(b)}</span> boca</td>
+        <td><span class="cel neutra">${bo[b].itens.size}</span></td>
+        <td><span class="cel neutra">${bo[b].ops.size}</span></td>
+        <td><span class="cel neutra">${bo[b].dias.size}</span></td>
+        <td><span class="cel neutra">${bo[b].maqs.size}</span></td>
+        <td><span class="cel ok">${fmtV(bo[b].v)}</span></td></tr>`).join('');
+      html += card('Boca · itens, OPs e volume', 'quantas OPs e dias cada boca rodou',
+        `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Boca</th><th>Itens</th><th>OPs</th><th>Dias</th><th>Máq.</th><th>Volume</th></tr></thead><tbody>${linhasB}</tbody></table></div>`);
+
+      if (totTrocas) {
+        const arrT = Object.entries(trocasMaq).sort((a, b) => b[1] - a[1])
+          .map(([c, n]) => ({ l: c + ' · ' + ((dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[c]) || ''), v: n }));
+        html += card('Trocas de boca por máquina', `mínimo de ${totTrocas} troca(s) no período · cada troca = setup extra${setupInfo ? ` · ≈ ${(totTrocas * setupInfo.media).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} h ao total (setup médio do 643)` : ''}`,
+          barrasHorizontal(arrT, 'trocas'));
+      }
+    }
+  }
 
   // repetibilidade — tabela: item | dias | OPs | máquinas | volume (toque mostra descrição completa)
   const linhas = itens.slice(0, 60).map((i, ix) => {
@@ -3129,12 +3179,13 @@ function renderPainel() {
         barrasVerticalScroll(sG.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sG.porMes && metrica === 'peso') ? metaDiariaSemExtrusao() : null }), 'Produção por dia'); }
 
     // produção por turno
-    html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5)', gTurnoPeso(D.producao, val, fmtBar, ''));
+    const prodSemExt = D.producao.filter(r => setorDe(r.recurso_cod) !== 'Extrusão');
+    html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5) · sem Extrusão (bobina)', gTurnoPeso(prodSemExt, val, fmtBar, ''));
 
     // produção por máquina — TODAS as máquinas de todos os setores
     const todasMaq = Object.values(SETOR_MAQ).flat();
-    html += card('Produção por máquina · todos os setores', metrica === 'peso' ? 'peso — todas as máquinas' : 'cxs — todas as máquinas',
-      gMaqPeso(D.producao, val, uni, todasMaq, D.nomeMaq));
+    html += card('Produção por máquina · todos os setores', (metrica === 'peso' ? 'peso' : 'cxs') + ' — todas as máquinas · sem Extrusão (bobina)',
+      gMaqPeso(prodSemExt, val, uni, todasMaq.filter(c => setorDe(c) !== 'Extrusão'), D.nomeMaq));
 
     // Pareto de paradas (todos os setores)
     const porMotivo = somaPor(filtraParadas(D.paradas), p => p.motivo_desc || '—', p => p.tempo_horas || 0);
