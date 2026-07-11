@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.1.0</div>
+    <div class="ver-tag" id="verTag">versão 3.1.1</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.1.0</span>
+        <span class="ver-badge" id="verBadge">v3.1.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.1.0';
+const APP_VER = '3.1.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1080,6 +1080,26 @@ const FERIADOS = [
 function hojeISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function diasAte(iso) { const a = new Date(hojeISO() + 'T12:00:00'), b = new Date(iso + 'T12:00:00'); return Math.round((b - a) / 86400000); }
 function proximoFeriado() { const h = hojeISO(); return FERIADOS.filter(f => f.d >= h).sort((a, b) => a.d < b.d ? -1 : 1)[0] || null; }
+/* tipo do dia conforme regras da fábrica:
+   - sáb: horário reduzido (Manhã 06:00–11:30 · Tarde 11:31–17:00 · Noite não trabalha)
+   - feriado na SEG: folga; feriado na TER: folga na SEG anterior (a TER trabalha normal)
+   - feriado de QUA em diante: o dia roda no horário reduzido de sábado */
+const FER_SET = (() => { try { return new Set(FERIADOS.map(f => f.d)); } catch (_) { return new Set(); } })();
+function addDiasISO(iso, n) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function tipoDia(dia) {
+  if (!dia) return 'util';
+  const dow = new Date(dia + 'T12:00:00').getDay(); // 0=dom 1=seg ... 6=sáb
+  if (FER_SET.has(dia)) {
+    if (dow === 1) return 'folga';          // feriado na segunda: folga
+    if (dow === 2) return 'util';           // feriado na terça: trabalha (folga foi na 2ª)
+    return 'reduzido';                      // quarta em diante: horário de sábado
+  }
+  if (dow === 1 && FER_SET.has(addDiasISO(dia, 1))) return 'folga'; // 2ª antes de feriado de 3ª
+  if (dow === 6) return 'sabado';
+  if (dow === 0) return 'domingo';
+  return 'util';
+}
+const _diaReduzido = d => { const t = tipoDia(d); return t === 'sabado' || t === 'reduzido' || t === 'folga' || t === 'domingo'; };
 const COR_FER = { 'Nacional': '#5B9BD5', 'Estadual (SP)': '#70AD47', 'Municipal': '#E0A82D', 'Facultativo': '#9AA7B4' };
 function faixaFeriado() {
   const f = proximoFeriado(); if (!f) return '';
@@ -1586,7 +1606,8 @@ async function getOeeFatores() {
   return oeeFatores;
 }
 const fatorSetor = s => { const f = oeeFatores && Number(oeeFatores[s]); return (f > 0 && f <= 1) ? f : 0.80; };
-function horasBlocoDe(dia) { // duração dos blocos: 5 turnos (atual) ou 3 turnos (histórico)
+function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
+  if (dia && _diaReduzido(dia)) return { 'Manhã': 5.5, 'Tarde': 5.48, 'Noite': 0 }; // sábado/feriado reduzido/folga com produção
   const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
   return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
 }
@@ -1773,10 +1794,15 @@ const blocoTurno = (t, dia) => {
   return t === 1 ? 'Manhã' : t === 2 ? 'Tarde' : 'Noite'; // 3 turnos
 };
 // deriva o bloco (Manhã/Tarde/Noite) pela hora do consumo (646 não traz turno)
-function blocoPorHora(h) {
+function blocoPorHora(h, dia) {
   if (!h) return null;
   const p = String(h).split(':'); const t = (+p[0]) * 60 + (+(p[1] || 0));
   const m = (a, b) => a * 60 + b;
+  if (dia && _diaReduzido(dia)) { // sábado/feriado reduzido: Manhã 06:00–11:30 · Tarde 11:31–17:00 · resto Noite
+    if (t >= m(6, 0) && t <= m(11, 30)) return 'Manhã';
+    if (t >= m(11, 31) && t <= m(17, 0)) return 'Tarde';
+    return 'Noite';
+  }
   if (t >= m(6, 0) && t <= m(12, 0)) return 'Manhã';    // T1
   if (t >= m(12, 1) && t <= m(13, 36)) return 'Tarde';  // T2
   if (t >= m(13, 37) && t <= m(15, 10)) return 'Manhã'; // T3
@@ -2398,7 +2424,7 @@ function contextoIA() {
     .map(o => `${o.c} ${nome(o.c)} ${o.v.toFixed(1)}%`).join('; ');
   const pMT = {}, cMT = {};
   prodTermo.forEach(r => { const k = r.recurso_cod + '|' + blocoTurno(r.turno, r.dia); pMT[k] = (pMT[k] || 0) + (r.peso || 0); });
-  bob.forEach(c => { const b2 = blocoPorHora(c.hora); if (!b2) return; const k = c.recurso_cod + '|' + b2; cMT[k] = (cMT[k] || 0) + (c.peso || 0); });
+  bob.forEach(c => { const b2 = blocoPorHora(c.hora, c.dia); if (!b2) return; const k = c.recurso_cod + '|' + b2; cMT[k] = (cMT[k] || 0) + (c.peso || 0); });
   const aprovMT = {};
   Object.keys(cMT).forEach(k => { if (cMT[k] > 0 && pMT[k] > 0) { const parts = k.split('|'); const c = parts[0], b2 = parts[1]; (aprovMT[c] = aprovMT[c] || {})[b2] = (pMT[k] / cMT[k] * 100).toFixed(0); } });
   const aprovMTtxt = Object.keys(aprovMT).map(c => `${c} M${aprovMT[c]['Manhã'] || '—'} T${aprovMT[c]['Tarde'] || '—'} N${aprovMT[c]['Noite'] || '—'}`).join('; ');
@@ -2720,7 +2746,7 @@ const ultimoDiaDe = rows => { const d = rows.map(r => r.dia).filter(Boolean).sor
 const noSetor = (rows, setor) => setor ? rows.filter(r => setorDe(r.recurso_cod) === setor) : rows;
 const somaPor = (rows, keyFn, valFn) => { const o = {}; rows.forEach(r => { const k = keyFn(r); if (k == null || k === '') return; o[k] = (o[k] || 0) + (valFn(r) || 0); }); return o; };
 // turno (bloco) das paradas, derivado da hora de início
-const blocoParada = p => { const h = p.inicio ? String(p.inicio).slice(11, 16) : null; return blocoPorHora(h); };
+const blocoParada = p => { const h = p.inicio ? String(p.inicio).slice(11, 16) : null; return blocoPorHora(h, p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null)); };
 
 // barras verticais por turno (peso) com cores da planilha
 const COR_TURNO = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
@@ -2815,7 +2841,7 @@ function tabelaAprov(termoRows, bobRows) {
   const cel = {}, nome = {};
   const ini = c => { if (!cel[c]) cel[c] = { 'Manhã': { p: 0, c: 0 }, 'Tarde': { p: 0, c: 0 }, 'Noite': { p: 0, c: 0 } }; };
   termoRows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno, r.dia)].p += (r.peso || 0); nome[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
-  bobRows.forEach(c => { const b = blocoPorHora(c.hora); if (!b) return; ini(c.recurso_cod); cel[c.recurso_cod][b].c += (c.peso || 0); if (!nome[c.recurso_cod]) nome[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
+  bobRows.forEach(c => { const b = blocoPorHora(c.hora, c.dia); if (!b) return; ini(c.recurso_cod); cel[c.recurso_cod][b].c += (c.peso || 0); if (!nome[c.recurso_cod]) nome[c.recurso_cod] = c.recurso_nome || c.recurso_cod; });
   const linhas = Object.keys(cel).filter(c => ['Manhã', 'Tarde', 'Noite'].some(b => cel[c][b].c > 0)).map(c => {
     const t = {}; let pT = 0, cT = 0;
     ['Manhã', 'Tarde', 'Noite'].forEach(b => { const o = cel[c][b]; t[b] = o.c > 0 ? o.p / o.c * 100 : null; pT += o.p; cT += o.c; });
