@@ -339,7 +339,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 2.9.7</div>
+    <div class="ver-tag" id="verTag">versão 2.9.8</div>
   </div>
 </div>
 
@@ -379,7 +379,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v2.9.7</span>
+        <span class="ver-badge" id="verBadge">v2.9.8</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1013,7 +1013,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '2.9.7';
+const APP_VER = '2.9.8';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1684,10 +1684,12 @@ async function carregarPainel() {
         fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ate),
         fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso', de, ate)
       ]);
+      let perdasCli = [];
+      try { perdasCli = await fetchTudo('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate); } catch (_) {}
       await getCutover5();
       await getMetas();
       await getLayoutPadrao();
-      dadosPainel = { producao, paradas, consumo, perdas, info: imps };
+      dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
       [producao, perdas, paradas, consumo].forEach(arr => (arr || []).forEach(r => {
@@ -2851,6 +2853,21 @@ function renderPainel() {
   if (perS.length) {
     html += card('Perdas por máquina e turno', 'peso perdido (kg)',
       tabelaMaqTurno(perS, { valFn: r => r.peso || 0, fmtCel: v => v > 0 ? fmtKg(v) : '—', corCel: v => v > 0 ? 'baixo' : 'vazio' }));
+  }
+  // perdas do 054 (Sleeve/Rotulagem não têm máquina no relatório de perdas)
+  if (setor === 'Sleeve' || setor === 'Rotulagem') {
+    const rx = setor === 'Sleeve' ? /SLEEVE/i : /ROTUL/i;
+    const perCli = (D.perdasCli || []).filter(r => rx.test(r.etapa || ''));
+    if (perCli.length) {
+      const porTipo = somaPor(perCli, r => r.tipo_perda_desc || '—', r => r.peso || 0);
+      const arrT = Object.keys(porTipo).map(k => ({ l: k, v: porTipo[k] })).sort((a, b) => b.v - a.v);
+      html += card('Perdas por tipo · ' + setor, 'peso (kg) · relatório 054 (por etapa, sem máquina)',
+        paretoSVG(arrT, v => fmtKg(v)) + paretoHorizontal(arrT, v => fmtKg(v)));
+      const porCli = somaPor(perCli, r => r.cliente || '—', r => r.peso || 0);
+      const arrC = Object.keys(porCli).map(k => ({ l: k, v: porCli[k] })).sort((a, b) => b.v - a.v).slice(0, 15);
+      if (arrC.length > 1) html += card('Perdas por cliente · ' + setor, 'peso (kg) · top 15 · relatório 054',
+        barrasHorizontal(arrC, 'kg'));
+    }
   }
   // aproveitamento período por máquina e turno (Termo)
   if (ehTermo) {
