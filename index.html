@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.1.4</div>
+    <div class="ver-tag" id="verTag">versão 3.1.5</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.1.4</span>
+        <span class="ver-badge" id="verBadge">v3.1.5</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.1.4';
+const APP_VER = '3.1.5';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1091,24 +1091,40 @@ async function getFerTroca() {
     const { data } = await sb.from('app_config').select('valor').eq('chave', 'feriados_troca').maybeSingle();
     ferTroca = (data && data.valor) ? (JSON.parse(data.valor) || {}) : {};
   } catch (_) { ferTroca = {}; }
+  REGRA_DIA = null; // regras dependem das trocas
   return ferTroca;
 }
 const FOLGA_EXTRA = (() => { try { return new Set(FERIADOS.filter(f => f.folga).map(f => f.d)); } catch (_) { return new Set(); } })(); // exceções em que a fábrica não trabalha (ex.: Corpus Christi)
 function addDiasISO(iso, n) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+/* Regras (compensação em cadeia):
+   - feriado SEG: folga na própria segunda
+   - feriado TER: folga na SEG anterior (a terça trabalha normal)
+   - feriado QUA em diante: TRABALHA o feriado normal; a SEXTA daquela semana roda no
+     horário reduzido de sábado; o SÁBADO daquela semana vira folga
+   - feriado no SÁBADO: folga
+   - feriado marcado como "trocado" na Agenda: tudo volta ao normal (sem deslocamentos) */
+let REGRA_DIA = null;
+function recalcRegrasDias() {
+  REGRA_DIA = {};
+  FERIADOS.forEach(f => {
+    if (f.t === 'Facultativo' && !f.folga) return;      // facultativo comum: trabalha normal
+    if (ferTroca && ferTroca[f.d]) return;               // trocado: sem regra especial
+    if (f.folga) { REGRA_DIA[f.d] = 'folga'; return; }   // exceção (Corpus Christi)
+    const dow = new Date(f.d + 'T12:00:00').getDay();
+    if (dow === 1) REGRA_DIA[f.d] = 'folga';                                  // segunda
+    else if (dow === 2) REGRA_DIA[addDiasISO(f.d, -1)] = 'folga';             // terça → folga na seg
+    else if (dow >= 3 && dow <= 5) {                                          // qua/qui/sex
+      REGRA_DIA[f.d] = 'util';                                                // trabalha o feriado
+      if (dow < 5) REGRA_DIA[addDiasISO(f.d, 5 - dow)] = 'reduzido';          // sexta da semana: reduzido
+      REGRA_DIA[addDiasISO(f.d, 6 - dow)] = 'folga';                          // sábado da semana: folga
+    } else if (dow === 6) REGRA_DIA[f.d] = 'folga';                           // feriado no sábado
+  });
+}
 function tipoDia(dia) {
   if (!dia) return 'util';
-  if (ferTroca && ferTroca[dia]) { // feriado trocado: vale como dia comum
-    const dw = new Date(dia + 'T12:00:00').getDay();
-    return dw === 6 ? 'sabado' : dw === 0 ? 'domingo' : 'util';
-  }
-  if (FOLGA_EXTRA.has(dia)) return 'folga'; // fábrica não trabalha (ex.: Corpus Christi)
-  const dow = new Date(dia + 'T12:00:00').getDay(); // 0=dom 1=seg ... 6=sáb
-  if (FER_SET.has(dia)) {
-    if (dow === 1) return 'folga';          // feriado na segunda: folga
-    if (dow === 2) return 'util';           // feriado na terça: trabalha (folga foi na 2ª)
-    return 'reduzido';                      // quarta em diante: horário de sábado
-  }
-  if (dow === 1 && FER_SET.has(addDiasISO(dia, 1))) return 'folga'; // 2ª antes de feriado de 3ª
+  if (REGRA_DIA === null) recalcRegrasDias();
+  if (REGRA_DIA[dia]) return REGRA_DIA[dia];
+  const dow = new Date(dia + 'T12:00:00').getDay();
   if (dow === 6) return 'sabado';
   if (dow === 0) return 'domingo';
   return 'util';
@@ -1179,6 +1195,7 @@ async function toggleFerTroca(dia, on) {
   if (!souAdmin) return;
   await getFerTroca();
   if (on) ferTroca[dia] = true; else delete ferTroca[dia];
+  REGRA_DIA = null;
   const { error } = await sb.from('app_config').update({ valor: JSON.stringify(ferTroca) }).eq('chave', 'feriados_troca');
   if (error) { toast('❌ ' + error.message); return; }
   toast(on ? '🔁 Feriado marcado como trocado — vale como dia normal.' : 'Troca desfeita — regras de feriado voltam a valer.');
