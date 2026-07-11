@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.1.7</div>
+    <div class="ver-tag" id="verTag">versão 3.2.0</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.1.7</span>
+        <span class="ver-badge" id="verBadge">v3.2.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.1.7';
+const APP_VER = '3.2.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2415,6 +2415,7 @@ function renderAnalise() {
 let iaHist = [];
 function abrirIA() {
   $('iaOverlay').classList.remove('oculto');
+  if (iaRegras === null) getIaRegras();
   primeTTS(); atualizaBtnVozSaida();
   ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
@@ -2425,6 +2426,19 @@ function addIA(quem, txt) {
   const d = document.createElement('div'); d.className = 'ia-msg ' + quem; d.textContent = txt;
   if (quem === 'assistente') { d.style.cursor = 'pointer'; d.title = 'Toque para ouvir'; d.onclick = () => falarIA(d.textContent); }
   $('iaMsgs').appendChild(d); $('iaMsgs').scrollTop = $('iaMsgs').scrollHeight; return d;
+}
+/* ===== regras da fábrica ensinadas à IA (admin cria pelo chat: "regra: ...") ===== */
+let iaRegras = null;
+async function getIaRegras() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'ia_regras').maybeSingle();
+    iaRegras = (data && data.valor) ? (JSON.parse(data.valor) || []) : [];
+  } catch (_) { iaRegras = []; }
+  return iaRegras;
+}
+async function salvarIaRegras() {
+  const { error } = await sb.from('app_config').update({ valor: JSON.stringify(iaRegras || []) }).eq('chave', 'ia_regras');
+  return !error;
 }
 function contextoIA() {
   if (!dadosPainel) return 'Ainda não há dados carregados.';
@@ -2663,6 +2677,27 @@ async function enviarIA() {
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   registrarUsoIA(q);
+  // ===== gestão de regras da IA =====
+  const qn = q.trim();
+  const mRegra = /^(?:nova\s+)?regra\s*[:\-]\s*(.{4,})$/i.exec(qn);
+  if (mRegra || /^(listar|ver|mostrar)\s+regras/i.test(qn) || /^(apagar|remover|excluir)\s+regra\s+(\d+)/i.test(qn)) {
+    if (iaRegras === null) await getIaRegras();
+    let resp;
+    const mDel = /^(?:apagar|remover|excluir)\s+regra\s+(\d+)/i.exec(qn);
+    if (mRegra) {
+      if (!souAdmin) resp = 'Só o administrador pode criar regras.';
+      else { iaRegras.push(mRegra[1].trim()); resp = (await salvarIaRegras()) ? `✅ Regra ${iaRegras.length} criada. A IA vai considerá-la em todas as análises (para todos os usuários).` : 'Não consegui salvar a regra.'; }
+    } else if (mDel) {
+      const n = +mDel[1];
+      if (!souAdmin) resp = 'Só o administrador pode remover regras.';
+      else if (n < 1 || n > iaRegras.length) resp = 'Não existe a regra ' + n + '.';
+      else { const rem = iaRegras.splice(n - 1, 1)[0]; resp = (await salvarIaRegras()) ? `🗑 Regra ${n} removida: "${rem}"` : 'Não consegui salvar.'; }
+    } else {
+      resp = iaRegras.length ? 'Regras ativas:\n' + iaRegras.map((r, i) => (i + 1) + '. ' + r).join('\n') + (souAdmin ? '\n\nPara remover: "apagar regra N". Para criar: "regra: ..."' : '') : 'Nenhuma regra cadastrada.' + (souAdmin ? ' Crie com: "regra: [texto]".' : '');
+    }
+    addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
+    return;
+  }
   const cmd = interpretarComando(q);
   if (cmd) {
     let resp;
@@ -2676,7 +2711,7 @@ async function enviarIA() {
     const r = await fetch(SB_URL + '/functions/v1/ai-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_KEY },
-      body: JSON.stringify({ contexto: contextoIA(), messages: iaHist.slice(-10) })
+      body: JSON.stringify({ contexto: contextoIA() + ((iaRegras && iaRegras.length) ? '\n\nREGRAS DA FÁBRICA (definidas pelo administrador — sempre respeite ao analisar):\n' + iaRegras.map((r, i) => (i + 1) + '. ' + r).join('\n') : ''), messages: iaHist.slice(-10) })
     });
     const d = await r.json();
     let txt = d.texto || d.error || 'Não consegui responder agora.';
