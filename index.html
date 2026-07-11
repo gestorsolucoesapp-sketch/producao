@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.2.0</div>
+    <div class="ver-tag" id="verTag">versão 3.2.1</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.2.0</span>
+        <span class="ver-badge" id="verBadge">v3.2.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1037,7 +1037,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.2.0';
+const APP_VER = '3.2.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1122,6 +1122,7 @@ function recalcRegrasDias() {
 }
 function tipoDia(dia) {
   if (!dia) return 'util';
+  if (diasOverride && diasOverride[dia]) return diasOverride[dia]; // dia especial definido pelo admin (via IA)
   if (REGRA_DIA === null) recalcRegrasDias();
   if (REGRA_DIA[dia]) return REGRA_DIA[dia];
   const dow = new Date(dia + 'T12:00:00').getDay();
@@ -1925,6 +1926,7 @@ async function carregarPainel() {
       await getMetas();
       await getLayoutPadrao();
       await getFerTroca();
+      if (diasOverride === null) await getDiasOverride();
       dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
@@ -2416,6 +2418,7 @@ let iaHist = [];
 function abrirIA() {
   $('iaOverlay').classList.remove('oculto');
   if (iaRegras === null) getIaRegras();
+  if (diasOverride === null) getDiasOverride();
   primeTTS(); atualizaBtnVozSaida();
   ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
@@ -2426,6 +2429,19 @@ function addIA(quem, txt) {
   const d = document.createElement('div'); d.className = 'ia-msg ' + quem; d.textContent = txt;
   if (quem === 'assistente') { d.style.cursor = 'pointer'; d.title = 'Toque para ouvir'; d.onclick = () => falarIA(d.textContent); }
   $('iaMsgs').appendChild(d); $('iaMsgs').scrollTop = $('iaMsgs').scrollHeight; return d;
+}
+/* ===== dias especiais (override do calendário via IA: "vamos trabalhar domingo 19/07") ===== */
+let diasOverride = null; // {'YYYY-MM-DD': 'util'|'reduzido'|'folga'}
+async function getDiasOverride() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'dias_override').maybeSingle();
+    diasOverride = (data && data.valor) ? (JSON.parse(data.valor) || {}) : {};
+  } catch (_) { diasOverride = {}; }
+  return diasOverride;
+}
+async function salvarDiasOverride() {
+  const { error } = await sb.from('app_config').update({ valor: JSON.stringify(diasOverride || {}) }).eq('chave', 'dias_override');
+  return !error;
 }
 /* ===== regras da fábrica ensinadas à IA (admin cria pelo chat: "regra: ...") ===== */
 let iaRegras = null;
@@ -2677,6 +2693,37 @@ async function enviarIA() {
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   registrarUsoIA(q);
+  // ===== dias especiais (calendário) =====
+  {
+    const qd = q.trim();
+    const mData = /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/.exec(qd);
+    const querLista = /^(listar|ver|mostrar)\s+dias\s+(especiais|marcados)/i.test(qd);
+    const mRemove = /^(?:remover|apagar|excluir|cancelar)\s+dia\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i.exec(qd);
+    const falaTrabalho = /trabalh/i.test(qd);
+    if (querLista || mRemove || (mData && falaTrabalho && /\b(vamos|iremos|vai|nao|não|folga|normal|reduzid|sabado|sábado)\b/i.test(qd))) {
+      if (diasOverride === null) await getDiasOverride();
+      const montaISO = m => { let a = m[3] ? +m[3] : new Date().getFullYear(); if (a < 100) a += 2000; return `${a}-${String(+m[2]).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`; };
+      let resp;
+      if (querLista) {
+        const ks = Object.keys(diasOverride).sort();
+        resp = ks.length ? 'Dias especiais marcados:\n' + ks.map(d => `• ${diaSemana(d)}, ${fmtData(d)} → ${diasOverride[d] === 'util' ? 'trabalha normal' : diasOverride[d] === 'reduzido' ? 'horário reduzido' : 'folga'}`).join('\n') : 'Nenhum dia especial marcado.';
+      } else if (mRemove) {
+        if (!souAdmin) resp = 'Só o administrador pode alterar o calendário.';
+        else { const iso = montaISO(mRemove); if (diasOverride[iso]) { delete diasOverride[iso]; await salvarDiasOverride(); dadosPainel = null; resp = `🗑 Marcação de ${fmtData(iso)} removida — volta a valer a regra padrão.`; } else resp = `${fmtData(iso)} não tem marcação especial.`; }
+      } else if (!souAdmin) {
+        resp = 'Só o administrador pode alterar o calendário.';
+      } else {
+        const iso = montaISO(mData);
+        const tipo = /\b(nao|não)\b.*trabalh|folga/i.test(qd) ? 'folga' : /reduzid|sabado|sábado/i.test(qd) && !/normal/i.test(qd) ? 'reduzido' : 'util';
+        diasOverride[iso] = tipo;
+        const ok = await salvarDiasOverride(); dadosPainel = null;
+        const nomeT = tipo === 'util' ? 'horário NORMAL (5 turnos, 23,92h)' : tipo === 'reduzido' ? 'horário REDUZIDO de sábado (10,98h, sem Noite)' : 'FOLGA (não trabalha)';
+        resp = ok ? `✅ Anotado: ${diaSemana(iso)}, ${fmtData(iso)} → ${nomeT}. OEE, turnos e aproveitamento vão considerar isso para todos.` : 'Não consegui salvar.';
+      }
+      addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
+      return;
+    }
+  }
   // ===== gestão de regras da IA =====
   const qn = q.trim();
   const mRegra = /^(?:nova\s+)?regra\s*[:\-]\s*(.{4,})$/i.exec(qn);
