@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.4.0</div>
+    <div class="ver-tag" id="verTag">versão 3.4.1</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.4.0</span>
+        <span class="ver-badge" id="verBadge">v3.4.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1059,7 +1059,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.4.0';
+const APP_VER = '3.4.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1755,16 +1755,37 @@ function oeeChip(rot, v) { return `<div style="flex:1;min-width:70px;text-align:
 /* ===================== MANUTENÇÃO · Ordens de Serviço ===================== */
 let osLista = [], osExtraida = null, osFotoB64 = null, osFotoMime = null;
 
+// comprime a foto antes de enviar (menos tokens = menos custo e mais rápido no 4G)
+function comprimirFoto(file, maxLado = 1600, q = 0.75) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width: w, height: h } = img;
+        const esc = Math.min(1, maxLado / Math.max(w, h));
+        w = Math.round(w * esc); h = Math.round(h * esc);
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        res({ b64: cv.toDataURL('image/jpeg', q).split(',')[1], mime: 'image/jpeg', kb: Math.round(w * h / 1024) });
+      };
+      img.onerror = rej; img.src = String(fr.result);
+    };
+    fr.onerror = rej; fr.readAsDataURL(file);
+  });
+}
+
 function lerFotoOS(input) {
   const f = input.files && input.files[0]; if (!f) return;
   const st = $('osStatus');
   st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo a OS com a IA…';
   $('osForm').classList.add('oculto');
-  const fr = new FileReader();
-  fr.onload = async () => {
-    const dataUrl = String(fr.result);
-    osFotoB64 = dataUrl.split(',')[1];
-    osFotoMime = (dataUrl.match(/^data:(image\/[a-z+]+);/) || [])[1] || 'image/jpeg';
+  const fr = { }; // (compressão substitui a leitura direta)
+  (async () => {
+    let comp;
+    try { comp = await comprimirFoto(f); }
+    catch (_) { st.textContent = '❌ Não consegui ler a imagem.'; return; }
+    osFotoB64 = comp.b64; osFotoMime = comp.mime;
     try {
       const { data: { session } } = await sb.auth.getSession();
       const r = await fetch(`${SB_URL}/functions/v1/os-ocr`, {
@@ -1773,13 +1794,13 @@ function lerFotoOS(input) {
         body: JSON.stringify({ imagem: osFotoB64, mime: osFotoMime })
       });
       const d = await r.json();
+      try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (foto)' }); } catch (_) {}
       if (d.error || !d.os || d.os.erro) { st.textContent = '❌ ' + (d.os && d.os.erro ? d.os.erro : (d.error || 'Não consegui ler a OS.')); return; }
       osExtraida = d.os; st.textContent = '✅ OS lida — confira os campos e salve.';
       formOS(osExtraida);
     } catch (e) { st.textContent = '❌ Erro de conexão. A função os-ocr foi publicada no Supabase?'; }
     input.value = '';
-  };
-  fr.readAsDataURL(f);
+  })();
 }
 
 function formOS(o) {
