@@ -343,7 +343,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.5.1</div>
+    <div class="ver-tag" id="verTag">versão 3.5.2</div>
   </div>
 </div>
 
@@ -383,7 +383,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.5.1</span>
+        <span class="ver-badge" id="verBadge">v3.5.2</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1066,7 +1066,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.5.1';
+const APP_VER = '3.5.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1527,7 +1527,7 @@ async function mostrarApp() {
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
-  if (souAdmin) abasPermitidas = ['painel', 'analise', 'importar', 'historico', 'usuarios', 'metas'];
+  if (souAdmin) abasPermitidas = ['painel', 'analise', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut'];
   else abasPermitidas = (perfil && Array.isArray(perfil.abas) && perfil.abas.length) ? perfil.abas.slice() : ['painel'];
   // mostra/oculta os botões de aba conforme permissão
   document.querySelectorAll('.aba').forEach(a => {
@@ -2179,6 +2179,7 @@ async function carregarPainel() {
       await getLayoutPadrao();
       await getFerTroca();
       if (diasOverride === null) await getDiasOverride();
+      try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
       dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
@@ -2875,7 +2876,17 @@ function contextoIA() {
   const perdUDTxt = Object.entries(perdUDt).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([t, k]) => `${t} ${Math.round(k)}kg`).join('; ');
   const raioXUD = `${metasVsTxt}\nParadas do último dia (setor · motivo · horas): ${parUDTxt || 'nenhuma'}.\nPerdas do último dia (setor · tipo · kg): ${perdUDTxt || 'nenhuma'}.`;
 
-  return raioXUD + `\nPeríodo: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
+  let manutTxt = '';
+  if (osLista && osLista.length) {
+    const ab = osLista.filter(o => !o.data_reinicio);
+    const porMaq = {}; osLista.forEach(o => { const k = (o.recurso_cod || o.setor || '—'); porMaq[k] = (porMaq[k] || 0) + 1; });
+    const top = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k}: ${n}`).join('; ');
+    const hOS = osLista.reduce((a, o) => a + (o.horas_parada || 0), 0);
+    manutTxt = `\nMANUTENÇÃO (ordens de serviço registradas): ${osLista.length} OS no total, ${ab.length} EM ABERTO` +
+      (ab.length ? ' (' + ab.slice(0, 8).map(o => `OS ${o.os_num || '?'} · ${o.recurso_cod || o.setor || ''} · ${o.atividade || ''} · ${o.motivo || ''}`).join(' | ') + ')' : '') +
+      `. Horas de parada somadas nas OS: ${hOS.toFixed(1)}h. OS por máquina/área: ${top}.`;
+  }
+  return raioXUD + manutTxt + `\nPeríodo: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
 Produção por dia: ${diasTxt}.
 Produção por turno: ${turnosTxt}.
 Último dia ${ud ? ud.slice(8) + '/' + ud.slice(5, 7) : '—'}: ${kg1(udKg)} e ${Math.round(udCx)} cxs. Por máquina no último dia: ${udMaqTxt}.
@@ -2974,7 +2985,8 @@ function interpretarComando(q) {
   if (/\b(peso|kg|quilo|tonelada)/.test(s)) cmd.metrica = 'peso';
   if (/\b(caixa|cxs|cx|quantidade)/.test(s)) cmd.metrica = 'quantidade';
   const verboNav = /\b(abr[ea]|abrir|mostr[ae]|mostrar|v[ai]|ir (para|pra)|va (para|pra)|leva|leve|troca|trocar|muda|mudar|filtra|filtrar|selecion|exib[ae]|exibir|coloca|poe|abre a|ver)\b/.test(s);
-  const pergunta = /\b(quanto|qual|quais|quantos|quantas|por que|porque|media|melhor|pior|compar|analis|explica|resum[ae])\b|\?/.test(s);
+  const pergunta = /\b(quanto|qual|quais|quantos|quantas|por que|porque|media|melhor|pior|compar|analis|explica|resum[ae]|tenho|temos|esta|estao)\b|\?/.test(s);
+  if (pergunta && !verboNav) return null;                                  // é pergunta → a IA responde (não navega)
   if (cmd.aba || cmd.agenda) return cmd;                                   // alvo de tela explícito
   if ((cmd.setor || cmd.periodo || cmd.metrica) && verboNav && !pergunta) return cmd; // filtro c/ verbo
   return null;                                                            // caso contrário, é pergunta → IA
@@ -2990,7 +3002,7 @@ async function executarComando(cmd) {
   const aba = cmd.aba || ((cmd.setor || cmd.periodo || cmd.metrica) ? 'painel' : null);
   if (!aba) return 'Diga qual tela abrir: painel, itens, importar, histórico, usuários ou agenda.';
   if (aba === 'usuarios' && !souAdmin) return 'Você não tem acesso à tela de Usuários.';
-  if (aba !== 'usuarios' && aba !== 'metas' && aba !== 'oee' && !abasPermitidas.includes(aba)) return 'Você não tem acesso a essa tela.';
+  if (!['usuarios', 'metas', 'oee', 'manut'].includes(aba) && !abasPermitidas.includes(aba)) return 'Você não tem acesso a essa tela.';
   fecharIA();
   document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === aba));
   $('abaPainel').classList.toggle('oculto', aba !== 'painel');
