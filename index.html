@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.4.5</div>
+    <div class="ver-tag" id="verTag">versão 3.5.0</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.4.5</span>
+        <span class="ver-badge" id="verBadge">v3.5.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1064,7 +1064,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.4.5';
+const APP_VER = '3.5.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1835,7 +1835,7 @@ function setorSugerido(o) {
   if (/predial|ilumina|utilidade|ar comprimido|eletrica geral/.test(t)) return 'Predial / Utilidades';
   return 'Outros';
 }
-function formOS(o) {
+function formOS(o, editId) {
   const campo = (id, lbl, v, tipo) => `<div class="campo" style="margin-bottom:8px"><label for="os_${id}">${lbl}</label><input id="os_${id}" type="${tipo || 'text'}" value="${v == null ? '' : String(v).replace(/"/g, '&quot;')}"></div>`;
   const dt = s => s ? String(s).slice(0, 16) : '';
   const temMaq = !!o.recurso_cod;
@@ -1853,13 +1853,22 @@ function formOS(o) {
     campo('detalhes', 'Detalhes', o.detalhes) +
     campo('conclusao', 'Conclusão', o.conclusao) +
     `<div style="display:flex;gap:8px">${campo('colab', 'Colaboradores', o.colaboradores)}${campo('custo', 'Custo (R$)', o.custo, 'number')}</div>` +
-    `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarOS()">💾 Salvar OS</button>`;
+    `<input type="hidden" id="os_id" value="${editId || ''}">` +
+    ((editId && !o.data_reinicio) ? `<button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="fecharAgora()">✅ Concluir agora (usa data/hora atual)</button>` : '') +
+    `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarOS()">💾 ${editId ? 'Salvar alterações' : 'Salvar OS'}</button>`;
   $('osForm').classList.remove('oculto');
+  toggleEscopoOS();
 }
 
 function toggleEscopoOS() {
   const eh = $('os_escopo').value === 'Máquina';
   ['os_maq'].forEach(id => { const e = $(id); if (e) { e.disabled = !eh; e.style.background = eh ? '' : '#f1f4f7'; if (!eh) e.value = ''; } });
+}
+function fecharAgora() {
+  const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  const el = $('os_reinicio'); if (el) el.value = d.toISOString().slice(0, 16);
+  toast('Reinício preenchido — confira a conclusão e salve.');
+  const c = $('os_conclusao'); if (c) c.focus();
 }
 async function salvarOS() {
   const v = id => { const e = $('os_' + id); return e && e.value.trim() ? e.value.trim() : null; };
@@ -1876,13 +1885,25 @@ async function salvarOS() {
     criado_por_nome: perfil && perfil.nome
   };
   if (!reg.os_num) { toast('Informe o número da OS.'); return; }
-  const { error } = await sb.from('manutencao_os').upsert(reg, { onConflict: 'os_num' });
+  const editId = ($('os_id') && $('os_id').value) || null;
+  const { error } = editId
+    ? await sb.from('manutencao_os').update(reg).eq('id', editId)
+    : await sb.from('manutencao_os').upsert(reg, { onConflict: 'os_num' });
   if (error) { toast('❌ ' + error.message); return; }
   toast('✅ OS ' + reg.os_num + ' salva.');
   $('osForm').classList.add('oculto'); $('osStatus').textContent = '';
   osExtraida = null; carregarManut();
 }
 
+function editarOS(id) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  osExtraida = o;
+  formOS(o, o.id);
+  $('osStatus').innerHTML = (!o.data_reinicio)
+    ? `✏️ <b>OS ${escapeHtml(o.os_num || '')}</b> em aberto — informe o <b>reinício</b> e a <b>conclusão</b> para fechar.`
+    : `✏️ Editando a OS <b>${escapeHtml(o.os_num || '')}</b>.`;
+  $('osForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 async function carregarManut() {
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
@@ -1932,10 +1953,11 @@ function renderManut() {
   // lista
   const linhas = L.slice(0, 60).map(o => {
     const dt = o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '—';
-    const h = o.horas_parada ? fmtNum(o.horas_parada) + 'h' : (o.data_reinicio ? '—' : '<span style="color:#D64545">em aberto</span>');
-    return `<tr><td class="nome" style="text-align:left"><span class="cod">${escapeHtml(o.os_num || '—')}</span> ${escapeHtml(o.maquina_desc || o.recurso_cod || '')}<div style="font-size:11.5px;color:#5C7186">${dt} · ${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}</div></td><td style="text-align:center">${h}</td></tr>`;
+    const aberta = !o.data_reinicio;
+    const h = o.horas_parada ? fmtNum(o.horas_parada) + 'h' : (aberta ? '<span style="color:#D64545;font-weight:700">em aberto</span>' : '—');
+    return `<tr onclick="editarOS('${o.id}')" style="cursor:pointer"><td class="nome" style="text-align:left"><span class="cod">${escapeHtml(o.os_num || '—')}</span> ${escapeHtml(o.maquina_desc || o.recurso_cod || '')}<div style="font-size:11.5px;color:#5C7186">${dt} · ${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}</div></td><td style="text-align:center">${h}<div style="font-size:11px;color:#3A6FB0">${aberta ? 'concluir ›' : 'editar ›'}</div></td></tr>`;
   }).join('');
-  html += card('Últimas OS', L.length + ' registrada(s)', `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">OS · máquina</th><th>Parada</th></tr></thead><tbody>${linhas}</tbody></table></div>`);
+  html += card('Últimas OS', L.length + ' registrada(s) · toque para concluir ou editar', `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">OS · máquina</th><th>Parada</th></tr></thead><tbody>${linhas}</tbody></table></div>`);
   box.innerHTML = html;
 }
 
