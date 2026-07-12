@@ -344,7 +344,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.9.1</div>
+    <div class="ver-tag" id="verTag">versão 3.10.0</div>
   </div>
 </div>
 
@@ -384,7 +384,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.9.1</span>
+        <span class="ver-badge" id="verBadge">v3.10.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -538,10 +538,13 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         <div class="titulo-sec">Manutenção · Ordens de Serviço</div>
         <p class="desc" style="margin-bottom:10px">Tire uma foto da OS — a IA lê os campos, você confere e salva. Vira histórico por máquina.</p>
         <input type="file" id="osCam" accept="image/*" capture="environment" style="display:none" onchange="lerFotoOS(this)">
-        <input type="file" id="osFoto" accept="image/*,application/pdf" style="display:none" onchange="lerFotoOS(this)">
+        <input type="file" id="osFoto" accept="image/*,application/pdf" multiple style="display:none" onchange="lerFotoOS(this)">
         <div style="display:flex;gap:8px">
           <button class="btn btn-verde" style="flex:1" onclick="document.getElementById('osCam').click()">📷 Tirar foto</button>
           <button class="btn btn-borda" style="flex:1" onclick="document.getElementById('osFoto').click()">📎 Galeria ou PDF</button>
+        </div>
+        <div id="osDrop" style="margin-top:10px;border:2px dashed #C7D4E0;border-radius:12px;padding:16px;text-align:center;color:#5C7186;font-size:13px;background:#FAFCFE">
+          📥 <b>Arraste várias OS aqui</b> (fotos ou PDFs) — ou toque em “Galeria ou PDF” e selecione várias
         </div>
         <p class="desc" style="margin-top:6px;text-align:center;font-size:12px">O PDF do ERP é lido com mais precisão que a foto do papel</p>
         <div id="osStatus" class="desc" style="margin-top:8px;text-align:center"></div>
@@ -1078,7 +1081,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.9.1';
+const APP_VER = '3.10.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1854,8 +1857,62 @@ function osRapida(input) {
   trocarAba('manut');
   setTimeout(() => lerFotoOS(input), 150);
 }
+// ===== leitura em LOTE (várias OS de uma vez) =====
+async function lerArquivoOS(f) {
+  const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
+  let b64, mime;
+  if (ehPdf) {
+    b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+    mime = 'application/pdf';
+  } else {
+    const c = await comprimirFoto(f); b64 = c.b64; mime = c.mime;
+  }
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(`${SB_URL}/functions/v1/os-ocr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (session && session.access_token) },
+    body: JSON.stringify({ imagem: b64, mime })
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok || !d || !d.os || d.os.erro) throw new Error((d && (d.error || (d.os && d.os.erro))) || ('HTTP ' + r.status));
+  return d.os;
+}
+async function lerLoteOS(files) {
+  const st = $('osStatus');
+  $('osForm').classList.add('oculto');
+  const res = { ok: [], erro: [] };
+  for (let i = 0; i < files.length; i++) {
+    st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo OS ${i + 1} de ${files.length}…`;
+    try {
+      const o = await lerArquivoOS(files[i]);
+      const cod = o.recurso_cod ? String(o.recurso_cod) : null;
+      const reg = {
+        os_num: o.os_num, recurso_cod: cod, maquina_desc: o.maquina_desc,
+        escopo: cod ? 'Máquina' : 'Setor/Área', setor: setorSugerido(o),
+        atividade: o.atividade, motivo: o.motivo, urgencia: o.urgencia,
+        maquina_parada: /parad/i.test(o.situacao_maquina || ''),
+        situacao_maquina: o.situacao_maquina,
+        data_abertura: o.data_abertura, data_parada: o.data_parada, data_reinicio: o.data_reinicio,
+        detalhes: o.detalhes, conclusao: o.conclusao, colaboradores: o.colaboradores,
+        custo: parseFloat(o.custo || 0) || 0,
+        criado_por_nome: perfil && perfil.nome
+      };
+      if (!reg.os_num) throw new Error('sem número de OS');
+      const { error } = await sb.from('manutencao_os').upsert(reg, { onConflict: 'os_num' });
+      if (error) throw new Error(error.message);
+      try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (lote)' }); } catch (_) {}
+      res.ok.push(reg.os_num);
+    } catch (e) { res.erro.push((files[i].name || 'arquivo') + ': ' + (e.message || 'falhou')); }
+  }
+  st.innerHTML = `✅ <b>${res.ok.length} OS importada(s)</b>${res.ok.length ? ' — ' + res.ok.join(', ') : ''}` +
+    (res.erro.length ? `<br><span style="color:#D64545">⚠️ ${res.erro.length} falhou(ram): ${escapeHtml(res.erro.join(' · '))}</span>` : '') +
+    `<br><span class="desc">Abra cada OS na lista para preencher a tratativa (máquina parada, prioridade, conclusão).</span>`;
+  carregarManut();
+}
 function lerFotoOS(input) {
-  const f = input.files && input.files[0]; if (!f) return;
+  const fs = [...(input.files || [])];
+  if (fs.length > 1) { lerLoteOS(fs); input.value = ''; return; }   // várias de uma vez
+  const f = fs[0]; if (!f) return;
   const st = $('osStatus');
   st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo a OS com a IA…';
   $('osForm').classList.add('oculto');
@@ -2078,7 +2135,24 @@ function editarOS(id) {
     : '✏️ Editando a OS <b>' + escapeHtml(o.os_num || '') + '</b>.';
   $('osForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
+function ligarDropOS() {
+  const dz = $('osDrop'); if (!dz || dz.dataset.on) return;
+  dz.dataset.on = '1';
+  const prev = e => { e.preventDefault(); e.stopPropagation(); };
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { prev(e); dz.style.borderColor = 'var(--verde)'; dz.style.background = '#F0FAF5'; }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { prev(e); dz.style.borderColor = '#C7D4E0'; dz.style.background = '#FAFCFE'; }));
+  dz.addEventListener('drop', e => {
+    const fs = [...(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : [])]
+      .filter(f => /^image\//.test(f.type) || /pdf$/i.test(f.type));
+    if (!fs.length) { toast('Solte fotos ou PDFs de OS.'); return; }
+    if (fs.length === 1) { const dt = new DataTransfer(); dt.items.add(fs[0]); const inp = $('osFoto'); inp.files = dt.files; lerFotoOS(inp); }
+    else lerLoteOS(fs);
+  });
+  dz.addEventListener('click', () => $('osFoto').click());
+  dz.style.cursor = 'pointer';
+}
 async function carregarManut() {
+  ligarDropOS();
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
   try {
