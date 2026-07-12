@@ -341,7 +341,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.4.3</div>
+    <div class="ver-tag" id="verTag">versão 3.4.4</div>
   </div>
 </div>
 
@@ -381,7 +381,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.4.3</span>
+        <span class="ver-badge" id="verBadge">v3.4.4</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1064,7 +1064,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.4.3';
+const APP_VER = '3.4.4';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1814,13 +1814,32 @@ function lerFotoOS(input) {
   })();
 }
 
+const AREAS_OS = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'KIT', 'Predial / Utilidades', 'Almoxarifado', 'Outros'];
+function setorSugerido(o) {
+  if (o.recurso_cod && setorDe(o.recurso_cod) !== 'Outros') return setorDe(o.recurso_cod);
+  const t = _norm((o.setor || '') + ' ' + (o.detalhes || ''));
+  if (/\bkit\b/.test(t)) return 'KIT';
+  if (/rotula/.test(t)) return 'Rotulagem';
+  if (/termoform/.test(t)) return 'Termoformagem';
+  if (/impress/.test(t)) return 'Impressão';
+  if (/extrus/.test(t)) return 'Extrusão';
+  if (/sleeve|posimec/.test(t)) return 'Sleeve';
+  if (/embalad/.test(t)) return 'Embaladeiras';
+  if (/predial|ilumina|utilidade|ar comprimido|eletrica geral/.test(t)) return 'Predial / Utilidades';
+  return 'Outros';
+}
 function formOS(o) {
   const campo = (id, lbl, v, tipo) => `<div class="campo" style="margin-bottom:8px"><label for="os_${id}">${lbl}</label><input id="os_${id}" type="${tipo || 'text'}" value="${v == null ? '' : String(v).replace(/"/g, '&quot;')}"></div>`;
   const dt = s => s ? String(s).slice(0, 16) : '';
+  const temMaq = !!o.recurso_cod;
+  const escopoSel = `<div class="campo" style="margin-bottom:8px"><label for="os_escopo">Escopo da OS</label><select id="os_escopo" onchange="toggleEscopoOS()"><option value="Máquina" ${temMaq ? 'selected' : ''}>Máquina</option><option value="Setor/Área" ${!temMaq ? 'selected' : ''}>Setor / Área (sem máquina)</option></select></div>`;
+  const setSug = setorSugerido(o);
+  const setorSel = `<div class="campo" style="margin-bottom:8px"><label for="os_setor">Setor / Área</label><select id="os_setor">${AREAS_OS.map(a => `<option ${a === setSug ? 'selected' : ''}>${a}</option>`).join('')}</select></div>`;
   $('osForm').innerHTML =
     campo('num', 'Nº da OS', o.os_num) +
+    escopoSel + setorSel +
     `<div style="display:flex;gap:8px">${campo('maq', 'Máquina (código)', o.recurso_cod)}${campo('ativ', 'Atividade', o.atividade)}</div>` +
-    campo('maqdesc', 'Descrição da máquina', o.maquina_desc) +
+    campo('maqdesc', 'Descrição da máquina / local', o.maquina_desc) +
     campo('motivo', 'Motivo', o.motivo) +
     `<div style="display:flex;gap:8px">${campo('abertura', 'Abertura', dt(o.data_abertura), 'datetime-local')}${campo('urg', 'Urgência', o.urgencia)}</div>` +
     `<div style="display:flex;gap:8px">${campo('parada', 'Data parada', dt(o.data_parada), 'datetime-local')}${campo('reinicio', 'Data reinício', dt(o.data_reinicio), 'datetime-local')}</div>` +
@@ -1831,14 +1850,19 @@ function formOS(o) {
   $('osForm').classList.remove('oculto');
 }
 
+function toggleEscopoOS() {
+  const eh = $('os_escopo').value === 'Máquina';
+  ['os_maq'].forEach(id => { const e = $(id); if (e) { e.disabled = !eh; e.style.background = eh ? '' : '#f1f4f7'; if (!eh) e.value = ''; } });
+}
 async function salvarOS() {
   const v = id => { const e = $('os_' + id); return e && e.value.trim() ? e.value.trim() : null; };
   const cod = v('maq');
   const par = v('parada'), rei = v('reinicio');
   const horas = (par && rei) ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
+  const escopo = ($('os_escopo') && $('os_escopo').value) || 'Máquina';
   const reg = {
-    os_num: v('num'), recurso_cod: cod, maquina_desc: v('maqdesc'),
-    setor: cod ? setorDe(cod) : null, atividade: v('ativ'), motivo: v('motivo'),
+    os_num: v('num'), recurso_cod: escopo === 'Máquina' ? cod : null, maquina_desc: v('maqdesc'),
+    escopo, setor: ($('os_setor') && $('os_setor').value) || null, atividade: v('ativ'), motivo: v('motivo'),
     urgencia: v('urg'), data_abertura: v('abertura'), data_parada: par, data_reinicio: rei,
     detalhes: v('detalhes'), conclusao: v('conclusao'), colaboradores: v('colab'),
     custo: parseFloat(v('custo') || '0') || 0, horas_parada: horas,
@@ -1854,7 +1878,7 @@ async function salvarOS() {
 
 async function carregarManut() {
   const sel = $('manutSetor');
-  if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + Object.keys(SETOR_MAQ).map(s => `<option value="${s}">${s}</option>`).join('');
+  if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
   try {
     const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500);
     osLista = data || [];
@@ -1866,6 +1890,7 @@ function renderManut() {
   const box = $('manutConteudo');
   const st = $('manutSetor').value;
   const L = st ? osLista.filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === st) : osLista;
+  const Lmaq = L.filter(o => o.recurso_cod), Larea = L.filter(o => !o.recurso_cod);
   if (!L.length) { box.innerHTML = '<p class="desc">Nenhuma OS registrada' + (st ? ' em ' + escapeHtml(st) : '') + ' ainda.</p>'; return; }
   const totH = L.reduce((a, o) => a + (o.horas_parada || 0), 0);
   const totC = L.reduce((a, o) => a + (o.custo || 0), 0);
@@ -1873,14 +1898,21 @@ function renderManut() {
   let html = `<div class="kpis" style="margin-bottom:10px">
     <div class="kpi"><div class="v">${L.length}</div><div class="l">OS registradas</div></div>
     <div class="kpi"><div class="v">${abertas}</div><div class="l">Em aberto</div></div>
+    <div class="kpi"><div class="v">${Lmaq.length}<small> / ${Larea.length}</small></div><div class="l">Máquina / Área</div></div>
     <div class="kpi"><div class="v">${fmtNum(totH)}<small> h</small></div><div class="l">Horas paradas (OS)</div></div>
     <div class="kpi"><div class="v">${totC ? 'R$ ' + fmtNum(totC) : '—'}</div><div class="l">Custo total</div></div>
   </div>`;
 
-  // Pareto por máquina (nº de OS) e por atividade
-  const pm = {}; L.forEach(o => { const k = (o.recurso_cod || '—') + ' · ' + (o.maquina_desc || ''); pm[k] = (pm[k] || 0) + 1; });
-  const arrM = Object.entries(pm).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v).slice(0, 12);
-  html += card('OS por máquina', 'nº de ordens · quem mais chama manutenção', barrasHorizontal(arrM, 'OS'));
+  // OS por máquina (só as com máquina)
+  if (Lmaq.length) {
+    const pm = {}; Lmaq.forEach(o => { const k = o.recurso_cod + ' · ' + (o.maquina_desc || ''); pm[k] = (pm[k] || 0) + 1; });
+    const arrM = Object.entries(pm).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v).slice(0, 12);
+    html += card('OS por máquina', Lmaq.length + ' OS de máquina · quem mais chama manutenção', barrasHorizontal(arrM, 'OS'));
+  }
+  // OS por setor/área (inclui as sem máquina: predial, iluminação, KIT…)
+  { const ps = {}; L.forEach(o => { const k = o.setor || '—'; ps[k] = (ps[k] || 0) + 1; });
+    const arrS = Object.entries(ps).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v);
+    html += card('OS por setor / área', Larea.length ? Larea.length + ' OS sem máquina (área/predial)' : 'distribuição por área', barrasHorizontal(arrS, 'OS')); }
 
   const pa = {}; L.forEach(o => { const k = (o.atividade || '—').toUpperCase(); pa[k] = (pa[k] || 0) + 1; });
   const arrA = Object.entries(pa).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v);
