@@ -344,7 +344,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.7.1</div>
+    <div class="ver-tag" id="verTag">versão 3.8.0</div>
   </div>
 </div>
 
@@ -384,7 +384,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small></h1>
-        <span class="ver-badge" id="verBadge">v3.7.1</span>
+        <span class="ver-badge" id="verBadge">v3.8.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -548,11 +548,19 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         <div id="osForm" class="oculto" style="margin-top:12px"></div>
       </div>
       <div class="card">
-        <div class="titulo-sec">Histórico e análise</div>
+        <div id="mntResumo" style="text-align:center;margin-bottom:6px"></div>
         <div class="painel-filtros" style="margin-bottom:8px">
           <div class="campo" style="margin:0;flex:1">
-            <label for="manutSetor">Setor</label>
+            <label for="manutSetor">Setor / Área</label>
             <select id="manutSetor" onchange="renderManut()"><option value="">Todos</option></select>
+          </div>
+          <div class="campo" style="margin:0;flex:1">
+            <label for="manutStatus">Situação</label>
+            <select id="manutStatus" onchange="renderManut()">
+              <option value="">Todas</option>
+              <option value="ab">Em aberto</option>
+              <option value="fe">Concluídas</option>
+            </select>
           </div>
         </div>
         <div id="manutConteudo"><p class="desc">Carregando…</p></div>
@@ -1070,7 +1078,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.7.1';
+const APP_VER = '3.8.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1892,6 +1900,7 @@ function formOS(o, editId) {
     `<input type="hidden" id="os_abertura" value="${dt(o.data_abertura)}">` +
     `<input type="hidden" id="os_detalhes" value="${(o.detalhes || '').replace(/"/g, '&quot;')}">` +
     ((editId && !o.data_reinicio) ? `<button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="fecharAgora()">✅ Concluir agora (data/hora atual)</button>` : '') +
+    (editId ? `<button class="btn" style="width:100%;margin-top:8px;background:#fff;color:#D64545;border:1.5px solid #D64545" onclick="apagarOS('${editId}')">🗑 Apagar esta OS</button>` : '') +
     `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarOS()">💾 ${editId ? 'Salvar alterações' : 'Salvar OS'}</button>`;
   osFotosProb = (o.fotos ? String(o.fotos).split('|').filter(Boolean) : []).map(u => ({ url: u }));
   $('osForm').classList.remove('oculto');
@@ -1978,35 +1987,36 @@ async function carregarManut() {
 
 function renderManut() {
   const box = $('manutConteudo');
-  const st = $('manutSetor').value;
-  const L = st ? osLista.filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === st) : osLista;
+  const st = $('manutSetor').value, sit = ($('manutStatus') && $('manutStatus').value) || '';
+  let L = st ? osLista.filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === st) : osLista.slice();
+  if (sit === 'ab') L = L.filter(o => !o.data_reinicio);
+  if (sit === 'fe') L = L.filter(o => !!o.data_reinicio);
+
+  { const r = $('mntResumo'); if (r) r.innerHTML =
+      `<div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Ordens de Serviço</div>` +
+      `<div style="font-size:11px;color:#5C7186;margin-top:1px">${escapeHtml(st || 'Todos os setores')} · ${sit === 'ab' ? 'em aberto' : sit === 'fe' ? 'concluídas' : 'todas'} · ${L.length} OS</div>`; }
+
+  if (!L.length) { box.innerHTML = '<p class="desc" style="text-align:center;padding:16px">Nenhuma OS encontrada com esses filtros.</p>'; return; }
+
   const Lmaq = L.filter(o => o.recurso_cod), Larea = L.filter(o => !o.recurso_cod);
-  if (!L.length) { box.innerHTML = '<p class="desc">Nenhuma OS registrada' + (st ? ' em ' + escapeHtml(st) : '') + ' ainda.</p>'; return; }
-  const totH = L.reduce((a, o) => a + (o.horas_parada || 0), 0);
+  const abertas = L.filter(o => !o.data_reinicio);
+  const paradasAgora = L.filter(o => o.maquina_parada && !o.data_reinicio).length;
+  const concl = L.filter(o => o.horas_parada != null && o.data_reinicio);
+  const mttr = concl.length ? concl.reduce((a, o) => a + (o.horas_parada || 0), 0) / concl.length : null;
   const totC = L.reduce((a, o) => a + (o.custo || 0), 0);
-  const abertas = L.filter(o => !o.data_reinicio).length;
+  const grupoAtiv = o => { const a = _norm(o.atividade || ''); return /eletr/.test(a) ? 'Elétrica' : /mecan/.test(a) ? 'Mecânica' : 'Outras'; };
+  const prioDe = o => { const u = _norm(o.urgencia || ''); return /alta/.test(u) ? 'Alta' : /baix/.test(u) ? 'Baixa' : 'Média'; };
+  const corPrio = { 'Alta': '#D64545', 'Média': '#E0A82D', 'Baixa': '#3CA96E' };
+
   let html = `<div class="kpis" style="margin-bottom:10px">
-    <div class="kpi"><div class="v">${L.length}</div><div class="l">OS registradas</div></div>
-    <div class="kpi"><div class="v">${abertas}</div><div class="l">Em aberto</div></div>
+    <div class="kpi"><div class="v">${L.length}</div><div class="l">OS no filtro</div></div>
+    <div class="kpi"><div class="v" style="color:${abertas.length ? '#D64545' : 'var(--navy)'}">${abertas.length}</div><div class="l">Em aberto</div></div>
+    <div class="kpi"><div class="v" style="color:${paradasAgora ? '#D64545' : 'var(--navy)'}">${paradasAgora}</div><div class="l">Máquinas paradas</div></div>
+    <div class="kpi"><div class="v">${mttr != null ? fmtNum(mttr) : '—'}<small> h</small></div><div class="l">MTTR (médio)</div></div>
     <div class="kpi"><div class="v">${Lmaq.length}<small> / ${Larea.length}</small></div><div class="l">Máquina / Área</div></div>
-    <div class="kpi"><div class="v" style="color:${L.filter(o => o.maquina_parada && !o.data_reinicio).length ? '#D64545' : 'var(--navy)'}">${L.filter(o => o.maquina_parada && !o.data_reinicio).length}</div><div class="l">Máquinas paradas agora</div></div>
-    <div class="kpi"><div class="v">${fmtNum(totH)}<small> h</small></div><div class="l">Horas paradas (OS)</div></div>
     <div class="kpi"><div class="v">${totC ? 'R$ ' + fmtNum(totC) : '—'}</div><div class="l">Custo total</div></div>
   </div>`;
 
-  // OS por máquina (só as com máquina)
-  if (Lmaq.length) {
-    const pm = {}; Lmaq.forEach(o => { const k = o.recurso_cod + ' · ' + (o.maquina_desc || ''); pm[k] = (pm[k] || 0) + 1; });
-    const arrM = Object.entries(pm).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v).slice(0, 12);
-    html += card('OS por máquina', Lmaq.length + ' OS de máquina · quem mais chama manutenção', barrasHorizontal(arrM, 'OS'));
-  }
-  // OS por setor/área (inclui as sem máquina: predial, iluminação, KIT…)
-  { const ps = {}; L.forEach(o => { const k = o.setor || '—'; ps[k] = (ps[k] || 0) + 1; });
-    const arrS = Object.entries(ps).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v);
-    html += card('OS por setor / área', Larea.length ? Larea.length + ' OS sem máquina (área/predial)' : 'distribuição por área', barrasHorizontal(arrS, 'OS')); }
-
-  // abertas × fechadas por atividade (Elétrica / Mecânica / Outras)
-  const grupoAtiv = o => { const a = _norm(o.atividade || ''); return /eletr/.test(a) ? 'Elétrica' : /mecan/.test(a) ? 'Mecânica' : 'Outras'; };
   { const g = { 'Elétrica': { ab: 0, fe: 0 }, 'Mecânica': { ab: 0, fe: 0 }, 'Outras': { ab: 0, fe: 0 } };
     L.forEach(o => { const k = grupoAtiv(o); if (o.data_reinicio) g[k].fe++; else g[k].ab++; });
     const arr = [];
@@ -2017,7 +2027,15 @@ function renderManut() {
     if (arr.length) html += card('Abertas × concluídas por atividade', 'vermelho = em aberto · verde = concluída', barrasHorizontal(arr, 'OS'));
   }
 
-  // Pareto de motivos: Elétrica e Mecânica separados
+  if (Lmaq.length) {
+    const pm = {}; Lmaq.forEach(o => { const k = o.recurso_cod + ' · ' + (o.maquina_desc || ''); pm[k] = (pm[k] || 0) + 1; });
+    const arrM = Object.entries(pm).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v).slice(0, 12);
+    html += card('OS por máquina', Lmaq.length + ' OS de máquina · quem mais chama manutenção', barrasHorizontal(arrM, 'OS'));
+  }
+  { const ps = {}; L.forEach(o => { const k = o.setor || '—'; ps[k] = (ps[k] || 0) + 1; });
+    const arrS = Object.entries(ps).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v);
+    html += card('OS por setor / área', Larea.length ? Larea.length + ' OS sem máquina (área/predial)' : 'distribuição por área', barrasHorizontal(arrS, 'OS')); }
+
   ['Elétrica', 'Mecânica'].forEach(gr => {
     const sub = L.filter(o => grupoAtiv(o) === gr);
     if (!sub.length) return;
@@ -2026,26 +2044,38 @@ function renderManut() {
     html += card('Pareto de motivos · ' + gr, sub.length + ' OS ' + (gr === 'Elétrica' ? 'elétricas' : 'mecânicas'), paretoSVG(arrMo, v => v + ' OS') + paretoHorizontal(arrMo, v => v + ' OS'));
   });
 
-  // prioridade
   { const pp = { 'Alta': 0, 'Média': 0, 'Baixa': 0 };
-    L.forEach(o => { const u = _norm(o.urgencia || ''); const k = /alta/.test(u) ? 'Alta' : /baix/.test(u) ? 'Baixa' : 'Média'; pp[k]++; });
-    const corP = { 'Alta': '#D64545', 'Média': '#E0A82D', 'Baixa': '#3CA96E' };
-    const arrP = ['Alta', 'Média', 'Baixa'].filter(k => pp[k]).map(k => ({ l: k, v: pp[k], cor: corP[k] }));
+    L.forEach(o => pp[prioDe(o)]++);
+    const arrP = ['Alta', 'Média', 'Baixa'].filter(k => pp[k]).map(k => ({ l: k, v: pp[k], cor: corPrio[k] }));
     if (arrP.length) html += card('OS por prioridade', 'alta · média · baixa', barrasHorizontal(arrP, 'OS'));
   }
 
-  // lista
-  const linhas = L.slice(0, 60).map(o => {
-    const dt = o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '—';
+  const itens = L.slice(0, 60).map(o => {
     const aberta = !o.data_reinicio;
-    const h = o.horas_parada ? fmtNum(o.horas_parada) + 'h' : (aberta ? '<span style="color:#D64545;font-weight:700">em aberto</span>' : '—');
-    const nFotos = o.fotos ? String(o.fotos).split('|').filter(Boolean).length : 0;
-    return `<tr onclick="editarOS('${o.id}')" style="cursor:pointer"><td class="nome" style="text-align:left"><span class="cod">${escapeHtml(o.os_num || '—')}</span> ${escapeHtml(o.maquina_desc || o.recurso_cod || '')}${nFotos ? ` <span style="font-size:11px">📷${nFotos}</span>` : ''}<div style="font-size:11.5px;color:#5C7186">${dt} · ${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}</div></td><td style="text-align:center">${h}<div style="font-size:11px;color:#3A6FB0">${aberta ? 'concluir ›' : 'editar ›'}</div></td></tr>`;
+    const p = prioDe(o), nF = o.fotos ? String(o.fotos).split('|').filter(Boolean).length : 0;
+    const dt = o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '—';
+    const chip = (txt, bg, fg) => `<span style="background:${bg};color:${fg || '#fff'};border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap">${txt}</span>`;
+    return `<div onclick="editarOS('${o.id}')" style="cursor:pointer;border:1px solid var(--borda);border-left:4px solid ${aberta ? '#D64545' : '#2E8B57'};border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;color:var(--navy)">OS ${escapeHtml(o.os_num || '—')} · ${escapeHtml(o.recurso_cod || o.setor || '')}</div>
+          <div style="font-size:12.5px;color:#41505E;margin-top:1px">${escapeHtml(o.maquina_desc || '')}</div>
+          <div style="font-size:12px;color:#5C7186;margin-top:3px">${escapeHtml(o.motivo || '')}</div>
+        </div>
+        <div style="text-align:right;font-size:12px;color:#5C7186;white-space:nowrap">${dt}<div style="margin-top:3px;font-weight:700;color:${aberta ? '#D64545' : 'var(--navy)'}">${o.horas_parada != null ? fmtNum(o.horas_parada) + 'h' : (aberta ? 'em aberto' : '—')}</div></div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">
+        ${chip(aberta ? 'EM ABERTO' : 'CONCLUÍDA', aberta ? '#D64545' : '#2E8B57')}
+        ${chip(grupoAtiv(o), '#16283A')}
+        ${chip('Prior. ' + p, corPrio[p])}
+        ${o.maquina_parada && aberta ? chip('MÁQUINA PARADA', '#8B0000') : ''}
+        ${nF ? chip('📷 ' + nF, '#F1F4F7', '#41505E') : ''}
+      </div>
+    </div>`;
   }).join('');
-  html += card('Últimas OS', L.length + ' registrada(s) · toque para concluir ou editar', `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">OS · máquina</th><th>Parada</th></tr></thead><tbody>${linhas}</tbody></table></div>`);
+  html += card('Ordens registradas', L.length + ' OS · toque para concluir, editar ou apagar', itens);
   box.innerHTML = html;
 }
-
 async function carregarOEE() {
   await getOeeFatores();
   if (!infoImports) infoImports = await carregarInfoImports();
