@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.18.0</div>
+    <div class="ver-tag" id="verTag">versão 3.18.1</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.18.0</span>
+        <span class="ver-badge" id="verBadge">v3.18.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1104,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.18.0';
+const APP_VER = '3.18.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2434,23 +2434,40 @@ function renderRoteamento() {
 async function aplicarRoteamento() {
   await getRoteamento(); await getUsuariosOS();
   if (!osRoteamento || !Object.keys(osRoteamento).length) { toast('Configure ao menos um tipo antes.'); return; }
-  const alvo = osLista.filter(o => !o.responsavel_id && !o.data_reinicio);   // em aberto e sem responsável
-  if (!alvo.length) { toast('Nenhuma OS em aberto sem responsável.'); return; }
-  confirmarApp(`Direcionar <b>${alvo.length} OS em aberto</b> conforme as regras por tipo?<br><span style="font-size:12.5px;color:#5C7186">Só as que tiverem tipo com responsável configurado serão direcionadas. Nada é apagado.</span>`, async () => {
-    let n = 0, semRegra = 0;
+
+  // OS em aberto cuja equipe do tipo ainda não está completa (não duplica ninguém)
+  const pend = [];
+  osLista.filter(o => !o.data_reinicio).forEach(o => {
+    const ids = idsDoTipo(tipoOS(o.atividade, o.motivo));
+    if (!ids.length) return;
+    const atuais = String(o.responsaveis || o.responsavel_id || '').split('|').filter(Boolean);
+    // se a OS foi transferida a alguém fora da equipe do tipo, respeita e não mexe
+    const manual = atuais.some(id => !ids.includes(id));
+    if (manual) return;
+    const faltam = ids.filter(id => !atuais.includes(id));
+    if (faltam.length) pend.push({ o, ids, faltam });
+  });
+
+  if (!pend.length) { toast('Todas as OS já estão com a equipe correta.'); return; }
+  const novos = pend.filter(p => !p.o.responsavel_id).length;
+  const compl = pend.length - novos;
+
+  confirmarApp(`Atualizar <b>${pend.length} OS em aberto</b>?<br><span style="font-size:12.5px;color:#5C7186">${novos} sem responsável receberão a equipe do tipo · ${compl} já têm alguém e ganharão apenas quem falta. Ninguém é duplicado e nada é apagado.</span>`, async () => {
+    let n = 0;
     const st = $('osStatus');
-    for (let i = 0; i < alvo.length; i++) {
-      const o = alvo[i];
-      const ra = respAuto(o);
-      if (!ra.id) { semRegra++; continue; }
-      if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Direcionando ${i + 1} de ${alvo.length}…`;
-      const { error } = await sb.from('manutencao_os').update({ responsavel_id: ra.id, responsavel_nome: ra.nome, responsaveis: ra.ids.join('|') }).eq('id', o.id);
-      if (!error) { n++; registrarEvento(o, 'direcionada', ra.nome); }
+    for (let i = 0; i < pend.length; i++) {
+      const { o, ids } = pend[i];
+      if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Atualizando ${i + 1} de ${pend.length}…`;
+      const nomes = ids.map(nomeDe).filter(Boolean).join(', ');
+      const { error } = await sb.from('manutencao_os')
+        .update({ responsavel_id: ids[0], responsavel_nome: nomes, responsaveis: ids.join('|') })
+        .eq('id', o.id);
+      if (!error) { n++; registrarEvento(o, o.responsavel_id ? 'transferida' : 'direcionada', nomes); }
     }
-    if (st) st.innerHTML = `✅ <b>${n} OS direcionada(s)</b>${semRegra ? ` · ${semRegra} sem regra para o tipo (defina o responsável do tipo)` : ''}`;
-    toast(`✅ ${n} OS direcionadas.`);
+    if (st) st.innerHTML = `✅ <b>${n} OS atualizada(s)</b> conforme as equipes por tipo.`;
+    toast(`✅ ${n} OS atualizadas.`);
     carregarManut();
-  }, '➡️ Direcionar', '#2E8B57');
+  }, '➡️ Atualizar', '#2E8B57');
 }
 async function addRoteamento(tipo, userId) {
   if (!userId) return;
