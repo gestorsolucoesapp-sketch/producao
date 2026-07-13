@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.13.0</div>
+    <div class="ver-tag" id="verTag">versão 3.13.1</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.13.0</span>
+        <span class="ver-badge" id="verBadge">v3.13.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1097,7 +1097,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.13.0';
+const APP_VER = '3.13.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1448,6 +1448,21 @@ const ABAS = [
 const SETORES_PADRAO = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Manutenção', 'KIT', 'Qualidade', 'PCP / Programação', 'Almoxarifado', 'Administrativo', 'Outro'];
 let setoresLista = null;   // categorias (setores) — editáveis pelo admin
 let telasSetor = null;     // { setor: ['painel','manut',...] } — padrão por setor
+let setorRestrito = null;  // { setor: true } — vê apenas os dados do próprio setor
+async function getSetorRestrito() {
+  if (setorRestrito) return setorRestrito;
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'setor_restrito').maybeSingle();
+    setorRestrito = (data && data.valor) ? (JSON.parse(data.valor) || {}) : {};
+  } catch (_) { setorRestrito = {}; }
+  return setorRestrito;
+}
+// setor da produção ao qual o usuário está travado (null = vê tudo)
+function setorTravado() {
+  if (souAdmin || !perfil || !perfil.setor) return null;
+  if (!setorRestrito || !setorRestrito[perfil.setor]) return null;
+  return SETOR_MAQ[perfil.setor] ? perfil.setor : null;   // só trava se for um setor de produção
+}
 async function getSetoresLista() {
   if (setoresLista) return setoresLista;
   try {
@@ -1597,7 +1612,7 @@ async function mostrarApp() {
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
   if (souAdmin) { abasPermitidas = ['painel', 'analise', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
   else {
-    await getTelasSetor();
+    await getTelasSetor(); await getSetorRestrito();
     if (perfil && perfil.abas_excecao && Array.isArray(perfil.abas)) abasPermitidas = perfil.abas.slice();          // exceção individual
     else abasPermitidas = (perfil && perfil.setor && Array.isArray(telasSetor[perfil.setor])) ? telasSetor[perfil.setor].slice() : ['painel']; // padrão do setor
     if (!abasPermitidas.includes('painel')) abasPermitidas.push('painel');
@@ -2233,6 +2248,7 @@ function ligarDropOS() {
   dz.style.cursor = 'pointer';
 }
 async function carregarManut() {
+  setTimeout(travarSetores, 0);
   ligarDropOS();
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
@@ -2345,6 +2361,7 @@ function renderManut() {
   box.innerHTML = html;
 }
 async function carregarOEE() {
+  setTimeout(travarSetores, 0);
   await getOeeFatores();
   if (!infoImports) infoImports = await carregarInfoImports();
   montarSeletorPeriodo(infoImports, 'oeePeriodo');
@@ -2510,6 +2527,15 @@ let infoImports = null; // cache do resumo de importações (período min/max)
 const MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 function mesLabel(ym) { const [a, m] = ym.split('-'); return MES_ABREV[+m - 1] + '/' + a; }
 function ultimoDiaMes(ym) { const [a, m] = ym.split('-').map(Number); const d = new Date(a, m, 0).getDate(); return `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+// aplica a trava de setor nos seletores da tela
+function travarSetores() {
+  const s = setorTravado(); if (!s) return;
+  [['setor', true], ['anSetor', true], ['oeeSetor', false], ['manutSetor', true]].forEach(([id]) => {
+    const el = $(id); if (!el) return;
+    el.innerHTML = `<option value="${s}">${escapeHtml(s)}</option>`;
+    el.value = s; el.disabled = true; el.style.background = '#F1F4F7';
+  });
+}
 function montarSeletorPeriodo(imps, selId) {
   const sel = $(selId || 'fPeriodo'); if (!sel) return;
   const wrap = sel.closest('.campo');
@@ -2538,6 +2564,7 @@ function mudarPeriodo() { aplicarPeriodo($('fPeriodo').value); carregarPainel();
 function mudarPeriodoAnalise() { aplicarPeriodo($('anPeriodo').value); carregarAnalise(); }
 
 async function carregarPainel() {
+  setTimeout(travarSetores, 0);
   const box = $('painelConteudo');
   if (!dadosPainel) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
@@ -2916,6 +2943,7 @@ function calcSetup(setor) {
   setupInfo = arr.length ? { media: h / arr.length, eventos: arr.length, horas: h } : null;
 }
 async function carregarAnalise() {
+  setTimeout(travarSetores, 0);
   const box = $('analiseConteudo');
   if (!infoImports) infoImports = await carregarInfoImports();
   montarSeletorPeriodo(infoImports, 'anPeriodo'); // define recorte padrão e popula o seletor
@@ -4010,7 +4038,7 @@ const fmtDataHora = iso => {
 };
 
 async function renderTelasSetor() {
-  await getSetoresLista(); await getTelasSetor();
+  await getSetoresLista(); await getTelasSetor(); await getSetorRestrito();
   const box = $('telasSetorBox'); if (!box) return;
   box.innerHTML = setoresLista.map(s => {
     const sel = telasSetor[s] || [];
@@ -4021,9 +4049,17 @@ async function renderTelasSetor() {
       </div>
       <div class="usr-telas" style="margin-top:6px">${ABAS.map(a =>
         `<label><input type="checkbox" ${sel.includes(a.id) ? 'checked' : ''} onchange="togTelaSetor('${s.replace(/'/g, "\\'")}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>
+      ${SETOR_MAQ[s] ? `<div class="usr-telas" style="margin-top:4px"><label style="color:#16283A"><input type="checkbox" ${(setorRestrito && setorRestrito[s]) ? 'checked' : ''} onchange="togRestrito('${s.replace(/'/g, "\\'")}',this.checked)"> 🔒 Ver apenas os dados do próprio setor</label></div>` : ''}
       ${sel.length ? '' : '<div class="desc" style="margin-top:4px;color:#E0A82D">Nenhuma tela liberada — verá só o Painel.</div>'}
     </div>`;
   }).join('');
+}
+async function togRestrito(setor, on) {
+  await getSetorRestrito();
+  if (on) setorRestrito[setor] = true; else delete setorRestrito[setor];
+  if (!(await salvarCfg('setor_restrito', setorRestrito))) { toast('❌ Não consegui salvar.'); return; }
+  toast(on ? '🔒 ' + setor + ': verá apenas os próprios dados.' : setor + ': volta a ver todos os setores.');
+  renderTelasSetor();
 }
 async function togTelaSetor(setor, aba, on) {
   await getTelasSetor();
