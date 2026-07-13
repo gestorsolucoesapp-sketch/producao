@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.19.1</div>
+    <div class="ver-tag" id="verTag">versão 3.20.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.19.1</span>
+        <span class="ver-badge" id="verBadge">v3.20.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1104,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.19.1';
+const APP_VER = '3.20.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2313,6 +2313,7 @@ function confirmarApp(msg, onSim, txtSim, corSim) {
 }
 function transferirOS(id) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  if (!podeMexer(o)) { toast('🔒 Esta OS está com ' + (o.iniciada_por_nome || 'outra pessoa') + '.'); return; }
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.55);z-index:900;display:flex;align-items:flex-end;justify-content:center';
   ov.innerHTML = `<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:520px;max-height:70vh;overflow:auto;padding-bottom:env(safe-area-inset-bottom)">
@@ -2326,7 +2327,7 @@ function transferirOS(id) {
   ov.querySelectorAll('.tr-pick').forEach(b => b.onclick = async () => {
     const uid = b.dataset.id; fechar();
     const nome = nomeDe(uid);
-    const { error } = await sb.from('manutencao_os').update({ responsavel_id: uid, responsavel_nome: nome, responsaveis: uid }).eq('id', id);
+    const { error } = await sb.from('manutencao_os').update({ responsavel_id: uid, responsavel_nome: nome, responsaveis: uid, iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
     if (error) { toast('❌ ' + error.message); return; }
     await registrarEvento(o, 'transferida', nome);
     toast('🔄 OS transferida para ' + nome + '.');
@@ -2335,8 +2336,9 @@ function transferirOS(id) {
 }
 async function devolverOS(id) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  if (!podeMexer(o)) { toast('🔒 Esta OS está com ' + (o.iniciada_por_nome || 'outra pessoa') + '.'); return; }
   confirmarApp(`Devolver a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Ela volta para a fila sem responsável e o gestor é avisado no Painel.</span>`, async () => {
-    const { error } = await sb.from('manutencao_os').update({ responsavel_id: null, responsavel_nome: null, responsaveis: null }).eq('id', id);
+    const { error } = await sb.from('manutencao_os').update({ responsavel_id: null, responsavel_nome: null, responsaveis: null, iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
     if (error) { toast('❌ ' + error.message); return; }
     await registrarEvento(o, 'devolvida', null);
     toast('↩️ OS devolvida para a fila.');
@@ -2347,6 +2349,7 @@ let ultimaConcluida = null;   // para o botão de reverter
 function concluirRapido(id, el) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) { if (el) el.checked = false; return; }
   if (el) el.checked = false;   // só marca de verdade depois de confirmar
+  if (!podeMexer(o)) { toast('🔒 Esta OS está com ' + (o.iniciada_por_nome || 'outra pessoa') + '.'); return; }
   confirmarApp(
     `Concluir a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br>` +
     `<span style="font-size:13px;color:#41505E">${escapeHtml(o.maquina_desc || o.recurso_cod || '')}<br>${escapeHtml(o.motivo || '')}</span><br>` +
@@ -2356,7 +2359,8 @@ function concluirRapido(id, el) {
       const rei = agora.toISOString().slice(0, 19);
       const par = o.data_parada || o.data_abertura;
       const horas = par ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
-      const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas }).eq('id', id);
+      const hExec = o.iniciada_em ? Math.max(0, (new Date(rei) - new Date(o.iniciada_em)) / 3600000) : null;
+      const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas, horas_execucao: hExec }).eq('id', id);
       if (error) { toast('❌ ' + error.message); return; }
       ultimaConcluida = { id, os_num: o.os_num };
       await registrarEvento(o, 'concluída', null);
@@ -2440,6 +2444,43 @@ async function carregarManut() {
   renderManut();
 }
 
+// tempo rodando desde que alguém pegou a OS
+const emExecucao = o => !!o.iniciada_em && !o.data_reinicio;
+const podeMexer = o => souAdmin || !o.iniciada_em || (perfil && o.iniciada_por === perfil.id);
+function tempoDesde(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return '0min';
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return h ? `${h}h ${String(m).padStart(2, '0')}min` : `${m}min`;
+}
+// atualiza os cronômetros na tela a cada 30s
+setInterval(() => {
+  document.querySelectorAll('[data-cron]').forEach(el => { el.textContent = tempoDesde(el.dataset.cron); });
+}, 30000);
+async function pegarOS(id) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  confirmarApp(`Assumir a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:13px;color:#41505E">${escapeHtml(o.maquina_desc || o.recurso_cod || '')}<br>${escapeHtml(o.motivo || '')}</span><br><span style="font-size:12.5px;color:#5C7186">O cronômetro começa agora. A partir daí, só você e o gestor podem movimentar ou concluir esta OS.</span>`, async () => {
+    const agora = new Date(); agora.setMinutes(agora.getMinutes() - agora.getTimezoneOffset());
+    const { error } = await sb.from('manutencao_os').update({
+      iniciada_em: agora.toISOString().slice(0, 19),
+      iniciada_por: perfil.id, iniciada_por_nome: perfil.nome
+    }).eq('id', id);
+    if (error) { toast('❌ ' + error.message); return; }
+    await registrarEvento(o, 'assumida', perfil.nome);
+    toast('🙋 OS ' + (o.os_num || '') + ' assumida — cronômetro rodando.');
+    carregarManut();
+  }, '🙋 Assumir', '#2E8B57');
+}
+async function largarOS(id) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  confirmarApp(`Soltar a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">O cronômetro para e a OS volta a ficar disponível para a equipe.</span>`, async () => {
+    const { error } = await sb.from('manutencao_os').update({ iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
+    if (error) { toast('❌ ' + error.message); return; }
+    await registrarEvento(o, 'largada', null);
+    toast('OS liberada para a equipe.');
+    carregarManut();
+  }, 'Soltar', '#E0A82D');
+}
 const diasEmAberto = o => {
   if (!o.data_abertura || o.data_reinicio) return null;
   const d = Math.floor((Date.now() - new Date(o.data_abertura).getTime()) / 86400000);
@@ -2540,19 +2581,32 @@ function renderManut() {
         (ultimaConcluida ? `<button class="btn btn-borda" style="width:100%;margin-bottom:10px;border-color:#E0A82D;color:#8a6d00" onclick="reverterConclusao()">↩️ Reverter a última conclusão (OS ${escapeHtml(ultimaConcluida.os_num || '')})</button>` : '') +
         minhas.map(o => {
           const d = diasEmAberto(o);
-          return `<div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--borda);border-left:4px solid #E0A82D;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#FFFDF5">
-            <input type="checkbox" onchange="concluirRapido('${o.id}', this)" style="width:22px;height:22px;margin-top:2px;accent-color:var(--verde);cursor:pointer">
-            <div style="flex:1;min-width:0">
-              <div onclick="editarOS('${o.id}')">
+          const exec = emExecucao(o);
+          const meu = perfil && o.iniciada_por === perfil.id;
+          const posso = podeMexer(o);
+          const info = `<div onclick="editarOS('${o.id}')">
                 <div style="font-weight:700;color:var(--navy)">OS ${escapeHtml(o.os_num || '—')} · ${escapeHtml(o.recurso_cod || o.setor || '')}</div>
                 <div style="font-size:12.5px;color:#41505E">${escapeHtml(o.maquina_desc || '')}</div>
                 <div style="font-size:12px;color:#5C7186;margin-top:2px">${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}${d != null ? ' · <b style="color:' + corDias(d) + '">' + (d === 0 ? 'hoje' : d + ' dia(s)') + '</b>' : ''}</div>
-              </div>
-              <div style="display:flex;gap:6px;margin-top:8px">
+              </div>`;
+          if (!exec) {   // ninguém pegou ainda
+            return `<div style="border:1px solid var(--borda);border-left:4px solid #E0A82D;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#FFFDF5">
+              ${info}
+              <button onclick="pegarOS('${o.id}')" class="btn btn-verde" style="width:100%;margin-top:8px;padding:8px">🙋 Assumir esta OS (inicia o cronômetro)</button>
+            </div>`;
+          }
+          const cron = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px;background:#E9F6EF;border-radius:8px;padding:5px 9px">
+              <span style="font-size:15px">⏱</span>
+              <div style="flex:1;font-size:12.5px;color:#16283A">Em execução por <b>${escapeHtml(o.iniciada_por_nome || '')}</b> · <b data-cron="${o.iniciada_em}" style="color:#2E8B57">${tempoDesde(o.iniciada_em)}</b></div></div>`;
+          const acoes = posso ? `<div style="display:flex;gap:6px;margin-top:8px">
                 <button onclick="transferirOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12.5px">🔄 Transferir</button>
+                <button onclick="largarOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12.5px;color:#E0A82D;border-color:#E0A82D">✋ Soltar</button>
                 <button onclick="devolverOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12.5px;color:#D64545;border-color:#D64545">↩️ Devolver</button>
-              </div>
-            </div></div>`;
+              </div>`
+            : `<div class="desc" style="margin-top:8px">🔒 Só ${escapeHtml(o.iniciada_por_nome || 'quem assumiu')} ou o gestor podem movimentar/concluir.</div>`;
+          return `<div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--borda);border-left:4px solid ${meu || souAdmin ? '#2E8B57' : '#9AA7B4'};border-radius:10px;padding:10px 12px;margin-bottom:8px;background:${meu || souAdmin ? '#F6FCF9' : '#F7F9FB'}">
+            ${posso ? `<input type="checkbox" onchange="concluirRapido('${o.id}', this)" style="width:22px;height:22px;margin-top:2px;accent-color:var(--verde);cursor:pointer">` : '<span style="font-size:18px;margin-top:2px">🔒</span>'}
+            <div style="flex:1;min-width:0">${info}${cron}${acoes}</div></div>`;
         }).join(''));
     } }
   // concluídas por mim (últimas 10)
@@ -2589,6 +2643,7 @@ function renderManut() {
     <div class="kpi"><div class="v">${L.length}</div><div class="l">OS no filtro</div></div>
     <div class="kpi"><div class="v" style="color:${abertas.length ? '#D64545' : 'var(--navy)'}">${abertas.length}</div><div class="l">Em aberto</div></div>
     <div class="kpi"><div class="v" style="color:${paradasAgora ? '#D64545' : 'var(--navy)'}">${paradasAgora}</div><div class="l">Máquinas paradas</div></div>
+    <div class="kpi"><div class="v" style="color:#2E8B57">${L.filter(emExecucao).length}</div><div class="l">Em execução agora</div></div>
     <div class="kpi"><div class="v">${mttr != null ? fmtNum(mttr) : '—'}<small> h</small></div><div class="l">MTTR (médio)</div></div>
     <div class="kpi"><div class="v" style="color:${corDias(maisAntiga)}">${maisAntiga != null ? maisAntiga : '—'}<small> d</small></div><div class="l">OS mais antiga em aberto</div></div>
     <div class="kpi"><div class="v">${Lmaq.length}<small> / ${Larea.length}</small></div><div class="l">Máquina / Área</div></div>
@@ -2648,6 +2703,7 @@ function renderManut() {
         ${chip(grupoAtiv(o), '#16283A')}
         ${chip('Prior. ' + p, corPrio[p])}
         ${o.maquina_parada && aberta ? chip('MÁQUINA PARADA', '#8B0000') : ''}
+        ${emExecucao(o) ? chip('⏱ ' + escapeHtml(o.iniciada_por_nome || '') + ' · <span data-cron="' + o.iniciada_em + '">' + tempoDesde(o.iniciada_em) + '</span>', '#2E8B57') : ''}
         ${nF ? chip('📷 ' + nF, '#F1F4F7', '#41505E') : ''}
         ${o.responsavel_nome ? chip('👤 ' + escapeHtml(o.responsavel_nome), '#3A6FB0') : ''}
       </div>
