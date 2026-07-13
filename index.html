@@ -350,7 +350,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.22.1</div>
+    <div class="ver-tag" id="verTag">versão 3.23.0</div>
   </div>
 </div>
 
@@ -391,7 +391,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.22.1</span>
+        <span class="ver-badge" id="verBadge">v3.23.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1108,7 +1108,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.22.1';
+const APP_VER = '3.23.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1799,6 +1799,18 @@ async function getOeeFatores() {
   return oeeFatores;
 }
 const fatorSetor = s => { const f = oeeFatores && Number(oeeFatores[s]); return (f > 0 && f <= 1) ? f : 0.80; };
+// horas de um dia normal (base para proporcionalizar metas/capacidade)
+function horasBlocoNormal() {
+  const cinco = cutover5 === null ? false : true;
+  return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
+}
+const HORAS_DIA_NORMAL = () => { const h = horasBlocoNormal(); return h['Manhã'] + h['Tarde'] + h['Noite']; };
+// quanto vale um dia (1 = dia cheio; ~0,46 = sábado reduzido, sem turno da noite)
+function fatorDoDia(dia) {
+  const h = horasBlocoDe(dia); const tot = h['Manhã'] + h['Tarde'] + h['Noite'];
+  const n = HORAS_DIA_NORMAL();
+  return n > 0 ? tot / n : 1;
+}
 function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
   if (dia && _diaReduzido(dia)) return { 'Manhã': 5.5, 'Tarde': 5.48, 'Noite': 0 }; // sábado/feriado reduzido/folga com produção
   const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
@@ -1814,7 +1826,7 @@ function computeOEE(setor) {
   const ini = c => { if (!agg[c]) agg[c] = { prod: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, perda: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, par: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, dias: new Set(), nome: '' }; };
   D.producao.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c)) return; ini(c); const b = blocoTurno(r.turno, r.dia); agg[c].prod[b] += (r.peso || 0); agg[c].dias.add(r.dia); if (!agg[c].nome) agg[c].nome = r.recurso_nome || c; });
   D.perdas.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c) || !agg[c]) return; agg[c].perda[blocoTurno(r.turno, r.dia)] += (r.peso || 0); });
-  D.paradas.forEach(p => { const c = String(p.recurso_cod); if (!dentro(c) || !agg[c]) return; const b = blocoParada(p); if (b) agg[c].par[b] += (p.tempo_horas || 0); });
+  filtraParadas(D.paradas).forEach(p => { const c = String(p.recurso_cod); if (!dentro(c) || !agg[c]) return; const b = blocoParada(p); if (b) agg[c].par[b] += (p.tempo_horas || 0); });
   // qualidade do 054 (Sleeve/Rotulagem não têm perda por máquina)
   let qual054 = null;
   if (setor === 'Sleeve' || setor === 'Rotulagem') {
@@ -1835,7 +1847,10 @@ function computeOEE(setor) {
     let prodM = 0, capM = 0, hProgM = 0, parM = 0, perdaM = 0;
     B.forEach(b => {
       const prod = m.prod[b], par = Math.min(m.par[b], hB[b]), perda = m.perda[b];
-      const cap = metas && metas[b] ? (metas[b] / fat) * nDias : 0;
+      // capacidade proporcional às horas REALMENTE programadas (sábado reduzido, sem turno da noite)
+      const hNormalB = horasBlocoNormal()[b] || 1;
+      const diasEquiv = hB[b] / hNormalB;
+      const cap = metas && metas[b] ? (metas[b] / fat) * diasEquiv : 0;
       prodM += prod; capM += cap; hProgM += hB[b]; parM += par; perdaM += perda;
       porBloco[b].prod += prod; porBloco[b].cap += cap; porBloco[b].hProg += hB[b]; porBloco[b].par += par; porBloco[b].perda += perda;
     });
@@ -3129,9 +3144,21 @@ function toggleReorg() {
 
 /* ===== filtro de motivos de parada ===== */
 let paradasExcluidas = new Set();
-try { paradasExcluidas = new Set(JSON.parse(localStorage.getItem('rp_par_excl') || '[]')); } catch (_) {}
+// por padrão, parada programada e interrompido NÃO contam (não são perda de disponibilidade)
+const PAR_OFF_PADRAO = m => /PARADA\s*PROGRAMADA|INTERROMP/i.test(m || '');
+try {
+  const salvo = localStorage.getItem('rp_par_excl');
+  paradasExcluidas = salvo ? new Set(JSON.parse(salvo)) : new Set();
+  if (!salvo) localStorage.setItem('rp_par_excl_auto', '1');   // marca que ainda não foi tocado pelo usuário
+} catch (_) {}
+// aplica o padrão nos motivos que existirem nos dados (só enquanto o usuário não mexer)
+function aplicarPadraoParadas(motivos) {
+  if (localStorage.getItem('rp_par_excl') ) return;           // usuário já configurou
+  (motivos || []).forEach(m => { if (PAR_OFF_PADRAO(m)) paradasExcluidas.add(m); });
+}
 const filtraParadas = rows => rows.filter(p => !paradasExcluidas.has(p.motivo_desc || '—'));
 function abrirFiltroParadas() {
+  if (dadosPainel) aplicarPadraoParadas([...new Set(dadosPainel.paradas.map(p => p.motivo_desc || '—'))]);
   if (!dadosPainel) { toast('Carregue o painel primeiro.'); return; }
   const horas = {};
   dadosPainel.paradas.forEach(p => { const m = p.motivo_desc || '—'; horas[m] = (horas[m] || 0) + (p.tempo_horas || 0); });
@@ -3386,6 +3413,7 @@ async function ensureAnalise() {
       fetchTudo('paradas', 'motivo_desc,tempo_horas,recurso_cod', de, ate)
     ]);
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
+    aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
     dadosAnalise = rows.filter(r => String(r.item_cod || '').startsWith('1'));
     return true;
@@ -4020,6 +4048,12 @@ const fmtNum = n => Math.round(n).toLocaleString('pt-BR');
 
 
 // períodos longos (> 45 dias): gráfico diário agrega por mês
+// meta média do período: dias reduzidos (sábado, sem noite) valem menos
+function metaMediaPeriodo(metaDiaNormal, diasOrd) {
+  if (!metaDiaNormal || !diasOrd || !diasOrd.length) return metaDiaNormal || null;
+  const soma = diasOrd.reduce((a, d) => a + fatorDoDia(d), 0);
+  return metaDiaNormal * (soma / diasOrd.length);
+}
 function serieProducao(porDia, diasOrd, fmtBar, clickFn) {
   if (diasOrd.length <= 45) {
     return { titulo: 'Produção por dia', dados: diasOrd.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: fmtBar(porDia[d]), click: clickFn ? clickFn(d) : undefined })), porMes: false };
@@ -4302,7 +4336,7 @@ function renderPainel() {
     const mediaDiaG = diasOrd.length ? diasOrd.reduce((a, d) => a + porDia[d], 0) / diasOrd.length : 0;
     { const sG = serieProducao(porDia, diasOrd, fmtBar, d => `detDia('','${d}')`);
       html += card(sG.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · sem Extrusão (bobina) · arraste →' + (sG.porMes ? ' · linha = média mensal' : ''),
-        barrasVerticalScroll(sG.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sG.porMes && metrica === 'peso') ? metaDiariaSemExtrusao() : null }), 'Produção por dia'); }
+        barrasVerticalScroll(sG.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sG.porMes && metrica === 'peso') ? metaMediaPeriodo(metaDiariaSemExtrusao(), diasOrd) : null }), 'Produção por dia'); }
 
     // produção por turno
     // gráfico diário/mensal de CADA setor, um abaixo do outro (cada um com sua média e meta)
@@ -4321,7 +4355,7 @@ function renderPainel() {
       const totSt = dOrd.reduce((a, d) => a + pd[d], 0);
       html += card(s.titulo + ' · ' + st,
         (emCx ? 'quantidade (cxs)' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : ''),
-        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && !emCx && metrica === 'peso') ? metaDiariaSetor(st) : null }),
+        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && !emCx && metrica === 'peso') ? metaMediaPeriodo(metaDiariaSetor(st), diasOrd) : null }),
         'Produção por dia · ' + st);
     });
 
@@ -4423,7 +4457,7 @@ function renderPainel() {
     const mediaDiaS = diasOrdS.length ? diasOrdS.reduce((a, d) => a + porDiaS[d], 0) / diasOrdS.length : 0;
     if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`);
       html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : ''),
-        barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaDiariaSetor(setor) : null }), 'Produção por dia'); } }
+        barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaMediaPeriodo(metaDiariaSetor(setor), diasOrd) : null }), 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
