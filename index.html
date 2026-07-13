@@ -350,7 +350,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.23.1</div>
+    <div class="ver-tag" id="verTag">versão 3.24.0</div>
   </div>
 </div>
 
@@ -391,7 +391,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.23.1</span>
+        <span class="ver-badge" id="verBadge">v3.24.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1108,7 +1108,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.23.1';
+const APP_VER = '3.24.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2367,13 +2367,26 @@ function transferirOS(id) {
 async function devolverOS(id) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
   if (!podeMexer(o)) { toast('🔒 Esta OS está com ' + (o.iniciada_por_nome || 'outra pessoa') + '.'); return; }
-  confirmarApp(`Devolver a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Ela volta para a fila sem responsável e o gestor é avisado no Painel.</span>`, async () => {
-    const { error } = await sb.from('manutencao_os').update({ responsavel_id: null, responsavel_nome: null, responsaveis: null, iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
+
+  const equipe = String(o.responsaveis || o.responsavel_id || '').split('|').filter(Boolean);
+  const euEstou = perfil && equipe.includes(perfil.id);
+  const restam = euEstou ? equipe.filter(x => x !== perfil.id) : [];   // saio só EU
+  const sozinho = !euEstou || restam.length === 0;                      // se eu era o único, volta pra fila geral
+
+  const msg = sozinho
+    ? `Devolver a <b>OS ${escapeHtml(o.os_num || '')}</b> para a fila?<br><span style="font-size:12.5px;color:#5C7186">Ela fica <b>sem responsável</b> e o gestor é avisado no Painel.</span>`
+    : `Sair da <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Você sai, mas ela <b>continua com ${restam.map(nomeDe).filter(Boolean).join(', ')}</b>. O gestor é avisado no Painel.</span>`;
+
+  confirmarApp(msg, async () => {
+    const upd = sozinho
+      ? { responsavel_id: null, responsavel_nome: null, responsaveis: null, iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }
+      : { responsavel_id: restam[0], responsavel_nome: restam.map(nomeDe).filter(Boolean).join(', '), responsaveis: restam.join('|'), iniciada_em: null, iniciada_por: null, iniciada_por_nome: null };
+    const { error } = await sb.from('manutencao_os').update(upd).eq('id', id);
     if (error) { toast('❌ ' + error.message); return; }
-    await registrarEvento(o, 'devolvida', null, 'Não é da minha responsabilidade');
-    toast('↩️ OS devolvida para a fila.');
+    await registrarEvento(o, 'devolvida', sozinho ? null : restam.map(nomeDe).filter(Boolean).join(', '), sozinho ? 'Não é da minha responsabilidade' : (perfil.nome + ' saiu da OS'));
+    toast(sozinho ? '↩️ OS devolvida para a fila.' : '↩️ Você saiu — a OS segue com ' + restam.map(nomeDe).filter(Boolean).join(', ') + '.');
     carregarManut();
-  }, '↩️ Devolver', '#D64545');
+  }, sozinho ? '↩️ Devolver' : '↩️ Sair da OS', '#D64545');
 }
 let ultimaConcluida = null;   // para o botão de reverter
 function concluirRapido(id, el) {
