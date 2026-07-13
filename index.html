@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.17.1</div>
+    <div class="ver-tag" id="verTag">versão 3.18.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.17.1</span>
+        <span class="ver-badge" id="verBadge">v3.18.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1104,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.17.1';
+const APP_VER = '3.18.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1860,6 +1860,7 @@ const oeeCor = v => v == null ? '#9AA7B4' : v >= 0.75 ? '#2E8B57' : v >= 0.60 ? 
 function oeeChip(rot, v) { return `<div style="flex:1;min-width:70px;text-align:center;background:#F4F7FA;border-radius:10px;padding:8px 4px"><div style="font-size:16px;font-weight:800;color:${oeeCor(v)}">${oeePct(v)}</div><div style="font-size:10.5px;color:#5C7186;text-transform:uppercase;letter-spacing:.4px">${rot}</div></div>`; }
 
 /* ===================== MANUTENÇÃO · Ordens de Serviço ===================== */
+let evtOS = [];
 let osLista = [], osExtraida = null, osFotoB64 = null, osFotoMime = null, osFotosProb = [];
 let usuariosOS = null;   // pessoas que podem receber OS
 let osRoteamento = null; // { 'FERRAMENTARIA': userId, 'ELETRICA': userId, ... }
@@ -1883,13 +1884,23 @@ function tipoOS(atividade, motivo) {
   if (/predial|ilumina|civil|utilidade/.test(t)) return 'Predial';
   return 'Outras';
 }
-// responsável automático conforme o tipo
+// responsáveis automáticos conforme o tipo (pode ser mais de um)
+const idsDoTipo = t => { const v = osRoteamento && osRoteamento[t]; return Array.isArray(v) ? v : (v ? [v] : []); };
+const nomeDe = id => { const u = (usuariosOS || []).find(x => x.id === id); return u ? (u.nome || u.email) : null; };
 function respAuto(o) {
-  if (!osRoteamento) return { id: null, nome: null };
-  const id = osRoteamento[tipoOS(o.atividade, o.motivo)];
-  if (!id) return { id: null, nome: null };
-  const u = (usuariosOS || []).find(x => x.id === id);
-  return { id, nome: u ? (u.nome || u.email) : null };
+  const ids = idsDoTipo(tipoOS(o.atividade, o.motivo));
+  if (!ids.length) return { id: null, ids: [], nome: null };
+  return { id: ids[0], ids, nome: ids.map(nomeDe).filter(Boolean).join(', ') };
+}
+// registra a movimentação da OS (direcionada / transferida / devolvida / concluída)
+async function registrarEvento(o, tipo, paraNome) {
+  try {
+    await sb.from('os_eventos').insert({
+      os_id: o.id || null, os_num: o.os_num || null, tipo,
+      de_nome: o.responsavel_nome || null, para_nome: paraNome || null,
+      por_nome: (perfil && perfil.nome) || null
+    });
+  } catch (_) {}
 }
 async function getUsuariosOS() {
   if (usuariosOS) return usuariosOS;
@@ -1983,7 +1994,7 @@ function osParaReg(o) {
   const cod = o.recurso_cod ? String(o.recurso_cod).trim() : null;
   const ra = respAuto(o);
   return {
-    responsavel_id: ra.id, responsavel_nome: ra.nome,
+    responsavel_id: ra.id, responsavel_nome: ra.nome, responsaveis: ra.ids.length ? ra.ids.join('|') : null,
     os_num: o.os_num ? String(o.os_num).trim() : null,
     recurso_cod: cod, maquina_desc: o.maquina_desc,
     escopo: cod ? 'Máquina' : 'Setor/Área', setor: setorSugerido(o),
@@ -2299,6 +2310,38 @@ function confirmarApp(msg, onSim, txtSim, corSim) {
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   ov.querySelector('#cfSim').onclick = () => { ov.remove(); onSim(); };
 }
+function transferirOS(id) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.55);z-index:900;display:flex;align-items:flex-end;justify-content:center';
+  ov.innerHTML = `<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:520px;max-height:70vh;overflow:auto;padding-bottom:env(safe-area-inset-bottom)">
+    <div style="padding:14px 16px;background:var(--navy);color:#fff"><b>🔄 Transferir OS ${escapeHtml(o.os_num || '')}</b><div style="font-size:12px;color:#9FB6CC;margin-top:2px">Para quem?</div></div>
+    ${(usuariosOS || []).filter(u => u.id !== (perfil && perfil.id)).map(u => `<button class="tr-pick" data-id="${u.id}" style="display:block;width:100%;text-align:left;background:#fff;border:none;border-bottom:1px solid var(--borda);padding:13px 16px;cursor:pointer"><b style="color:var(--navy)">${escapeHtml(u.nome || u.email)}</b>${u.setor ? `<span style="display:block;font-size:12px;color:#5C7186">${escapeHtml(u.setor)}</span>` : ''}</button>`).join('')}
+    <button id="trCancel" style="width:100%;background:#F1F4F7;border:none;padding:14px;font-weight:700;color:#5C7186;cursor:pointer">Cancelar</button></div>`;
+  document.body.appendChild(ov);
+  const fechar = () => ov.remove();
+  ov.onclick = e => { if (e.target === ov) fechar(); };
+  ov.querySelector('#trCancel').onclick = fechar;
+  ov.querySelectorAll('.tr-pick').forEach(b => b.onclick = async () => {
+    const uid = b.dataset.id; fechar();
+    const nome = nomeDe(uid);
+    const { error } = await sb.from('manutencao_os').update({ responsavel_id: uid, responsavel_nome: nome, responsaveis: uid }).eq('id', id);
+    if (error) { toast('❌ ' + error.message); return; }
+    await registrarEvento(o, 'transferida', nome);
+    toast('🔄 OS transferida para ' + nome + '.');
+    carregarManut();
+  });
+}
+async function devolverOS(id) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  confirmarApp(`Devolver a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Ela volta para a fila sem responsável e o gestor é avisado no Painel.</span>`, async () => {
+    const { error } = await sb.from('manutencao_os').update({ responsavel_id: null, responsavel_nome: null, responsaveis: null }).eq('id', id);
+    if (error) { toast('❌ ' + error.message); return; }
+    await registrarEvento(o, 'devolvida', null);
+    toast('↩️ OS devolvida para a fila.');
+    carregarManut();
+  }, '↩️ Devolver', '#D64545');
+}
 async function concluirRapido(id, el) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
   if (el) el.disabled = true;
@@ -2308,6 +2351,7 @@ async function concluirRapido(id, el) {
   const horas = par ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
   const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas }).eq('id', id);
   if (error) { toast('❌ ' + error.message); if (el) { el.disabled = false; el.checked = false; } return; }
+  await registrarEvento(o, 'concluída', null);
   toast('✅ OS ' + (o.os_num || '') + ' concluída' + (horas != null ? ' · ' + fmtNum(horas) + 'h de parada' : '') + '. Abra para detalhar o que foi feito.');
   carregarManut();
 }
@@ -2374,12 +2418,16 @@ function renderRoteamento() {
   c.classList.toggle('oculto', !souAdmin);
   if (!souAdmin) return;
   $('roteamentoBox').innerHTML = TIPOS_OS.map(t => {
-    const sel = (osRoteamento && osRoteamento[t]) || '';
-    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <div style="flex:0 0 120px;font-weight:700;color:var(--navy);font-size:13.5px">${t}</div>
-      <select onchange="setRoteamento('${t}', this.value)" style="flex:1;padding:8px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
-        <option value="">— ninguém —</option>
-        ${(usuariosOS || []).map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${escapeHtml(u.nome || u.email)}</option>`).join('')}
+    const ids = idsDoTipo(t);
+    const chips = ids.length
+      ? ids.map(id => `<span style="display:inline-flex;align-items:center;gap:4px;background:#3A6FB0;color:#fff;border-radius:8px;padding:2px 8px;font-size:12px;font-weight:600;margin:2px 4px 2px 0">${escapeHtml(nomeDe(id) || '?')} <span onclick="rmRoteamento('${t}','${id}')" style="cursor:pointer">✕</span></span>`).join('')
+      : '<span class="desc">ninguém</span>';
+    return `<div style="border:1px solid var(--borda);border-radius:10px;padding:9px 11px;margin-bottom:8px">
+      <div style="font-weight:700;color:var(--navy);font-size:13.5px;margin-bottom:4px">${t}</div>
+      <div style="margin-bottom:6px">${chips}</div>
+      <select onchange="addRoteamento('${t}', this.value); this.value='';" style="width:100%;padding:8px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
+        <option value="">+ adicionar responsável…</option>
+        ${(usuariosOS || []).filter(u => !ids.includes(u.id)).map(u => `<option value="${u.id}">${escapeHtml(u.nome || u.email)}</option>`).join('')}
       </select></div>`;
   }).join('');
 }
@@ -2396,20 +2444,31 @@ async function aplicarRoteamento() {
       const ra = respAuto(o);
       if (!ra.id) { semRegra++; continue; }
       if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Direcionando ${i + 1} de ${alvo.length}…`;
-      const { error } = await sb.from('manutencao_os').update({ responsavel_id: ra.id, responsavel_nome: ra.nome }).eq('id', o.id);
-      if (!error) n++;
+      const { error } = await sb.from('manutencao_os').update({ responsavel_id: ra.id, responsavel_nome: ra.nome, responsaveis: ra.ids.join('|') }).eq('id', o.id);
+      if (!error) { n++; registrarEvento(o, 'direcionada', ra.nome); }
     }
     if (st) st.innerHTML = `✅ <b>${n} OS direcionada(s)</b>${semRegra ? ` · ${semRegra} sem regra para o tipo (defina o responsável do tipo)` : ''}`;
     toast(`✅ ${n} OS direcionadas.`);
     carregarManut();
   }, '➡️ Direcionar', '#2E8B57');
 }
-async function setRoteamento(tipo, userId) {
+async function addRoteamento(tipo, userId) {
+  if (!userId) return;
   await getRoteamento();
-  if (userId) osRoteamento[tipo] = userId; else delete osRoteamento[tipo];
+  const ids = idsDoTipo(tipo);
+  if (!ids.includes(userId)) ids.push(userId);
+  osRoteamento[tipo] = ids;
   if (!(await salvarCfg('os_roteamento', osRoteamento))) { toast('❌ Não consegui salvar.'); return; }
-  const u = (usuariosOS || []).find(x => x.id === userId);
-  toast(userId ? `➡️ ${tipo} → ${u ? (u.nome || u.email) : ''}` : `${tipo}: sem direcionamento.`);
+  toast(`➡️ ${tipo} → ${nomeDe(userId)}`);
+  renderRoteamento();
+}
+async function rmRoteamento(tipo, userId) {
+  await getRoteamento();
+  const ids = idsDoTipo(tipo).filter(x => x !== userId);
+  if (ids.length) osRoteamento[tipo] = ids; else delete osRoteamento[tipo];
+  if (!(await salvarCfg('os_roteamento', osRoteamento))) { toast('❌ Não consegui salvar.'); return; }
+  toast(`${nomeDe(userId) || ''} removido de ${tipo}.`);
+  renderRoteamento();
 }
 function renderManut() {
   const box = $('manutConteudo');
@@ -2424,17 +2483,24 @@ function renderManut() {
 
   // ===== Minhas OS (direcionadas a mim) =====
   let htmlMinhas = '';
-  { const minhas = osLista.filter(o => o.responsavel_id && perfil && o.responsavel_id === perfil.id && !o.data_reinicio);
+  { const souResp = o => perfil && (o.responsavel_id === perfil.id || String(o.responsaveis || '').split('|').includes(perfil.id));
+    const minhas = osLista.filter(o => souResp(o) && !o.data_reinicio);
     if (minhas.length) {
       htmlMinhas = card('🔔 Minhas OS · direcionadas a você', minhas.length + ' em aberto · marque a caixinha para concluir',
         minhas.map(o => {
           const d = diasEmAberto(o);
           return `<div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--borda);border-left:4px solid #E0A82D;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#FFFDF5">
             <input type="checkbox" onchange="concluirRapido('${o.id}', this)" style="width:22px;height:22px;margin-top:2px;accent-color:var(--verde);cursor:pointer">
-            <div style="flex:1;min-width:0" onclick="editarOS('${o.id}')">
-              <div style="font-weight:700;color:var(--navy)">OS ${escapeHtml(o.os_num || '—')} · ${escapeHtml(o.recurso_cod || o.setor || '')}</div>
-              <div style="font-size:12.5px;color:#41505E">${escapeHtml(o.maquina_desc || '')}</div>
-              <div style="font-size:12px;color:#5C7186;margin-top:2px">${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}${d != null ? ' · <b style="color:' + corDias(d) + '">' + (d === 0 ? 'hoje' : d + ' dia(s)') + '</b>' : ''}</div>
+            <div style="flex:1;min-width:0">
+              <div onclick="editarOS('${o.id}')">
+                <div style="font-weight:700;color:var(--navy)">OS ${escapeHtml(o.os_num || '—')} · ${escapeHtml(o.recurso_cod || o.setor || '')}</div>
+                <div style="font-size:12.5px;color:#41505E">${escapeHtml(o.maquina_desc || '')}</div>
+                <div style="font-size:12px;color:#5C7186;margin-top:2px">${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}${d != null ? ' · <b style="color:' + corDias(d) + '">' + (d === 0 ? 'hoje' : d + ' dia(s)') + '</b>' : ''}</div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button onclick="transferirOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12.5px">🔄 Transferir</button>
+                <button onclick="devolverOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12.5px;color:#D64545;border-color:#D64545">↩️ Devolver</button>
+              </div>
             </div></div>`;
         }).join(''));
     } }
@@ -2750,6 +2816,7 @@ async function carregarPainel() {
       await getFerTroca();
       if (diasOverride === null) await getDiasOverride();
       try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
+      try { const re2 = await sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20); evtOS = re2.data || []; } catch (_) { evtOS = []; }
       dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
