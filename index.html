@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.20.2</div>
+    <div class="ver-tag" id="verTag">versão 3.21.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.20.2</span>
+        <span class="ver-badge" id="verBadge">v3.21.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1104,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.20.2';
+const APP_VER = '3.21.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1893,12 +1893,12 @@ function respAuto(o) {
   return { id: ids[0], ids, nome: ids.map(nomeDe).filter(Boolean).join(', ') };
 }
 // registra a movimentação da OS (direcionada / transferida / devolvida / concluída)
-async function registrarEvento(o, tipo, paraNome) {
+async function registrarEvento(o, tipo, paraNome, motivo) {
   try {
     await sb.from('os_eventos').insert({
       os_id: o.id || null, os_num: o.os_num || null, tipo,
       de_nome: o.responsavel_nome || null, para_nome: paraNome || null,
-      por_nome: (perfil && perfil.nome) || null
+      por_nome: (perfil && perfil.nome) || null, motivo: motivo || null
     });
   } catch (_) {}
 }
@@ -2340,7 +2340,7 @@ async function devolverOS(id) {
   confirmarApp(`Devolver a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Ela volta para a fila sem responsável e o gestor é avisado no Painel.</span>`, async () => {
     const { error } = await sb.from('manutencao_os').update({ responsavel_id: null, responsavel_nome: null, responsaveis: null, iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
     if (error) { toast('❌ ' + error.message); return; }
-    await registrarEvento(o, 'devolvida', null);
+    await registrarEvento(o, 'devolvida', null, 'Não é da minha responsabilidade');
     toast('↩️ OS devolvida para a fila.');
     carregarManut();
   }, '↩️ Devolver', '#D64545');
@@ -2471,15 +2471,56 @@ async function pegarOS(id) {
     carregarManut();
   }, '🙋 Assumir', '#2E8B57');
 }
-async function largarOS(id) {
+const MOTIVOS_SOLTA = [
+  { ic: '📦', t: 'Falta de peça / material' },
+  { ic: '🕐', t: 'Fim do turno' },
+  { ic: '🔧', t: 'Precisa de outra especialidade' },
+  { ic: '🏭', t: 'Máquina em produção — não posso parar' },
+  { ic: '🚚', t: 'Aguardando terceiro / assistência' },
+  { ic: '⚠️', t: 'Mais complexo que o previsto' },
+  { ic: '✍️', t: 'Outro motivo…' }
+];
+function largarOS(id) {
   const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
-  confirmarApp(`Soltar a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">O cronômetro para e a OS volta a ficar disponível para a equipe.</span>`, async () => {
+  if (!podeMexer(o)) { toast('🔒 Esta OS está com ' + (o.iniciada_por_nome || 'outra pessoa') + '.'); return; }
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.55);z-index:900;display:flex;align-items:flex-end;justify-content:center';
+  ov.innerHTML = `<div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:520px;max-height:80vh;overflow:auto;padding-bottom:env(safe-area-inset-bottom)">
+    <div style="padding:14px 16px;background:var(--navy);color:#fff"><b>✋ Soltar a OS ${escapeHtml(o.os_num || '')}</b><div style="font-size:12px;color:#9FB6CC;margin-top:2px">Por que você não vai concluir agora? <b>Obrigatório</b></div></div>
+    ${MOTIVOS_SOLTA.map((m, i) => `<button class="mt-pick" data-i="${i}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#fff;border:none;border-bottom:1px solid var(--borda);padding:13px 16px;cursor:pointer">
+      <span style="font-size:20px">${m.ic}</span><span style="flex:1;font-weight:600;color:var(--navy);font-size:14px">${m.t}</span><span style="color:#9AA7B4">›</span></button>`).join('')}
+    <div id="mtOutro" style="display:none;padding:12px 16px;border-bottom:1px solid var(--borda)">
+      <input type="text" id="mtTexto" placeholder="Escreva o motivo…" style="width:100%;padding:10px;border:1px solid var(--borda);border-radius:10px;font-size:15px">
+      <button id="mtOk" class="btn btn-verde" style="width:100%;margin-top:8px">✋ Soltar com esse motivo</button>
+    </div>
+    <button id="mtCancel" style="width:100%;background:#F1F4F7;border:none;padding:14px;font-weight:700;color:#5C7186;cursor:pointer">Cancelar</button></div>`;
+  document.body.appendChild(ov);
+  const fechar = () => ov.remove();
+  ov.onclick = e => { if (e.target === ov) fechar(); };
+  ov.querySelector('#mtCancel').onclick = fechar;
+
+  const soltar = async (motivo) => {
+    fechar();
     const { error } = await sb.from('manutencao_os').update({ iniciada_em: null, iniciada_por: null, iniciada_por_nome: null }).eq('id', id);
     if (error) { toast('❌ ' + error.message); return; }
-    await registrarEvento(o, 'largada', null);
-    toast('OS liberada para a equipe.');
+    await registrarEvento(o, 'largada', null, motivo);
+    toast('✋ OS liberada · motivo: ' + motivo);
     carregarManut();
-  }, 'Soltar', '#E0A82D');
+  };
+  ov.querySelectorAll('.mt-pick').forEach(b => b.onclick = () => {
+    const m = MOTIVOS_SOLTA[+b.dataset.i];
+    if (m.t.startsWith('Outro')) {
+      ov.querySelector('#mtOutro').style.display = 'block';
+      ov.querySelector('#mtTexto').focus();
+      ov.querySelector('#mtOk').onclick = () => {
+        const t = (ov.querySelector('#mtTexto').value || '').trim();
+        if (!t) { toast('Escreva o motivo.'); return; }
+        soltar(t);
+      };
+      return;
+    }
+    soltar(m.t);
+  });
 }
 const diasEmAberto = o => {
   if (!o.data_abertura || o.data_reinicio) return null;
@@ -2613,6 +2654,17 @@ function renderManut() {
             <div style="flex:1;min-width:0">${info}${cron}${acoes}</div></div>`;
         }).join(''));
     } }
+  // ✋ Por que as OS são soltas (gestor) — justifica estoque de peça, turno, especialidade
+  if (souAdmin && evtOS && evtOS.length) {
+    const sol = evtOS.filter(e => e.tipo === 'largada' && e.motivo);
+    if (sol.length) {
+      const m = {}; sol.forEach(e => { m[e.motivo] = (m[e.motivo] || 0) + 1; });
+      const arr = Object.entries(m).map(([l, v]) => ({ l, v })).sort((a, b) => b.v - a.v);
+      htmlMinhas += card('✋ Por que as OS são soltas', sol.length + ' solta(s) registrada(s) · a causa nº 1 costuma ser falta de peça',
+        barrasHorizontal(arr, 'vez(es)'));
+    }
+  }
+
   // ⏱ OS em execução agora (quem pegou e há quanto tempo)
   { const rodando = osLista.filter(emExecucao)
       .sort((a, b) => String(a.iniciada_em).localeCompare(String(b.iniciada_em)));
