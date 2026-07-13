@@ -350,7 +350,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.23.0</div>
+    <div class="ver-tag" id="verTag">versão 3.23.1</div>
   </div>
 </div>
 
@@ -391,7 +391,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.23.0</span>
+        <span class="ver-badge" id="verBadge">v3.23.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1108,7 +1108,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.23.0';
+const APP_VER = '3.23.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1816,8 +1816,18 @@ function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
   const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
   return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
 }
+// ===== OEE: regra própria de paradas =====
+// por padrão o OEE ignora as paradas "INTERROMPIDO" (não são perda de disponibilidade da máquina)
+const EH_INTERROMPIDO = m => /INTERROMP/i.test(m || '');
+let oeeIgnInterromp = true;
+try { const v = localStorage.getItem('rp_oee_interromp'); if (v !== null) oeeIgnInterromp = v === '1'; } catch (_) {}
+function togOeeInterromp(on) {
+  oeeIgnInterromp = !!on;
+  try { localStorage.setItem('rp_oee_interromp', on ? '1' : '0'); } catch (_) {}
+  renderOEE();
+}
 // calcula OEE do período carregado (dadosPainel) para um setor
-function computeOEE(setor) {
+function computeOEE(setor, ignInterromp) {
   const D = dadosPainel; if (!D) return null;
   const cods = (SETOR_MAQ[setor] || []).map(String);
   const dentro = c => cods.includes(String(c));
@@ -1826,7 +1836,8 @@ function computeOEE(setor) {
   const ini = c => { if (!agg[c]) agg[c] = { prod: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, perda: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, par: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, dias: new Set(), nome: '' }; };
   D.producao.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c)) return; ini(c); const b = blocoTurno(r.turno, r.dia); agg[c].prod[b] += (r.peso || 0); agg[c].dias.add(r.dia); if (!agg[c].nome) agg[c].nome = r.recurso_nome || c; });
   D.perdas.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c) || !agg[c]) return; agg[c].perda[blocoTurno(r.turno, r.dia)] += (r.peso || 0); });
-  filtraParadas(D.paradas).forEach(p => { const c = String(p.recurso_cod); if (!dentro(c) || !agg[c]) return; const b = blocoParada(p); if (b) agg[c].par[b] += (p.tempo_horas || 0); });
+  const _ign = (ignInterromp === undefined) ? oeeIgnInterromp : ignInterromp;
+  D.paradas.filter(p => !(_ign && EH_INTERROMPIDO(p.motivo_desc))).forEach(p => { const c = String(p.recurso_cod); if (!dentro(c) || !agg[c]) return; const b = blocoParada(p); if (b) agg[c].par[b] += (p.tempo_horas || 0); });
   // qualidade do 054 (Sleeve/Rotulagem não têm perda por máquina)
   let qual054 = null;
   if (setor === 'Sleeve' || setor === 'Rotulagem') {
@@ -2844,7 +2855,26 @@ function renderOEE() {
   const R = computeOEE(setor);
   const box = $('oeeConteudo');
   if (!R || !R.porMaq.length) { box.innerHTML = '<p class="desc">Sem produção de ' + escapeHtml(setor) + ' no período selecionado.</p>'; return; }
+
+  // impacto do INTERROMPIDO: calcula o cenário oposto para comparar
+  const Rop = computeOEE(setor, !oeeIgnInterromp);
+  const hInt = (dadosPainel.paradas || []).filter(p => EH_INTERROMPIDO(p.motivo_desc) && (SETOR_MAQ[setor] || []).map(String).includes(String(p.recurso_cod)))
+    .reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const dOEE = (R.total.oee != null && Rop && Rop.total.oee != null) ? (R.total.oee - Rop.total.oee) * 100 : null;
+
   let html = `<div style="text-align:center;margin:6px 0 10px"><div style="font-size:34px;font-weight:800;color:${oeeCor(R.total.oee)}">${oeePct(R.total.oee)}</div><div style="font-size:12px;color:#5C7186">OEE do setor · ${periodoSel ? escapeHtml(periodoSel.label) : ''} · fator ${(R.fator * 100).toFixed(0)}%</div></div>`;
+
+  html += `<div style="border:1px solid var(--borda);border-radius:12px;padding:10px 12px;margin-bottom:12px;background:${oeeIgnInterromp ? '#F6FCF9' : '#FFF9EC'}">
+    <label style="display:flex;align-items:center;gap:9px;cursor:pointer">
+      <input type="checkbox" ${oeeIgnInterromp ? 'checked' : ''} onchange="togOeeInterromp(this.checked)" style="width:20px;height:20px;accent-color:var(--verde)">
+      <span style="flex:1;font-size:13.5px;color:#16283A;font-weight:600">Ignorar paradas <b>INTERROMPIDO</b> no OEE</span>
+    </label>
+    <div style="font-size:12px;color:#5C7186;margin-top:6px">
+      ${hInt ? `${fmtNum(hInt)} h de “interrompido” no período · ` : 'nenhuma parada “interrompido” no período · '}
+      ${dOEE != null && Math.abs(dOEE) >= 0.05
+        ? `impacto no OEE: <b style="color:${dOEE > 0 ? '#2E8B57' : '#D64545'}">${dOEE > 0 ? '+' : ''}${dOEE.toFixed(1)} pp</b> (com essa opção ${oeeIgnInterromp ? 'ligada' : 'desligada'})<br>Contando o interrompido, o OEE seria <b>${oeePct(oeeIgnInterromp ? Rop.total.oee : R.total.oee)}</b> · ignorando, <b>${oeePct(oeeIgnInterromp ? R.total.oee : Rop.total.oee)}</b>`
+        : 'sem impacto relevante no OEE'}
+    </div></div>`;
   html += `<div style="display:flex;gap:8px;margin-bottom:12px">${oeeChip('Disponib.', R.total.disp)}${oeeChip('Perform.', R.total.perf)}${oeeChip('Qualidade', R.total.qual)}</div>`;
   html += `<div style="display:flex;gap:8px;margin-bottom:12px">${['Manhã', 'Tarde', 'Noite'].map(b => oeeChip(b, R.blocos[b].oee)).join('')}</div>`;
   html += `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%;min-width:390px"><thead><tr><th style="text-align:left">Máquina</th><th>Disp.</th><th>Perf.</th><th>Qual.</th><th>OEE</th></tr></thead><tbody>`;
