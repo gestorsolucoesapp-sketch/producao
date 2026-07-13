@@ -350,7 +350,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.24.1</div>
+    <div class="ver-tag" id="verTag">versão 3.25.0</div>
   </div>
 </div>
 
@@ -391,7 +391,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.24.1</span>
+        <span class="ver-badge" id="verBadge">v3.25.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1108,7 +1108,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.24.1';
+const APP_VER = '3.25.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1787,6 +1787,9 @@ function metaDiariaSemExtrusao() {
   return achou ? s : null;
 }
 const _BLOCOS_META = [['Manhã', 'M'], ['Tarde', 'T'], ['Noite', 'N']];
+// Embaladeiras trabalham em CAIXAS; os demais setores em kg
+const setorEmCx = s => s === 'Embaladeiras';
+const fmtMeta = (v, setor) => setorEmCx(setor) ? (Math.round(v).toLocaleString('pt-BR') + ' cxs') : fmtKg(v);
 /* ===== OEE ===== */
 let oeeFatores = null; // {setor: 0.80}
 async function getOeeFatores() {
@@ -1819,6 +1822,7 @@ function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
 // ===== OEE: regra própria de paradas =====
 // por padrão o OEE ignora as paradas "INTERROMPIDO" (não são perda de disponibilidade da máquina)
 const EH_INTERROMPIDO = m => /INTERROMP/i.test(m || '');
+// nas Embaladeiras a qualidade não vem do refugo em kg (produção é medida em caixas)
 let oeeIgnInterromp = true;
 try { const v = localStorage.getItem('rp_oee_interromp'); if (v !== null) oeeIgnInterromp = v === '1'; } catch (_) {}
 function togOeeInterromp(on) {
@@ -1834,7 +1838,9 @@ function computeOEE(setor, ignInterromp) {
   const B = ['Manhã', 'Tarde', 'Noite'];
   const agg = {}; // cod -> {prod:{b}, perda:{b}, par:{b}, dias:Set}
   const ini = c => { if (!agg[c]) agg[c] = { prod: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, perda: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, par: { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, dias: new Set(), nome: '' }; };
-  D.producao.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c)) return; ini(c); const b = blocoTurno(r.turno, r.dia); agg[c].prod[b] += (r.peso || 0); agg[c].dias.add(r.dia); if (!agg[c].nome) agg[c].nome = r.recurso_nome || c; });
+  const emCxOEE = setorEmCx(setor);   // Embaladeiras: meta e produção em caixas
+  const valOEE = r => emCxOEE ? (r.quantidade || 0) : (r.peso || 0);
+  D.producao.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c)) return; ini(c); const b = blocoTurno(r.turno, r.dia); agg[c].prod[b] += valOEE(r); agg[c].dias.add(r.dia); if (!agg[c].nome) agg[c].nome = r.recurso_nome || c; });
   D.perdas.forEach(r => { const c = String(r.recurso_cod); if (!dentro(c) || !agg[c]) return; agg[c].perda[blocoTurno(r.turno, r.dia)] += (r.peso || 0); });
   const _ign = (ignInterromp === undefined) ? oeeIgnInterromp : ignInterromp;
   D.paradas.filter(p => !(_ign && EH_INTERROMPIDO(p.motivo_desc))).forEach(p => { const c = String(p.recurso_cod); if (!dentro(c) || !agg[c]) return; const b = blocoParada(p); if (b) agg[c].par[b] += (p.tempo_horas || 0); });
@@ -1868,10 +1874,10 @@ function computeOEE(setor, ignInterromp) {
     const temMeta = capM > 0;
     if (!temMeta) tot.semMeta++;
     const disp = hProgM > 0 ? Math.max(0, (hProgM - parM) / hProgM) : null;
-    const qual = qual054 != null ? qual054 : ((prodM + perdaM) > 0 ? prodM / (prodM + perdaM) : null);
+    const qual = qual054 != null ? qual054 : (emCxOEE ? null : ((prodM + perdaM) > 0 ? prodM / (prodM + perdaM) : null));
     const dxp = temMeta ? prodM / capM : null; // disponibilidade × performance
     const perf = (dxp != null && disp > 0) ? dxp / disp : null;
-    const oee = (dxp != null && qual != null) ? dxp * qual : null;
+    const oee = (dxp != null) ? (qual != null ? dxp * qual : dxp) : null;   // sem qualidade medida (cxs), OEE = D × P
     porMaq.push({ cod: c, nome: m.nome, disp, perf, qual, oee, temMeta, nDias });
     tot.prod += prodM; tot.cap += capM; tot.hProg += hProgM; tot.par += parM; tot.perda += perdaM;
   });
@@ -2921,7 +2927,7 @@ function renderMetas() {
   cods.forEach(c => {
     const cod = String(c), nome = nomes[cod] || '', m = (metasData && metasData[cod]) || {};
     const soma = _BLOCOS_META.reduce((a, b) => a + (m[b[0]] || 0), 0);
-    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}</td>${_BLOCOS_META.map(b => `<td><input type="number" inputmode="decimal" min="0" step="1" id="meta_${cod}_${b[1]}" value="${m[b[0]] != null ? m[b[0]] : ''}" placeholder="0" ${ro} oninput="metasTotaisLive()" style="width:58px;padding:6px 4px;font-size:14px;border:1px solid var(--borda);border-radius:8px;text-align:right${roStyle}"></td>`).join('')}<td><span class="cel neutra" id="metaDia_${cod}">${soma ? fmtKg(soma) : '—'}</span></td></tr>`;
+    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}</td>${_BLOCOS_META.map(b => `<td><input type="number" inputmode="decimal" min="0" step="1" id="meta_${cod}_${b[1]}" value="${m[b[0]] != null ? m[b[0]] : ''}" placeholder="0" ${ro} oninput="metasTotaisLive()" style="width:58px;padding:6px 4px;font-size:14px;border:1px solid var(--borda);border-radius:8px;text-align:right${roStyle}"></td>`).join('')}<td><span class="cel neutra" id="metaDia_${cod}">${soma ? fmtMeta(soma, setor) : '—'}</span></td></tr>`;
   });
   html += `<tr style="border-top:2px solid var(--navy);font-weight:700;background:#f4f7fa"><td style="text-align:left;padding:8px 6px">TOTAL ${escapeHtml(setor)}</td>${_BLOCOS_META.map(b => `<td style="text-align:center"><span id="metaTotB_${b[1]}">—</span></td>`).join('')}<td><span class="cel neutra" id="metaTotDia" style="font-weight:700">—</span></td></tr>`;
   html += `</tbody></table></div>`;
@@ -2944,11 +2950,11 @@ function metasTotaisLive() {
       const el = $(`meta_${cod}_${b[1]}`); const v = el ? parseFloat(el.value) : NaN;
       const n = isNaN(v) ? 0 : v; dia += n; totB[b[1]] += n;
     });
-    const cel = $(`metaDia_${cod}`); if (cel) cel.textContent = dia ? fmtKg(dia) : '—';
+    const cel = $(`metaDia_${cod}`); if (cel) cel.textContent = dia ? fmtMeta(dia, setor) : '—';
   });
-  _BLOCOS_META.forEach(b => { const el = $(`metaTotB_${b[1]}`); if (el) el.textContent = totB[b[1]] ? fmtKg(totB[b[1]]) : '—'; });
+  _BLOCOS_META.forEach(b => { const el = $(`metaTotB_${b[1]}`); if (el) el.textContent = totB[b[1]] ? fmtMeta(totB[b[1]], setor) : '—'; });
   const totDia = totB.M + totB.T + totB.N;
-  const elD = $('metaTotDia'); if (elD) elD.textContent = totDia ? fmtKg(totDia) : '—';
+  const elD = $('metaTotDia'); if (elD) elD.textContent = totDia ? fmtMeta(totDia, setor) : '—';
   // total geral (todos os setores, a partir do que está salvo; o setor aberto usa os campos atuais)
   let geral = totDia;
   Object.keys(SETOR_MAQ).forEach(s => {
