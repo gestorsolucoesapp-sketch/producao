@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.16.1</div>
+    <div class="ver-tag" id="verTag">versão 3.17.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.16.1</span>
+        <span class="ver-badge" id="verBadge">v3.17.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -570,6 +570,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
         <div class="titulo-sec">Direcionamento automático</div>
         <p class="desc" style="margin-bottom:10px">Cada tipo de manutenção vai direto para o responsável escolhido — ao importar a OS, ela já cai na lista dele.</p>
         <div id="roteamentoBox"><p class="desc">Carregando…</p></div>
+        <button class="btn btn-verde" style="width:100%;margin-top:10px" onclick="aplicarRoteamento()">➡️ Aplicar às OS já cadastradas (sem responsável)</button>
+        <p class="desc" style="margin-top:6px;text-align:center">As novas OS importadas já entram direcionadas automaticamente.</p>
       </div>
       <div class="card">
         <div id="mntResumo" style="text-align:center;margin-bottom:6px"></div>
@@ -1102,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.16.1';
+const APP_VER = '3.17.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2380,6 +2382,27 @@ function renderRoteamento() {
         ${(usuariosOS || []).map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${escapeHtml(u.nome || u.email)}</option>`).join('')}
       </select></div>`;
   }).join('');
+}
+async function aplicarRoteamento() {
+  await getRoteamento(); await getUsuariosOS();
+  if (!osRoteamento || !Object.keys(osRoteamento).length) { toast('Configure ao menos um tipo antes.'); return; }
+  const alvo = osLista.filter(o => !o.responsavel_id && !o.data_reinicio);   // em aberto e sem responsável
+  if (!alvo.length) { toast('Nenhuma OS em aberto sem responsável.'); return; }
+  confirmarApp(`Direcionar <b>${alvo.length} OS em aberto</b> conforme as regras por tipo?`, async () => {
+    let n = 0, semRegra = 0;
+    const st = $('osStatus');
+    for (let i = 0; i < alvo.length; i++) {
+      const o = alvo[i];
+      const ra = respAuto(o);
+      if (!ra.id) { semRegra++; continue; }
+      if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Direcionando ${i + 1} de ${alvo.length}…`;
+      const { error } = await sb.from('manutencao_os').update({ responsavel_id: ra.id, responsavel_nome: ra.nome }).eq('id', o.id);
+      if (!error) n++;
+    }
+    if (st) st.innerHTML = `✅ <b>${n} OS direcionada(s)</b>${semRegra ? ` · ${semRegra} sem regra para o tipo (defina o responsável do tipo)` : ''}`;
+    toast(`✅ ${n} OS direcionadas.`);
+    carregarManut();
+  });
 }
 async function setRoteamento(tipo, userId) {
   await getRoteamento();
