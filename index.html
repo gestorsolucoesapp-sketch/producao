@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.13.2</div>
+    <div class="ver-tag" id="verTag">versão 3.14.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.13.2</span>
+        <span class="ver-badge" id="verBadge">v3.14.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1097,7 +1097,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.13.2';
+const APP_VER = '3.14.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1960,16 +1960,46 @@ async function salvarOrdens(ordens) {
   }
   return { ok, erro };
 }
-// ===== leitura em LOTE (várias OS de uma vez) =====
-async function lerArquivoOS(f) {
-  const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
-  let b64, mime;
-  if (ehPdf) {
-    b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
-    mime = 'application/pdf';
-  } else {
-    const c = await comprimirFoto(f); b64 = c.b64; mime = c.mime;
+// extrai o texto do PDF (pdf.js) — sem limite de páginas e muito mais barato que enviar o PDF
+async function textoDoPDF(file, onProg) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pgs = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    if (onProg) onProg(i, pdf.numPages);
+    const pg = await pdf.getPage(i);
+    const tc = await pg.getTextContent();
+    pgs.push(tc.items.map(it => it.str).join(' '));
   }
+  return pgs;
+}
+// manda o texto em blocos de páginas e junta todas as OS
+async function lerPdfTexto(file, st) {
+  const pgs = await textoDoPDF(file, (i, n) => {
+    if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo o PDF… página ${i} de ${n}`;
+  });
+  const BLOCO = 12; // páginas por chamada
+  const todas = [];
+  for (let i = 0; i < pgs.length; i += BLOCO) {
+    const parte = pgs.slice(i, i + BLOCO);
+    if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Interpretando páginas ${i + 1}–${Math.min(i + BLOCO, pgs.length)} de ${pgs.length}…`;
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(`${SB_URL}/functions/v1/os-ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (session && session.access_token) },
+      body: JSON.stringify({ texto: parte.join('\n\n----- página -----\n\n') })
+    });
+    const d = await r.json().catch(() => null);
+    if (r.ok && d && d.ordens) todas.push(...d.ordens);
+    else if (!r.ok) throw new Error((d && (d.error || d.message)) || ('HTTP ' + r.status));
+  }
+  return todas;
+}
+// ===== leitura em LOTE (várias OS de uma vez) =====
+async function lerArquivoOS(f, st) {
+  const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
+  if (ehPdf) return await lerPdfTexto(f, st);   // PDF → texto (sem limite de páginas)
+  const c = await comprimirFoto(f); const b64 = c.b64, mime = c.mime;
   const { data: { session } } = await sb.auth.getSession();
   const r = await fetch(`${SB_URL}/functions/v1/os-ocr`, {
     method: 'POST',
@@ -1987,7 +2017,7 @@ async function lerLoteOS(files) {
   for (let i = 0; i < files.length; i++) {
     st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo arquivo ${i + 1} de ${files.length}…`;
     try {
-      const ordens = await lerArquivoOS(files[i]);
+      const ordens = await lerArquivoOS(files[i], st);
       const r2 = await salvarOrdens(ordens);
       res.ok.push(...r2.ok); res.erro.push(...r2.erro.map(e => (files[i].name || '') + ' · ' + e));
       try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (lote)' }); } catch (_) {}
@@ -2008,14 +2038,22 @@ function lerFotoOS(input) {
   const fr = { }; // (compressão substitui a leitura direta)
   (async () => {
     const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
+    if (ehPdf) {                                   // PDF (1 ou 200 páginas) → texto
+      try {
+        const ordens = await lerPdfTexto(f, st);
+        if (!ordens.length) { st.textContent = '❌ Nenhuma OS encontrada no PDF.'; input.value = ''; return; }
+        if (ordens.length === 1) { osExtraida = ordens[0]; st.textContent = '✅ OS lida — confira e salve.'; formOS(ordens[0]); input.value = ''; return; }
+        st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> ${ordens.length} OS encontradas — salvando…`;
+        const rr = await salvarOrdens(ordens);
+        st.innerHTML = `✅ <b>${rr.ok.length} OS importada(s)</b>` +
+          (rr.erro.length ? `<br><span style="color:#D64545">⚠️ ${rr.erro.length} com problema</span>` : '') +
+          `<br><span class="desc">Abra cada OS na lista para preencher a tratativa.</span>`;
+        input.value = ''; carregarManut(); return;
+      } catch (e) { st.textContent = '❌ ' + (e.message || 'Não consegui ler o PDF.'); input.value = ''; return; }
+    }
     try {
-      if (ehPdf) {
-        const b64 = await new Promise((res, rej) => { const r2 = new FileReader(); r2.onload = () => res(String(r2.result).split(',')[1]); r2.onerror = rej; r2.readAsDataURL(f); });
-        osFotoB64 = b64; osFotoMime = 'application/pdf';
-      } else {
-        const comp = await comprimirFoto(f);
-        osFotoB64 = comp.b64; osFotoMime = comp.mime;
-      }
+      const comp = await comprimirFoto(f);
+      osFotoB64 = comp.b64; osFotoMime = comp.mime;
     } catch (_) { st.textContent = '❌ Não consegui ler o arquivo.'; return; }
     try {
       const { data: { session } } = await sb.auth.getSession();
