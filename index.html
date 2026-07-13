@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.18.1</div>
+    <div class="ver-tag" id="verTag">versão 3.19.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.18.1</span>
+        <span class="ver-badge" id="verBadge">v3.19.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1104,7 +1104,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.18.1';
+const APP_VER = '3.19.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2342,18 +2342,38 @@ async function devolverOS(id) {
     carregarManut();
   }, '↩️ Devolver', '#D64545');
 }
-async function concluirRapido(id, el) {
-  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
-  if (el) el.disabled = true;
-  const agora = new Date(); agora.setMinutes(agora.getMinutes() - agora.getTimezoneOffset());
-  const rei = agora.toISOString().slice(0, 19);
-  const par = o.data_parada || o.data_abertura;
-  const horas = par ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
-  const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas }).eq('id', id);
-  if (error) { toast('❌ ' + error.message); if (el) { el.disabled = false; el.checked = false; } return; }
-  await registrarEvento(o, 'concluída', null);
-  toast('✅ OS ' + (o.os_num || '') + ' concluída' + (horas != null ? ' · ' + fmtNum(horas) + 'h de parada' : '') + '. Abra para detalhar o que foi feito.');
-  carregarManut();
+let ultimaConcluida = null;   // para o botão de reverter
+function concluirRapido(id, el) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) { if (el) el.checked = false; return; }
+  if (el) el.checked = false;   // só marca de verdade depois de confirmar
+  confirmarApp(
+    `Concluir a <b>OS ${escapeHtml(o.os_num || '')}</b>?<br>` +
+    `<span style="font-size:13px;color:#41505E">${escapeHtml(o.maquina_desc || o.recurso_cod || '')}<br>${escapeHtml(o.motivo || '')}</span><br>` +
+    `<span style="font-size:12.5px;color:#5C7186">O reinício será registrado agora. Você poderá reverter em seguida.</span>`,
+    async () => {
+      const agora = new Date(); agora.setMinutes(agora.getMinutes() - agora.getTimezoneOffset());
+      const rei = agora.toISOString().slice(0, 19);
+      const par = o.data_parada || o.data_abertura;
+      const horas = par ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
+      const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas }).eq('id', id);
+      if (error) { toast('❌ ' + error.message); return; }
+      ultimaConcluida = { id, os_num: o.os_num };
+      await registrarEvento(o, 'concluída', null);
+      toast('✅ OS ' + (o.os_num || '') + ' concluída' + (horas != null ? ' · ' + fmtNum(horas) + 'h' : ''));
+      carregarManut();
+    }, '✅ Concluir', '#2E8B57');
+}
+async function reverterConclusao() {
+  if (!ultimaConcluida) { toast('Nada para reverter.'); return; }
+  const { id, os_num } = ultimaConcluida;
+  confirmarApp(`Reabrir a <b>OS ${escapeHtml(os_num || '')}</b>?<br><span style="font-size:12.5px;color:#5C7186">Ela volta para “em aberto” e o registro de conclusão é desfeito.</span>`, async () => {
+    const { error } = await sb.from('manutencao_os').update({ data_reinicio: null, horas_parada: null }).eq('id', id);
+    if (error) { toast('❌ ' + error.message); return; }
+    await registrarEvento({ id, os_num }, 'reaberta', null);
+    ultimaConcluida = null;
+    toast('↩️ OS ' + (os_num || '') + ' reaberta.');
+    carregarManut();
+  }, '↩️ Reabrir', '#E0A82D');
 }
 async function apagarOS(id, ev) {
   if (ev && ev.stopPropagation) ev.stopPropagation();
@@ -2504,6 +2524,7 @@ function renderManut() {
     const minhas = osLista.filter(o => souResp(o) && !o.data_reinicio);
     if (minhas.length) {
       htmlMinhas = card('🔔 Minhas OS · direcionadas a você', minhas.length + ' em aberto · marque a caixinha para concluir',
+        (ultimaConcluida ? `<button class="btn btn-borda" style="width:100%;margin-bottom:10px;border-color:#E0A82D;color:#8a6d00" onclick="reverterConclusao()">↩️ Reverter a última conclusão (OS ${escapeHtml(ultimaConcluida.os_num || '')})</button>` : '') +
         minhas.map(o => {
           const d = diasEmAberto(o);
           return `<div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--borda);border-left:4px solid #E0A82D;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#FFFDF5">
@@ -2520,6 +2541,18 @@ function renderManut() {
               </div>
             </div></div>`;
         }).join(''));
+    } }
+  // concluídas por mim (últimas 10)
+  { const souResp2 = o => perfil && (o.responsavel_id === perfil.id || String(o.responsaveis || '').split('|').includes(perfil.id));
+    const feitas = osLista.filter(o => souResp2(o) && o.data_reinicio)
+      .sort((a, b) => String(b.data_reinicio).localeCompare(String(a.data_reinicio))).slice(0, 10);
+    if (feitas.length) {
+      htmlMinhas += card('✅ Concluídas por você', feitas.length + ' última(s) · histórico do seu trabalho',
+        feitas.map(o => `<div onclick="editarOS('${o.id}')" style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--borda)">
+          <div style="flex:1;min-width:0"><b style="color:var(--navy)">OS ${escapeHtml(o.os_num || '')}</b> · ${escapeHtml(o.recurso_cod || o.setor || '')}
+            <div style="font-size:12px;color:#5C7186">${escapeHtml(o.motivo || '')}</div></div>
+          <div style="text-align:right;font-size:12px;color:#2E8B57;font-weight:700;white-space:nowrap">${o.data_reinicio ? fmtData(String(o.data_reinicio).slice(0, 10)) : ''}<div style="color:#5C7186;font-weight:400">${o.horas_parada != null ? fmtNum(o.horas_parada) + 'h' : ''}</div></div>
+        </div>`).join(''));
     } }
   if (!L.length) { box.innerHTML = htmlMinhas + '<p class="desc" style="text-align:center;padding:16px">Nenhuma OS encontrada com esses filtros.</p>'; return; }
 
