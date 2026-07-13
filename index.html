@@ -348,7 +348,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
     <!-- link: voltar (modos cadastro/reset) -->
     <button class="link-voltar oculto" id="btnVoltarLogin" onclick="modoLogin('login')">← Voltar ao login</button>
 
-    <div class="ver-tag" id="verTag">versão 3.14.0</div>
+    <div class="ver-tag" id="verTag">versão 3.15.0</div>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.14.0</span>
+        <span class="ver-badge" id="verBadge">v3.15.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1097,7 +1097,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.14.0';
+const APP_VER = '3.15.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1854,6 +1854,15 @@ function oeeChip(rot, v) { return `<div style="flex:1;min-width:70px;text-align:
 
 /* ===================== MANUTENÇÃO · Ordens de Serviço ===================== */
 let osLista = [], osExtraida = null, osFotoB64 = null, osFotoMime = null, osFotosProb = [];
+let usuariosOS = null;   // pessoas que podem receber OS
+async function getUsuariosOS() {
+  if (usuariosOS) return usuariosOS;
+  try {
+    const { data } = await sb.from('perfis').select('id,nome,email,setor').order('nome');
+    usuariosOS = data || [];
+  } catch (_) { usuariosOS = []; }
+  return usuariosOS;
+}
 
 // comprime a foto antes de enviar (menos tokens = menos custo e mais rápido no 4G)
 function comprimirFoto(file, maxLado = 1600, q = 0.75) {
@@ -2136,6 +2145,7 @@ function formOS(o, editId) {
       ro('Detalhes', o.detalhes) +
     `</div>` +
     `<div style="font-weight:700;color:var(--navy);margin:12px 0 6px;font-size:13.5px">Tratativa</div>` +
+    `<div class="campo" style="margin-bottom:8px"><label for="os_resp">Direcionar para (responsável)</label><select id="os_resp"><option value="">— ninguém —</option>${(usuariosOS || []).map(u => `<option value="${u.id}" ${u.id === o.responsavel_id ? 'selected' : ''}>${escapeHtml(u.nome || u.email)}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('')}</select></div>` +
     `<div class="campo" style="margin-bottom:8px"><label for="os_parada">Máquina parada?</label><select id="os_parada"><option value="1" ${parada ? 'selected' : ''}>Sim — máquina parada</option><option value="0" ${!parada ? 'selected' : ''}>Não — máquina trabalhando</option></select></div>` +
     `<div class="campo" style="margin-bottom:8px"><label for="os_urg">Prioridade</label><select id="os_urg">${['Alta', 'Média', 'Baixa'].map(p => `<option ${p === prioNorm ? 'selected' : ''}>${p}</option>`).join('')}</select></div>` +
     `<div style="display:flex;gap:8px">${ed('parada_dt', 'Data parada', dt(o.data_parada), 'datetime-local')}${ed('reinicio', 'Data reinício', dt(o.data_reinicio), 'datetime-local')}</div>` +
@@ -2220,6 +2230,8 @@ async function salvarOS() {
     data_abertura: v('abertura'), data_parada: par, data_reinicio: rei,
     detalhes: v('detalhes'), conclusao: v('conclusao'), colaboradores: v('colab'),
     custo: parseFloat(v('custo') || '0') || 0, horas_parada: horas,
+    responsavel_id: v('resp'),
+    responsavel_nome: (() => { const id = v('resp'); const u = (usuariosOS || []).find(x => x.id === id); return u ? (u.nome || u.email) : null; })(),
     fotos: osFotosProb.map(f => f.url).filter(Boolean).join('|') || null,
     criado_por_nome: perfil && perfil.nome
   };
@@ -2247,6 +2259,18 @@ function confirmarApp(msg, onSim) {
   ov.querySelector('#cfNao').onclick = () => ov.remove();
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   ov.querySelector('#cfSim').onclick = () => { ov.remove(); onSim(); };
+}
+async function concluirRapido(id, el) {
+  const o = osLista.find(x => String(x.id) === String(id)); if (!o) return;
+  if (el) el.disabled = true;
+  const agora = new Date(); agora.setMinutes(agora.getMinutes() - agora.getTimezoneOffset());
+  const rei = agora.toISOString().slice(0, 19);
+  const par = o.data_parada || o.data_abertura;
+  const horas = par ? Math.max(0, (new Date(rei) - new Date(par)) / 3600000) : null;
+  const { error } = await sb.from('manutencao_os').update({ data_reinicio: rei, horas_parada: horas }).eq('id', id);
+  if (error) { toast('❌ ' + error.message); if (el) { el.disabled = false; el.checked = false; } return; }
+  toast('✅ OS ' + (o.os_num || '') + ' concluída' + (horas != null ? ' · ' + fmtNum(horas) + 'h de parada' : '') + '. Abra para detalhar o que foi feito.');
+  carregarManut();
 }
 async function apagarOS(id, ev) {
   if (ev && ev.stopPropagation) ev.stopPropagation();
@@ -2315,7 +2339,23 @@ function renderManut() {
       `<div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Ordens de Serviço</div>` +
       `<div style="font-size:11px;color:#5C7186;margin-top:1px">${escapeHtml(st || 'Todos os setores')} · ${sit === 'ab' ? 'em aberto' : sit === 'fe' ? 'concluídas' : 'todas'} · ${L.length} OS</div>`; }
 
-  if (!L.length) { box.innerHTML = '<p class="desc" style="text-align:center;padding:16px">Nenhuma OS encontrada com esses filtros.</p>'; return; }
+  // ===== Minhas OS (direcionadas a mim) =====
+  let htmlMinhas = '';
+  { const minhas = osLista.filter(o => o.responsavel_id && perfil && o.responsavel_id === perfil.id && !o.data_reinicio);
+    if (minhas.length) {
+      htmlMinhas = card('🔔 Minhas OS · direcionadas a você', minhas.length + ' em aberto · marque a caixinha para concluir',
+        minhas.map(o => {
+          const d = diasEmAberto(o);
+          return `<div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--borda);border-left:4px solid #E0A82D;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#FFFDF5">
+            <input type="checkbox" onchange="concluirRapido('${o.id}', this)" style="width:22px;height:22px;margin-top:2px;accent-color:var(--verde);cursor:pointer">
+            <div style="flex:1;min-width:0" onclick="editarOS('${o.id}')">
+              <div style="font-weight:700;color:var(--navy)">OS ${escapeHtml(o.os_num || '—')} · ${escapeHtml(o.recurso_cod || o.setor || '')}</div>
+              <div style="font-size:12.5px;color:#41505E">${escapeHtml(o.maquina_desc || '')}</div>
+              <div style="font-size:12px;color:#5C7186;margin-top:2px">${escapeHtml(o.atividade || '')} · ${escapeHtml(o.motivo || '')}${d != null ? ' · <b style="color:' + corDias(d) + '">' + (d === 0 ? 'hoje' : d + ' dia(s)') + '</b>' : ''}</div>
+            </div></div>`;
+        }).join(''));
+    } }
+  if (!L.length) { box.innerHTML = htmlMinhas + '<p class="desc" style="text-align:center;padding:16px">Nenhuma OS encontrada com esses filtros.</p>'; return; }
 
   const Lmaq = L.filter(o => o.recurso_cod), Larea = L.filter(o => !o.recurso_cod);
   const abertas = L.filter(o => !o.data_reinicio);
@@ -2329,7 +2369,7 @@ function renderManut() {
   const prioDe = o => { const u = _norm(o.urgencia || ''); return /alta/.test(u) ? 'Alta' : /baix/.test(u) ? 'Baixa' : 'Média'; };
   const corPrio = { 'Alta': '#D64545', 'Média': '#E0A82D', 'Baixa': '#3CA96E' };
 
-  let html = `<div class="kpis" style="margin-bottom:10px">
+  let html = htmlMinhas + `<div class="kpis" style="margin-bottom:10px">
     <div class="kpi"><div class="v">${L.length}</div><div class="l">OS no filtro</div></div>
     <div class="kpi"><div class="v" style="color:${abertas.length ? '#D64545' : 'var(--navy)'}">${abertas.length}</div><div class="l">Em aberto</div></div>
     <div class="kpi"><div class="v" style="color:${paradasAgora ? '#D64545' : 'var(--navy)'}">${paradasAgora}</div><div class="l">Máquinas paradas</div></div>
@@ -2393,6 +2433,7 @@ function renderManut() {
         ${chip('Prior. ' + p, corPrio[p])}
         ${o.maquina_parada && aberta ? chip('MÁQUINA PARADA', '#8B0000') : ''}
         ${nF ? chip('📷 ' + nF, '#F1F4F7', '#41505E') : ''}
+        ${o.responsavel_nome ? chip('👤 ' + escapeHtml(o.responsavel_nome), '#3A6FB0') : ''}
       </div>
     </div>`;
   }).join('');
