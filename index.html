@@ -213,8 +213,12 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .grafico h3{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:4px}
 .grafico .sub{font-size:11.5px;color:var(--cinza);margin-bottom:12px}
 .grafico svg{width:100%;height:auto;display:block;overflow:visible}
-.bh-row{display:grid;grid-template-columns:96px 1fr auto;align-items:center;gap:8px;margin:7px 0;font-size:12.5px}
-.bh-row .nome{color:var(--texto);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.svg-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px}
+.grafico .svg-scroll svg,.svg-scroll svg{width:auto!important;max-width:none;height:auto}
+.svg-scroll::-webkit-scrollbar{height:6px}
+.svg-scroll::-webkit-scrollbar-thumb{background:#C9D4E0;border-radius:3px}
+.bh-row{display:grid;grid-template-columns:minmax(92px,36%) 1fr auto;align-items:center;gap:8px;margin:7px 0;font-size:12.5px}
+.bh-row .nome{color:var(--texto);white-space:normal;overflow:hidden;line-height:1.22;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .bh-bar{height:16px;border-radius:5px;background:var(--verde);min-width:2px}
 .bh-val{font-size:12px;font-weight:700;color:var(--navy);white-space:nowrap;font-variant-numeric:tabular-nums}
 .vazio-painel{padding:20px;text-align:center;color:var(--cinza);font-size:13.5px}
@@ -391,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.26.0</span>
+        <span class="ver-badge" id="verBadge">v3.27.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1109,7 +1113,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.26.0';
+const APP_VER = '3.27.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2042,7 +2046,9 @@ function osParaReg(o) {
     detalhes: o.detalhes, conclusao: o.conclusao, colaboradores: o.colaboradores,
     custo: parseFloat(o.custo || 0) || 0,
     horas_parada: (o.data_parada && o.data_reinicio) ? Math.max(0, (new Date(o.data_reinicio) - new Date(o.data_parada)) / 3600000) : null,
-    criado_por_nome: perfil && perfil.nome
+    criado_por: (perfil && perfil.id) || null,
+    criado_por_nome: (perfil && perfil.nome) || null,
+    criado_em: new Date().toISOString()
   };
 }
 async function salvarOrdens(ordens) {
@@ -2862,6 +2868,7 @@ function renderManut() {
         ${nF ? chip('📷 ' + nF, '#F1F4F7', '#41505E') : ''}
         ${o.responsavel_nome ? chip('👤 ' + escapeHtml(o.responsavel_nome), '#3A6FB0') : ''}
       </div>
+      ${o.criado_por_nome ? `<div style="font-size:11.5px;color:#8395A6;margin-top:7px;padding-top:6px;border-top:1px dashed var(--borda)">📝 registrada por <b>${escapeHtml(o.criado_por_nome)}</b>${o.criado_em ? ' · ' + fmtDataHora(o.criado_em) : ''}</div>` : ''}
     </div>`;
   }).join('');
   html += card('Ordens registradas', L.length + ' OS · toque para concluir, editar ou apagar', itens);
@@ -4180,7 +4187,7 @@ function barrasVerticalScroll(dados, corFn, opts) {
   const margem = (opts && opts.margemEsq) ? opts.margemEsq : 0;
   const W = Math.max(280, dados.length * 46) + margem;
   const svg = barrasVertical(dados, corFn, opts).replace('<svg ', `<svg width="${W}" height="184" `);
-  return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px">${svg}</div>`;
+  return `<div class="svg-scroll">${svg}</div>`;
 }
 
 function barrasHorizontal(dados, unidade) {
@@ -4237,40 +4244,52 @@ function paretoSVG(dados, fmtVal, cor) {
   const arr = [...dados].filter(d => d.v > 0).sort((a, b) => b.v - a.v).slice(0, 14);
   if (!arr.length) return '<p class="vazio-painel">Sem dados.</p>';
   const tot = arr.reduce((a, d) => a + d.v, 0) || 1, max = arr[0].v || 1;
-  const W = Math.max(320, arr.length * 60), H = 250, base = 175, topo = 24, padL = 6, padR = 6;
-  const larg = (W - padL - padR) / arr.length, bw = larg * 0.6;
+  const PB = 78;                                    // largura por barra (px reais) — não espreme mais
+  const W = Math.max(320, arr.length * PB), H = 300, base = 178, topo = 26, padL = 8, padR = 8;
+  const larg = (W - padL - padR) / arr.length, bw = Math.min(46, larg * 0.58);
   let bars = '', pts = [], rotulos = '', vals = '';
   let ac = 0;
+  // quebra o rótulo em até 2 linhas de ~13 caracteres (antes cortava em 8 com "…")
+  const quebra = (s) => {
+    const p = String(s).split(/\s+/); const ln = []; let cur = '';
+    p.forEach(w => { if ((cur + ' ' + w).trim().length <= 13) cur = (cur + ' ' + w).trim(); else { if (cur) ln.push(cur); cur = w; } });
+    if (cur) ln.push(cur);
+    if (ln.length > 2) { const r = ln.slice(1).join(' '); ln.length = 1; ln.push(r.length > 13 ? r.slice(0, 12) + '…' : r); }
+    return ln;
+  };
   arr.forEach((d, i) => {
     const cx = padL + i * larg + larg / 2;
     const h = Math.max(2, (d.v / max) * (base - topo));
     const y = base - h;
+    const clk = d.click ? ` onclick="${d.click}" style="cursor:pointer"` : '';
+    bars += `<g${clk}>`;
+    if (d.click) bars += `<rect x="${(padL + i * larg).toFixed(1)}" y="0" width="${larg.toFixed(1)}" height="${base}" fill="transparent"/>`;
     bars += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${cor || 'var(--alerta)'}"/>`;
-    vals += `<text x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#16283A">${fmtVal(d.v)}</text>`;
+    bars += `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#16283A">${fmtVal(d.v)}</text></g>`;
     ac += d.v; const pa = ac / tot;
     const py = topo + (1 - pa) * (base - topo);
     pts.push([cx, py, pa]);
-    // rótulo do eixo x (curto)
-    const nome = (d.l.length > 8 ? d.l.slice(0, 8) + '…' : d.l);
-    rotulos += `<text x="${cx.toFixed(1)}" y="${base + 14}" text-anchor="end" font-size="9" fill="#5C7186" transform="rotate(-35 ${cx.toFixed(1)} ${base + 14})">${escapeHtml(nome)}</text>`;
+    const ln = quebra(d.l);
+    rotulos += `<g${clk}>` + ln.map((t, k) =>
+      `<text x="${cx.toFixed(1)}" y="${base + 16 + k * 11}" text-anchor="middle" font-size="10" fill="#5C7186">${escapeHtml(t)}</text>`
+    ).join('') + '</g>';
   });
-  // linha acumulada
   const linha = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
   let dots = '', pcts = '';
   pts.forEach(p => {
     dots += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="#28348E"/>`;
-    pcts += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 7).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="#28348E">${Math.round(p[2] * 100)}%</text>`;
+    pcts += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 8).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#28348E">${Math.round(p[2] * 100)}%</text>`;
   });
-  // linha 80%
   const y80 = topo + 0.2 * (base - topo);
-  return `<svg viewBox="0 0 ${W} ${H + 20}">
+  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
     <line x1="${padL}" y1="${y80.toFixed(1)}" x2="${W - padR}" y2="${y80.toFixed(1)}" stroke="#C9D4E0" stroke-dasharray="4 4"/>
-    <text x="${W - padR}" y="${(y80 - 3).toFixed(1)}" text-anchor="end" font-size="8.5" fill="#9AA6B2">80%</text>
+    <text x="${W - padR}" y="${(y80 - 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#9AA6B2">80%</text>
     <line x1="${padL}" y1="${base}" x2="${W - padR}" y2="${base}" stroke="#DEE6ED"/>
     ${bars}${vals}
     <path d="${linha}" fill="none" stroke="#28348E" stroke-width="2"/>
     ${dots}${pcts}${rotulos}
   </svg>`;
+  return `<div class="svg-scroll">${svg}</div>`;
 }
 // tabela máquina × turno (Manhã/Tarde/Noite/Total)
 function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes }) {
@@ -4427,15 +4446,15 @@ function renderPainel() {
 
     // Pareto de paradas (todos os setores)
     const porMotivo = somaPor(filtraParadas(D.paradas), p => p.motivo_desc || '—', p => p.tempo_horas || 0);
-    { const dd = Object.keys(porMotivo).map(m => ({ l: m, v: porMotivo[m] }));
-      html += card('Pareto de paradas · todos os setores', 'horas · barras + linha de % acumulado',
-      paretoSVG(dd, v => fmtNum(v) + 'h', 'var(--alerta)') + paretoHorizontal(dd.map(x => ({ ...x, click: `detMotivoParada('','${x.l.replace(/'/g, '&#39;')}')` })), v => fmtNum(v) + 'h', 'var(--alerta)')); }
+    { const dd = Object.keys(porMotivo).map(m => ({ l: m, v: porMotivo[m], click: `detMotivoParada('','${m.replace(/'/g, '&#39;')}')` }));
+      html += card('Pareto de paradas · todos os setores', 'horas · toque numa barra para ver o resumo',
+      paretoSVG(dd, v => fmtNum(v) + 'h', 'var(--alerta)') + paretoHorizontal(dd, v => fmtNum(v) + 'h', 'var(--alerta)')); }
 
     // Pareto de perdas (todos os setores)
     const porTipo = somaPor(D.perdas, r => r.tipo_perda_desc || '—', r => r.peso || 0);
-    { const dd = Object.keys(porTipo).map(t => ({ l: t, v: porTipo[t] }));
-      html += card('Pareto de perdas · todos os setores', 'peso · barras + linha de % acumulado',
-      paretoSVG(dd, v => fmtKg(v), '#D64545') + paretoHorizontal(dd.map(x => ({ ...x, click: `detTipoPerda('','${x.l.replace(/'/g, '&#39;')}')` })), v => fmtKg(v), '#D64545')); }
+    { const dd = Object.keys(porTipo).map(t => ({ l: t, v: porTipo[t], click: `detTipoPerda('','${t.replace(/'/g, '&#39;')}')` }));
+      html += card('Pareto de perdas · todos os setores', 'peso · toque numa barra para ver o resumo',
+      paretoSVG(dd, v => fmtKg(v), '#D64545') + paretoHorizontal(dd, v => fmtKg(v), '#D64545')); }
 
     box.innerHTML = html; posRenderPainel();
     return;
@@ -4480,8 +4499,8 @@ function renderPainel() {
   // paradas do último dia
   if (parUD.length) {
     const mUD = somaPor(parUD, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
-    { const dd = Object.keys(mUD).map(m => ({ l: m, v: mUD[m] }));
-      html += card('Paradas do dia', 'horas · barras + linha de % acumulado', paretoSVG(dd, v => fmtNum(v) + 'h') + paretoHorizontal(dd, v => fmtNum(v) + 'h')); }
+    { const dd = Object.keys(mUD).map(m => ({ l: m, v: mUD[m], click: `detMotivoParada('${setor}','${m.replace(/'/g, '&#39;')}')` }));
+      html += card('Paradas do dia', 'horas · toque numa barra para ver o resumo', paretoSVG(dd, v => fmtNum(v) + 'h') + paretoHorizontal(dd, v => fmtNum(v) + 'h')); }
   }
   if (ehTermo && (prodUD.length && bobUD.length)) {
     const t = tabelaAprov(prodUD, bobUD);
@@ -4523,8 +4542,8 @@ function renderPainel() {
   if (parS.length) {
     const pm = {}, nm = {};
     parS.forEach(p => { pm[p.recurso_cod] = (pm[p.recurso_cod] || 0) + (p.tempo_horas || 0); nm[p.recurso_cod] = p.recurso_nome || p.recurso_cod; });
-    const arr = Object.keys(pm).map(c => ({ l: c + ' · ' + nm[c], v: pm[c] }));
-    html += card('Paradas por máquina', 'horas · barras + linha de % acumulado', paretoSVG(arr, v => fmtNum(v) + 'h') + paretoHorizontal(arr.map(x => ({ ...x, click: `detMaquina('${x.l.split(' · ')[0]}')` })), v => fmtNum(v) + 'h'));
+    const arr = Object.keys(pm).map(c => ({ l: c + ' · ' + nm[c], v: pm[c], click: `detMaquina('${c}')` }));
+    html += card('Paradas por máquina', 'horas · toque numa barra para ver o resumo', paretoSVG(arr, v => fmtNum(v) + 'h') + paretoHorizontal(arr, v => fmtNum(v) + 'h'));
   }
   // perdas por máquina e turno (período)
   if (perS.length) {
