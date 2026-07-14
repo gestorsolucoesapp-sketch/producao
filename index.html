@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.29.0</span>
+        <span class="ver-badge" id="verBadge">v3.29.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1113,7 +1113,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.29.0';
+const APP_VER = '3.29.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3524,7 +3524,8 @@ function renderAnalise() {
   const box = $('analiseConteudo');
   const grupo = '';                               // filtro de grupo removido — mostra todos os itens (filtra só por setor)
   const metrica = $('anMetrica').value;           // peso | quantidade
-  const val = r => metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0);
+  // em modo "cxs" a Extrusão não entra: bobina não tem caixa (o ERP repete o peso em quantidade)
+  const val = r => metrica === 'peso' ? (r.peso || 0) : (semCaixa(setorDe(r.recurso_cod)) ? 0 : (r.quantidade || 0));
   const fmtV = metrica === 'peso' ? fmtKg : (n => fmtNum(n) + ' cxs');
 
   let rows = dadosAnalise.filter(r => r.item_cod);
@@ -4431,17 +4432,18 @@ function renderPainel() {
       const rowsSt = D.producao.filter(r => setorDe(r.recurso_cod) === st);
       if (!rowsSt.length) return;
       const emCx = (st === 'Embaladeiras');                        // Embaladeiras sempre em caixas
-      const valSt = emCx ? (r => r.quantidade || 0) : val;
-      const fmtBarSt = emCx ? fmtCx : fmtBar;
-      const fmtVSt = emCx ? (n => fmtNum(n) + ' cxs') : fmtV;
+      const soKg = semCaixa(st);                                  // Extrusão sempre em kg (bobina)
+      const valSt = emCx ? (r => r.quantidade || 0) : soKg ? (r => r.peso || 0) : val;
+      const fmtBarSt = emCx ? fmtCx : soKg ? fmtKg : fmtBar;
+      const fmtVSt = emCx ? (n => fmtNum(n) + ' cxs') : soKg ? fmtKg : fmtV;
       const pd = somaPor(rowsSt, r => r.dia, valSt);
       const dOrd = Object.keys(pd).sort();
       if (!dOrd.length) return;
       const s = serieProducao(pd, dOrd, fmtBarSt, d => `detDia('${st}','${d}')`);
       const totSt = dOrd.reduce((a, d) => a + pd[d], 0);
       html += card(s.titulo + ' · ' + st,
-        (emCx ? 'quantidade (cxs)' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : ''),
-        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && !emCx && metrica === 'peso') ? metaMediaPeriodo(metaDiariaSetor(st), dOrd) : null }),
+        (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : ''),
+        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && !emCx && (soKg || metrica === 'peso')) ? metaMediaPeriodo(metaDiariaSetor(st), dOrd) : null }),
         'Produção por dia · ' + st);
     });
 
