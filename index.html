@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.28.1</span>
+        <span class="ver-badge" id="verBadge">v3.29.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1113,7 +1113,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.28.1';
+const APP_VER = '3.29.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1791,6 +1791,11 @@ function metaDiariaSemExtrusao() {
   }));
   return achou ? s : null;
 }
+// Extrusão produz BOBINA (kg). O ERP repete o peso no campo "quantidade" — logo "cxs" ali é o próprio kg.
+const semCaixa = st => st === 'Extrusão';
+const cxDe = rows => rows.reduce((a, r) => a + (semCaixa(setorDe(r.recurso_cod)) ? 0 : (r.quantidade || 0)), 0);
+const temCaixa = rows => rows.some(r => !semCaixa(setorDe(r.recurso_cod)));
+const txtCx = rows => temCaixa(rows) ? fmtNum(cxDe(rows)) + ' cxs' : 'bobina (sem caixa)';
 const _BLOCOS_META = [['Manhã', 'M'], ['Tarde', 'T'], ['Noite', 'N']];
 // Embaladeiras trabalham em CAIXAS; os demais setores em kg
 const setorEmCx = s => s === 'Embaladeiras';
@@ -3314,21 +3319,23 @@ function detDia(setor, dia) {
   const per = (setor ? noSetor(D.perdas, setor) : D.perdas).filter(r => r.dia === dia).reduce((a, r) => a + (r.peso || 0), 0);
   const perdaPct = (kg + per) > 0 ? (per / (kg + per) * 100).toFixed(1) : '0';
   abreDet('Dia ' + fmtDataSem(dia), `
-    <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${fmtNum(cx)} cxs · perda ${perdaPct}%</p>
+    <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
     ${tabSimples(['Turno', 'Peso'], ['Manhã', 'Tarde', 'Noite'].map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${fmtKg(bloco[t])}</span></td></tr>`).join(''))}
     <div style="height:8px"></div>
     ${tabSimples(['Máquina', 'Peso'], topMaq.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}`);
 }
 // PRODUÇÃO de um turno (bloco)
-function detTurno(setor, bloco) {
+function detTurno(setor, bloco, dia) {
   if (!dadosPainel) return;
   const D = dadosPainel;
-  let prod = D.producao.filter(r => blocoTurno(r.turno, r.dia) === bloco); if (setor) prod = prod.filter(r => setorDe(r.recurso_cod) === setor);
-  const kg = prod.reduce((a, r) => a + (r.peso || 0), 0), cx = prod.reduce((a, r) => a + (r.quantidade || 0), 0);
+  let prod = D.producao.filter(r => blocoTurno(r.turno, r.dia) === bloco);
+  if (dia) prod = prod.filter(r => r.dia === dia);            // clique veio do card do ÚLTIMO DIA
+  if (setor) prod = prod.filter(r => setorDe(r.recurso_cod) === setor);
+  const kg = prod.reduce((a, r) => a + (r.peso || 0), 0);
   const maq = {}, nm = {}; prod.forEach(r => { maq[r.recurso_cod] = (maq[r.recurso_cod] || 0) + (r.peso || 0); nm[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
   const top = Object.entries(maq).sort((a, b) => b[1] - a[1]);
-  abreDet('Turno ' + bloco, `
-    <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${fmtNum(cx)} cxs</p>
+  abreDet('Turno ' + bloco + (dia ? ' · ' + fmtData(dia) : ' · período'), `
+    <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)}</p>
     ${tabSimples(['Máquina', 'Peso'], top.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}`);
 }
 // UMA máquina: produção por turno, paradas, perdas, aproveitamento
@@ -3354,7 +3361,7 @@ function detMaquina(cod) {
   abreDet(cod, `
     <p class="idet-desc">${escapeHtml(nome)}</p>
     <div class="idet-grid">
-      <div><b>${fmtKg(kg)}</b><span>produção · ${fmtNum(cx)} cxs</span></div>
+      <div><b>${fmtKg(kg)}</b><span>produção · ${txtCx(prod)}</span></div>
       <div><b>${fmtNum(horas)} h</b><span>paradas</span></div>
       <div><b>${perdaPct}%</b><span>perda (refugo) · ${fmtKg(perKg)}</span></div>
       ${aprovLinha}
@@ -3412,7 +3419,7 @@ function resumoSetor(s) {
   $('itemDetTitulo').textContent = s;
   $('itemDetCorpo').innerHTML = `
     <div class="idet-grid">
-      <div><b>${fmtKg(kg)}</b><span>produção (${fmtNum(cx)} cxs)</span></div>
+      <div><b>${fmtKg(kg)}</b><span>produção (${txtCx(prod)})</span></div>
       <div><b>${ativas}/${totalMaq}</b><span>máquinas com produção</span></div>
       <div><b>${fmtNum(horas)} h</b><span>horas paradas</span></div>
       <div><b>${perdaPct != null ? perdaPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</b><span>perda (refugo)</span></div>
@@ -4212,10 +4219,10 @@ const blocoParada = p => { const h = p.inicio ? String(p.inicio).slice(11, 16) :
 
 // barras verticais por turno (peso) com cores da planilha
 const COR_TURNO = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
-function gTurnoPeso(rows, valFn, fmtBar, setor) {
+function gTurnoPeso(rows, valFn, fmtBar, setor, dia) {
   const b = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
   rows.forEach(r => { b[blocoTurno(r.turno, r.dia)] += (valFn(r) || 0); });
-  return barrasVertical(['Manhã', 'Tarde', 'Noite'].map(k => ({ l: k, v: b[k], rot: fmtBar(b[k]), click: `detTurno('${setor || ''}','${k}')` })), d => COR_TURNO[d.l] || 'var(--verde)');
+  return barrasVertical(['Manhã', 'Tarde', 'Noite'].map(k => ({ l: k, v: b[k], rot: fmtBar(b[k]), click: `detTurno('${setor || ''}','${k}','${dia || ''}')` })), d => COR_TURNO[d.l] || 'var(--verde)');
 }
 // top máquinas (horizontal) — com código; pode incluir todas as máquinas do setor
 function gMaqPeso(rows, valFn, uni, incluirCods, nomes) {
@@ -4362,7 +4369,9 @@ function renderPainel() {
   aprovReg = [];
   const box = $('painelConteudo');
   const setor = $('fSetor').value;
-  const metrica = $('fMetrica').value;
+  let metrica = $('fMetrica').value;
+  // Extrusão só existe em kg (bobina) — "cxs" ali seria o próprio peso repetido
+  if (setor === 'Extrusão' && metrica === 'quantidade') { metrica = 'peso'; if ($('fMetrica')) $('fMetrica').value = 'peso'; }
   const uni = metrica === 'peso' ? 'kg' : 'cxs';
   const fmtV = metrica === 'peso' ? fmtKg : fmtNum;
   const val = r => metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0);
@@ -4481,12 +4490,12 @@ function renderPainel() {
   // ---------- ÚLTIMO DIA ----------
   html += secao('ultimo-dia', 'Último dia · ' + udSemTxt);
   const kgDia = prodUD.reduce((a, r) => a + (r.peso || 0), 0);
-  const cxDia = prodUD.reduce((a, r) => a + (r.quantidade || 0), 0);
+  const cxDia = cxDe(prodUD);
   html += `<div class="kpis pbloco" data-k="k:ud-total">
     <div class="kpi destaque"><div class="v">${fmtKg(kgDia)}</div><div class="l">Total do dia (peso)</div></div>
-    <div class="kpi"><div class="v">${fmtNum(cxDia)}</div><div class="l">Total do dia (cxs)</div></div></div>`;
+    <div class="kpi"><div class="v">${temCaixa(prodUD) ? fmtNum(cxDia) : '—'}</div><div class="l">${temCaixa(prodUD) ? 'Total do dia (cxs)' : 'Bobina · sem caixa'}</div></div></div>`;
   if (prodUD.length) {
-    html += card('Produção por turno', metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)', gTurnoPeso(prodUD, val, fmtBar, setor), 'Produção por turno · dia');
+    html += card('Produção por turno', metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)', gTurnoPeso(prodUD, val, fmtBar, setor, ud), 'Produção por turno · dia');
     html += card('Produção por máquina', metrica === 'peso' ? 'peso' : 'quantidade (cxs)', gMaqPeso(prodUD, val, uni, SETOR_MAQ[setor] || null, D.nomeMaq));
   }
   // perda % do último dia
