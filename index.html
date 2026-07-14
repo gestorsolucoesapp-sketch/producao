@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.35.0</span>
+        <span class="ver-badge" id="verBadge">v3.36.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1121,7 +1121,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.35.0';
+const APP_VER = '3.36.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3633,6 +3633,46 @@ function renderAnalise() {
   else if (grupo) rows = rows.filter(r => String(r.item_cod).startsWith(grupo));
   if (!rows.length) { box.innerHTML = '<div class="grafico"><p class="vazio-painel">Nenhum item encontrado para este filtro.</p></div>'; return; }
 
+  // ===== ITENS DIFERENTES POR DIA (mês) / POR MÊS (ano) =====
+  // Contagem DISTINTA — somar os distintos de cada dia daria número errado no mês
+  // (o mesmo item roda vários dias e seria contado repetido).
+  let cardItensDia = '';
+  {
+    const porDiaSet = {};
+    rows.forEach(r => { if (!r.dia) return; (porDiaSet[r.dia] = porDiaSet[r.dia] || new Set()).add(String(r.item_cod)); });
+    const dias = Object.keys(porDiaSet).sort();
+    if (dias.length) {
+      const ultimo = dias[dias.length - 1];
+      let dados, titulo, sub;
+      if (dias.length <= 45) {                                   // MÊS → um ponto por dia
+        titulo = 'Itens diferentes por dia';
+        sub = 'quantos itens distintos rodaram em cada dia · toque numa barra para ver quais';
+        dados = dias.map(d => ({
+          l: d.slice(8) + '/' + d.slice(5, 7),
+          v: porDiaSet[d].size,
+          rot: String(porDiaSet[d].size),
+          click: `detItensDia('${anSetor}','${d}')`
+        }));
+      } else {                                                   // ANO / TUDO → um ponto por mês
+        const porMesSet = {};
+        rows.forEach(r => { if (!r.dia) return; const m = r.dia.slice(0, 7); (porMesSet[m] = porMesSet[m] || new Set()).add(String(r.item_cod)); });
+        const meses = Object.keys(porMesSet).sort();
+        titulo = 'Itens diferentes por mês';
+        sub = 'itens distintos rodados no mês (não é a soma dos dias — o mesmo item repete)';
+        dados = meses.map(m => ({ l: mesLabel(m), v: porMesSet[m].size, rot: String(porMesSet[m].size) }));
+      }
+      const media = dados.reduce((a, d) => a + d.v, 0) / dados.length;
+      cardItensDia =
+        `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
+        `<div class="kpis" style="margin-bottom:10px">
+           <div class="kpi destaque"><div class="v">${porDiaSet[ultimo].size}</div><div class="l">Itens no último dia · ${fmtData(ultimo)}</div></div>
+           <div class="kpi"><div class="v">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">Média do período</div></div>
+         </div>` +
+        `<div class="grafico">${barrasVerticalScroll(dados, null, { media: true, fmt: n => String(Math.round(n)), margemEsq: 34 })}</div>` +
+        `<p class="desc" style="margin-top:6px;font-size:11px">Muitos itens diferentes num dia = mais trocas de item = mais setup. Vale cruzar com o Pareto de paradas (AJUSTE DE MÁQUINA).</p></div>`;
+    }
+  }
+
   // agrega por item (com dias por máquina para detectar re-entradas)
   const it = {};
   rows.forEach(r => {
@@ -3772,7 +3812,42 @@ function renderAnalise() {
       barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
   }
 
-  box.innerHTML = html;
+  box.innerHTML = cardItensDia + html;
+}
+
+// quais itens rodaram num dia (clique nas barras de "Itens diferentes por dia")
+function detItensDia(setor, dia) {
+  if (!dadosAnalise) return;
+  const metrica = $('anMetrica') ? $('anMetrica').value : 'peso';
+  let rows = dadosAnalise.filter(r => r.item_cod && r.dia === dia);
+  if (setor) rows = rows.filter(r => setorDe(r.recurso_cod) === setor);
+  const it = {};
+  rows.forEach(r => {
+    const c = String(r.item_cod);
+    if (!it[c]) it[c] = { desc: r.item_desc || c, kg: 0, cx: 0, maqs: new Set() };
+    it[c].kg += (r.peso || 0);
+    it[c].cx += semCaixa(setorDe(r.recurso_cod)) ? 0 : (r.quantidade || 0);
+    if (r.recurso_cod) it[c].maqs.add(String(r.recurso_cod));
+  });
+  const linhas = Object.entries(it).sort((a, b) => (metrica === 'peso' ? b[1].kg - a[1].kg : b[1].cx - a[1].cx));
+  $('itemDetTitulo').textContent = 'Itens de ' + fmtData(dia);
+  if (!linhas.length) {
+    $('itemDetCorpo').innerHTML = '<p class="idet-desc">Nenhum item neste dia.</p>';
+    $('itemDetOverlay').classList.remove('oculto'); return;
+  }
+  const totKg = linhas.reduce((a, [, o]) => a + o.kg, 0);
+  $('itemDetCorpo').innerHTML = `
+    <p class="idet-desc">${setor || 'Todos os setores'} · <b>${linhas.length} itens diferentes</b> · ${fmtKg(totKg)}</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+      <th style="text-align:left">Item</th><th>Peso</th><th>Cxs</th><th>Máq.</th>
+    </tr></thead><tbody>
+    ${linhas.map(([c, o]) => `<tr>
+      <td class="nome"><b>${escapeHtml(c)}</b><br><span style="font-size:11px;color:#5C7186">${escapeHtml(o.desc)}</span></td>
+      <td><span class="cel neutra">${fmtKg(o.kg)}</span></td>
+      <td><span class="cel neutra">${o.cx ? fmtNum(o.cx) : '—'}</span></td>
+      <td><span class="cel neutra">${[...o.maqs].join(', ')}</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('itemDetOverlay').classList.remove('oculto');
 }
 
 /* ================= IA ================= */
