@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.33.1</span>
+        <span class="ver-badge" id="verBadge">v3.34.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1118,7 +1118,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.33.1';
+const APP_VER = '3.34.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -5159,14 +5159,24 @@ async function gravar(id, substituir = false) {
   const mapa = MAPA[r.rotina];
   try {
     if (!mapa) throw new Error('Relatório RPCP' + r.rotina + ' ainda não tem tabela mapeada.');
-    // Dedup por SOBREPOSIÇÃO de período: apaga só importações da MESMA rotina cujo
-    // intervalo [periodo_de, periodo_ate] cruza o novo. Assim blocos de outros meses
-    // (ex.: jan–mar, abr–mai) são preservados, e reimportar o mesmo período o substitui
-    // sem duplicar. (Antes apagava TUDO da rotina, o que zerava o histórico.)
-    await sb.from('importacoes').delete()
-      .eq('rotina', r.rotina)
-      .lte('periodo_de', r.periodo.ate)
-      .gte('periodo_ate', r.periodo.de);
+    // Dedup por PERÍODO DE DADOS (não por registro de importação).
+    //
+    // BUG ANTIGO: apagava o REGISTRO de qualquer importação cujo intervalo cruzasse o novo.
+    // Como as tabelas têm ON DELETE CASCADE, apagar o registro apagava TODAS as linhas dele.
+    // Se um bloco antigo cobria maio E junho, importar junho matava maio junto.
+    //
+    // AGORA: apaga só as LINHAS do período novo na tabela de destino, e só remove o
+    // registro da importação se ele estiver INTEIRO dentro do período novo.
+    {
+      const { error: eDel } = await sb.from(mapa.tabela).delete()
+        .gte('dia', r.periodo.de)
+        .lte('dia', r.periodo.ate);
+      if (eDel) throw new Error(`Falha ao limpar o período em ${mapa.tabela}: ` + eDel.message);
+      await sb.from('importacoes').delete()
+        .eq('rotina', r.rotina)
+        .gte('periodo_de', r.periodo.de)
+        .lte('periodo_ate', r.periodo.ate);
+    }
     // 1) registra a importação
     const { data: imp, error: e1 } = await sb.from('importacoes').insert({
       hash, rotina: r.rotina, arquivo: nomeArquivo,
