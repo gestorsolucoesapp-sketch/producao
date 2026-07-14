@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.31.1</span>
+        <span class="ver-badge" id="verBadge">v3.32.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -507,6 +507,11 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       </div>
       <div id="barraLote" class="oculto"></div>
       <div id="listaPreviews"></div>
+      <div class="card">
+        <div class="titulo-sec">Saúde da importação</div>
+        <p class="desc" style="margin-bottom:10px">Quantos dias cada mês tem em cada relatório. Se a produção estiver muito abaixo das paradas, é sinal de PDF que não entrou — foi o que aconteceu com junho.</p>
+        <div id="saudeImport"><p class="desc">Carregando…</p></div>
+      </div>
     </section>
 
     <!-- HISTÓRICO -->
@@ -1113,7 +1118,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.31.1';
+const APP_VER = '3.32.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1697,6 +1702,57 @@ function addOlho(id) {
 ['inSenha', 'inSenha2', 'inNova1', 'inNova2'].forEach(addOlho);
 
 /* ================= ABAS ================= */
+// ===== SAÚDE DA IMPORTAÇÃO =====
+// Compara, mês a mês, quantos dias existem em producao × paradas × perdas.
+// Produção muito abaixo das outras = relatório que nunca foi importado.
+async function carregarSaudeImport() {
+  const box = $('saudeImport'); if (!box) return;
+  box.innerHTML = '<p class="desc">Carregando…</p>';
+  let linhas = null;
+  try {
+    const { data, error } = await sb.from('v_saude_import').select('*').order('mes', { ascending: false });
+    if (error) throw error;
+    linhas = data || [];
+  } catch (e) {
+    box.innerHTML = '<p class="desc" style="color:#D64545">Não consegui ler a view <b>v_saude_import</b>. Rode o SQL de criação dela no Supabase.</p>';
+    return;
+  }
+  if (!linhas.length) { box.innerHTML = '<p class="vazio-painel">Nenhum dado importado ainda.</p>'; return; }
+
+  const TOL = 3; // paradas podem ter alguns dias a mais (fim de semana, máquina parada sem produzir)
+  let alertas = 0;
+  const linhasHtml = linhas.map(r => {
+    const prod = r.prod_dias || 0, par = r.par_dias || 0, perd = r.perd_dias || 0;
+    const ref = Math.max(prod, par, perd);
+    const cel = (v, nome) => {
+      const falta = ref - v;
+      const ruim = v === 0 || falta > TOL;
+      if (ruim) alertas++;
+      const cor = v === 0 ? '#D64545' : ruim ? '#D64545' : falta > 0 ? '#C9922E' : '#2E8B57';
+      const bg = v === 0 || ruim ? '#FDECEC' : falta > 0 ? '#FFF6E5' : '#EAF6EF';
+      return `<td style="text-align:center;padding:7px 4px">
+        <span style="display:inline-block;min-width:44px;padding:4px 6px;border-radius:7px;background:${bg};color:${cor};font-weight:800;font-size:12.5px">${v}${ruim ? ' ⚠️' : ''}</span></td>`;
+    };
+    const algumRuim = [prod, par, perd].some(v => v === 0 || (ref - v) > TOL);
+    return `<tr style="border-top:1px solid var(--borda);${algumRuim ? 'background:#FFFAFA' : ''}">
+      <td style="padding:7px 4px;font-weight:700;color:var(--navy);font-size:12.5px">${mesLabel(r.mes)}</td>
+      ${cel(prod)}${cel(par)}${cel(perd)}
+      <td style="text-align:center;padding:7px 4px;font-size:11.5px;color:${algumRuim ? '#D64545' : '#5C7186'};font-weight:${algumRuim ? '800' : '600'}">${algumRuim ? 'FALTA IMPORTAR' : 'ok'}</td>
+    </tr>`;
+  }).join('');
+
+  box.innerHTML =
+    (alertas ? `<div style="background:#FDECEC;border:1px solid #F3C4C4;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:#8C2F2F"><b>⚠️ ${alertas} relatório(s) com dias faltando.</b> Enquanto isso, o OEE e a perda % desses meses ficam distorcidos — dividem parada por uma produção que não existe.</div>`
+       : `<div style="background:#EAF6EF;border:1px solid #BFE3CE;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:#1F6B43"><b>✅ Tudo importado.</b> Produção, paradas e perdas batem em todos os meses.</div>`) +
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:340px">
+      <thead><tr style="font-size:10.5px;color:#8395A6;letter-spacing:.4px">
+        <th style="text-align:left;padding:4px">MÊS</th>
+        <th style="padding:4px">PRODUÇÃO</th><th style="padding:4px">PARADAS</th><th style="padding:4px">PERDAS</th>
+        <th style="padding:4px">STATUS</th>
+      </tr></thead><tbody>${linhasHtml}</tbody></table></div>
+    <p class="desc" style="margin-top:8px;font-size:11px">Números = dias com dado no mês. Diferença de até ${TOL} dias é normal (paradas podem ocorrer em dia sem produção).</p>`;
+}
+
 function trocarAba(qual) {
   if (qual === 'usuarios' && !souAdmin) return;
   if (qual !== 'usuarios' && !abasPermitidas.includes(qual)) return;
@@ -1712,6 +1768,7 @@ function trocarAba(qual) {
   $('abaManut').classList.toggle('oculto', qual !== 'manut');
   if (qual === 'painel') carregarPainel();
   if (qual === 'analise') carregarAnalise();
+  if (qual === 'importar') carregarSaudeImport();
   if (qual === 'historico') carregarHistorico();
   if (qual === 'usuarios')  carregarUsuarios();
   if (qual === 'metas')     carregarMetas();
@@ -3987,6 +4044,7 @@ async function executarComando(cmd) {
   $('abaMetas').classList.toggle('oculto', aba !== 'metas');
   $('abaOEE').classList.toggle('oculto', aba !== 'oee');
   $('abaManut').classList.toggle('oculto', aba !== 'manut');
+  if (aba === 'importar') carregarSaudeImport();
   const partes = [];
   if (aba === 'painel') {
     await carregarPainel();
