@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.32.0</span>
+        <span class="ver-badge" id="verBadge">v3.33.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1118,7 +1118,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.32.0';
+const APP_VER = '3.33.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1719,10 +1719,34 @@ async function carregarSaudeImport() {
   }
   if (!linhas.length) { box.innerHTML = '<p class="vazio-painel">Nenhum dado importado ainda.</p>'; return; }
 
+  // preenche os BURACOS: mês sem nenhum registro não vem na view, então não gerava alerta.
+  // Ex.: junho apagado inteiro ficava invisível e o card dizia "tudo importado".
+  {
+    const ms = linhas.map(r => r.mes).sort();
+    const [aI, mI] = ms[0].split('-').map(Number);
+    const [aF, mF] = ms[ms.length - 1].split('-').map(Number);
+    const temMes = new Set(ms);
+    const todos = [];
+    for (let a = aI, m = mI; a < aF || (a === aF && m <= mF);) {
+      const ym = a + '-' + String(m).padStart(2, '0');
+      todos.push(ym);
+      if (!temMes.has(ym)) linhas.push({ mes: ym, prod_dias: 0, par_dias: 0, perd_dias: 0, vazio: true });
+      m++; if (m > 12) { m = 1; a++; }
+    }
+    linhas.sort((x, y) => y.mes.localeCompare(x.mes));
+  }
+
   const TOL = 3; // paradas podem ter alguns dias a mais (fim de semana, máquina parada sem produzir)
   let alertas = 0;
   const linhasHtml = linhas.map(r => {
     const prod = r.prod_dias || 0, par = r.par_dias || 0, perd = r.perd_dias || 0;
+    if (!prod && !par && !perd) {   // mês inteiro sem nada
+      alertas++;
+      return `<tr style="border-top:1px solid var(--borda);background:#FDECEC">
+        <td style="padding:7px 4px;font-weight:700;color:var(--navy);font-size:12.5px">${mesLabel(r.mes)}</td>
+        <td colspan="3" style="text-align:center;padding:7px 4px;color:#D64545;font-weight:800;font-size:12.5px">nenhum dado</td>
+        <td style="text-align:center;padding:7px 4px;font-size:11.5px;color:#D64545;font-weight:800">MÊS VAZIO</td></tr>`;
+    }
     const ref = Math.max(prod, par, perd);
     const cel = (v, nome) => {
       const falta = ref - v;
@@ -5059,7 +5083,7 @@ function renderPreview(id, dup) {
     <div class="prog oculto" id="${id}Prog"><div></div></div>
     <div class="prev-acoes">
       <button class="btn btn-borda" onclick="descartar('${id}')">Descartar</button>
-      <button class="btn btn-verde" id="${id}Btn" onclick="gravar('${id}')" ${ehDup ? 'disabled' : ''}>${ehDup ? 'Duplicado' : 'Confirmar e gravar'}</button>
+      <button class="btn ${ehDup ? 'btn-navy' : 'btn-verde'}" id="${id}Btn" onclick="gravar('${id}')">${ehDup ? '♻️ Já importado — gravar de novo' : 'Confirmar e gravar'}</button>
     </div>`;
   atualizarBarraLote();
 }
