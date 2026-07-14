@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.37.0</span>
+        <span class="ver-badge" id="verBadge">v3.38.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1121,7 +1121,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.37.0';
+const APP_VER = '3.38.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1734,7 +1734,7 @@ async function carregarSaudeImport(manual) {
     for (let a = aI, m = mI; a < aF || (a === aF && m <= mF);) {
       const ym = a + '-' + String(m).padStart(2, '0');
       todos.push(ym);
-      if (!temMes.has(ym)) linhas.push({ mes: ym, prod_dias: 0, resumo_dias: 0, par_dias: 0, perd_dias: 0, vazio: true });
+      if (!temMes.has(ym)) linhas.push({ mes: ym, prod_dias: 0, resumo_dias: 0, par_dias: 0, perd_dias: 0, cli_dias: 0, cons_dias: 0, vazio: true });
       m++; if (m > 12) { m = 1; a++; }
     }
     linhas.sort((x, y) => y.mes.localeCompare(x.mes));
@@ -1744,14 +1744,17 @@ async function carregarSaudeImport(manual) {
   let alertas = 0;
   const linhasHtml = linhas.map(r => {
     const prod = r.prod_dias || 0, resumo = r.resumo_dias || 0, par = r.par_dias || 0, perd = r.perd_dias || 0;
-    if (!prod && !resumo && !par && !perd) {   // mês inteiro sem nada
+    const cli = r.cli_dias || 0, cons = r.cons_dias || 0;
+    if (!prod && !resumo && !par && !perd && !cons) {   // mês inteiro sem nada (cli é esparso, não conta)
       alertas++;
       return `<tr style="border-top:1px solid var(--borda);background:#FDECEC">
         <td style="padding:7px 4px;font-weight:700;color:var(--navy);font-size:12.5px">${mesLabel(r.mes)}</td>
-        <td colspan="4" style="text-align:center;padding:7px 4px;color:#D64545;font-weight:800;font-size:12.5px">nenhum dado</td>
+        <td colspan="6" style="text-align:center;padding:7px 4px;color:#D64545;font-weight:800;font-size:12.5px">nenhum dado</td>
         <td style="text-align:center;padding:7px 4px;font-size:11.5px;color:#D64545;font-weight:800">MÊS VAZIO</td></tr>`;
     }
-    const ref = Math.max(prod, resumo, par, perd);
+    // 054 (perdas de cliente) é legitimamente raro — fica cinza, nunca conta como falta
+    const celInfo = v => `<td style="text-align:center;padding:7px 4px"><span style="display:inline-block;min-width:40px;padding:4px 6px;border-radius:7px;background:#EEF1F5;color:#8395A6;font-weight:700;font-size:12px">${v || '—'}</span></td>`;
+    const ref = Math.max(prod, resumo, par, perd, cons);
     const cel = (v, nome) => {
       const falta = ref - v;
       const ruim = v === 0 || falta > TOL;
@@ -1761,10 +1764,10 @@ async function carregarSaudeImport(manual) {
       return `<td style="text-align:center;padding:7px 4px">
         <span style="display:inline-block;min-width:44px;padding:4px 6px;border-radius:7px;background:${bg};color:${cor};font-weight:800;font-size:12.5px">${v}${ruim ? ' ⚠️' : ''}</span></td>`;
     };
-    const algumRuim = [prod, resumo, par, perd].some(v => v === 0 || (ref - v) > TOL);
+    const algumRuim = [prod, resumo, par, perd, cons].some(v => v === 0 || (ref - v) > TOL);
     return `<tr style="border-top:1px solid var(--borda);${algumRuim ? 'background:#FFFAFA' : ''}">
       <td style="padding:7px 4px;font-weight:700;color:var(--navy);font-size:12.5px">${mesLabel(r.mes)}</td>
-      ${cel(prod)}${cel(resumo)}${cel(par)}${cel(perd)}
+      ${cel(prod)}${cel(resumo)}${cel(par)}${cel(perd)}${celInfo(cli)}${cel(cons)}
       <td style="text-align:center;padding:7px 4px;font-size:11.5px;color:${algumRuim ? '#D64545' : '#5C7186'};font-weight:${algumRuim ? '800' : '600'}">${algumRuim ? 'FALTA IMPORTAR' : 'ok'}</td>
     </tr>`;
   }).join('');
@@ -1772,16 +1775,18 @@ async function carregarSaudeImport(manual) {
   box.innerHTML =
     (alertas ? `<div style="background:#FDECEC;border:1px solid #F3C4C4;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:#8C2F2F"><b>⚠️ ${alertas} relatório(s) com dias faltando.</b> Enquanto isso, o OEE e a perda % desses meses ficam distorcidos — dividem parada por uma produção que não existe.</div>`
        : `<div style="background:#EAF6EF;border:1px solid #BFE3CE;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:#1F6B43"><b>✅ Tudo importado.</b> Produção, paradas e perdas batem em todos os meses.</div>`) +
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:340px">
+    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:460px">
       <thead><tr style="font-size:10.5px;color:#8395A6;letter-spacing:.4px">
         <th style="text-align:left;padding:4px">MÊS</th>
-        <th style="padding:4px">622<br>PRODUÇÃO</th>
+        <th style="padding:4px">622<br>PROD</th>
         <th style="padding:4px;color:#28348E">621<br>RESUMO ⭐</th>
-        <th style="padding:4px">643<br>PARADAS</th><th style="padding:4px">624<br>PERDAS</th>
+        <th style="padding:4px">643<br>PARAD</th><th style="padding:4px">624<br>PERD</th>
+        <th style="padding:4px;color:#8395A6">054<br>CLI</th><th style="padding:4px">646<br>CONS</th>
         <th style="padding:4px">STATUS</th>
       </tr></thead><tbody>${linhasHtml}</tbody></table></div>
     <p class="desc" style="margin-top:8px;font-size:11px">Números = dias com dado no mês. Diferença de até ${TOL} dias é normal (paradas podem ocorrer em dia sem produção).<br>
-    ⭐ <b>621 RESUMO é a tabela que o PAINEL lê.</b> Se ela estiver vazia num mês, o Painel inteiro fica cego naquele mês — mesmo com o 622 completo.</p>`;
+    ⭐ <b>621 RESUMO é a tabela que o PAINEL lê.</b> Se ela estiver vazia num mês, o Painel inteiro fica cego naquele mês — mesmo com o 622 completo.<br>
+    <span style="color:#8395A6">054 CLI (perdas de cliente) é raro por natureza — fica cinza e não conta como falta.</span></p>`;
 }
 
 function trocarAba(qual) {
