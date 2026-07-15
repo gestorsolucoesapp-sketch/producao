@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.41.0</span>
+        <span class="ver-badge" id="verBadge">v3.42.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1121,7 +1121,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.41.0';
+const APP_VER = '3.42.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3581,7 +3581,7 @@ async function ensureAnalise() {
     const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
     const [rows, paradas] = await Promise.all([
       fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso', de, ate),
-      fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod', de, ate)
+      fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod,op,inicio', de, ate)
     ]);
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
@@ -3590,10 +3590,30 @@ async function ensureAnalise() {
     return true;
   } catch (e) { return e.message || false; }
 }
+// Junta os fragmentos do ERP num setup real.
+// O ERP fatia cada setup a cada micro-parada e na virada de turno; um único setup
+// (mesma máquina, mesma OP) chega picado em dezenas de linhas. Regra: mesma máquina
+// + mesma OP = 1 setup. Sem OP, cai para máquina+dia. Data do setup = seu início.
+function setupsReais(lista) {
+  const grupos = {};
+  lista.forEach(p => {
+    const chave = p.op
+      ? p.recurso_cod + '|op:' + p.op
+      : p.recurso_cod + '|dia:' + (p.dia || (p.inicio || '').slice(0, 10));
+    if (!grupos[chave]) grupos[chave] = { recurso_cod: p.recurso_cod, op: p.op || null, horas: 0, dia: null, ini: null };
+    const g = grupos[chave];
+    g.horas += (p.tempo_horas || 0);
+    const ini = p.inicio || p.dia;
+    if (ini && (!g.ini || ini < g.ini)) { g.ini = ini; g.dia = (p.inicio || '').slice(0, 10) || p.dia; }
+    if (!g.dia) g.dia = p.dia;
+  });
+  return Object.values(grupos);   // cada item = 1 setup real
+}
 function calcSetup(setor) {
   const arr = setor ? setupParadas.filter(p => setorDe(p.recurso_cod) === setor) : setupParadas;
-  const h = arr.reduce((a, p) => a + (p.tempo_horas || 0), 0);
-  setupInfo = arr.length ? { media: h / arr.length, eventos: arr.length, horas: h } : null;
+  const reais = setupsReais(arr);                    // agrupa fragmentos -> setups reais
+  const h = reais.reduce((a, g) => a + g.horas, 0);
+  setupInfo = reais.length ? { media: h / reais.length, eventos: reais.length, horas: h } : null;
 }
 async function carregarAnalise() {
   setTimeout(travarSetores, 0);
@@ -3686,20 +3706,20 @@ function renderAnalise() {
   let cardSetup = '';
   {
     const sp = anSetor ? setupParadas.filter(p => setorDe(p.recurso_cod) === anSetor) : setupParadas;
-    const comDia = sp.filter(p => p.dia);
-    if (comDia.length) {
+    const reais = setupsReais(sp).filter(g => g.dia);   // 1 por máquina+OP, não fragmentos
+    if (reais.length) {
       const porDia = {}, horasDia = {};
-      comDia.forEach(p => { porDia[p.dia] = (porDia[p.dia] || 0) + 1; horasDia[p.dia] = (horasDia[p.dia] || 0) + (p.tempo_horas || 0); });
+      reais.forEach(g => { porDia[g.dia] = (porDia[g.dia] || 0) + 1; horasDia[g.dia] = (horasDia[g.dia] || 0) + g.horas; });
       const dias = Object.keys(porDia).sort();
       const ultimo = dias[dias.length - 1];
-      const totEv = comDia.length, totH = comDia.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+      const totEv = reais.length, totH = reais.reduce((a, g) => a + g.horas, 0);
       let dados, titulo, sub;
       if (dias.length <= 45) {
         titulo = 'Setups por dia';
         sub = 'nº de paradas de SETUP em cada dia · toque numa barra para ver as máquinas';
         dados = dias.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: String(porDia[d]), click: `detSetupDia('${anSetor}','${d}')` }));
       } else {
-        const porMes = {}; comDia.forEach(p => { const m = p.dia.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
+        const porMes = {}; reais.forEach(g => { const m = g.dia.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
         const meses = Object.keys(porMes).sort();
         titulo = 'Setups por mês';
         sub = 'nº de paradas de SETUP no mês';
@@ -3863,15 +3883,17 @@ function renderAnalise() {
 
 // máquinas que fizeram setup num dia (clique nas barras de "Setups por dia")
 function detSetupDia(setor, dia) {
-  let sp = setupParadas.filter(p => p.dia === dia);
+  let sp = setupParadas.filter(p => setorDe(p.recurso_cod) === (setor || setorDe(p.recurso_cod)));
   if (setor) sp = sp.filter(p => setorDe(p.recurso_cod) === setor);
+  // agrupa em setups reais e fica só com os que começaram neste dia
+  const reais = setupsReais(sp).filter(g => g.dia === dia);
   const mq = {};
-  sp.forEach(p => { const c = String(p.recurso_cod); if (!mq[c]) mq[c] = { n: 0, h: 0 }; mq[c].n++; mq[c].h += (p.tempo_horas || 0); });
+  reais.forEach(g => { const c = String(g.recurso_cod); if (!mq[c]) mq[c] = { n: 0, h: 0 }; mq[c].n++; mq[c].h += g.horas; });
   const linhas = Object.entries(mq).sort((a, b) => b[1].n - a[1].n);
   $('itemDetTitulo').textContent = 'Setups de ' + fmtData(dia);
-  const totH = sp.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const totH = reais.reduce((a, g) => a + g.horas, 0), totN = reais.length;
   $('itemDetCorpo').innerHTML = `
-    <p class="idet-desc">${setor || 'Todos os setores'} · <b>${sp.length} setup(s)</b> · ${fmtNum(totH)}h</p>
+    <p class="idet-desc">${setor || 'Todos os setores'} · <b>${totN} setup(s)</b> · ${fmtNum(totH)}h</p>
     <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
       <th style="text-align:left">Máquina</th><th>Setups</th><th>Horas</th>
     </tr></thead><tbody>
