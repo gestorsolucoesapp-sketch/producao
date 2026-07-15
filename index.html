@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.60.0</span>
+        <span class="ver-badge" id="verBadge">v3.61.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1149,7 +1149,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.60.0';
+const APP_VER = '3.61.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1891,7 +1891,7 @@ function renderTarefas() {
   const meuId = perfil && perfil.id;
   const meuSetor = perfil && perfil.setor;
   const f = $('tarFiltro') ? $('tarFiltro').value : 'todas';
-  let lista = tarefasData.slice();
+  let lista = tarefasData.slice().sort((a, b) => ((a.ordem || 0) - (b.ordem || 0)) || ((a.criado_em || '') < (b.criado_em || '') ? 1 : -1));
   const noSetor = (t) => t.setor && String(t.setor).split('|').includes(meuSetor);
   if (f === 'minhas') lista = lista.filter(t => !t.concluida && (t.responsavel_id === meuId || noSetor(t)));
   else if (f === 'criei') lista = lista.filter(t => !t.concluida && t.criado_por === meuId);
@@ -1916,8 +1916,9 @@ function renderTarefas() {
       ? `👤 ${escapeHtml(t.responsavel_nome)}`
       : (t.setor ? `🏭 ${escapeHtml(String(t.setor).split('|').join(', '))}` : '👤 pessoal');
     const cor = COR_PRIOR[t.prioridade] || '#E0A82D';
-    return `<div style="border:1px solid var(--borda);border-left:4px solid ${cor};border-radius:12px;padding:12px;margin-bottom:10px;${t.concluida ? 'opacity:.62' : ''}">
+    return `<div class="tar-card" ${t.concluida ? '' : `draggable="true" ondragstart="tarDragStart(event,'${t.id}')" ondragover="tarDragOver(event)" ondrop="tarDrop(event,'${t.id}')" ondragend="tarDragEnd(event)"`} data-tid="${t.id}" style="border:1px solid var(--borda);border-left:4px solid ${cor};border-radius:12px;padding:12px;margin-bottom:10px;${t.concluida ? 'opacity:.62' : ''}">
       <div style="display:flex;gap:10px;align-items:flex-start">
+        ${t.concluida ? '' : '<span style="color:#C9D4E0;cursor:grab;padding-top:2px;font-size:18px;user-select:none" title="Arraste para reordenar">⠿</span>'}
         <label style="cursor:pointer;padding-top:2px">
           <input type="checkbox" ${t.concluida ? 'checked' : ''} onchange="toggleTarefa('${t.id}', this.checked)" style="width:22px;height:22px;accent-color:var(--verde)">
         </label>
@@ -2091,6 +2092,29 @@ function irParaManut() {
   else if (abasPermitidas.includes('tarefas')) trocarAba('tarefas');
 }
 
+// ---- arrastar para reordenar ----
+let tarDragId = null;
+function tarDragStart(e, id) { tarDragId = id; e.dataTransfer.effectAllowed = 'move'; const c = e.currentTarget; setTimeout(() => c.style.opacity = '.4', 0); }
+function tarDragEnd(e) { e.currentTarget.style.opacity = ''; }
+function tarDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+async function tarDrop(e, alvoId) {
+  e.preventDefault();
+  if (!tarDragId || tarDragId === alvoId) return;
+  // reordena a lista visível (só as abertas) e regrava o campo ordem
+  const abertas = tarefasData.filter(t => !t.concluida).sort((a, b) => ((a.ordem || 0) - (b.ordem || 0)) || ((a.criado_em || '') < (b.criado_em || '') ? 1 : -1));
+  const from = abertas.findIndex(t => t.id === tarDragId);
+  const to = abertas.findIndex(t => t.id === alvoId);
+  if (from < 0 || to < 0) return;
+  const [mov] = abertas.splice(from, 1);
+  abertas.splice(to, 0, mov);
+  // renumera 10,20,30... e persiste
+  abertas.forEach((t, i) => { t.ordem = (i + 1) * 10; });
+  tarDragId = null;
+  renderTarefas();
+  try {
+    await Promise.all(abertas.map(t => sb.from('tarefas').update({ ordem: t.ordem }).eq('id', t.id)));
+  } catch (_) {}
+}
 async function toggleTarefa(id, feita) {
   try {
     const upd = feita
