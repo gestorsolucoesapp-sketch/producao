@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.67.1</span>
+        <span class="ver-badge" id="verBadge">v3.68.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.67.1';
+const APP_VER = '3.68.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3934,6 +3934,21 @@ function abreDet(titulo, corpoHtml) {
 }
 const tabSimples = (cab, linhas) => `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>${cab.map((c, i) => `<th${i === 0 ? ' style="text-align:left"' : ''}>${c}</th>`).join('')}</tr></thead><tbody>${linhas}</tbody></table></div>`;
 
+// média diária (kg) de cada máquina nos dias em que ela efetivamente rodou, dentro
+// do período carregado. Serve de baseline para estimar a produção perdida das
+// máquinas que ficaram paradas num dia.
+function mediaDiaPorMaquina(rows) {
+  const acc = {};
+  rows.forEach(r => {
+    const c = String(r.recurso_cod);
+    if (!acc[c]) acc[c] = { dias: new Set(), kg: 0 };
+    if ((r.peso || 0) > 0 && r.dia) acc[c].dias.add(r.dia);
+    acc[c].kg += (r.peso || 0);
+  });
+  const out = {};
+  Object.keys(acc).forEach(c => { const n = acc[c].dias.size; out[c] = { media: n ? acc[c].kg / n : 0, dias: n }; });
+  return out;
+}
 // PRODUÇÃO de um dia
 function detDia(setor, dia) {
   if (!dadosPainel) return;
@@ -3945,11 +3960,32 @@ function detDia(setor, dia) {
   const topMaq = Object.entries(maq).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const per = (setor ? noSetor(D.perdas, setor) : D.perdas).filter(r => r.dia === dia).reduce((a, r) => a + (r.peso || 0), 0);
   const perdaPct = (kg + per) > 0 ? (per / (kg + per) * 100).toFixed(1) : '0';
+
+  // ---- máquinas do setor que NÃO rodaram neste dia + produção perdida estimada ----
+  const codsSetor = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
+  const rodaram = new Set(Object.keys(maq).filter(c => (maq[c] || 0) > 0).map(String));
+  const medMaq = mediaDiaPorMaquina(D.producao);
+  const paradas = codsSetor.filter(c => !rodaram.has(c)).map(c => ({
+    cod: c,
+    nome: (D.nomeMaq && D.nomeMaq[c]) || nm[c] || c,
+    perda: medMaq[c] ? medMaq[c].media : 0,
+    temHist: !!(medMaq[c] && medMaq[c].dias > 0)
+  })).sort((a, b) => b.perda - a.perda);
+  const paradasHist = paradas.filter(p => p.temHist);      // com baseline real (rodou em algum dia)
+  const semHist = paradas.length - paradasHist.length;      // sem produção no período (provável desativada)
+  const perdaEstTot = paradasHist.reduce((a, p) => a + p.perda, 0);
+  const secaoParadas = paradasHist.length ? `
+    <div style="height:12px"></div>
+    <p class="idet-desc" style="color:#B3261E;font-weight:600">⚠️ Máquinas paradas · ${paradasHist.length} de ${codsSetor.length} · produção perdida estimada ≈ ${fmtKg(perdaEstTot)}</p>
+    ${tabSimples(['Máquina parada', 'Perda estimada'], paradasHist.map(p => `<tr><td class="nome"><span class="cod">${escapeHtml(p.cod)}</span> ${escapeHtml(p.nome)}</td><td><span class="cel" style="background:#FBE3E3;color:#B3261E;font-weight:700">≈ ${fmtKg(p.perda)}</span></td></tr>`).join(''))}
+    <p style="font-size:11px;color:#5C7186;margin-top:6px">Perda estimada = média diária de cada máquina nos dias em que rodou no período. Sábado/feriado pode ter paradas normais de escala.${semHist ? ' ' + semHist + ' máquina(s) sem produção no período foram omitidas (possivelmente desativadas).' : ''}</p>` : '';
+
   abreDet('Dia ' + fmtDataSem(dia), `
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
     ${tabSimples(['Turno', 'Peso'], ['Manhã', 'Tarde', 'Noite'].map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${fmtKg(bloco[t])}</span></td></tr>`).join(''))}
     <div style="height:8px"></div>
-    ${tabSimples(['Máquina', 'Peso'], topMaq.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}`);
+    ${tabSimples(['Máquina', 'Peso'], topMaq.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}
+    ${secaoParadas}`);
 }
 // PRODUÇÃO de um turno (bloco)
 function detTurno(setor, bloco, dia) {
