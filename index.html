@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.69.1</span>
+        <span class="ver-badge" id="verBadge">v3.70.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.69.1';
+const APP_VER = '3.70.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1921,7 +1921,7 @@ function renderTarefas() {
   const f = $('tarFiltro') ? $('tarFiltro').value : 'todas';
   let lista = tarefasData.slice().sort((a, b) => ((a.ordem || 0) - (b.ordem || 0)) || ((a.criado_em || '') < (b.criado_em || '') ? 1 : -1));
   const noSetor = (t) => t.setor && String(t.setor).split('|').includes(meuSetor);
-  if (f === 'minhas') lista = lista.filter(t => !t.concluida && (t.responsavel_id === meuId || noSetor(t)));
+  if (f === 'minhas') lista = lista.filter(t => !t.concluida && (t.para_todos || t.responsavel_id === meuId || noSetor(t)));
   else if (f === 'criei') lista = lista.filter(t => !t.concluida && t.criado_por === meuId);
   else if (f === 'setor') lista = lista.filter(t => !t.concluida && noSetor(t));
   else if (f === 'todas') lista = lista.filter(t => !t.concluida);
@@ -1941,8 +1941,9 @@ function renderTarefas() {
     const cronometro = t.concluida
       ? `<span style="color:#2E8B57;font-weight:700">✓ concluída ${t.concluida_por_nome ? 'por ' + escapeHtml(t.concluida_por_nome) : ''} em ${fmtDataHora(t.concluida_em)}</span>`
       : `<span style="color:#5C7186">🕒 aberta há <b>${dias} dia${dias === 1 ? '' : 's'}</b></span>`;
-    const alvo = t.responsavel_nome
-      ? `👤 ${escapeHtml(t.responsavel_nome)}`
+    const alvo = t.para_todos
+      ? '🏭 Todos'
+      : t.responsavel_nome ? `👤 ${escapeHtml(t.responsavel_nome)}`
       : (t.setor ? `🏭 ${escapeHtml(String(t.setor).split('|').join(', '))}` : '👤 pessoal');
     const cor = COR_PRIOR[t.prioridade] || '#E0A82D';
     return `<div class="tar-card" ${t.concluida ? '' : `draggable="true" ondragstart="tarDragStart(event,'${t.id}')" ondragover="tarDragOver(event)" ondrop="tarDrop(event,'${t.id}')" ondragend="tarDragEnd(event)"`} data-tid="${t.id}" style="border:1px solid var(--borda);border-left:4px solid ${cor};border-radius:12px;padding:12px;margin-bottom:10px;${t.concluida ? 'opacity:.62' : ''}">
@@ -2225,7 +2226,7 @@ async function abrirNovaTarefa(id) {
       <span style="font-size:14px;color:var(--navy)">${sx}</span></label>`).join('');
   // define o alvo inicial
   let alvoIni = 'eu';
-  if (t) { if (t.setor) alvoIni = 'setor'; else if (t.responsavel_id && t.responsavel_id !== (perfil && perfil.id)) alvoIni = 'pessoa'; else if (t.responsavel_id) alvoIni = 'eu'; else alvoIni = 'pessoa'; }
+  if (t) { if (t.para_todos) alvoIni = 'todos'; else if (t.setor) alvoIni = 'setor'; else if (t.responsavel_id && t.responsavel_id !== (perfil && perfil.id)) alvoIni = 'pessoa'; else if (t.responsavel_id) alvoIni = 'eu'; else alvoIni = 'pessoa'; }
   const ov = document.createElement('div');
   ov.id = 'novaTarefaOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.5);z-index:900;display:flex;align-items:flex-end;justify-content:center';
@@ -2241,6 +2242,7 @@ async function abrirNovaTarefa(id) {
         <option value="eu">Eu mesmo</option>
         <option value="pessoa">Uma pessoa</option>
         <option value="setor">Um setor</option>
+        <option value="todos">Todos (toda a fábrica)</option>
       </select>
     </div>
     <div class="campo oculto" id="ntPessoaBox"><label>Pessoa</label><select id="ntPessoa">${pessoas}</select></div>
@@ -2287,6 +2289,7 @@ async function salvarTarefa() {
     prioridade: $('ntPrior').value || 'media',
     recorrente: $('ntRecorrente') ? $('ntRecorrente').checked : false,
     recorrencia_dias: ($('ntRecorrente') && $('ntRecorrente').checked && $('ntRecDias') && $('ntRecDias').value) ? parseInt($('ntRecDias').value, 10) : null,
+    para_todos: false,
     responsavel_id: null, responsavel_nome: null, setor: null
   };
   if (alvo === 'eu') { t.responsavel_id = perfil && perfil.id; t.responsavel_nome = perfil && perfil.nome; }
@@ -2296,11 +2299,12 @@ async function salvarTarefa() {
     if (!marcados.length) { toast('Marque ao menos um setor.'); return; }
     t.setor = marcados.join('|');
   }
+  else if (alvo === 'todos') { t.para_todos = true; }
   try {
     if (tarEditId) {
       // edição / repasse: não muda quem criou nem a data
       const upd = { titulo: t.titulo, descricao: t.descricao, prazo: t.prazo, prioridade: t.prioridade,
-        recorrente: t.recorrente, recorrencia_dias: t.recorrencia_dias,
+        recorrente: t.recorrente, recorrencia_dias: t.recorrencia_dias, para_todos: t.para_todos,
         responsavel_id: t.responsavel_id, responsavel_nome: t.responsavel_nome, setor: t.setor };
       const { error } = await sb.from('tarefas').update(upd).eq('id', tarEditId);
       if (error) throw error;
@@ -2844,23 +2848,26 @@ function lerFotoOS(input) {
       let d = null, bruto = '';
       try { bruto = await r.text(); d = JSON.parse(bruto); } catch (_) {}
       try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (foto)' }); } catch (_) {}
-      if (r.ok && d && d.ordens && d.ordens.length > 1) {   // arquivo com VÁRIAS OS
-        st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> ${d.ordens.length} OS encontradas — salvando…`;
-        const rr = await salvarOrdens(d.ordens);
+      // normaliza: a função devolve {ordens:[...]}; aceita também {os:{...}} legado
+      const ordensArr = (d && Array.isArray(d.ordens) && d.ordens.length) ? d.ordens : (d && d.os ? [d.os] : []);
+      if (r.ok && ordensArr.length > 1) {   // arquivo com VÁRIAS OS
+        st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> ${ordensArr.length} OS encontradas — salvando…`;
+        const rr = await salvarOrdens(ordensArr);
         st.innerHTML = `✅ <b>${rr.ok.length} OS importada(s)</b>${rr.ok.length ? ' — ' + rr.ok.join(', ') : ''}` +
           (rr.erro.length ? `<br><span style="color:#D64545">⚠️ ${rr.erro.length} com problema: ${escapeHtml(rr.erro.join(' · '))}</span>` : '') +
           `<br><span class="desc">Abra cada OS na lista para preencher a tratativa.</span>`;
         input.value = ''; carregarManut(); return;
       }
-      if (!r.ok || !d || d.error || !d.os || d.os.erro) {
+      const os1 = ordensArr[0] || null;
+      if (!r.ok || !d || d.error || !os1 || os1.erro) {
         if (d && d.bruto) console.log('OS-OCR resposta bruta:', d.bruto);
-        const motivo = (d && (d.os && d.os.erro)) || (d && (d.error || d.message || d.msg)) || (bruto ? bruto.slice(0, 160) : 'sem resposta');
+        const motivo = (os1 && os1.erro) || (d && (d.error || d.message || d.msg)) || (bruto ? bruto.slice(0, 160) : 'sem resposta');
         st.innerHTML = `❌ <b>HTTP ${r.status}</b> — ${escapeHtml(String(motivo))}` +
           (r.status === 404 ? '<br><span class="desc">A função <b>os-ocr</b> não foi encontrada. Publique-a no Supabase com esse nome exato.</span>' : '') +
           (r.status === 401 || r.status === 403 ? '<br><span class="desc">Problema de autenticação — saia e entre no app de novo.</span>' : '');
         return;
       }
-      osExtraida = d.os; st.textContent = '✅ OS lida — confira os campos e salve.';
+      osExtraida = os1; st.textContent = '✅ OS lida — confira os campos e salve.';
       formOS(osExtraida);
     } catch (e) { st.textContent = '❌ Erro de conexão. A função os-ocr foi publicada no Supabase?'; }
     input.value = '';
