@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.65.0</span>
+        <span class="ver-badge" id="verBadge">v3.66.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.65.0';
+const APP_VER = '3.66.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1705,6 +1705,7 @@ async function mostrarApp() {
     if (h && perfil) h.innerHTML = perfil.setor ? '🏭 ' + escapeHtml(perfil.setor) : '<span style="color:#E0A82D">setor não definido</span>'; }
   atualizarBadgeFiltroPar();
   // carrega tarefas + OS em segundo plano só para alimentar o sino
+  carregarUltimoAcessoGestor();
   Promise.all([
     getTarefas().catch(() => {}),
     (async () => { try { const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500); if (!osLista || !osLista.length) osLista = data || []; } catch (_) {} })()
@@ -5563,14 +5564,38 @@ function renderPainel() {
   box.innerHTML = html; posRenderPainel();
 }
 
+let ultimoAcessoGestor = null;   // {nome, quando}
+async function carregarUltimoAcessoGestor() {
+  try {
+    // admins/gestores
+    const { data: perfis } = await sb.from('perfis').select('id,nome,role');
+    const admins = (perfis || []).filter(u => (u.role || '').toLowerCase() === 'admin');
+    if (!admins.length) return;
+    const ids = admins.map(a => a.id);
+    const nomeById = {}; admins.forEach(a => nomeById[a.id] = a.nome);
+    // acessos desses admins, do mais recente ao mais antigo
+    const { data: acs } = await sb.from('acessos').select('user_id,entrou_em').in('user_id', ids).order('entrou_em', { ascending: false }).limit(50);
+    if (!acs || !acs.length) return;
+    // o "último acesso" que interessa é o mais recente que NÃO seja a sessão atual (se sou admin)
+    const meu = perfil && perfil.id;
+    const alvo = acs.find(a => a.user_id !== meu) || acs[0];
+    ultimoAcessoGestor = { nome: nomeById[alvo.user_id] || 'Gestor', quando: alvo.entrou_em };
+    // re-render da faixa se o painel já estiver na tela
+    if (dadosPainel && $('painelInfo')) $('painelInfo').innerHTML = cabecalhoInfo();
+  } catch (_) {}
+}
 function cabecalhoInfo() {
   const i = dadosPainel && dadosPainel.info;
   if (!i) return '';
   const quando = i.atualizado ? new Date(i.atualizado).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
   const periodo = i.periodoDe ? `${fmtData(i.periodoDe)}${i.periodoAte && i.periodoAte !== i.periodoDe ? ' a ' + fmtData(i.periodoAte) : ''}` : '—';
-  return `<div class="atualiz-faixa">
+  const linhaGestor = (souAdmin && ultimoAcessoGestor)
+    ? `<div class="af-sub" style="margin-top:3px">👤 Último acesso do gestor: <b>${escapeHtml(ultimoAcessoGestor.nome)}</b> · ${fmtDataHora(ultimoAcessoGestor.quando)}${acessouHoje(ultimoAcessoGestor.quando) ? ' <span style="display:inline-block;background:#F0821E;color:#fff;font-weight:800;font-size:9px;padding:1px 6px;border-radius:5px;vertical-align:middle">HOJE</span>' : ''}</div>`
+    : '';
+  return `<div class="atualiz-faixa" id="painelInfo">
     <div><span class="af-ic">🕒</span> Atualizado em <b>${quando}</b>${periodoSel ? ' · vendo <b>' + escapeHtml(periodoSel.label) + '</b>' : ''}</div>
     <div class="af-sub">Período dos dados: ${periodo} · ${i.total} importação(ões) · ${i.rotinas.join(', ')}</div>
+    ${linhaGestor}
   </div>`;
 }
 
