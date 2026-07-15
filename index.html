@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.72.2</span>
+        <span class="ver-badge" id="verBadge">v3.73.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.72.2';
+const APP_VER = '3.73.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -5498,15 +5498,15 @@ const secao = (key, txt) => `<div class="secao-tit pbloco" data-k="s:${key}">${t
 /* ================= PAINEL ================= */
 // kg de produção perdidos por PARADA de máquina, estimados pela regra da empresa:
 // kg/h da máquina no turno = meta do turno ÷ 7,5 (22,5 h úteis/dia ÷ 3 turnos).
-// kg perdido = horas paradas do turno × kg/h do turno, somado por máquina e por dia.
-// NÃO conta paradas planejadas/não-produtivas (programada, interrompida, intervalo):
-// nesses casos a máquina não deixou de produzir por problema.
-const PARADA_NAO_PERDE = m => /PARADA\s*PROGRAMADA|INTERROMP|INTERVALO/i.test(m || '');
+// kg perdido = horas paradas do turno × kg/h do turno.
+// Descarta apenas INTERROMPIDA (máquina fora de operação); todo o resto conta.
+// Agrega por máquina, por dia e por MOTIVO de parada.
+const PARADA_NAO_PERDE = m => /INTERROMP/i.test(m || '');
 function kgPerdidoParadas(D) {
   if (!D || !metasData) return null;
-  const acc = {}, porDia = {};
+  const acc = {}, porDia = {}, porMotivo = {};
   filtraParadas(D.paradas).forEach(p => {
-    if (PARADA_NAO_PERDE(p.motivo_desc)) return;             // planejada/não-produtiva → não é perda
+    if (PARADA_NAO_PERDE(p.motivo_desc)) return;             // interrompida → fora de operação
     const c = String(p.recurso_cod);
     const metas = metasData[c]; if (!metas) return;         // sem meta cadastrada → não estima
     const b = blocoParada(p); if (!b) return;
@@ -5518,13 +5518,19 @@ function kgPerdidoParadas(D) {
     acc[c].kg += kg; acc[c].horas += horas;
     const d = p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
     if (d) porDia[d] = (porDia[d] || 0) + kg;
+    const mo = p.motivo_desc || '—';
+    if (!porMotivo[mo]) porMotivo[mo] = { kg: 0, horas: 0 };
+    porMotivo[mo].kg += kg; porMotivo[mo].horas += horas;
   });
   const porMaq = Object.keys(acc)
     .map(c => ({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, kg: acc[c].kg, horas: acc[c].horas }))
     .filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
+  const porMot = Object.keys(porMotivo)
+    .map(m => ({ motivo: m, kg: porMotivo[m].kg, horas: porMotivo[m].horas }))
+    .filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
   const total = porMaq.reduce((a, x) => a + x.kg, 0);
   const horasTot = porMaq.reduce((a, x) => a + x.horas, 0);
-  return { total, horasTot, porMaq, porDia };
+  return { total, horasTot, porMaq, porDia, porMot };
 }
 function renderPainel() {
   if (!dadosPainel) return;
@@ -5620,8 +5626,13 @@ function renderPainel() {
     { const kp = kgPerdidoParadas(D);
       if (kp && kp.porMaq.length) {
         html += card('⏱️ Produção perdida por parada · por máquina',
-          'kg que deixaram de sair = horas paradas × meta kg/h · exclui parada programada/interrompida/intervalo · total ' + fmtKg(kp.total) + ' em ' + fmtNum(kp.horasTot) + ' h',
+          'kg que deixaram de sair = horas paradas × meta kg/h · descarta só INTERROMPIDA · total ' + fmtKg(kp.total) + ' em ' + fmtNum(kp.horasTot) + ' h',
           barrasHorizontal(kp.porMaq.slice(0, 15).map(x => ({ l: x.cod + ' ' + (x.nome || ''), v: Math.round(x.kg) })), 'kg'));
+        if (kp.porMot && kp.porMot.length) {
+          html += card('⏱️ Produção perdida por parada · por motivo',
+            'quanto cada motivo custou em produção (horas × meta kg/h da máquina)',
+            barrasHorizontal(kp.porMot.slice(0, 18).map(x => ({ l: x.motivo, v: Math.round(x.kg) })), 'kg'));
+        }
         const dP = Object.keys(kp.porDia).sort();
         if (dP.length) { const sP = serieProducao(kp.porDia, dP, fmtKg);
           html += card(sP.porMes ? 'Produção perdida por parada · por mês' : 'Produção perdida por parada · por dia',
