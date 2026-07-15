@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.67.0</span>
+        <span class="ver-badge" id="verBadge">v3.67.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.67.0';
+const APP_VER = '3.67.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -6091,6 +6091,18 @@ async function gravar(id, substituir = false) {
   const mapa = MAPA[r.rotina];
   try {
     if (!mapa) throw new Error('Relatório RPCP' + r.rotina + ' ainda não tem tabela mapeada.');
+    // FIX período nulo: quando o PDF não traz a linha "Período: dd/mm - dd/mm",
+    // acharPeriodo() devolve {de:null, ate:null} e o DELETE abaixo quebrava com
+    // "invalid input syntax for type date: null". Cada registro já carrega seu
+    // próprio 'dia', então derivamos o intervalo real a partir dos dados.
+    if (!r.periodo) r.periodo = { de: null, ate: null };
+    if (!r.periodo.de || !r.periodo.ate) {
+      const dias = (r.registros || []).map(x => x && x.dia).filter(Boolean).sort();
+      if (dias.length) {
+        r.periodo.de = r.periodo.de || dias[0];
+        r.periodo.ate = r.periodo.ate || dias[dias.length - 1];
+      }
+    }
     // Dedup por PERÍODO DE DADOS (não por registro de importação).
     //
     // BUG ANTIGO: apagava o REGISTRO de qualquer importação cujo intervalo cruzasse o novo.
@@ -6099,7 +6111,9 @@ async function gravar(id, substituir = false) {
     //
     // AGORA: apaga só as LINHAS do período novo na tabela de destino, e só remove o
     // registro da importação se ele estiver INTEIRO dentro do período novo.
-    {
+    // Sem período válido (nenhuma data nos registros) pulamos a limpeza para não
+    // quebrar — a dedup por hash do arquivo ainda impede reimportar o mesmo PDF.
+    if (r.periodo.de && r.periodo.ate) {
       const { error: eDel } = await sb.from(mapa.tabela).delete()
         .gte('dia', r.periodo.de)
         .lte('dia', r.periodo.ate);
