@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.47.0</span>
+        <span class="ver-badge" id="verBadge">v3.48.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1124,7 +1124,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.47.0';
+const APP_VER = '3.48.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3398,7 +3398,7 @@ function atualizarBadgeFiltroPar() {
 }
 
 /* ================= ANÁLISE (622) ================= */
-let dadosAnalise = null, dadosProducaoFull = null;
+let dadosAnalise = null, dadosProducaoFull = null, todasParadas = [];
 let setupInfo = null, setupParadas = []; // setup médio (643)
 let itensRender = [];
 function verItem(ix) {
@@ -3601,10 +3601,11 @@ async function ensureAnalise() {
   try {
     const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
     const [rows, paradas] = await Promise.all([
-      fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso', de, ate),
-      fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod,op,inicio', de, ate)
+      fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso,unidade', de, ate),
+      fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod,op,inicio,fim', de, ate)
     ]);
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
+    todasParadas = paradas.slice();   // todas — para o tempo líquido por OP
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
     dadosProducaoFull = rows.slice();   // completo — para o cálculo de trocas de item
@@ -3640,6 +3641,31 @@ function calcSetup(setor) {
 // Trocas de item = setups REAIS pela produção (independem do apontamento manual).
 // Para cada máquina, ordena as OPs por início; quando o item muda de uma OP para a
 // seguinte, é 1 troca (saiu X -> entrou Y), na data de início da OP que entrou.
+// unidades por caixa: último número antes de UNID/UND/UND/CX na descrição
+function undPorCaixa(desc) {
+  if (!desc) return null;
+  const m = String(desc).toUpperCase().match(/(\d[\d.]*)\s*(?:UNID|UND(?:\/CX)?|UN|PC|P[EÇ]?[ÇC]?AS?)\b(?!.*\d)/);
+  if (m) return parseInt(m[1].replace(/\./g, ''), 10) || null;
+  const nums = String(desc).match(/\d[\d.]*/g);
+  return nums ? (parseInt(nums[nums.length - 1].replace(/\./g, ''), 10) || null) : null;
+}
+// peças e caixas de uma OP, respeitando a unidade (CX = caixas, MIL = peças)
+function pecasCaixas(qtd, unidade, desc) {
+  const upc = undPorCaixa(desc);           // unidades por caixa
+  const u = String(unidade || '').toUpperCase();
+  if (u === 'CX') {                        // quantidade = caixas
+    return { caixas: qtd, pecas: upc ? qtd * upc : null, upc };
+  }
+  // MIL (ou qualquer outra) = quantidade já é peças
+  return { caixas: upc ? qtd / upc : null, pecas: qtd, upc };
+}
+// soma das horas de TODAS as paradas de uma OP numa máquina (para o tempo líquido)
+function horasParadasPorOP(maq, op) {
+  if (!op) return 0;
+  return (todasParadas || [])
+    .filter(pp => String(pp.recurso_cod) === String(maq) && String(pp.op) === String(op))
+    .reduce((a, pp) => a + (pp.tempo_horas || 0), 0);
+}
 // hora real da troca vem das PARADAS de setup (a produção não guarda hora).
 // índice: 'maquina|op' -> menor 'inicio' de SETUP daquela OP.
 function horaSetupPorOP() {
@@ -3661,8 +3687,10 @@ function calcularTrocas(setor) {
     const maq = String(r.recurso_cod);
     const chave = maq + '|' + (r.op || (r.item_cod + '|' + (r.data_inicio || r.dia)));
     const ini = r.data_inicio || r.dia;
-    if (!ops[chave]) ops[chave] = { maq, op: r.op || null, item: String(r.item_cod), desc: r.item_desc || String(r.item_cod), ini };
-    else if (ini && ini < ops[chave].ini) ops[chave].ini = ini;
+    if (!ops[chave]) ops[chave] = { maq, op: r.op || null, item: String(r.item_cod), desc: r.item_desc || String(r.item_cod), ini, unidade: r.unidade, qtd: 0 };
+    if (ini && ini < ops[chave].ini) ops[chave].ini = ini;
+    ops[chave].qtd += (r.quantidade || 0);
+    if (r.unidade) ops[chave].unidade = r.unidade;
   });
   // agrupa por máquina e ordena por início
   const porMaq = {};
@@ -3676,13 +3704,29 @@ function calcularTrocas(setor) {
         const opSaiu = lista[i - 1].op ? (lista[i - 1].maq + '|' + lista[i - 1].op) : null;
         const horaEntrou = (opEntrou && horaOP[opEntrou]) || '';        // hora real da troca
         const horaSaiu = (opSaiu && horaOP[opSaiu]) || '';              // quando a OP anterior começou
+        // velocidade da OP que ENTROU: rodou de horaEntrou até a próxima troca (ou fim do dia)
+        const oEnt = lista[i];
+        const fimBruto = (i + 1 < lista.length) ? ((lista[i + 1].op && horaOP[lista[i + 1].maq + '|' + lista[i + 1].op]) || lista[i + 1].ini || '') : '';
+        let velP = null, velC = null, hLiq = null, pc = null;
+        if (horaEntrou && fimBruto) {
+          const ms = new Date(fimBruto) - new Date(horaEntrou);
+          const hBruto = ms > 0 ? ms / 3600000 : 0;               // horas brutas
+          const hPar = horasParadasPorOP(oEnt.maq, oEnt.op);      // paradas dessa OP
+          hLiq = Math.max(0, hBruto - hPar);                      // tempo líquido produzindo
+          pc = pecasCaixas(oEnt.qtd, oEnt.unidade, oEnt.desc);
+          if (hLiq > 0) {
+            if (pc.pecas != null) velP = pc.pecas / (hLiq * 60);  // peças/min
+            if (pc.caixas != null) velC = pc.caixas / hLiq;       // cxs/h
+          }
+        }
         trocas.push({
           maq: lista[i].maq,
           dia: (lista[i].ini || '').slice(0, 10),
           hora: horaEntrou || lista[i].ini || '',   // ordena por esta
           horaEntrou, horaSaiu,
           deCod: lista[i - 1].item, deDesc: lista[i - 1].desc,
-          paraCod: lista[i].item, paraDesc: lista[i].desc
+          paraCod: lista[i].item, paraDesc: lista[i].desc,
+          velP, velC, hLiq, pecas: pc ? pc.pecas : null, caixas: pc ? pc.caixas : null
         });
       }
     }
@@ -3731,16 +3775,16 @@ function detTrocasDia(setor, dia) {
   $('itemDetCorpo').innerHTML = `
     <p class="idet-desc">${setor || 'Todos os setores'} · <b>${ts.length} troca(s) de item</b> = ${ts.length} setup(s)</p>
     <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
-      <th>Trocou às</th><th style="text-align:left">Máq.</th><th style="text-align:left">Saiu</th><th style="text-align:left">Entrou</th>
+      <th>Trocou às</th><th style="text-align:left">Máq.</th><th style="text-align:left">Entrou</th><th>Velocidade do item que entrou</th>
     </tr></thead><tbody>
     ${ts.map(t => `<tr>
       <td style="text-align:center;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${t.horaEntrou ? soHora(t.horaEntrou) : '<span style=\'color:#B3BDC7\'>s/ setup</span>'}</td>
       <td class="nome"><b>${escapeHtml(t.maq)}</b></td>
-      <td style="font-size:11.5px"><b>${escapeHtml(t.deCod)}</b><br><span style="color:#8395A6">${escapeHtml(t.deDesc)}</span></td>
       <td style="font-size:11.5px"><b style="color:#00964D">${escapeHtml(t.paraCod)}</b><br><span style="color:#5C7186">${escapeHtml(t.paraDesc)}</span></td>
+      <td style="text-align:right;font-size:11.5px;white-space:nowrap">${t.velP != null ? `<b>${t.velP.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</b> pç/min` : '<span style=\'color:#B3BDC7\'>—</span>'}${t.velC != null ? `<br><span style="color:#5C7186">${t.velC.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} cx/h</span>` : ''}${t.hLiq != null && t.hLiq > 0 ? `<br><span style="color:#8395A6;font-size:10px">${fmtNum(t.hLiq)}h líq.</span>` : ''}</td>
     </tr>`).join('')}
     </tbody></table></div>
-    <p class="idet-desc" style="margin-top:8px;font-size:11px;color:#8395A6">A hora vem da parada de SETUP registrada para a OP que entrou. "s/ setup" = a troca aconteceu mas ninguém apontou a parada.</p>`;
+    <p class="idet-desc" style="margin-top:8px;font-size:11px;color:#8395A6">Velocidade = produção do item ÷ tempo líquido (da troca até a próxima, descontando as paradas da OP). "s/ setup" = troca sem parada apontada.</p>`;
   $('itemDetOverlay').classList.remove('oculto');
 }
 async function carregarAnalise() {
