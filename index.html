@@ -397,10 +397,13 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.53.0</span>
+        <span class="ver-badge" id="verBadge">v3.54.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
-      <button id="btnSair" onclick="sair()">Sair</button>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
+        <button id="btnSair" onclick="sair()">Sair</button>
+      </div>
     </div>
   </header>
   <nav><div class="abas">
@@ -1146,7 +1149,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.53.0';
+const APP_VER = '3.54.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1682,6 +1685,8 @@ async function mostrarApp() {
   { const h = $('hdrSetor');
     if (h && perfil) h.innerHTML = perfil.setor ? '🏭 ' + escapeHtml(perfil.setor) : '<span style="color:#E0A82D">setor não definido</span>'; }
   atualizarBadgeFiltroPar();
+  // carrega tarefas em segundo plano só para alimentar o sino
+  getTarefas().then(() => atualizarSino()).catch(() => {});
 }
 // fecha o acesso ao fechar/atualizar a aba
 window.addEventListener('pagehide', () => { navigator.sendBeacon && acessoId && fecharAcesso(); });
@@ -1853,7 +1858,7 @@ async function carregarTarefas() {
     box.innerHTML = '<p class="desc" style="color:#D64545">Não consegui ler as tarefas. Rode o SQL de criação da tabela <b>tarefas</b> no Supabase.</p>';
     return;
   }
-  renderTarefas();
+  renderTarefas(); atualizarSino();
 }
 function diasCorridos(iso) {
   if (!iso) return 0;
@@ -1908,6 +1913,14 @@ function renderTarefas() {
             ${seloPrazo(t)}
             <span style="color:#8395A6">${cronometro}</span>
           </div>
+          ${!t.concluida ? `<div style="margin-top:10px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#5C7186;margin-bottom:3px">
+              <span>Progresso</span><span id="pgl-${t.id}" style="font-weight:800;color:${corProg(t.progresso||0)}">${t.progresso||0}%</span>
+            </div>
+            <input type="range" min="0" max="100" step="5" value="${t.progresso||0}"
+              oninput="previewProg('${t.id}', this.value)" onchange="salvarProg('${t.id}', this.value)"
+              style="width:100%;accent-color:${corProg(t.progresso||0)}" id="pgr-${t.id}">
+          </div>` : ''}
           <div style="font-size:11px;color:#9AA6B2;margin-top:6px">criada por ${escapeHtml(t.criado_por_nome || '—')} · ${fmtDataHora(t.criado_em)}
             ${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
         </div>
@@ -1915,6 +1928,88 @@ function renderTarefas() {
     </div>`;
   }).join('');
 }
+// cor do progresso: interpola vermelho -> amarelo -> verde
+function corProg(v) {
+  v = Math.max(0, Math.min(100, v || 0));
+  if (v >= 100) return '#1F9D55';
+  if (v >= 50)  return '#3CA96E';
+  if (v >= 25)  return '#E0A82D';
+  return '#D64545';
+}
+function previewProg(id, v) {
+  const lbl = $('pgl-' + id); const rng = $('pgr-' + id);
+  if (lbl) { lbl.textContent = v + '%'; lbl.style.color = corProg(+v); }
+  if (rng) rng.style.accentColor = corProg(+v);
+}
+let _progTimer = {};
+async function salvarProg(id, v) {
+  v = parseInt(v, 10) || 0;
+  const t = (tarefasData || []).find(x => x.id === id); if (t) t.progresso = v;
+  try {
+    const upd = { progresso: v };
+    if (v >= 100 && t && !t.concluida) { upd.concluida = true; upd.concluida_em = new Date().toISOString(); upd.concluida_por_nome = (perfil && perfil.nome) || null; if (t) Object.assign(t, upd); }
+    await sb.from('tarefas').update(upd).eq('id', id);
+    if (v >= 100) { renderTarefas(); atualizarSino(); toast('✓ 100% — tarefa concluída'); }
+  } catch (e) { toast('❌ ' + (e.message || e)); }
+}
+
+// ---- Notificações (sino) ----
+let notifVistas = [];
+try { notifVistas = JSON.parse(sessionStorage.getItem('notifVistas') || '[]'); } catch (_) {}
+function calcNotificacoes() {
+  if (!tarefasData) return [];
+  const meuId = perfil && perfil.id, meuSetor = perfil && perfil.setor;
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const out = [];
+  tarefasData.forEach(t => {
+    if (t.concluida) return;
+    const minha = t.responsavel_id === meuId || (t.setor && t.setor === meuSetor);
+    if (!minha) return;
+    // vencida
+    if (t.prazo) {
+      const pz = new Date(t.prazo + 'T00:00:00');
+      const dif = Math.round((pz - hoje) / 86400000);
+      if (dif < 0) out.push({ id: 'venc-' + t.id, tipo: 'venc', tarefa: t, txt: `⏰ Venceu há ${Math.abs(dif)}d: ${t.titulo}` });
+      else if (dif === 0) out.push({ id: 'hoje-' + t.id, tipo: 'hoje', tarefa: t, txt: `📅 Vence hoje: ${t.titulo}` });
+    }
+    // recebida de outra pessoa (não criei eu)
+    if (t.criado_por && t.criado_por !== meuId && diasCorridos(t.criado_em) <= 7) {
+      out.push({ id: 'nova-' + t.id, tipo: 'nova', tarefa: t, txt: `📥 Nova de ${escapeHtml(t.criado_por_nome || 'alguém')}: ${t.titulo}` });
+    }
+  });
+  return out;
+}
+function atualizarSino() {
+  const badge = $('sinoBadge'); if (!badge) return;
+  const n = calcNotificacoes().filter(x => !notifVistas.includes(x.id)).length;
+  badge.textContent = n;
+  badge.classList.toggle('oculto', n === 0);
+}
+function abrirNotificacoes() {
+  const ns = calcNotificacoes();
+  const ov = document.createElement('div');
+  ov.id = 'notifOv';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.5);z-index:900;display:flex;align-items:flex-start;justify-content:center;padding-top:60px';
+  const cor = { venc: '#D64545', hoje: '#B26A00', nova: '#28348E' };
+  ov.innerHTML = `<div style="background:#fff;width:100%;max-width:440px;border-radius:16px;padding:16px;max-height:70vh;overflow:auto;margin:0 12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:16px;font-weight:800;color:var(--navy)">🔔 Notificações</div>
+      <button onclick="document.getElementById('notifOv').remove()" style="background:#EEF3F8;border:0;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>
+    </div>
+    ${ns.length ? ns.map(x => `<div onclick="irParaTarefas()" style="cursor:pointer;border-left:3px solid ${cor[x.tipo]};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px;font-size:13px;color:#2C3E50">${x.txt}</div>`).join('')
+      : '<p class="vazio-painel">Nada por aqui. Tudo em dia! ✅</p>'}
+  </div>`;
+  document.body.appendChild(ov);
+  // marca como vistas
+  notifVistas = [...new Set([...notifVistas, ...ns.map(x => x.id)])];
+  try { sessionStorage.setItem('notifVistas', JSON.stringify(notifVistas)); } catch (_) {}
+  atualizarSino();
+}
+function irParaTarefas() {
+  $('notifOv') && $('notifOv').remove();
+  if (abasPermitidas.includes('tarefas')) trocarAba('tarefas');
+}
+
 async function toggleTarefa(id, feita) {
   try {
     const upd = feita
