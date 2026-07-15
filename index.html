@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.66.0</span>
+        <span class="ver-badge" id="verBadge">v3.67.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.66.0';
+const APP_VER = '3.67.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1706,6 +1706,7 @@ async function mostrarApp() {
   atualizarBadgeFiltroPar();
   // carrega tarefas + OS em segundo plano só para alimentar o sino
   carregarUltimoAcessoGestor();
+  if (souAdmin) carregarNovosIntegrantes();
   Promise.all([
     getTarefas().catch(() => {}),
     (async () => { try { const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500); if (!osLista || !osLista.length) osLista = data || []; } catch (_) {} })()
@@ -2038,6 +2039,13 @@ function calcNotificacoes(incluirLidas) {
       out.push({ id: 'nova-' + t.id, tipo: 'nova', tarefa: t, txt: `📥 Nova de ${escapeHtml(t.criado_por_nome || 'alguém')}: ${t.titulo}` });
     }
   });
+  // novos integrantes — SÓ o gestor é avisado
+  if (souAdmin) {
+    (novosIntegrantes || []).forEach(u => {
+      out.push({ id: 'novo-' + u.id, tipo: 'novo', novo: u,
+        txt: `🆕 Novo cadastro: <b>${escapeHtml(u.nome || u.email || 'sem nome')}</b>${u.setor ? ' · ' + escapeHtml(u.setor) : ''} · há ${diasCorridos(u.criado_em)}d` });
+    });
+  }
   // OS de manutenção direcionadas a você, em aberto
   (osLista || []).forEach(o => {
     if (o.data_reinicio) return;                 // já concluída
@@ -2062,7 +2070,7 @@ function abrirNotificacoes() {
   const ov = document.createElement('div');
   ov.id = 'notifOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.5);z-index:900;display:flex;align-items:flex-start;justify-content:center;padding-top:60px';
-  const cor = { venc: '#D64545', hoje: '#B26A00', nova: '#28348E', os: '#00964D' };
+  const cor = { venc: '#D64545', hoje: '#B26A00', nova: '#28348E', os: '#00964D', novo: '#7A3FA0' };
   ov.innerHTML = `<div style="background:#fff;width:100%;max-width:440px;border-radius:16px;padding:16px;max-height:70vh;overflow:auto;margin:0 12px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <div style="font-size:16px;font-weight:800;color:var(--navy)">🔔 Notificações</div>
@@ -2089,9 +2097,10 @@ function abrirNotificacoes() {
           </div>`;
         }
         const lidaT = notifLidas.includes(x.id);
+        const acaoClique = x.tipo === 'novo' ? 'irParaUsuarios()' : 'irParaTarefas()';
         return `<div style="border-left:3px solid ${cor[x.tipo]};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px;${lidaT ? 'opacity:.55' : ''}">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-            <div onclick="irParaTarefas()" style="cursor:pointer;font-size:13px;color:#2C3E50;flex:1">${x.txt}</div>
+            <div onclick="${acaoClique}" style="cursor:pointer;font-size:13px;color:#2C3E50;flex:1">${x.txt}</div>
             ${lidaT ? '<span style="font-size:11px;color:#8395A6;white-space:nowrap">✓ lida</span>' : `<button onclick="marcarLida('${x.id}')" style="background:transparent;border:0;color:#28348E;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;padding:0">✓ lida</button>`}
           </div></div>`;
       }).join('')
@@ -2118,6 +2127,10 @@ function irParaManut() {
   $('notifOv') && $('notifOv').remove();
   if (abasPermitidas.includes('manut')) trocarAba('manut');
   else if (abasPermitidas.includes('tarefas')) trocarAba('tarefas');
+}
+function irParaUsuarios() {
+  $('notifOv') && $('notifOv').remove();
+  if (abasPermitidas.includes('usuarios')) trocarAba('usuarios');
 }
 
 // ---- arrastar para reordenar ----
@@ -5564,6 +5577,14 @@ function renderPainel() {
   box.innerHTML = html; posRenderPainel();
 }
 
+let novosIntegrantes = [];   // cadastros recentes (só o gestor é avisado)
+async function carregarNovosIntegrantes() {
+  try {
+    const { data } = await sb.from('perfis').select('id,nome,email,setor,criado_em,role').order('criado_em', { ascending: false }).limit(50);
+    novosIntegrantes = (data || []).filter(u => u.criado_em && diasCorridos(u.criado_em) <= 7);
+    atualizarSino();
+  } catch (_) {}
+}
 let ultimoAcessoGestor = null;   // {nome, quando}
 async function carregarUltimoAcessoGestor() {
   try {
