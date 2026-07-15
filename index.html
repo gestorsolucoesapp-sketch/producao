@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.48.0</span>
+        <span class="ver-badge" id="verBadge">v3.49.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1124,7 +1124,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.48.0';
+const APP_VER = '3.49.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3734,6 +3734,66 @@ function calcularTrocas(setor) {
   return trocas;
 }
 let trocasCache = [];   // guardado para o clique (drill-down)
+// Relação de TODAS as OPs com velocidade (1 linha por OP), para o relatório.
+function relacaoItens(setor) {
+  const horaOP = horaSetupPorOP();
+  const base = (dadosProducaoFull || []).filter(r => r.item_cod && (r.data_inicio || r.dia));
+  const rows = setor ? base.filter(r => setorDe(r.recurso_cod) === setor) : base;
+  const ops = {};
+  rows.forEach(r => {
+    const maq = String(r.recurso_cod);
+    const chave = maq + '|' + (r.op || (r.item_cod + '|' + (r.data_inicio || r.dia)));
+    const ini = r.data_inicio || r.dia;
+    if (!ops[chave]) ops[chave] = { maq, op: r.op || null, item: String(r.item_cod), desc: r.item_desc || String(r.item_cod), ini, unidade: r.unidade, qtd: 0 };
+    if (ini && ini < ops[chave].ini) ops[chave].ini = ini;
+    ops[chave].qtd += (r.quantidade || 0);
+    if (r.unidade) ops[chave].unidade = r.unidade;
+  });
+  // por máquina, ordena por início para achar o fim (início da próxima OP)
+  const porMaq = {};
+  Object.values(ops).forEach(o => { (porMaq[o.maq] = porMaq[o.maq] || []).push(o); });
+  const linhas = [];
+  Object.values(porMaq).forEach(lista => {
+    lista.sort((a, b) => (a.ini || '').localeCompare(b.ini || ''));
+    lista.forEach((o, i) => {
+      const hIni = (o.op && horaOP[o.maq + '|' + o.op]) || o.ini || '';
+      const prox = lista[i + 1];
+      const hFim = prox ? ((prox.op && horaOP[prox.maq + '|' + prox.op]) || prox.ini || '') : '';
+      const pc = pecasCaixas(o.qtd, o.unidade, o.desc);
+      let velP = null, velC = null, hLiq = null;
+      if (hIni && hFim) {
+        const hBruto = Math.max(0, (new Date(hFim) - new Date(hIni)) / 3600000);
+        hLiq = Math.max(0, hBruto - horasParadasPorOP(o.maq, o.op));
+        if (hLiq > 0) {
+          if (pc.pecas != null) velP = pc.pecas / (hLiq * 60);
+          if (pc.caixas != null) velC = pc.caixas / hLiq;
+        }
+      }
+      linhas.push({ maq: o.maq, op: o.op, dia: (o.ini || '').slice(0, 10), hora: hIni,
+        item: o.item, desc: o.desc, qtd: o.qtd, unidade: o.unidade,
+        pecas: pc.pecas, caixas: pc.caixas, velP, velC, hLiq });
+    });
+  });
+  linhas.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+  return linhas;
+}
+// Card-relatório de velocidade por item/OP
+function montarCardVelocidade(anSetor) {
+  const L = relacaoItens(anSetor).filter(x => x.velP != null || x.velC != null);
+  if (!L.length) return '';
+  const linhas = L.map(x => `<tr>
+    <td style="white-space:nowrap;font-size:11px;color:#5C7186">${x.dia ? fmtData(x.dia).slice(0,5) : ''} ${x.hora ? soHora(x.hora) : ''}</td>
+    <td style="text-align:center;font-weight:700;color:var(--navy);font-size:11.5px">${escapeHtml(x.maq)}</td>
+    <td style="font-size:11px"><b>${escapeHtml(x.op || '—')}</b> · ${escapeHtml(x.item)}<br><span style="color:#8395A6">${escapeHtml((x.desc||'').slice(0,42))}</span></td>
+    <td style="text-align:right;white-space:nowrap;font-size:12px"><b>${x.velP != null ? x.velP.toLocaleString('pt-BR',{maximumFractionDigits:0}) : '—'}</b> <span style="color:#8395A6;font-size:10px">pç/min</span></td>
+    <td style="text-align:right;white-space:nowrap;font-size:12px">${x.velC != null ? x.velC.toLocaleString('pt-BR',{maximumFractionDigits:0}) : '—'} <span style="color:#8395A6;font-size:10px">cx/h</span></td>
+  </tr>`).join('');
+  return `<div class="card"><div class="titulo-sec">Velocidade por item (OP)</div>
+    <p class="desc" style="margin-bottom:8px">Cada OP com sua velocidade real (peças/min e caixas/h), no tempo líquido de produção. ${L.length} OPs no período${anSetor ? ' · ' + anSetor : ''}.</p>
+    <div style="overflow-x:auto;max-height:520px;overflow-y:auto"><table class="aprov-tab" style="min-width:460px"><thead><tr style="position:sticky;top:0;background:#fff;z-index:1">
+      <th style="text-align:left">Quando</th><th>Máq</th><th style="text-align:left">OP · Item</th><th style="text-align:right">Peças/min</th><th style="text-align:right">Cxs/h</th>
+    </tr></thead><tbody>${linhas}</tbody></table></div></div>`;
+}
 // Card de setups por dia/mês — independe da produção (vem das paradas 643).
 function montarCardSetup(anSetor) {
   trocasCache = calcularTrocas(anSetor).filter(t => t.dia);
@@ -4019,7 +4079,7 @@ function renderAnalise() {
       barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
   }
 
-  box.innerHTML = cardItensDia + cardSetup + html;
+  box.innerHTML = cardItensDia + cardSetup + montarCardVelocidade(anSetor) + html;
 }
 
 // máquinas que fizeram setup num dia (clique nas barras de "Setups por dia")
