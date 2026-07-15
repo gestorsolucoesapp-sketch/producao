@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.69.0</span>
+        <span class="ver-badge" id="verBadge">v3.69.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.69.0';
+const APP_VER = '3.69.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2003,21 +2003,22 @@ async function salvarProg(id, v) {
 
 // registra a conclusão de uma tarefa recorrente no histórico e reabre a tarefa
 async function registrarConclusaoRecorrente(t) {
+  const agora = new Date().toISOString();
+  const nome = (perfil && perfil.nome) || null;
   try {
     await sb.from('tarefas_conclusoes').insert({
       tarefa_id: t.id,
       concluida_por_id: (perfil && perfil.id) || null,
-      concluida_por_nome: (perfil && perfil.nome) || null,
-      concluida_em: new Date().toISOString(),
+      concluida_por_nome: nome,
+      concluida_em: agora,
       progresso_final: 100
     });
   } catch (e) { toast('❌ histórico: ' + (e.message || e)); }
-  const upd = { progresso: 0, concluida: false, concluida_em: null, concluida_por_nome: null };
-  if (t.recorrencia_dias && t.recorrencia_dias > 0) upd.prazo = addDiasISO(hojeISO(), t.recorrencia_dias);
+  const upd = { concluida: true, concluida_em: agora, concluida_por_nome: nome, progresso: 100 };
   try { await sb.from('tarefas').update(upd).eq('id', t.id); } catch (e) { toast('❌ ' + (e.message || e)); return; }
   Object.assign(t, upd);
   renderTarefas(); atualizarSino();
-  toast('✓ Registrado no histórico · tarefa reaberta' + (upd.prazo ? ' (próx. ' + fmtData(upd.prazo) + ')' : ''));
+  toast('✓ Concluída · registrada no histórico');
 }
 // histórico de conclusões de uma tarefa recorrente
 async function verHistTarefa(id) {
@@ -2190,11 +2191,12 @@ async function tarDrop(e, alvoId) {
 }
 async function toggleTarefa(id, feita) {
   const tr = (tarefasData || []).find(x => x.id === id);
-  if (tr && tr.recorrente) { if (feita) { await registrarConclusaoRecorrente(tr); } else { renderTarefas(); } return; }
+  if (tr && tr.recorrente && feita) { await registrarConclusaoRecorrente(tr); return; }
   try {
     const upd = feita
       ? { concluida: true, concluida_em: new Date().toISOString(), concluida_por_nome: (perfil && perfil.nome) || null }
       : { concluida: false, concluida_em: null, concluida_por_nome: null };
+    if (!feita && tr && tr.recorrente) upd.progresso = 0;   // reabrir recorrente para o próximo ciclo
     await sb.from('tarefas').update(upd).eq('id', id);
     const t = (tarefasData || []).find(x => x.id === id); if (t) Object.assign(t, upd);
     renderTarefas();
