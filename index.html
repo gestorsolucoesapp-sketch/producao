@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.44.0</span>
+        <span class="ver-badge" id="verBadge">v3.45.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1124,7 +1124,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.44.0';
+const APP_VER = '3.45.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3398,7 +3398,7 @@ function atualizarBadgeFiltroPar() {
 }
 
 /* ================= ANÁLISE (622) ================= */
-let dadosAnalise = null;
+let dadosAnalise = null, dadosProducaoFull = null;
 let setupInfo = null, setupParadas = []; // setup médio (643)
 let itensRender = [];
 function verItem(ix) {
@@ -3607,6 +3607,7 @@ async function ensureAnalise() {
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
+    dadosProducaoFull = rows.slice();   // completo — para o cálculo de trocas de item
     dadosAnalise = rows.filter(r => String(r.item_cod || '').startsWith('1'));
     return true;
   } catch (e) { return e.message || false; }
@@ -3636,37 +3637,90 @@ function calcSetup(setor) {
   const h = reais.reduce((a, g) => a + g.horas, 0);
   setupInfo = reais.length ? { media: h / reais.length, eventos: reais.length, horas: h } : null;
 }
+// Trocas de item = setups REAIS pela produção (independem do apontamento manual).
+// Para cada máquina, ordena as OPs por início; quando o item muda de uma OP para a
+// seguinte, é 1 troca (saiu X -> entrou Y), na data de início da OP que entrou.
+function calcularTrocas(setor) {
+  const base = (dadosProducaoFull || []).filter(r => r.item_cod && (r.data_inicio || r.dia));
+  const rows = setor ? base.filter(r => setorDe(r.recurso_cod) === setor) : base;
+  // 1 linha por OP (a OP pode vir fatiada em várias linhas); guarda 1º início e o item
+  const ops = {};
+  rows.forEach(r => {
+    const maq = String(r.recurso_cod);
+    const chave = maq + '|' + (r.op || (r.item_cod + '|' + (r.data_inicio || r.dia)));
+    const ini = r.data_inicio || r.dia;
+    if (!ops[chave]) ops[chave] = { maq, op: r.op || null, item: String(r.item_cod), desc: r.item_desc || String(r.item_cod), ini };
+    else if (ini && ini < ops[chave].ini) ops[chave].ini = ini;
+  });
+  // agrupa por máquina e ordena por início
+  const porMaq = {};
+  Object.values(ops).forEach(o => { (porMaq[o.maq] = porMaq[o.maq] || []).push(o); });
+  const trocas = [];   // {maq, dia, deCod, deDesc, paraCod, paraDesc}
+  Object.values(porMaq).forEach(lista => {
+    lista.sort((a, b) => (a.ini || '').localeCompare(b.ini || ''));
+    for (let i = 1; i < lista.length; i++) {
+      if (lista[i].item !== lista[i - 1].item) {
+        trocas.push({
+          maq: lista[i].maq,
+          dia: (lista[i].ini || '').slice(0, 10),
+          deCod: lista[i - 1].item, deDesc: lista[i - 1].desc,
+          paraCod: lista[i].item, paraDesc: lista[i].desc
+        });
+      }
+    }
+  });
+  return trocas;
+}
+let trocasCache = [];   // guardado para o clique (drill-down)
 // Card de setups por dia/mês — independe da produção (vem das paradas 643).
 function montarCardSetup(anSetor) {
-  const sp = anSetor ? setupParadas.filter(p => setorDe(p.recurso_cod) === anSetor) : setupParadas;
-  const reais = setupsReais(sp).filter(g => g.dia);   // 1 por máquina+OP, não fragmentos
-  if (!reais.length) {
-    return `<div class="card"><div class="titulo-sec">Setups por dia</div><p class="vazio-painel">Nenhuma parada de SETUP no período${anSetor ? ' para ' + anSetor : ''}.</p></div>`;
+  trocasCache = calcularTrocas(anSetor).filter(t => t.dia);
+  if (!trocasCache.length) {
+    return `<div class="card"><div class="titulo-sec">Trocas de item (setups)</div><p class="vazio-painel">Nenhuma troca de item no período${anSetor ? ' para ' + anSetor : ''}.</p></div>`;
   }
   const porDia = {};
-  reais.forEach(g => { porDia[g.dia] = (porDia[g.dia] || 0) + 1; });
+  trocasCache.forEach(t => { porDia[t.dia] = (porDia[t.dia] || 0) + 1; });
   const dias = Object.keys(porDia).sort();
-  const totEv = reais.length, totH = reais.reduce((a, g) => a + g.horas, 0);
+  const tot = trocasCache.length;
   let dados, titulo, sub;
   if (dias.length <= 45) {
-    titulo = 'Setups por dia';
-    sub = 'nº de paradas de SETUP em cada dia · toque numa barra para ver as máquinas';
-    dados = dias.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: String(porDia[d]), click: `detSetupDia('${anSetor}','${d}')` }));
+    titulo = 'Trocas de item por dia (setups reais)';
+    sub = 'cada troca de item numa máquina = 1 setup · toque numa barra para ver o que saiu e o que entrou';
+    dados = dias.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: String(porDia[d]), click: `detTrocasDia('${anSetor}','${d}')` }));
   } else {
-    const porMes = {}; reais.forEach(g => { const m = g.dia.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
+    const porMes = {}; trocasCache.forEach(t => { const m = t.dia.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
     const meses = Object.keys(porMes).sort();
-    titulo = 'Setups por mês';
-    sub = 'nº de paradas de SETUP no mês';
+    titulo = 'Trocas de item por mês (setups reais)';
+    sub = 'trocas de item no mês (cada uma é um setup)';
     dados = meses.map(m => ({ l: mesLabel(m), v: porMes[m], rot: String(porMes[m]) }));
   }
-  const media = dados.reduce((a, d) => a + d.v, 0) / dados.length;
+  const media = tot / dados.length;
   return `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
     `<div class="kpis" style="margin-bottom:10px">
-       <div class="kpi destaque"><div class="v">${totEv}</div><div class="l">Setups no período${anSetor ? ' · ' + anSetor : ''}</div></div>
-       <div class="kpi"><div class="v">${fmtNum(totH)}h</div><div class="l">Horas em setup · média ${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}/dia</div></div>
+       <div class="kpi destaque"><div class="v">${tot}</div><div class="l">Trocas no período${anSetor ? ' · ' + anSetor : ''}</div></div>
+       <div class="kpi"><div class="v">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">Média de trocas por dia</div></div>
      </div>` +
     `<div class="grafico">${barrasVerticalScroll(dados, () => '#C9922E', { media: true, fmt: n => String(Math.round(n)), margemEsq: 30 })}</div>` +
-    `<p class="desc" style="margin-top:6px;font-size:11px">Cada barra = quantas vezes a máquina parou para SETUP naquele dia. Menos setups = mais tempo produzindo.</p></div>`;
+    `<p class="desc" style="margin-top:6px;font-size:11px">Contado pela produção: sempre que uma máquina troca de item entre uma OP e a seguinte, é um setup — mesmo que ninguém tenha apontado a parada. Mais assertivo que contar as paradas de SETUP.</p></div>`;
+}
+// clique numa barra: mostra cada troca (o que saiu -> o que entrou) naquele dia
+function detTrocasDia(setor, dia) {
+  const ts = calcularTrocas(setor).filter(t => t.dia === dia);
+  $('itemDetTitulo').textContent = 'Trocas de ' + fmtData(dia);
+  if (!ts.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Nenhuma troca neste dia.</p>'; $('itemDetOverlay').classList.remove('oculto'); return; }
+  ts.sort((a, b) => a.maq.localeCompare(b.maq));
+  $('itemDetCorpo').innerHTML = `
+    <p class="idet-desc">${setor || 'Todos os setores'} · <b>${ts.length} troca(s) de item</b> = ${ts.length} setup(s)</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+      <th style="text-align:left">Máq.</th><th style="text-align:left">Saiu</th><th style="text-align:left">Entrou</th>
+    </tr></thead><tbody>
+    ${ts.map(t => `<tr>
+      <td class="nome"><b>${escapeHtml(t.maq)}</b></td>
+      <td style="font-size:11.5px"><b>${escapeHtml(t.deCod)}</b><br><span style="color:#8395A6">${escapeHtml(t.deDesc)}</span></td>
+      <td style="font-size:11.5px"><b style="color:#00964D">${escapeHtml(t.paraCod)}</b><br><span style="color:#5C7186">${escapeHtml(t.paraDesc)}</span></td>
+    </tr>`).join('')}
+    </tbody></table></div>`;
+  $('itemDetOverlay').classList.remove('oculto');
 }
 async function carregarAnalise() {
   setTimeout(travarSetores, 0);
