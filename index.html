@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.70.2</span>
+        <span class="ver-badge" id="verBadge">v3.71.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.70.2';
+const APP_VER = '3.71.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3838,6 +3838,7 @@ async function carregarPainel() {
       try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
       try { const re2 = await sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20); evtOS = re2.data || []; } catch (_) { evtOS = []; }
       dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
+      try { await getMetas(); } catch (_) {}   // metas p/ o card de kg perdido por parada
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
       [producao, perdas, paradas, consumo].forEach(arr => (arr || []).forEach(r => {
@@ -5467,6 +5468,33 @@ const card = (titulo, sub, conteudo, key) => `<div class="grafico pbloco" data-k
 const secao = (key, txt) => `<div class="secao-tit pbloco" data-k="s:${key}">${txt}</div>`;
 
 /* ================= PAINEL ================= */
+// kg de produção perdidos por PARADA de máquina, estimados pela meta kg/hora.
+// meta kg/h da máquina = meta do bloco (Manhã/Tarde/Noite) ÷ horas normais do bloco.
+// kg perdido = horas paradas × meta kg/h, somado por máquina e por dia.
+function kgPerdidoParadas(D) {
+  if (!D || !metasData) return null;
+  const hN = horasBlocoNormal();
+  const acc = {}, porDia = {};
+  filtraParadas(D.paradas).forEach(p => {
+    const c = String(p.recurso_cod);
+    const metas = metasData[c]; if (!metas) return;         // sem meta cadastrada → não estima
+    const b = blocoParada(p); if (!b) return;
+    const kgHora = (metas[b] || 0) / (hN[b] || 1);
+    if (!(kgHora > 0)) return;
+    const horas = p.tempo_horas || 0; const kg = horas * kgHora;
+    if (kg <= 0) return;
+    if (!acc[c]) acc[c] = { kg: 0, horas: 0 };
+    acc[c].kg += kg; acc[c].horas += horas;
+    const d = p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
+    if (d) porDia[d] = (porDia[d] || 0) + kg;
+  });
+  const porMaq = Object.keys(acc)
+    .map(c => ({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, kg: acc[c].kg, horas: acc[c].horas }))
+    .filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
+  const total = porMaq.reduce((a, x) => a + x.kg, 0);
+  const horasTot = porMaq.reduce((a, x) => a + x.horas, 0);
+  return { total, horasTot, porMaq, porDia };
+}
 function renderPainel() {
   if (!dadosPainel) return;
   aprovReg = [];
@@ -5556,6 +5584,19 @@ function renderPainel() {
     const todasMaq = Object.values(SETOR_MAQ).flat();
     html += card('Produção por máquina · todos os setores', (metrica === 'peso' ? 'peso' : 'cxs') + ' — todas as máquinas, Extrusão incluída',
       gMaqPeso(D.producao, val, uni, todasMaq, D.nomeMaq));
+
+    // ⏱️ Produção perdida por PARADA (baseado na meta kg/h de cada máquina)
+    { const kp = kgPerdidoParadas(D);
+      if (kp && kp.porMaq.length) {
+        html += card('⏱️ Produção perdida por parada · por máquina',
+          'kg que deixaram de sair = horas paradas × meta kg/h da máquina · total ' + fmtKg(kp.total) + ' em ' + fmtNum(kp.horasTot) + ' h paradas',
+          barrasHorizontal(kp.porMaq.slice(0, 15).map(x => ({ l: x.cod + ' ' + (x.nome || ''), v: Math.round(x.kg) })), 'kg'));
+        const dP = Object.keys(kp.porDia).sort();
+        if (dP.length) { const sP = serieProducao(kp.porDia, dP, fmtKg);
+          html += card(sP.porMes ? 'Produção perdida por parada · por mês' : 'Produção perdida por parada · por dia',
+            'kg estimados perdidos por ' + (sP.porMes ? 'mês' : 'dia') + ' (meta kg/h × horas paradas)' + (sP.porMes ? ' · linha = média mensal' : ''),
+            barrasVerticalScroll(sP.dados, () => '#C0504D', { media: true, fmt: fmtKg, margemEsq: 46 })); }
+      } }
 
     // Pareto de paradas (todos os setores)
     const porMotivo = somaPor(filtraParadas(D.paradas), p => p.motivo_desc || '—', p => p.tempo_horas || 0);
