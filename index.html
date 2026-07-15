@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.57.0</span>
+        <span class="ver-badge" id="verBadge">v3.58.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1149,7 +1149,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.57.0';
+const APP_VER = '3.58.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1957,14 +1957,25 @@ async function salvarProg(id, v) {
 }
 
 // ---- Notificações (sino) ----
-let notifVistas = [];
-try { notifVistas = JSON.parse(sessionStorage.getItem('notifVistas') || '[]'); } catch (_) {}
+let notifLidas = [];
+try { notifLidas = JSON.parse(localStorage.getItem('notifLidas') || '[]'); } catch (_) {}
+function marcarLida(nid) {
+  if (!notifLidas.includes(nid)) { notifLidas.push(nid); try { localStorage.setItem('notifLidas', JSON.stringify(notifLidas)); } catch (_) {} }
+  atualizarSino();
+  $('notifOv') && $('notifOv').remove();
+  abrirNotificacoes();
+}
+function limparLidas() {   // se a pendência sumiu, esquece a marca de lida (mantém a lista enxuta)
+  const ativos = new Set(calcNotificacoes(true).map(x => x.id));
+  notifLidas = notifLidas.filter(id => ativos.has(id));
+  try { localStorage.setItem('notifLidas', JSON.stringify(notifLidas)); } catch (_) {}
+}
 // sou responsável por esta OS? (id direto ou na lista de responsáveis)
 function souRespOS(o) {
   if (!perfil) return false;
   return o.responsavel_id === perfil.id || String(o.responsaveis || '').split('|').includes(perfil.id);
 }
-function calcNotificacoes() {
+function calcNotificacoes(incluirLidas) {
   if (!tarefasData) return [];
   const meuId = perfil && perfil.id, meuSetor = perfil && perfil.setor;
   const hoje = new Date(); hoje.setHours(0,0,0,0);
@@ -1995,16 +2006,17 @@ function calcNotificacoes() {
     out.push({ id: 'os-' + o.id, tipo: 'os', os: o,
       txt: `${urg}🔧 OS ${o.os_num || ''} (${escapeHtml(o.atividade || 'manutenção')}) · ${escapeHtml(String(alvoOS).slice(0,32))}${dias > 0 ? ` · há ${dias}d` : ''}` });
   });
-  return out;
+  return incluirLidas ? out : out.filter(x => !notifLidas.includes(x.id));
 }
 function atualizarSino() {
   const badge = $('sinoBadge'); if (!badge) return;
-  const n = calcNotificacoes().length;   // total de pendências reais (vencidas, novas, OS em aberto)
+  const n = calcNotificacoes().length;   // pendências não-lidas
   badge.textContent = n > 99 ? '99+' : n;
   badge.classList.toggle('oculto', n === 0);
 }
 function abrirNotificacoes() {
-  const ns = calcNotificacoes();
+  limparLidas();
+  const ns = calcNotificacoes(true);   // mostra todas; as lidas ficam esmaecidas
   const ov = document.createElement('div');
   ov.id = 'notifOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.5);z-index:900;display:flex;align-items:flex-start;justify-content:center;padding-top:60px';
@@ -2018,8 +2030,12 @@ function abrirNotificacoes() {
         if (x.tipo === 'os') {
           const o = x.os;
           const emExec = !!o.iniciada_em && !o.data_reinicio;
-          return `<div style="border-left:3px solid ${cor.os};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px">
-            <div onclick="irParaManut()" style="cursor:pointer;font-size:13px;color:#2C3E50">${x.txt}</div>
+          const lida = notifLidas.includes(x.id);
+          return `<div style="border-left:3px solid ${cor.os};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px;${lida ? 'opacity:.55' : ''}">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+              <div onclick="irParaManut()" style="cursor:pointer;font-size:13px;color:#2C3E50;flex:1">${x.txt}</div>
+              ${lida ? '<span style="font-size:11px;color:#8395A6;white-space:nowrap">✓ lida</span>' : `<button onclick="marcarLida('${x.id}')" style="background:transparent;border:0;color:#28348E;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;padding:0">✓ lida</button>`}
+            </div>
             ${emExec
               ? `<div style="margin-top:8px;font-size:12.5px;color:#16283A">⏱ Em execução por <b>${escapeHtml(o.iniciada_por_nome || '')}</b> · <b data-cron="${o.iniciada_em}" style="color:#2E8B57">${tempoDesde(o.iniciada_em)}</b>
                  <div style="display:flex;gap:6px;margin-top:6px"><button onclick="transferirOS('${o.id}')" class="btn btn-borda" style="flex:1;padding:6px;font-size:12px">🔄 Transferir</button></div></div>`
@@ -2030,7 +2046,12 @@ function abrirNotificacoes() {
                  </div></div>`}
           </div>`;
         }
-        return `<div onclick="irParaTarefas()" style="cursor:pointer;border-left:3px solid ${cor[x.tipo]};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px;font-size:13px;color:#2C3E50">${x.txt}</div>`;
+        const lidaT = notifLidas.includes(x.id);
+        return `<div style="border-left:3px solid ${cor[x.tipo]};background:#F7F9FB;border-radius:8px;padding:10px;margin-bottom:8px;${lidaT ? 'opacity:.55' : ''}">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+            <div onclick="irParaTarefas()" style="cursor:pointer;font-size:13px;color:#2C3E50;flex:1">${x.txt}</div>
+            ${lidaT ? '<span style="font-size:11px;color:#8395A6;white-space:nowrap">✓ lida</span>' : `<button onclick="marcarLida('${x.id}')" style="background:transparent;border:0;color:#28348E;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;padding:0">✓ lida</button>`}
+          </div></div>`;
       }).join('')
       : '<p class="vazio-painel">Nada por aqui. Tudo em dia! ✅</p>'}
   </div>`;
