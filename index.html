@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.62.0</span>
+        <span class="ver-badge" id="verBadge">v3.63.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1147,7 +1147,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.62.0';
+const APP_VER = '3.63.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2615,13 +2615,35 @@ function osParaReg(o) {
   };
 }
 async function salvarOrdens(ordens) {
-  const ok = [], erro = [];
+  const ok = [], erro = [], atualizadas = [];
+  // busca de uma vez as OS que já existem (para atualizar sem atropelar o trabalho em andamento)
+  const nums = ordens.map(o => o.os_num && String(o.os_num).trim()).filter(Boolean);
+  let existentes = {};
+  try {
+    const { data } = await sb.from('manutencao_os')
+      .select('id,os_num,responsavel_id,responsavel_nome,responsaveis,iniciada_em,iniciada_por,iniciada_por_nome,criado_por,criado_por_nome,criado_em')
+      .in('os_num', nums);
+    (data || []).forEach(x => existentes[x.os_num] = x);
+  } catch (_) {}
+
   for (const o of ordens) {
     const reg = osParaReg(o);
     if (!reg.os_num) { erro.push('uma OS sem número'); continue; }
-    const { error } = await sb.from('manutencao_os').upsert(reg, { onConflict: 'os_num' });
-    if (error) erro.push(reg.os_num + ': ' + error.message); else ok.push(reg.os_num);
+    const ja = existentes[reg.os_num];
+    if (ja) {
+      // OS JÁ EXISTE → atualiza os dados do ERP (fechamento, conclusão, custo, datas)
+      // mas PRESERVA o que é do app: quem assumiu (cronômetro), direcionamento manual, autoria.
+      delete reg.criado_por; delete reg.criado_por_nome; delete reg.criado_em;
+      if (ja.responsavel_id || ja.responsaveis) { delete reg.responsavel_id; delete reg.responsavel_nome; delete reg.responsaveis; }
+      const { error } = await sb.from('manutencao_os').update(reg).eq('id', ja.id);
+      if (error) erro.push(reg.os_num + ': ' + error.message);
+      else { ok.push(reg.os_num); if (reg.data_reinicio && !ja.data_reinicio) atualizadas.push(reg.os_num); }
+    } else {
+      const { error } = await sb.from('manutencao_os').insert(reg);
+      if (error) erro.push(reg.os_num + ': ' + error.message); else ok.push(reg.os_num);
+    }
   }
+  if (atualizadas.length) toast(`🔄 ${atualizadas.length} OS fechadas no ERP foram atualizadas aqui`);
   return { ok, erro };
 }
 // extrai o texto do PDF (pdf.js) — sem limite de páginas e muito mais barato que enviar o PDF
