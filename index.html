@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.50.0</span>
+        <span class="ver-badge" id="verBadge">v3.51.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1124,7 +1124,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.50.0';
+const APP_VER = '3.51.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3678,6 +3678,23 @@ function horaSetupPorOP() {
   });
   return idx;
 }
+// Janela real de uma OP: do início da 1ª parada ao fim da última parada da OP.
+// (a produção não guarda hora; as paradas sim, e elas balizam quando a OP rodou.)
+function janelaOP(maq, op) {
+  if (!op) return null;
+  const ps = (todasParadas || []).filter(pp => String(pp.recurso_cod) === String(maq) && String(pp.op) === String(op));
+  if (!ps.length) return null;
+  let ini = null, fim = null, horasPar = 0;
+  ps.forEach(pp => {
+    horasPar += (pp.tempo_horas || 0);
+    if (pp.inicio && (!ini || pp.inicio < ini)) ini = pp.inicio;
+    const f = pp.fim || pp.inicio;
+    if (f && (!fim || f > fim)) fim = f;
+  });
+  if (!ini || !fim) return null;
+  const bruto = (new Date(fim) - new Date(ini)) / 3600000;   // horas da janela
+  return { ini, fim, bruto: Math.max(0, bruto), horasPar, liq: Math.max(0, bruto - horasPar) };
+}
 // Extrusão é chapa/bobina (processo contínuo) — não entra em velocidade de troca.
 function contaSetup(cod) { return setorDe(cod) !== 'Extrusão'; }
 function calcularTrocas(setor) {
@@ -3757,22 +3774,19 @@ function relacaoItens(setor) {
   Object.values(ops).forEach(o => { (porMaq[o.maq] = porMaq[o.maq] || []).push(o); });
   const linhas = [];
   Object.values(porMaq).forEach(lista => {
-    lista.sort((a, b) => (a.ini || '').localeCompare(b.ini || ''));
-    lista.forEach((o, i) => {
-      const hIni = (o.op && horaOP[o.maq + '|' + o.op]) || o.ini || '';
-      const prox = lista[i + 1];
-      const hFim = prox ? ((prox.op && horaOP[prox.maq + '|' + prox.op]) || prox.ini || '') : '';
+    lista.forEach((o) => {
+      const jan = janelaOP(o.maq, o.op);
       const pc = pecasCaixas(o.qtd, o.unidade, o.desc);
-      let velP = null, velC = null, hLiq = null;
-      if (hIni && hFim) {
-        const hBruto = Math.max(0, (new Date(hFim) - new Date(hIni)) / 3600000);
-        hLiq = Math.max(0, hBruto - horasParadasPorOP(o.maq, o.op));
+      let velP = null, velC = null, hLiq = null, hora = o.ini || '';
+      if (jan) {
+        hora = jan.ini;
+        hLiq = jan.liq;
         if (hLiq > 0) {
           if (pc.pecas != null) velP = pc.pecas / (hLiq * 60);
           if (pc.caixas != null) velC = pc.caixas / hLiq;
         }
       }
-      linhas.push({ maq: o.maq, op: o.op, dia: (o.ini || '').slice(0, 10), hora: hIni,
+      linhas.push({ maq: o.maq, op: o.op, dia: (o.ini || '').slice(0, 10), hora,
         item: o.item, desc: o.desc, qtd: o.qtd, unidade: o.unidade,
         pecas: pc.pecas, caixas: pc.caixas, velP, velC, hLiq });
     });
