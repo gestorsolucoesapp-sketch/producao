@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.40.0</span>
+        <span class="ver-badge" id="verBadge">v3.41.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <button id="btnSair" onclick="sair()">Sair</button>
@@ -1121,7 +1121,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.40.0';
+const APP_VER = '3.41.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3581,7 +3581,7 @@ async function ensureAnalise() {
     const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
     const [rows, paradas] = await Promise.all([
       fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso', de, ate),
-      fetchTudo('paradas', 'motivo_desc,tempo_horas,recurso_cod', de, ate)
+      fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod', de, ate)
     ]);
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
@@ -3677,7 +3677,45 @@ function renderAnalise() {
            <div class="kpi"><div class="v">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">Média do período</div></div>
          </div>` +
         `<div class="grafico">${barrasVerticalScroll(dados, null, { media: true, fmt: n => String(Math.round(n)), margemEsq: 34 })}</div>` +
-        `<p class="desc" style="margin-top:6px;font-size:11px">Muitos itens diferentes num dia = mais trocas de item = mais setup. Vale cruzar com o Pareto de paradas (AJUSTE DE MÁQUINA).</p></div>`;
+        `<p class="desc" style="margin-top:6px;font-size:11px">Muitos itens diferentes num dia = mais trocas de item = mais setup. Vale cruzar com o gráfico de setups abaixo.</p></div>`;
+    }
+  }
+
+  // ===== SETUPS POR DIA (mês) / POR MÊS (ano) =====
+  // Cada parada com motivo "SETUP" no 643 é um evento. Conta eventos + soma as horas.
+  let cardSetup = '';
+  {
+    const sp = anSetor ? setupParadas.filter(p => setorDe(p.recurso_cod) === anSetor) : setupParadas;
+    const comDia = sp.filter(p => p.dia);
+    if (comDia.length) {
+      const porDia = {}, horasDia = {};
+      comDia.forEach(p => { porDia[p.dia] = (porDia[p.dia] || 0) + 1; horasDia[p.dia] = (horasDia[p.dia] || 0) + (p.tempo_horas || 0); });
+      const dias = Object.keys(porDia).sort();
+      const ultimo = dias[dias.length - 1];
+      const totEv = comDia.length, totH = comDia.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+      let dados, titulo, sub;
+      if (dias.length <= 45) {
+        titulo = 'Setups por dia';
+        sub = 'nº de paradas de SETUP em cada dia · toque numa barra para ver as máquinas';
+        dados = dias.map(d => ({ l: d.slice(8) + '/' + d.slice(5, 7), v: porDia[d], rot: String(porDia[d]), click: `detSetupDia('${anSetor}','${d}')` }));
+      } else {
+        const porMes = {}; comDia.forEach(p => { const m = p.dia.slice(0, 7); porMes[m] = (porMes[m] || 0) + 1; });
+        const meses = Object.keys(porMes).sort();
+        titulo = 'Setups por mês';
+        sub = 'nº de paradas de SETUP no mês';
+        dados = meses.map(m => ({ l: mesLabel(m), v: porMes[m], rot: String(porMes[m]) }));
+      }
+      const media = dados.reduce((a, d) => a + d.v, 0) / dados.length;
+      cardSetup =
+        `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
+        `<div class="kpis" style="margin-bottom:10px">
+           <div class="kpi destaque"><div class="v">${totEv}</div><div class="l">Setups no período${anSetor ? ' · ' + anSetor : ''}</div></div>
+           <div class="kpi"><div class="v">${fmtNum(totH)}h</div><div class="l">Horas em setup · média ${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}/dia</div></div>
+         </div>` +
+        `<div class="grafico">${barrasVerticalScroll(dados, () => '#C9922E', { media: true, fmt: n => String(Math.round(n)), margemEsq: 30 })}</div>` +
+        `<p class="desc" style="margin-top:6px;font-size:11px">Cada barra = quantas vezes a máquina parou para SETUP naquele dia. Menos setups = mais tempo produzindo.</p></div>`;
+    } else {
+      cardSetup = `<div class="card"><div class="titulo-sec">Setups por dia</div><p class="vazio-painel">Nenhuma parada de SETUP no período${anSetor ? ' para ' + anSetor : ''}.</p></div>`;
     }
   }
 
@@ -3820,7 +3858,29 @@ function renderAnalise() {
       barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
   }
 
-  box.innerHTML = cardItensDia + html;
+  box.innerHTML = cardItensDia + cardSetup + html;
+}
+
+// máquinas que fizeram setup num dia (clique nas barras de "Setups por dia")
+function detSetupDia(setor, dia) {
+  let sp = setupParadas.filter(p => p.dia === dia);
+  if (setor) sp = sp.filter(p => setorDe(p.recurso_cod) === setor);
+  const mq = {};
+  sp.forEach(p => { const c = String(p.recurso_cod); if (!mq[c]) mq[c] = { n: 0, h: 0 }; mq[c].n++; mq[c].h += (p.tempo_horas || 0); });
+  const linhas = Object.entries(mq).sort((a, b) => b[1].n - a[1].n);
+  $('itemDetTitulo').textContent = 'Setups de ' + fmtData(dia);
+  const totH = sp.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  $('itemDetCorpo').innerHTML = `
+    <p class="idet-desc">${setor || 'Todos os setores'} · <b>${sp.length} setup(s)</b> · ${fmtNum(totH)}h</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+      <th style="text-align:left">Máquina</th><th>Setups</th><th>Horas</th>
+    </tr></thead><tbody>
+    ${linhas.map(([c, o]) => `<tr>
+      <td class="nome"><b>${escapeHtml(c)}</b></td>
+      <td><span class="cel neutra">${o.n}</span></td>
+      <td><span class="cel neutra">${fmtNum(o.h)}h</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('itemDetOverlay').classList.remove('oculto');
 }
 
 // quais itens rodaram num dia (clique nas barras de "Itens diferentes por dia")
