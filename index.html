@@ -397,7 +397,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.54.0</span>
+        <span class="ver-badge" id="verBadge">v3.55.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1149,7 +1149,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.54.0';
+const APP_VER = '3.55.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1922,7 +1922,7 @@ function renderTarefas() {
               style="width:100%;accent-color:${corProg(t.progresso||0)}" id="pgr-${t.id}">
           </div>` : ''}
           <div style="font-size:11px;color:#9AA6B2;margin-top:6px">criada por ${escapeHtml(t.criado_por_nome || '—')} · ${fmtDataHora(t.criado_em)}
-            ${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
+            ${(t.criado_por === meuId || t.responsavel_id === meuId || souAdmin) ? ` · <a onclick="abrirNovaTarefa('${t.id}')" style="color:#28348E;cursor:pointer">editar / repassar</a>` : ''}${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
         </div>
       </div>
     </div>`;
@@ -2029,21 +2029,28 @@ async function excluirTarefa(id) {
     renderTarefas(); toast('Tarefa excluída');
   } catch (e) { toast('❌ ' + (e.message || e)); }
 }
-async function abrirNovaTarefa() {
+let tarEditId = null;
+async function abrirNovaTarefa(id) {
   await getUsuariosOS();
-  const pessoas = (usuariosOS || []).map(u => `<option value="${u.id}|${escapeHtml(u.nome || u.email)}">${escapeHtml(u.nome || u.email)}</option>`).join('');
-  const setores = SETORES.filter(x => x !== 'Outros').map(sx => `<option value="${sx}">${sx}</option>`).join('');
+  tarEditId = id || null;
+  const t = id ? (tarefasData || []).find(x => x.id === id) : null;
+  const selP = t && t.responsavel_id ? `${t.responsavel_id}|${t.responsavel_nome || ''}` : '';
+  const pessoas = (usuariosOS || []).map(u => `<option value="${u.id}|${escapeHtml(u.nome || u.email)}" ${selP.startsWith(u.id) ? 'selected' : ''}>${escapeHtml(u.nome || u.email)}</option>`).join('');
+  const setores = SETORES.filter(x => x !== 'Outros').map(sx => `<option value="${sx}" ${t && t.setor === sx ? 'selected' : ''}>${sx}</option>`).join('');
+  // define o alvo inicial
+  let alvoIni = 'eu';
+  if (t) { if (t.setor) alvoIni = 'setor'; else if (t.responsavel_id && t.responsavel_id !== (perfil && perfil.id)) alvoIni = 'pessoa'; else if (t.responsavel_id) alvoIni = 'eu'; else alvoIni = 'pessoa'; }
   const ov = document.createElement('div');
   ov.id = 'novaTarefaOv';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(11,42,74,.5);z-index:900;display:flex;align-items:flex-end;justify-content:center';
   ov.innerHTML = `<div style="background:#fff;width:100%;max-width:560px;border-radius:18px 18px 0 0;padding:18px;max-height:88vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <div style="font-size:17px;font-weight:800;color:var(--navy)">Nova tarefa</div>
+      <div style="font-size:17px;font-weight:800;color:var(--navy)">${id ? 'Editar / repassar tarefa' : 'Nova tarefa'}</div>
       <button onclick="document.getElementById('novaTarefaOv').remove()" style="background:#EEF3F8;border:0;width:34px;height:34px;border-radius:50%;font-size:18px;cursor:pointer">×</button>
     </div>
-    <div class="campo"><label>Título *</label><input id="ntTitulo" placeholder="O que precisa ser feito?"></div>
-    <div class="campo"><label>Detalhes</label><textarea id="ntDesc" rows="2" placeholder="Opcional"></textarea></div>
-    <div class="campo"><label>Para quem</label>
+    <div class="campo"><label>Título *</label><input id="ntTitulo" placeholder="O que precisa ser feito?" value="${t ? escapeHtml(t.titulo).replace(/"/g,'&quot;') : ''}"></div>
+    <div class="campo"><label>Detalhes</label><textarea id="ntDesc" rows="2" placeholder="Opcional">${t && t.descricao ? escapeHtml(t.descricao) : ''}</textarea></div>
+    <div class="campo"><label>Para quem ${id ? '<span style="color:#28348E">(mude aqui para repassar)</span>' : ''}</label>
       <select id="ntAlvo" onchange="ntTrocarAlvo()">
         <option value="eu">Eu mesmo</option>
         <option value="pessoa">Uma pessoa</option>
@@ -2053,14 +2060,19 @@ async function abrirNovaTarefa() {
     <div class="campo oculto" id="ntPessoaBox"><label>Pessoa</label><select id="ntPessoa">${pessoas}</select></div>
     <div class="campo oculto" id="ntSetorBox"><label>Setor</label><select id="ntSetor">${setores}</select></div>
     <div style="display:flex;gap:10px">
-      <div class="campo" style="flex:1"><label>Prazo</label><input id="ntPrazo" type="date"></div>
+      <div class="campo" style="flex:1"><label>Prazo</label><input id="ntPrazo" type="date" value="${t && t.prazo ? t.prazo : ''}"></div>
       <div class="campo" style="flex:1"><label>Prioridade</label>
-        <select id="ntPrior"><option value="media">Média</option><option value="alta">Alta</option><option value="baixa">Baixa</option></select>
+        <select id="ntPrior">
+          <option value="media" ${t && t.prioridade === 'media' ? 'selected' : ''}>Média</option>
+          <option value="alta" ${t && t.prioridade === 'alta' ? 'selected' : ''}>Alta</option>
+          <option value="baixa" ${t && t.prioridade === 'baixa' ? 'selected' : ''}>Baixa</option>
+        </select>
       </div>
     </div>
-    <button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarTarefa()">Criar tarefa</button>
+    <button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarTarefa()">${id ? 'Salvar alterações' : 'Criar tarefa'}</button>
   </div>`;
   document.body.appendChild(ov);
+  $('ntAlvo').value = alvoIni; ntTrocarAlvo();
 }
 function ntTrocarAlvo() {
   const v = $('ntAlvo').value;
@@ -2084,11 +2096,23 @@ async function salvarTarefa() {
   else if (alvo === 'pessoa') { const [id, nome] = ($('ntPessoa').value || '').split('|'); t.responsavel_id = id || null; t.responsavel_nome = nome || null; }
   else if (alvo === 'setor') { t.setor = $('ntSetor').value || null; }
   try {
-    const { data, error } = await sb.from('tarefas').insert(t).select();
-    if (error) throw error;
-    if (data && data[0]) { if (!tarefasData) tarefasData = []; tarefasData.unshift(data[0]); }
-    $('novaTarefaOv') && $('novaTarefaOv').remove();
-    renderTarefas(); toast('✓ Tarefa criada');
+    if (tarEditId) {
+      // edição / repasse: não muda quem criou nem a data
+      const upd = { titulo: t.titulo, descricao: t.descricao, prazo: t.prazo, prioridade: t.prioridade,
+        responsavel_id: t.responsavel_id, responsavel_nome: t.responsavel_nome, setor: t.setor };
+      const { error } = await sb.from('tarefas').update(upd).eq('id', tarEditId);
+      if (error) throw error;
+      const cur = (tarefasData || []).find(x => x.id === tarEditId); if (cur) Object.assign(cur, upd);
+      $('novaTarefaOv') && $('novaTarefaOv').remove();
+      tarEditId = null;
+      renderTarefas(); atualizarSino(); toast('✓ Tarefa atualizada');
+    } else {
+      const { data, error } = await sb.from('tarefas').insert(t).select();
+      if (error) throw error;
+      if (data && data[0]) { if (!tarefasData) tarefasData = []; tarefasData.unshift(data[0]); }
+      $('novaTarefaOv') && $('novaTarefaOv').remove();
+      renderTarefas(); atualizarSino(); toast('✓ Tarefa criada');
+    }
   } catch (e) { toast('❌ ' + (e.message || e)); }
 }
 
