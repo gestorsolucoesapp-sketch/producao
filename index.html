@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.68.0</span>
+        <span class="ver-badge" id="verBadge">v3.69.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.68.0';
+const APP_VER = '3.69.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1956,6 +1956,7 @@ function renderTarefas() {
           ${t.descricao ? `<div style="font-size:12.5px;color:#5C7186;margin-top:2px;word-break:break-word">${linkificar(t.descricao)}</div>` : ''}
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:11.5px">
             <span style="background:#EEF3F8;color:#41505E;padding:2px 8px;border-radius:6px;font-weight:600">${alvo}</span>
+            ${t.recorrente ? '<span style="background:#EAF3EE;color:#1F7A46;padding:2px 8px;border-radius:6px;font-weight:600">🔁 recorrente</span>' : ''}
             ${seloPrazo(t)}
             <span style="color:#8395A6">${cronometro}</span>
           </div>
@@ -1968,7 +1969,7 @@ function renderTarefas() {
               style="width:100%;accent-color:${corProg(t.progresso||0)}" id="pgr-${t.id}">
           </div>` : ''}
           <div style="font-size:11px;color:#9AA6B2;margin-top:6px">criada por ${escapeHtml(t.criado_por_nome || '—')} · ${fmtDataHora(t.criado_em)}
-            ${(t.criado_por === meuId || t.responsavel_id === meuId || souAdmin) ? ` · <a onclick="abrirNovaTarefa('${t.id}')" style="color:#28348E;cursor:pointer">editar / repassar</a>` : ''}${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
+            ${t.recorrente ? ` · <a onclick="verHistTarefa('${t.id}')" style="color:#28348E;cursor:pointer">📜 histórico</a>` : ''}${(t.criado_por === meuId || t.responsavel_id === meuId || souAdmin) ? ` · <a onclick="abrirNovaTarefa('${t.id}')" style="color:#28348E;cursor:pointer">editar / repassar</a>` : ''}${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
         </div>
       </div>
     </div>`;
@@ -1991,6 +1992,7 @@ let _progTimer = {};
 async function salvarProg(id, v) {
   v = parseInt(v, 10) || 0;
   const t = (tarefasData || []).find(x => x.id === id); if (t) t.progresso = v;
+  if (v >= 100 && t && t.recorrente) { await registrarConclusaoRecorrente(t); return; }
   try {
     const upd = { progresso: v };
     if (v >= 100 && t && !t.concluida) { upd.concluida = true; upd.concluida_em = new Date().toISOString(); upd.concluida_por_nome = (perfil && perfil.nome) || null; if (t) Object.assign(t, upd); }
@@ -1999,6 +2001,36 @@ async function salvarProg(id, v) {
   } catch (e) { toast('❌ ' + (e.message || e)); }
 }
 
+// registra a conclusão de uma tarefa recorrente no histórico e reabre a tarefa
+async function registrarConclusaoRecorrente(t) {
+  try {
+    await sb.from('tarefas_conclusoes').insert({
+      tarefa_id: t.id,
+      concluida_por_id: (perfil && perfil.id) || null,
+      concluida_por_nome: (perfil && perfil.nome) || null,
+      concluida_em: new Date().toISOString(),
+      progresso_final: 100
+    });
+  } catch (e) { toast('❌ histórico: ' + (e.message || e)); }
+  const upd = { progresso: 0, concluida: false, concluida_em: null, concluida_por_nome: null };
+  if (t.recorrencia_dias && t.recorrencia_dias > 0) upd.prazo = addDiasISO(hojeISO(), t.recorrencia_dias);
+  try { await sb.from('tarefas').update(upd).eq('id', t.id); } catch (e) { toast('❌ ' + (e.message || e)); return; }
+  Object.assign(t, upd);
+  renderTarefas(); atualizarSino();
+  toast('✓ Registrado no histórico · tarefa reaberta' + (upd.prazo ? ' (próx. ' + fmtData(upd.prazo) + ')' : ''));
+}
+// histórico de conclusões de uma tarefa recorrente
+async function verHistTarefa(id) {
+  const t = (tarefasData || []).find(x => x.id === id);
+  abreDet('📜 Histórico', '<p class="idet-desc">' + (t ? escapeHtml(t.titulo) : '') + '</p><p class="vazio-painel">Carregando…</p>');
+  try {
+    const { data, error } = await sb.from('tarefas_conclusoes').select('*').eq('tarefa_id', id).order('concluida_em', { ascending: false });
+    if (error) throw error;
+    if (!data || !data.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">' + (t ? escapeHtml(t.titulo) : '') + '</p><p class="vazio-painel">Ainda sem conclusões registradas.</p>'; return; }
+    const linhas = data.map(e => `<tr><td class="nome">${escapeHtml(e.concluida_por_nome || '—')}</td><td><span class="cel neutra">${fmtDataHora(e.concluida_em)}</span></td></tr>`).join('');
+    $('itemDetCorpo').innerHTML = `<p class="idet-desc">${escapeHtml(t ? t.titulo : '')} · ${data.length} conclusão(ões)</p>` + tabSimples(['Quem concluiu', 'Quando'], linhas);
+  } catch (e) { $('itemDetCorpo').innerHTML = '<p class="vazio-painel">Erro: ' + escapeHtml(e.message || String(e)) + '</p>'; }
+}
 // ---- Notificações (sino) ----
 let notifLidas = [];
 try { notifLidas = JSON.parse(localStorage.getItem('notifLidas') || '[]'); } catch (_) {}
@@ -2157,6 +2189,8 @@ async function tarDrop(e, alvoId) {
   } catch (_) {}
 }
 async function toggleTarefa(id, feita) {
+  const tr = (tarefasData || []).find(x => x.id === id);
+  if (tr && tr.recorrente) { if (feita) { await registrarConclusaoRecorrente(tr); } else { renderTarefas(); } return; }
   try {
     const upd = feita
       ? { concluida: true, concluida_em: new Date().toISOString(), concluida_por_nome: (perfil && perfil.nome) || null }
@@ -2171,6 +2205,7 @@ async function excluirTarefa(id) {
   if (!confirm('Excluir esta tarefa?')) return;
   try {
     await sb.from('tarefas').delete().eq('id', id);
+    try { await sb.from('tarefas_conclusoes').delete().eq('tarefa_id', id); } catch (_) {}
     tarefasData = (tarefasData || []).filter(x => x.id !== id);
     renderTarefas(); toast('Tarefa excluída');
   } catch (e) { toast('❌ ' + (e.message || e)); }
@@ -2219,6 +2254,13 @@ async function abrirNovaTarefa(id) {
         </select>
       </div>
     </div>
+    <div class="campo" style="margin-top:2px">
+      <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+        <input type="checkbox" id="ntRecorrente" ${t && t.recorrente ? 'checked' : ''} onchange="ntTrocarRec()" style="width:18px;height:18px;accent-color:var(--verde);margin-top:2px">
+        <span style="font-size:14px;color:var(--navy)">🔁 Recorrente — ao concluir, não sai da lista; cada conclusão vira histórico</span>
+      </label>
+    </div>
+    <div class="campo ${t && t.recorrente ? '' : 'oculto'}" id="ntRecDiasBox"><label>Repetir a cada (dias) — opcional</label><input id="ntRecDias" type="number" min="1" placeholder="ex.: 15" value="${t && t.recorrencia_dias ? t.recorrencia_dias : ''}"></div>
     <button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarTarefa()">${id ? 'Salvar alterações' : 'Criar tarefa'}</button>
   </div>`;
   document.body.appendChild(ov);
@@ -2229,6 +2271,7 @@ function ntTrocarAlvo() {
   $('ntPessoaBox').classList.toggle('oculto', v !== 'pessoa');
   $('ntSetorBox').classList.toggle('oculto', v !== 'setor');
 }
+function ntTrocarRec() { const b = $('ntRecDiasBox'); if (b) b.classList.toggle('oculto', !$('ntRecorrente').checked); }
 async function salvarTarefa() {
   const titulo = ($('ntTitulo').value || '').trim();
   if (!titulo) { toast('Dê um título à tarefa.'); return; }
@@ -2240,6 +2283,8 @@ async function salvarTarefa() {
     criado_por_nome: (perfil && perfil.nome) || null,
     prazo: $('ntPrazo').value || null,
     prioridade: $('ntPrior').value || 'media',
+    recorrente: $('ntRecorrente') ? $('ntRecorrente').checked : false,
+    recorrencia_dias: ($('ntRecorrente') && $('ntRecorrente').checked && $('ntRecDias') && $('ntRecDias').value) ? parseInt($('ntRecDias').value, 10) : null,
     responsavel_id: null, responsavel_nome: null, setor: null
   };
   if (alvo === 'eu') { t.responsavel_id = perfil && perfil.id; t.responsavel_nome = perfil && perfil.nome; }
@@ -2253,6 +2298,7 @@ async function salvarTarefa() {
     if (tarEditId) {
       // edição / repasse: não muda quem criou nem a data
       const upd = { titulo: t.titulo, descricao: t.descricao, prazo: t.prazo, prioridade: t.prioridade,
+        recorrente: t.recorrente, recorrencia_dias: t.recorrencia_dias,
         responsavel_id: t.responsavel_id, responsavel_nome: t.responsavel_nome, setor: t.setor };
       const { error } = await sb.from('tarefas').update(upd).eq('id', tarEditId);
       if (error) throw error;
