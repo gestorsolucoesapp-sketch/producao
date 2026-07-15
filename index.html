@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.71.0</span>
+        <span class="ver-badge" id="verBadge">v3.72.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.71.0';
+const APP_VER = '3.72.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3641,8 +3641,36 @@ function renderOEE() {
   box.innerHTML = html;
 }
 let metasEditavel = false, metasLiberado = false;
+// kg/h REAL do ano (01/01/2026→hoje) por máquina×turno, via view agregada no banco.
+// Se a view não existir ainda, degrada para vazio (mostra "—").
+let metasReal = null;
+async function getMetasReal() {
+  if (metasReal) return metasReal;
+  metasReal = {};
+  try {
+    const { data } = await sb.from('v_metas_real_2026').select('*');
+    (data || []).forEach(r => {
+      const c = String(r.recurso_cod); if (!c) return;
+      if (!metasReal[c]) metasReal[c] = {};
+      metasReal[c][r.bloco] = { kg: +r.kg || 0, dias: +r.dias || 0, h_parada: +r.h_parada || 0 };
+    });
+  } catch (_) {}
+  return metasReal;
+}
+// regra da empresa: 22,5 h úteis/dia ÷ 3 turnos = 7,5 h por turno
+const H_TURNO = 7.5;
+function kghDaCelula(cod, bloco) {
+  const m = (metasData && metasData[cod]) || {};
+  const metaKgh = (m[bloco] || 0) / H_TURNO;                 // meta ÷ 7,5
+  let realKgh = null;
+  const rr = metasReal && metasReal[cod] && metasReal[cod][bloco];
+  if (rr) { const horas = rr.dias * H_TURNO - (rr.h_parada || 0); realKgh = horas > 0 ? rr.kg / horas : null; }
+  const f = n => (n == null || !(n > 0)) ? '—' : Math.round(n).toLocaleString('pt-BR');
+  return `<div style="font-size:10px;color:#5C7186;margin-top:3px;line-height:1.3">meta ${f(metaKgh)}/h<br>real ${f(realKgh)}/h</div>`;
+}
 async function carregarMetas() {
   metasData = null; await getMetas();
+  metasReal = null; await getMetasReal();
   metasEditavel = souAdmin || !!(perfil && perfil.metas_edit);
   const sel = $('metaSetor');
   if (!sel.options.length) sel.innerHTML = Object.keys(SETOR_MAQ).map(s => `<option value="${s}">${s}</option>`).join('');
@@ -3658,7 +3686,7 @@ function renderMetas() {
   cods.forEach(c => {
     const cod = String(c), nome = nomes[cod] || '', m = (metasData && metasData[cod]) || {};
     const soma = _BLOCOS_META.reduce((a, b) => a + (m[b[0]] || 0), 0);
-    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}</td>${_BLOCOS_META.map(b => `<td><input type="number" inputmode="decimal" min="0" step="1" id="meta_${cod}_${b[1]}" value="${m[b[0]] != null ? m[b[0]] : ''}" placeholder="0" ${ro} oninput="metasTotaisLive()" style="width:58px;padding:6px 4px;font-size:14px;border:1px solid var(--borda);border-radius:8px;text-align:right${roStyle}"></td>`).join('')}<td><span class="cel neutra" id="metaDia_${cod}">${soma ? fmtMeta(soma, setor) : '—'}</span></td></tr>`;
+    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}</td>${_BLOCOS_META.map(b => `<td style="vertical-align:top"><input type="number" inputmode="decimal" min="0" step="1" id="meta_${cod}_${b[1]}" value="${m[b[0]] != null ? m[b[0]] : ''}" placeholder="0" ${ro} oninput="metasTotaisLive()" style="width:58px;padding:6px 4px;font-size:14px;border:1px solid var(--borda);border-radius:8px;text-align:right${roStyle}">${kghDaCelula(cod, b[0])}</td>`).join('')}<td style="vertical-align:top"><span class="cel neutra" id="metaDia_${cod}">${soma ? fmtMeta(soma, setor) : '—'}</span></td></tr>`;
   });
   html += `<tr style="border-top:2px solid var(--navy);font-weight:700;background:#f4f7fa"><td style="text-align:left;padding:8px 6px">TOTAL ${escapeHtml(setor)}</td>${_BLOCOS_META.map(b => `<td style="text-align:center"><span id="metaTotB_${b[1]}">—</span></td>`).join('')}<td><span class="cel neutra" id="metaTotDia" style="font-weight:700">—</span></td></tr>`;
   html += `</tbody></table></div>`;
