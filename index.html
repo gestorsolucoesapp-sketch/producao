@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.84.2</span>
+        <span class="ver-badge" id="verBadge">v3.84.3</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.84.2';
+const APP_VER = '3.84.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4377,6 +4377,15 @@ function detParadasDia(setor, dia) {
     </tbody></table></div>`;
   $('itemDetOverlay').classList.remove('oculto');
 }
+let ULTIMO_DIA_PROD = null;
+async function getUltimoDiaProd() {
+  if (ULTIMO_DIA_PROD) return ULTIMO_DIA_PROD;
+  try {
+    const r = await sb.from('producao_resumo').select('dia').gt('peso', 0).order('dia', { ascending: false }).limit(1);
+    ULTIMO_DIA_PROD = (r.data && r.data[0] && r.data[0].dia) || null;
+  } catch (_) {}
+  return ULTIMO_DIA_PROD;
+}
 async function ensureAnalise() {
   if (dadosAnalise) return true;
   try {
@@ -4389,10 +4398,10 @@ async function ensureAnalise() {
     todasParadas = paradas.slice();   // todas — para o tempo líquido por OP
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
-    // remove dias importados sem produção real (só detalhe/OS, peso 0) — ex.: 16/07
-    const diasComPeso = rows.filter(r => (r.peso || 0) > 0).map(r => r.dia).filter(Boolean).sort();
-    const ultProd = diasComPeso.length ? diasComPeso[diasComPeso.length - 1] : null;
-    const rowsValidas = ultProd ? rows.filter(r => r.dia && r.dia <= ultProd) : rows;
+    // teto: último dia com produção REAL no resumo (621). Dias importados só com
+    // detalhe/OS (ex.: 16/07, não lançado no 621) ficam de fora.
+    await getUltimoDiaProd();
+    const rowsValidas = ULTIMO_DIA_PROD ? rows.filter(r => r.dia && String(r.dia).slice(0, 10) <= ULTIMO_DIA_PROD) : rows;
     dadosProducaoFull = rowsValidas.slice();   // completo — para o cálculo de trocas de item
     dadosAnalise = rowsValidas.filter(r => String(r.item_cod || '').startsWith('1'));
     return true;
@@ -4492,7 +4501,9 @@ async function preencherMediaTrocasMes(ym, setor) {
       const de = ym + '-01', ate = ultimoDiaMes(ym);
       const rows = await fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,quantidade,unidade', de, ate);
       rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
-      _trocasMesCache = { ym, rows };
+      await getUltimoDiaProd();
+      const rr = ULTIMO_DIA_PROD ? rows.filter(r => r.dia && String(r.dia).slice(0, 10) <= ULTIMO_DIA_PROD) : rows;
+      _trocasMesCache = { ym, rows: rr };
     }
     const ts = calcularTrocas(setor, _trocasMesCache.rows);
     const porDia = {}; ts.forEach(t => { const d = String(t.dia).slice(0, 10); porDia[d] = (porDia[d] || 0) + 1; });
@@ -4735,7 +4746,9 @@ async function preencherMediaItensMes(ym, setor) {
       const de = ym + '-01', ate = ultimoDiaMes(ym);
       const rows = await fetchTudo('producao', 'dia,data_inicio,item_cod,recurso_cod', de, ate);
       rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
-      _itensMesCache = { ym, rows };
+      await getUltimoDiaProd();
+      const rr = ULTIMO_DIA_PROD ? rows.filter(r => r.dia && String(r.dia).slice(0, 10) <= ULTIMO_DIA_PROD) : rows;
+      _itensMesCache = { ym, rows: rr };
     }
     let base = _itensMesCache.rows.filter(r => r.item_cod && r.dia);
     if (setor) base = base.filter(r => setorDe(r.recurso_cod) === setor);
