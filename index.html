@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.82.0</span>
+        <span class="ver-badge" id="verBadge">v3.82.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.82.0';
+const APP_VER = '3.82.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3892,7 +3892,7 @@ function montarSeletorPeriodo(imps, selId) {
   const anos = [...new Set(meses.map(m => m.slice(0, 4)))];
   if (!periodoSel) { periodoSel = { tipo: 'mes', ym: maxYM, de: maxYM + '-01', ate: ultimoDiaMes(maxYM), label: 'Mês ' + mesLabel(maxYM) }; }
   let html = '';
-  const ud = imps.periodoAte, dAnt = addDiasISO(ud, -1);
+  const ud = imps.ultimoDiaProd || imps.periodoAte, dAnt = addDiasISO(ud, -1);
   html += `<option value="dia:${ud}">Último dia · ${fmtData(ud)}</option>`;
   if (dAnt >= imps.periodoDe) html += `<option value="dia:${dAnt}">Dia anterior · ${fmtData(dAnt)}</option>`;
   meses.slice().reverse().forEach(m => html += `<option value="mes:${m}">Mês ${mesLabel(m)}</option>`);
@@ -5371,10 +5371,18 @@ async function carregarInfoImports() {
   const des = dados.map(d => d.periodo_de).filter(Boolean).sort();
   const ates = dados.map(d => d.periodo_ate || d.periodo_de).filter(Boolean).sort();
   const rotinas = [...new Set(dados.map(d => 'RPCP' + d.rotina))].sort();
+  // último dia com PRODUÇÃO de verdade (621) — o "Último dia" do seletor usa isto,
+  // não o fim das importações (que pode incluir um dia só com OS/perdas, vazio de produção)
+  let ultimoDiaProd = null;
+  try {
+    const rp = await sb.from('producao_resumo').select('dia').gt('peso', 0).order('dia', { ascending: false }).limit(1);
+    ultimoDiaProd = (rp.data && rp.data[0] && rp.data[0].dia) || null;
+  } catch (_) {}
   return {
     atualizado: datas.length ? datas[datas.length - 1] : null,
     periodoDe: des[0] || null,
     periodoAte: ates[ates.length - 1] || null,
+    ultimoDiaProd,
     total: dados.length,
     rotinas
   };
@@ -5899,6 +5907,11 @@ function renderPainel() {
   const ud = ultimoDiaDe(prodS.length ? prodS : D.producao);
   const udTxt = ud ? fmtData(ud) : '—';
   const udSemTxt = ud ? fmtDataSem(ud) : '—';
+  if (!prodS.length) {
+    html += `<div style="background:#FFF6E5;border:1px solid #E8C87A;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:13.5px;color:#7A5A00">
+      ⚠️ <b>Sem produção de ${escapeHtml(setor)} no período selecionado</b> (${escapeHtml(periodoSel ? periodoSel.label : '')}).
+      ${(parS.length || perS.length) ? 'Há apenas paradas/perdas registradas — os cards abaixo refletem isso.' : 'Escolha outro período no seletor acima.'}</div>`;
+  }
   const prodUD = prodS.filter(r => r.dia === ud);
   const parUD = parS.filter(p => p.dia === ud);
   const perUD = perS.filter(r => r.dia === ud);
