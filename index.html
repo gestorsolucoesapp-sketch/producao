@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.83.1</span>
+        <span class="ver-badge" id="verBadge">v3.84.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.83.1';
+const APP_VER = '3.84.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4478,9 +4478,29 @@ function janelaOP(maq, op) {
 }
 // Extrusão é chapa/bobina (processo contínuo) — não entra em velocidade de troca.
 function contaSetup(cod) { return setorDe(cod) !== 'Extrusão'; }
-function calcularTrocas(setor) {
+
+// média MENSAL de trocas/dia (referência estável, independente do recorte na tela)
+let _trocasMesCache = { ym: null, rows: null };
+async function preencherMediaTrocasMes(ym, setor) {
+  const elV = document.getElementById('mediaTrocasMesV'); if (!elV) return;
+  try {
+    if (_trocasMesCache.ym !== ym) {
+      const de = ym + '-01', ate = ultimoDiaMes(ym);
+      const rows = await fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,quantidade,unidade', de, ate);
+      rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
+      _trocasMesCache = { ym, rows };
+    }
+    const ts = calcularTrocas(setor, _trocasMesCache.rows);
+    const porDia = {}; ts.forEach(t => { const d = String(t.dia).slice(0, 10); porDia[d] = (porDia[d] || 0) + 1; });
+    const dias = Object.keys(porDia).length;
+    const media = dias ? (ts.length / dias) : 0;
+    const el2 = document.getElementById('mediaTrocasMesV');
+    if (el2) el2.textContent = media.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  } catch (_) { const e = document.getElementById('mediaTrocasMesV'); if (e) e.textContent = '—'; }
+}
+function calcularTrocas(setor, baseOpt) {
   const horaOP = horaSetupPorOP();
-  const base = (dadosProducaoFull || []).filter(r => r.item_cod && (r.data_inicio || r.dia) && contaSetup(r.recurso_cod));
+  const base = (baseOpt || dadosProducaoFull || []).filter(r => r.item_cod && (r.data_inicio || r.dia) && contaSetup(r.recurso_cod));
   const rows = setor ? base.filter(r => setorDe(r.recurso_cod) === setor) : base;
   // 1 linha por OP (a OP pode vir fatiada em várias linhas); guarda 1º início e o item
   const ops = {};
@@ -4615,10 +4635,17 @@ function montarCardSetup(anSetor) {
     dados = meses.map(m => ({ l: mesLabel(m), v: porMes[m], rot: String(porMes[m]) }));
   }
   const media = tot / dados.length;
+  const ymRef = (periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : (dias[dias.length - 1] || '').slice(0, 7);
+  if (periodoSel && periodoSel.tipo === 'mes') {
+    // período já é o mês: média local é a mensal
+    setTimeout(() => { const e = document.getElementById('mediaTrocasMesV'); if (e) e.textContent = media.toLocaleString('pt-BR', { maximumFractionDigits: 1 }); }, 0);
+  } else if (ymRef) {
+    setTimeout(() => preencherMediaTrocasMes(ymRef, anSetor), 0);
+  }
   return `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
     `<div class="kpis" style="margin-bottom:10px">
        <div class="kpi destaque"><div class="v">${tot}</div><div class="l">Trocas no período${anSetor ? ' · ' + anSetor : ''}</div></div>
-       <div class="kpi"><div class="v">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">Média de trocas por dia</div></div>
+       <div class="kpi"><div class="v" id="mediaTrocasMesV">…</div><div class="l">Média de trocas/dia · mês ${ymRef ? mesLabel(ymRef) : ''}</div></div>
      </div>` +
     `<div class="grafico">${barrasVerticalScroll(dados, () => '#C9922E', { media: true, fmt: n => String(Math.round(n)), margemEsq: 30 })}</div>` +
     `<p class="desc" style="margin-top:6px;font-size:11px">Contado pela produção: sempre que uma máquina troca de item entre uma OP e a seguinte, é um setup — mesmo que ninguém tenha apontado a parada. Mais assertivo que contar as paradas de SETUP.</p></div>`;
@@ -5916,8 +5943,10 @@ function renderPainel() {
       } }
 
     // Pareto de paradas (todos os setores)
-    const porMotivo = somaPor(filtraParadas(D.paradas), p => p.motivo_desc || '—', p => p.tempo_horas || 0);
-    { const dd = Object.keys(porMotivo).map(m => ({ l: m, v: porMotivo[m], click: `detMotivoParada('','${m.replace(/'/g, '&#39;')}')` }));
+    const _parF = filtraParadas(D.paradas);
+    const porMotivo = somaPor(_parF, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
+    const nMot = {}; _parF.forEach(p => { const m = p.motivo_desc || '—'; nMot[m] = (nMot[m] || 0) + 1; });
+    { const dd = Object.keys(porMotivo).map(m => ({ l: m + ' · ' + (nMot[m] || 0) + '×', v: porMotivo[m], click: `detMotivoParada('','${m.replace(/'/g, '&#39;')}')` }));
       html += card('Pareto de paradas · todos os setores', 'horas · toque numa barra para ver o resumo',
       paretoSVG(dd, v => fmtNum(v) + 'h', 'var(--alerta)') + paretoHorizontal(dd, v => fmtNum(v) + 'h', 'var(--alerta)')); }
 
@@ -5975,7 +6004,8 @@ function renderPainel() {
   // paradas do último dia
   if (parUD.length) {
     const mUD = somaPor(parUD, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
-    { const dd = Object.keys(mUD).map(m => ({ l: m, v: mUD[m], click: `detMotivoParada('${setor}','${m.replace(/'/g, '&#39;')}','${ud}')` }));
+    const nUD = {}; parUD.forEach(p => { const m = p.motivo_desc || '—'; nUD[m] = (nUD[m] || 0) + 1; });
+    { const dd = Object.keys(mUD).map(m => ({ l: m + ' · ' + (nUD[m] || 0) + '×', v: mUD[m], click: `detMotivoParada('${setor}','${m.replace(/'/g, '&#39;')}','${ud}')` }));
       html += card('Paradas do dia · ' + udTxt, 'horas · toque numa barra para ver o resumo', paretoSVG(dd, v => fmtNum(v) + 'h') + paretoHorizontal(dd, v => fmtNum(v) + 'h')); }
   }
   // ⏱️ produção perdida por parada NO ÚLTIMO DIA
