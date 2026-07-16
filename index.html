@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.89.3</span>
+        <span class="ver-badge" id="verBadge">v3.90.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.89.3';
+const APP_VER = '3.90.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -6859,8 +6859,54 @@ async function carregarHistorico() {
         <div class="t">RPCP${i.rotina || '—'} · ${fmtData(i.periodo_de)}</div>
         <div class="s">${i.arquivo || ''} · ${fmt(i.registros, 0)} registros${i.criado_em ? ' · ' + new Date(i.criado_em).toLocaleString('pt-BR') : ''}</div>
       </div>
-      <button class="apagar" onclick="apagarImportacao('${i.id}', 'RPCP${i.rotina} de ${fmtData(i.periodo_de)}')">Apagar</button>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button onclick="verImportacao('${i.rotina}','${i.periodo_de}','${i.periodo_ate || i.periodo_de}','${(i.arquivo || '').replace(/'/g, '')}',${i.registros || 0})" style="background:none;border:1px solid var(--borda);border-radius:8px;padding:6px 12px;color:var(--navy);font-weight:700;cursor:pointer">🔎 Ver</button>
+        <button class="apagar" onclick="apagarImportacao('${i.id}', 'RPCP${i.rotina} de ${fmtData(i.periodo_de)}')">Apagar</button>
+      </div>
     </div>`).join('');
+}
+
+// ===== auditoria de importação: o que entrou (por dia + totais + tipos p/ 624) =====
+const _ROTINA_TAB = {
+  '621': { tab: 'producao_resumo', val: 'peso',        un: 'kg', nome: 'Produção (resumo)' },
+  '622': { tab: 'producao',        val: 'peso',        un: 'kg', nome: 'Produção (detalhe)' },
+  '624': { tab: 'perdas',          val: 'peso',        un: 'kg', nome: 'Perdas (refugo)' },
+  '643': { tab: 'paradas',         val: 'tempo_horas', un: 'h',  nome: 'Paradas' },
+  '646': { tab: 'consumo',         val: 'peso',        un: 'kg', nome: 'Consumo' },
+  '054': { tab: 'perdas_cliente',  val: 'peso',        un: 'kg', nome: 'Perdas de cliente' }
+};
+async function verImportacao(rotina, de, ate, arquivo, registros) {
+  const cfg = _ROTINA_TAB[String(rotina)] || null;
+  abreDet('🔎 RPCP' + rotina + ' · ' + fmtData(de), '<p class="idet-desc">Carregando auditoria…</p>');
+  if (!cfg) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Rotina sem tabela mapeada.</p>'; return; }
+  try {
+    const cols = 'dia,' + cfg.val + (rotina === '624' ? ',tipo_perda_desc' : '');
+    const rows = await fetchTudo(cfg.tab, cols, de, ate);
+    const porDia = {}, porTipo = {};
+    let tot = 0;
+    rows.forEach(r => {
+      const v = +r[cfg.val] || 0; tot += v;
+      const d = r.dia; if (!porDia[d]) porDia[d] = { n: 0, v: 0 }; porDia[d].n++; porDia[d].v += v;
+      if (rotina === '624') { const t = r.tipo_perda_desc || '—'; porTipo[t] = (porTipo[t] || 0) + v; }
+    });
+    const dias = Object.keys(porDia).sort();
+    const fv = v => cfg.un === 'h' ? (v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h') : fmtKg(v);
+    let html = `<p class="idet-desc"><b>${cfg.nome}</b> · ${escapeHtml(arquivo)}<br>
+      Período ${fmtData(de)} → ${fmtData(ate)} · <b>${fmtNum(rows.length)}</b> registros no banco${registros ? ' (importados: ' + fmtNum(registros) + ')' : ''} · total <b>${fv(tot)}</b></p>`;
+    if (registros && Math.abs(rows.length - registros) > 0) {
+      html += `<p class="idet-desc" style="color:${rows.length < registros ? '#D64545' : '#7A5A00'}">⚠️ ${rows.length < registros ? 'Há MENOS registros no banco do que os importados — outra importação pode ter sobrescrito parte do período.' : 'Há MAIS registros no banco do que esta importação — o período recebeu registros de outras importações também.'}</p>`;
+    }
+    html += tabSimples(['Dia', 'Registros', cfg.un === 'h' ? 'Horas' : 'Peso'],
+      dias.map(d => `<tr><td class="nome">${fmtData(d)}</td><td><span class="cel neutra">${fmtNum(porDia[d].n)}</span></td><td><span class="cel cel-tot">${fv(porDia[d].v)}</span></td></tr>`).join(''));
+    if (rotina === '624') {
+      const tipos = Object.entries(porTipo).sort((a, b) => b[1] - a[1]).slice(0, 15);
+      html += '<div style="height:10px"></div><div class="titulo-sec" style="font-size:13px">Tipos de perda importados (top 15)</div>' +
+        tabSimples(['Tipo', 'kg'], tipos.map(([t, v]) => `<tr><td class="nome">${escapeHtml(t)}</td><td><span class="cel baixo">${fmtKg(v)}</span></td></tr>`).join(''));
+    }
+    $('itemDetCorpo').innerHTML = html;
+  } catch (e) {
+    $('itemDetCorpo').innerHTML = '<p class="idet-desc">Erro na auditoria: ' + escapeHtml(e.message || String(e)) + '</p>';
+  }
 }
 async function apagarImportacao(id, nome) {
   if (!confirm(`Apagar ${nome}?\n\nTodos os registros desta importação serão removidos.`)) return;
