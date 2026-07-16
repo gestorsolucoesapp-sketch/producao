@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.84.0</span>
+        <span class="ver-badge" id="verBadge">v3.84.1</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.84.0';
+const APP_VER = '3.84.1';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4721,6 +4721,28 @@ function renderAnalise() {
     return;
   }
 
+
+// média MENSAL de itens distintos/dia (referência estável, independe do recorte na tela)
+let _itensMesCache = { ym: null, rows: null };
+async function preencherMediaItensMes(ym, setor) {
+  const el = document.getElementById('mediaItensMesV'); if (!el) return;
+  try {
+    if (_itensMesCache.ym !== ym) {
+      const de = ym + '-01', ate = ultimoDiaMes(ym);
+      const rows = await fetchTudo('producao', 'dia,data_inicio,item_cod,recurso_cod', de, ate);
+      rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
+      _itensMesCache = { ym, rows };
+    }
+    let base = _itensMesCache.rows.filter(r => r.item_cod && r.dia);
+    if (setor) base = base.filter(r => setorDe(r.recurso_cod) === setor);
+    const porDia = {}; base.forEach(r => { (porDia[r.dia] = porDia[r.dia] || new Set()).add(String(r.item_cod)); });
+    const dias = Object.keys(porDia);
+    const media = dias.length ? (dias.reduce((a, d) => a + porDia[d].size, 0) / dias.length) : 0;
+    const e2 = document.getElementById('mediaItensMesV');
+    if (e2) e2.textContent = media.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  } catch (_) { const e = document.getElementById('mediaItensMesV'); if (e) e.textContent = '—'; }
+}
+
   // ===== ITENS DIFERENTES POR DIA (mês) / POR MÊS (ano) =====
   // Contagem DISTINTA — somar os distintos de cada dia daria número errado no mês
   // (o mesmo item roda vários dias e seria contado repetido).
@@ -4750,11 +4772,18 @@ function renderAnalise() {
         dados = meses.map(m => ({ l: mesLabel(m), v: porMesSet[m].size, rot: String(porMesSet[m].size) }));
       }
       const media = dados.reduce((a, d) => a + d.v, 0) / dados.length;
+      const ehMes = (dias.length <= 45);
+      const ymRef = ehMes ? ((periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : ultimo.slice(0, 7)) : null;
+      if (ehMes) {
+        if (periodoSel && periodoSel.tipo === 'mes') {
+          setTimeout(() => { const e = document.getElementById('mediaItensMesV'); if (e) e.textContent = media.toLocaleString('pt-BR', { maximumFractionDigits: 1 }); }, 0);
+        } else { setTimeout(() => preencherMediaItensMes(ymRef, anSetor), 0); }
+      }
       cardItensDia =
         `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
         `<div class="kpis" style="margin-bottom:10px">
            <div class="kpi destaque"><div class="v">${porDiaSet[ultimo].size}</div><div class="l">Itens no último dia · ${fmtData(ultimo)}</div></div>
-           <div class="kpi"><div class="v">${media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">Média do período</div></div>
+           <div class="kpi"><div class="v" id="mediaItensMesV">${ehMes ? '…' : media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</div><div class="l">${ehMes ? ('Média/dia · mês ' + mesLabel(ymRef)) : 'Média por mês'}</div></div>
          </div>` +
         `<div class="grafico">${barrasVerticalScroll(dados, null, { media: true, fmt: n => String(Math.round(n)), margemEsq: 34 })}</div>` +
         `<p class="desc" style="margin-top:6px;font-size:11px">Muitos itens diferentes num dia = mais trocas de item = mais setup. Vale cruzar com o gráfico de setups abaixo.</p></div>`;
