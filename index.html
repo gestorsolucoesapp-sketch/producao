@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.86.0</span>
+        <span class="ver-badge" id="verBadge">v3.87.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.86.0';
+const APP_VER = '3.87.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3755,8 +3755,11 @@ function kghDaCelula(cod, bloco) {
   return `<div style="font-size:10px;color:#5C7186;margin-top:3px;line-height:1.3">meta ${f(metaKgh)}/h${linhaReal}</div>`;
 }
 async function carregarMetas() {
-  metasData = null; await getMetas();
-  metasReal = null; await getMetasReal();
+  // usa cache: metas mudam pouco; a view do real (pesada) só é buscada se o real/h estiver visível
+  await Promise.all([
+    (metasData ? Promise.resolve() : getMetas()),
+    (MOSTRAR_REAL_KGH && !metasReal ? getMetasReal() : Promise.resolve())
+  ]);
   metasEditavel = souAdmin || !!(perfil && perfil.metas_edit);
   const sel = $('metaSetor');
   if (!sel.options.length) sel.innerHTML = Object.keys(SETOR_MAQ).map(s => `<option value="${s}">${s}</option>`).join('');
@@ -3976,19 +3979,17 @@ async function carregarPainel() {
       ]);
       let perdasCli = [];
       try { perdasCli = await fetchTudo('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate); } catch (_) {}
-      await getCutover5();
-      await getMetas();
-      await getLayoutPadrao();
-      await getFerTroca();
-      await getRegraFeriados();
-      if (REGRAS_PERDA === null) await getRegrasPerda();
+      // fetches independentes em paralelo (era 1 por vez → agora 1 rodada só)
+      await Promise.all([
+        getCutover5(), getMetas(), getLayoutPadrao(), getFerTroca(), getRegraFeriados(),
+        (REGRAS_PERDA === null ? getRegrasPerda() : Promise.resolve()),
+        getMaqsAtivas(),
+        (diasOverride === null ? getDiasOverride() : Promise.resolve()),
+        sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300).then(ro => { osLista = ro.data || []; }).catch(() => {}),
+        sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20).then(re2 => { evtOS = re2.data || []; }).catch(() => { evtOS = []; })
+      ]);
       classificarPerdas(perdas);
-      await getMaqsAtivas();
-      if (diasOverride === null) await getDiasOverride();
-      try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
-      try { const re2 = await sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20); evtOS = re2.data || []; } catch (_) { evtOS = []; }
       dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
-      try { await getMetas(); } catch (_) {}   // metas p/ o card de kg perdido por parada
       // mapa código→nome a partir de todas as fontes (para nomear máquinas sem produção)
       const nomeMaq = {};
       [producao, perdas, paradas, consumo].forEach(arr => (arr || []).forEach(r => {
@@ -5899,6 +5900,8 @@ function detPerdaMotivo(motivoEnc, dia, setor) {
 // preenche o N do SETUP nos Paretos com as TROCAS REAIS (mesma conta da aba Itens)
 async function preencherSetupsReais(setor, dia) {
   try {
+    const box0 = $('abaPainel') || document.body;
+    if (!/SETUP · …×/.test(box0.textContent || '')) return;   // sem placeholder → nada a preencher
     const ok = await ensureAnalise(); if (ok !== true) return;
     let ts = calcularTrocas(setor || '');
     if (dia) ts = ts.filter(t => String(t.dia).slice(0, 10) === dia);
