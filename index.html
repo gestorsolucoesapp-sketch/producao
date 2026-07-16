@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.85.1</span>
+        <span class="ver-badge" id="verBadge">v3.85.2</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.85.1';
+const APP_VER = '3.85.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4270,7 +4270,7 @@ function detMaquina(cod) {
     ${topMot.length ? '<div style="height:8px"></div>' + tabSimples(['Motivo de parada', 'Horas'], topMot.map(([m, h]) => `<tr><td class="nome">${escapeHtml(m)}</td><td><span class="cel cel-tot">${Math.round(h)}h</span></td></tr>`).join('')) : ''}`);
 }
 // UM motivo de parada: máquinas e horas
-function detMotivoParada(setor, motivo, dia) {
+async function detMotivoParada(setor, motivo, dia) {
   if (!dadosPainel) return; const m = motivo.replace(/&#39;/g, "'"); const D = dadosPainel;
   let par = filtraParadas(D.paradas).filter(p => (p.motivo_desc || '—') === m);
   if (setor) par = par.filter(p => setorDe(p.recurso_cod) === setor);
@@ -4278,8 +4278,24 @@ function detMotivoParada(setor, motivo, dia) {
   const tot = par.reduce((a, p) => a + (p.tempo_horas || 0), 0);
   const maq = {}, nm = {}; par.forEach(p => { maq[p.recurso_cod] = (maq[p.recurso_cod] || 0) + (p.tempo_horas || 0); nm[p.recurso_cod] = p.recurso_nome || p.recurso_cod; });
   const top = Object.entries(maq).sort((a, b) => b[1] - a[1]);
-  abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)</p>
-    ${tabSimples(['Máquina', 'Horas'], top.map(([c, h]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel cel-tot">${Math.round(h)}h</span></td></tr>`).join(''))}`);
+  // SETUP: mostra também as TROCAS REAIS por máquina (mesma conta da aba Itens)
+  let trocasMaq = null, totTrocas = 0;
+  if (/^SETUP$/i.test(m)) {
+    try { const ok = await ensureAnalise();
+      if (ok === true) { let ts = calcularTrocas(setor || '');
+        if (dia) ts = ts.filter(t => String(t.dia).slice(0, 10) === dia);
+        trocasMaq = {}; ts.forEach(t => { trocasMaq[String(t.maq)] = (trocasMaq[String(t.maq)] || 0) + 1; });
+        totTrocas = ts.length; } } catch (_) {}
+  }
+  const cab = trocasMaq ? ['Máquina', 'Trocas', 'Horas'] : ['Máquina', 'Horas'];
+  // máquinas que TROCARAM mas não apontaram parada de setup → entram com 0h
+  if (trocasMaq) Object.keys(trocasMaq).forEach(c => { if (!(c in maq)) { maq[c] = 0; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; top.push([c, 0]); } });
+  const linhas = top.map(([c, h]) => {
+    const tr = trocasMaq ? `<td><span class="cel ${(trocasMaq[String(c)] || 0) > 1 ? 'baixo' : 'neutra'}">${trocasMaq[String(c)] || 0}×</span></td>` : '';
+    return `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td>${tr}<td><span class="cel cel-tot">${Math.round(h)}h</span></td></tr>`;
+  }).join('');
+  abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)${trocasMaq ? ` · <b>${totTrocas} troca(s) real(is)</b> — em vermelho quem trocou mais de 1×` : ''}</p>
+    ${tabSimples(cab, linhas)}`);
 }
 // UM tipo de perda: máquinas, peso e cxs
 function detTipoPerda(setor, tipo) {
