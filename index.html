@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.78.0</span>
+        <span class="ver-badge" id="verBadge">v3.79.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.78.0';
+const APP_VER = '3.79.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1217,6 +1217,35 @@ function proximoFeriado() { const h = hojeISO(); return FERIADOS.filter(f => f.d
    - feriado de QUA em diante: o dia roda no horário reduzido de sábado */
 const FER_SET = (() => { try { return new Set(FERIADOS.filter(f => f.t !== 'Facultativo').map(f => f.d)); } catch (_) { return new Set(); } })(); // facultativos trabalham normal
 let ferTroca = {}; // {'YYYY-MM-DD': true} — feriado trocado: o dia trabalha normal
+// regra de troca de feriados escrita pelo admin na Agenda — o assistente lê isso
+let regraFeriadosTexto = '';
+async function getRegraFeriados() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'regra_feriados_texto').maybeSingle();
+    regraFeriadosTexto = (data && data.valor) ? data.valor : '';
+  } catch (_) { regraFeriadosTexto = ''; }
+  return regraFeriadosTexto;
+}
+async function salvarRegraFer() {
+  if (!souAdmin) { toast('Só admin pode editar a regra.'); return; }
+  const txt = ($('regraFerTxt') ? $('regraFerTxt').value : '').trim();
+  try {
+    const { error } = await sb.from('app_config').upsert({ chave: 'regra_feriados_texto', valor: txt }, { onConflict: 'chave' });
+    if (error) throw error;
+    regraFeriadosTexto = txt; toast('✅ Regra salva — o assistente já usa.');
+  } catch (e) { toast('❌ ' + (e.message || e)); }
+}
+function blocoRegraFer() {
+  const txt = regraFeriadosTexto || '';
+  if (souAdmin) {
+    return `<div style="background:#F4F8FC;border:1px solid #cfe0ee;border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="font-weight:700;color:var(--navy);margin-bottom:6px">📋 Regra de troca de feriados <span style="font-weight:400;font-size:11px;color:#5C7186">— o assistente usa isso</span></div>
+      <textarea id="regraFerTxt" rows="5" placeholder="Ex.: Feriado na terça → folga na segunda anterior. Quarta em diante → trabalha; sexta reduzida; sábado folga. Natal e Ano Novo: a definir." style="width:100%;padding:8px;border:1px solid var(--borda);border-radius:8px;font-size:13px;box-sizing:border-box;resize:vertical">${escapeHtml(txt)}</textarea>
+      <button class="btn btn-verde" style="margin-top:8px" onclick="salvarRegraFer()">Salvar regra</button>
+    </div>`;
+  }
+  return txt ? `<div style="background:#F4F8FC;border:1px solid #cfe0ee;border-radius:10px;padding:12px;margin-bottom:14px"><div style="font-weight:700;color:var(--navy);margin-bottom:4px">📋 Regra de troca de feriados</div><div style="font-size:13px;color:#41586f;white-space:pre-wrap">${escapeHtml(txt)}</div></div>` : '';
+}
 async function getFerTroca() {
   try {
     const { data } = await sb.from('app_config').select('valor').eq('chave', 'feriados_troca').maybeSingle();
@@ -1275,6 +1304,7 @@ async function abrirAgenda() {
   $('agendaOverlay').classList.remove('oculto');
   $('agendaConteudo').innerHTML = '<p class="desc" style="text-align:center;padding:20px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando…</p>';
   await getFerTroca();
+  await getRegraFeriados();
   if (diasOverride === null) await getDiasOverride(); else await getDiasOverride();
   await carregarAvisos();
   renderAgenda();
@@ -1295,8 +1325,8 @@ function renderAgenda() {
   const esp = Object.keys(diasOverride || {}).filter(d => d >= h).map(d => ({ tipo: 'especial', data: d, titulo: NOME_OV[diasOverride[d]] || 'Dia especial', ov: diasOverride[d] }));
   const avs = avisosData.map(a => ({ tipo: 'aviso', data: a.data, hora: a.hora, titulo: a.titulo, nota: a.nota, compart: a.compartilhado, autor: a.autor_nome, meu: a.user_id === meuId, id: a.id }));
   const todos = fer.concat(esp).concat(avs).sort((x, y) => x.data < y.data ? -1 : x.data > y.data ? 1 : ((x.hora || '') < (y.hora || '') ? -1 : 1));
-  if (!todos.length) { $('agendaConteudo').innerHTML = '<p class="desc" style="text-align:center;padding:20px">Nada por aqui ainda.<br>Toque em "Novo aviso" para adicionar.</p>'; return; }
-  $('agendaConteudo').innerHTML = todos.map(it => {
+  if (!todos.length) { $('agendaConteudo').innerHTML = blocoRegraFer() + '<p class="desc" style="text-align:center;padding:20px">Nada por aqui ainda.<br>Toque em "Novo aviso" para adicionar.</p>'; return; }
+  $('agendaConteudo').innerHTML = blocoRegraFer() + todos.map(it => {
     const dnum = diasAte(it.data), quando = dnum <= 0 ? 'hoje' : dnum === 1 ? 'amanhã' : `em ${dnum}d`;
     const dataLbl = `${diaSemana(it.data)}, ${fmtData(it.data)}${it.hora ? ' · ' + String(it.hora).slice(0, 5) : ''}`;
     if (it.tipo === 'especial') {
@@ -3862,6 +3892,7 @@ async function carregarPainel() {
       await getMetas();
       await getLayoutPadrao();
       await getFerTroca();
+      await getRegraFeriados();
       if (diasOverride === null) await getDiasOverride();
       try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
       try { const re2 = await sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20); evtOS = re2.data || []; } catch (_) { evtOS = []; }
@@ -4989,7 +5020,9 @@ function contextoIA() {
   const _hoje = hojeISO();
   const ferTxt = `\nFERIADOS (calendário oficial cadastrado no app). Hoje é ${_hoje}. Próximos: ` +
     (FERIADOS.filter(f => f.d >= _hoje).slice(0, 10).map(f => `${f.d} ${f.n} [${f.t}${f.folga ? ' — FÁBRICA NÃO TRABALHA (folga)' : ''}]`).join('; ') || 'nenhum cadastrado') +
-    `. Regra da fábrica: feriado tipo "Facultativo" a produção trabalha NORMAL (5 turnos), salvo os marcados como folga (ex.: Corpus Christi 04/06, não trabalha). Feriados Nacional/Estadual/Municipal seguem a política cadastrada na aba Agenda. Se perguntarem por uma data que NÃO está nesta lista, responda que não há feriado cadastrado nessa data — não invente.`;
+    `. Regra da fábrica: feriado tipo "Facultativo" a produção trabalha NORMAL (5 turnos), salvo os marcados como folga (ex.: Corpus Christi 04/06, não trabalha). Feriados Nacional/Estadual/Municipal seguem a política cadastrada na aba Agenda. Se perguntarem por uma data que NÃO está nesta lista, responda que não há feriado cadastrado nessa data — não invente.` +
+    (regraFeriadosTexto ? `\nREGRA DE TROCA DE FERIADO definida pela empresa (use esta como referência principal): ${regraFeriadosTexto}` : '') +
+    `\nRegras automáticas que o app aplica: feriado na SEGUNDA → folga na própria segunda; na TERÇA → folga na segunda anterior (a terça trabalha); da QUARTA em diante → trabalha normal, a SEXTA da semana roda em horário reduzido e o SÁBADO vira folga; feriado no SÁBADO → folga; feriado marcado como "trocado" na Agenda → volta tudo ao normal.`;
   return raioXUD + manutTxt + ferTxt + `\nPeríodo: ${per}. Produção total ${kg1(tot)}. Por setor: ${setores}.
 Produção por dia: ${diasTxt}.
 Produção por turno: ${turnosTxt}.
