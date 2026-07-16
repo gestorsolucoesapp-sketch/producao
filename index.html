@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.79.0</span>
+        <span class="ver-badge" id="verBadge">v3.80.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.79.0';
+const APP_VER = '3.80.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -5180,11 +5180,28 @@ async function registrarUsoIA(pergunta) {
   try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: String(pergunta || '').slice(0, 300) }); } catch (_) {}
 }
 
+let acaoPendente = null;
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   registrarUsoIA(q);
+  // ===== confirmação de ação pendente (SIM/NÃO) =====
+  if (acaoPendente) {
+    if (/^\s*(sim|confirmo?|confirmar|pode|isso|ok|faz|fazer|manda|beleza|claro|positivo|aplica|aplicar)\b/i.test(q)) {
+      const ac = acaoPendente; acaoPendente = null;
+      const resp = await ac();
+      addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
+      return;
+    }
+    if (/^\s*(n[aã]o|cancela|deixa|esquece|para)\b/i.test(q)) {
+      acaoPendente = null;
+      const resp = 'Ok, cancelei — não alterei nada.';
+      addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
+      return;
+    }
+    acaoPendente = null; // mudou de assunto → descarta a ação pendente e segue normal
+  }
   // ===== dias especiais (calendário) =====
   {
     const qd = q.trim();
@@ -5201,16 +5218,19 @@ async function enviarIA() {
         resp = ks.length ? 'Dias especiais marcados:\n' + ks.map(d => `• ${diaSemana(d)}, ${fmtData(d)} → ${diasOverride[d] === 'util' ? 'trabalha normal' : diasOverride[d] === 'reduzido' ? 'horário reduzido' : 'folga'}`).join('\n') : 'Nenhum dia especial marcado.';
       } else if (mRemove) {
         if (!souAdmin) resp = 'Só o administrador pode alterar o calendário.';
-        else { const iso = montaISO(mRemove); if (diasOverride[iso]) { delete diasOverride[iso]; await salvarDiasOverride(); dadosPainel = null; resp = `🗑 Marcação de ${fmtData(iso)} removida — volta a valer a regra padrão.`; } else resp = `${fmtData(iso)} não tem marcação especial.`; }
+        else { const iso = montaISO(mRemove);
+          if (!diasOverride[iso]) resp = `${fmtData(iso)} não tem marcação especial.`;
+          else { acaoPendente = async () => { delete diasOverride[iso]; await salvarDiasOverride(); dadosPainel = null; return `🗑 Marcação de ${fmtData(iso)} removida — volta a valer a regra padrão.`; };
+            resp = `Você quer REMOVER a marcação especial de ${diaSemana(iso)}, ${fmtData(iso)}? Responda SIM para confirmar.`; }
+        }
       } else if (!souAdmin) {
         resp = 'Só o administrador pode alterar o calendário.';
       } else {
         const iso = montaISO(mData);
         const tipo = /\b(nao|não)\b.*trabalh|folga/i.test(qd) ? 'folga' : /reduzid|sabado|sábado/i.test(qd) && !/normal/i.test(qd) ? 'reduzido' : 'util';
-        diasOverride[iso] = tipo;
-        const ok = await salvarDiasOverride(); dadosPainel = null;
         const nomeT = tipo === 'util' ? 'horário NORMAL (5 turnos, 23,92h)' : tipo === 'reduzido' ? 'horário REDUZIDO de sábado (10,98h, sem Noite)' : 'FOLGA (não trabalha)';
-        resp = ok ? `✅ Anotado: ${diaSemana(iso)}, ${fmtData(iso)} → ${nomeT}. OEE, turnos e aproveitamento vão considerar isso para todos.` : 'Não consegui salvar.';
+        acaoPendente = async () => { diasOverride[iso] = tipo; const ok = await salvarDiasOverride(); dadosPainel = null; return ok ? `✅ Pronto: ${diaSemana(iso)}, ${fmtData(iso)} → ${nomeT}. OEE, turnos e aproveitamento passam a considerar isso.` : 'Não consegui salvar.'; };
+        resp = `Confirmar: marcar ${diaSemana(iso)}, ${fmtData(iso)} como ${nomeT}? Responda SIM para eu aplicar.`;
       }
       addIA('assistente', resp); iaHist.push({ role: 'assistant', content: resp }); falarIA(resp);
       return;
@@ -5225,12 +5245,16 @@ async function enviarIA() {
     const mDel = /^(?:apagar|remover|excluir)\s+regra\s+(\d+)/i.exec(qn);
     if (mRegra) {
       if (!souAdmin) resp = 'Só o administrador pode criar regras.';
-      else { iaRegras.push(mRegra[1].trim()); resp = (await salvarIaRegras()) ? `✅ Regra ${iaRegras.length} criada. A IA vai considerá-la em todas as análises (para todos os usuários).` : 'Não consegui salvar a regra.'; }
+      else { const novaR = mRegra[1].trim();
+        acaoPendente = async () => { iaRegras.push(novaR); return (await salvarIaRegras()) ? `✅ Regra ${iaRegras.length} criada. A IA vai considerá-la nas análises.` : 'Não consegui salvar a regra.'; };
+        resp = `Confirmar criação da regra: "${novaR}"? Responda SIM.`; }
     } else if (mDel) {
       const n = +mDel[1];
       if (!souAdmin) resp = 'Só o administrador pode remover regras.';
       else if (n < 1 || n > iaRegras.length) resp = 'Não existe a regra ' + n + '.';
-      else { const rem = iaRegras.splice(n - 1, 1)[0]; resp = (await salvarIaRegras()) ? `🗑 Regra ${n} removida: "${rem}"` : 'Não consegui salvar.'; }
+      else { const rem = iaRegras[n - 1];
+        acaoPendente = async () => { iaRegras.splice(n - 1, 1); return (await salvarIaRegras()) ? `\u{1F5D1} Regra ${n} removida: "${rem}"` : 'Não consegui salvar.'; };
+        resp = `Confirmar remoção da regra ${n}: "${rem}"? Responda SIM.`; }
     } else {
       resp = iaRegras.length ? 'Regras ativas:\n' + iaRegras.map((r, i) => (i + 1) + '. ' + r).join('\n') + (souAdmin ? '\n\nPara remover: "apagar regra N". Para criar: "regra: ..."' : '') : 'Nenhuma regra cadastrada.' + (souAdmin ? ' Crie com: "regra: [texto]".' : '');
     }
