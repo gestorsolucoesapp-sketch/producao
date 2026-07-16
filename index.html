@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.81.1</span>
+        <span class="ver-badge" id="verBadge">v3.82.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.81.1';
+const APP_VER = '3.82.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -3892,19 +3892,51 @@ function montarSeletorPeriodo(imps, selId) {
   const anos = [...new Set(meses.map(m => m.slice(0, 4)))];
   if (!periodoSel) { periodoSel = { tipo: 'mes', ym: maxYM, de: maxYM + '-01', ate: ultimoDiaMes(maxYM), label: 'Mês ' + mesLabel(maxYM) }; }
   let html = '';
+  const ud = imps.periodoAte, dAnt = addDiasISO(ud, -1);
+  html += `<option value="dia:${ud}">Último dia · ${fmtData(ud)}</option>`;
+  if (dAnt >= imps.periodoDe) html += `<option value="dia:${dAnt}">Dia anterior · ${fmtData(dAnt)}</option>`;
   meses.slice().reverse().forEach(m => html += `<option value="mes:${m}">Mês ${mesLabel(m)}</option>`);
   anos.forEach(a => html += `<option value="ano:${a}">Ano ${a} (análise)</option>`);
   if (anos.length || meses.length > 1) html += `<option value="tudo">Todo o histórico</option>`;
+  html += `<option value="custom">Personalizado (escolher datas)…</option>`;
   sel.innerHTML = html;
-  sel.value = periodoSel.tipo === 'mes' ? `mes:${periodoSel.ym}` : periodoSel.tipo === 'ano' ? `ano:${periodoSel.ano}` : 'tudo';
+  sel.value = periodoSel.tipo === 'mes' ? `mes:${periodoSel.ym}` : periodoSel.tipo === 'ano' ? `ano:${periodoSel.ano}` : periodoSel.tipo === 'dia' ? `dia:${periodoSel.de}` : periodoSel.tipo === 'custom' ? 'custom' : 'tudo';
+  if (![...sel.options].some(o => o.value === sel.value)) sel.value = `mes:${maxYM}`;
+  // linha do período personalizado (de → até)
+  let cbox = document.getElementById('customPerBox');
+  if (!cbox && wrap) {
+    cbox = document.createElement('div'); cbox.id = 'customPerBox'; cbox.className = 'oculto';
+    cbox.style.cssText = 'display:flex;gap:8px;align-items:end;margin-top:8px;flex-wrap:wrap';
+    cbox.innerHTML = `<div style="flex:1;min-width:120px"><label style="font-size:12px;color:#5C7186">De</label><input type="date" id="cpDe" style="width:100%;padding:8px;border:1px solid var(--borda);border-radius:8px;box-sizing:border-box"></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#5C7186">Até</label><input type="date" id="cpAte" style="width:100%;padding:8px;border:1px solid var(--borda);border-radius:8px;box-sizing:border-box"></div>
+      <button class="btn btn-verde" style="padding:9px 14px" onclick="aplicarPeriodoCustom()">Aplicar</button>`;
+    wrap.appendChild(cbox);
+  }
+  if (cbox) {
+    cbox.classList.toggle('oculto', periodoSel.tipo !== 'custom');
+    const de = document.getElementById('cpDe'), ate = document.getElementById('cpAte');
+    if (de) { de.min = imps.periodoDe; de.max = imps.periodoAte; if (!de.value) de.value = periodoSel.tipo === 'custom' ? periodoSel.de : imps.periodoDe; }
+    if (ate) { ate.min = imps.periodoDe; ate.max = imps.periodoAte; if (!ate.value) ate.value = periodoSel.tipo === 'custom' ? periodoSel.ate : imps.periodoAte; }
+  }
+}
+function aplicarPeriodoCustom() {
+  const de = document.getElementById('cpDe'), ate = document.getElementById('cpAte');
+  if (!de || !ate || !de.value || !ate.value) { toast('Preencha as duas datas.'); return; }
+  let d1 = de.value, d2 = ate.value; if (d1 > d2) { const t = d1; d1 = d2; d2 = t; de.value = d1; ate.value = d2; }
+  periodoSel = { tipo: 'custom', de: d1, ate: d2, label: d1 === d2 ? 'Dia ' + fmtData(d1) : fmtData(d1) + ' → ' + fmtData(d2) };
+  dadosPainel = null; dadosAnalise = null; carregarPainel();
 }
 function aplicarPeriodo(v) {
-  if (v === 'tudo') periodoSel = { tipo: 'tudo', de: null, ate: null, label: 'Todo o histórico' };
+  const cbox = document.getElementById('customPerBox');
+  if (v === 'custom') { if (cbox) cbox.classList.remove('oculto'); return; }
+  if (cbox) cbox.classList.add('oculto');
+  if (v.startsWith('dia:')) { const d = v.slice(4); periodoSel = { tipo: 'dia', de: d, ate: d, label: 'Dia ' + fmtData(d) + ' (' + diaSemana(d) + ')' }; }
+  else if (v === 'tudo') periodoSel = { tipo: 'tudo', de: null, ate: null, label: 'Todo o histórico' };
   else if (v.startsWith('ano:')) { const a = v.slice(4); periodoSel = { tipo: 'ano', ano: a, de: a + '-01-01', ate: a + '-12-31', label: 'Ano ' + a }; }
   else if (v.startsWith('mes:')) { const ym = v.slice(4); periodoSel = { tipo: 'mes', ym, de: ym + '-01', ate: ultimoDiaMes(ym), label: 'Mês ' + mesLabel(ym) }; }
   dadosPainel = null; dadosAnalise = null; // recorte muda os dois
 }
-function mudarPeriodo() { aplicarPeriodo($('fPeriodo').value); carregarPainel(); }
+function mudarPeriodo() { const v = $('fPeriodo').value; aplicarPeriodo(v); if (v !== 'custom') carregarPainel(); }
 function mudarPeriodoAnalise() { aplicarPeriodo($('anPeriodo').value); carregarAnalise(); }
 
 async function carregarPainel() {
