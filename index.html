@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.82.2</span>
+        <span class="ver-badge" id="verBadge">v3.82.3</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.82.2';
+const APP_VER = '3.82.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2429,6 +2429,23 @@ function classificarPerdas(arr) {
 const setorPerda = r => (r._sp || setorDe(r.recurso_cod));
 const perdaConta = r => (r._conta !== false);        // false só para excluídas/informativas
 const perdaVisivel = r => (r._conta !== false || r._info === true); // some só as "excluir"
+// máquinas ATIVAS = produziram nos últimos 30 dias (independente do período na tela).
+// Serve para a ociosidade pegar máquina parada mesmo num recorte de 1 dia.
+let MAQS_ATIVAS = null;
+async function getMaqsAtivas() {
+  if (MAQS_ATIVAS) return MAQS_ATIVAS;
+  MAQS_ATIVAS = new Set();
+  try {
+    const ult = await sb.from('producao_resumo').select('dia').gt('peso', 0).order('dia', { ascending: false }).limit(1);
+    const ref = (ult.data && ult.data[0] && ult.data[0].dia) || null;
+    if (ref) {
+      const de = addDiasISO(ref, -30);
+      const { data } = await sb.from('producao_resumo').select('recurso_cod').gt('peso', 0).gte('dia', de);
+      (data || []).forEach(r => MAQS_ATIVAS.add(String(r.recurso_cod)));
+    }
+  } catch (_) {}
+  return MAQS_ATIVAS;
+}
 const SETORES = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Outros'];
 const CORES = ['#00964D', '#28348E', '#E8A13D', '#3CA96E', '#6C7BD1', '#D64545', '#9AA6B2'];
 // Esquema de turnos muda no tempo: até a "virada" eram 3 turnos (1=Manhã,2=Tarde,3=Noite);
@@ -3964,6 +3981,7 @@ async function carregarPainel() {
       await getRegraFeriados();
       if (REGRAS_PERDA === null) await getRegrasPerda();
       classificarPerdas(perdas);
+      await getMaqsAtivas();
       if (diasOverride === null) await getDiasOverride();
       try { const ro = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300); osLista = ro.data || []; } catch (_) {}
       try { const re2 = await sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20); evtOS = re2.data || []; } catch (_) { evtOS = []; }
@@ -5673,14 +5691,17 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
   //    dia operacional do seu setor, que não produziu e não teve parada apontada.
   if (!opts.soParadas) {
     const H_DIA = 22.5;
-    const diasSetor = {}, prodMaqDia = {}, ativas = new Set();
+    const diasSetor = {}, prodMaqDia = {};
     (D.producao || []).forEach(r => {
       if ((r.peso || 0) <= 0) return;
       const c = String(r.recurso_cod), s = setorDe(c), d = r.dia;
-      ativas.add(c);
       (prodMaqDia[c] = prodMaqDia[c] || new Set()).add(d);
       (diasSetor[s] = diasSetor[s] || new Set()).add(d);
     });
+    // ativa = produziu nos últimos 30 dias (banco), não só no período da tela —
+    // assim máquina parada o recorte inteiro (ex.: 703 num dia) ainda conta como ociosa
+    const ativas = (MAQS_ATIVAS && MAQS_ATIVAS.size) ? MAQS_ATIVAS
+      : new Set(Object.keys(prodMaqDia));
     const parMaqDia = {};
     filtraParadas(D.paradas).forEach(p => {
       if (PARADA_NAO_PERDE(p.motivo_desc)) return;
