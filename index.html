@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.84.1</span>
+        <span class="ver-badge" id="verBadge">v3.84.2</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.84.1';
+const APP_VER = '3.84.2';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4389,8 +4389,12 @@ async function ensureAnalise() {
     todasParadas = paradas.slice();   // todas — para o tempo líquido por OP
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
     rows.forEach(r => { if (r.data_inicio) r.dia = r.data_inicio; });
-    dadosProducaoFull = rows.slice();   // completo — para o cálculo de trocas de item
-    dadosAnalise = rows.filter(r => String(r.item_cod || '').startsWith('1'));
+    // remove dias importados sem produção real (só detalhe/OS, peso 0) — ex.: 16/07
+    const diasComPeso = rows.filter(r => (r.peso || 0) > 0).map(r => r.dia).filter(Boolean).sort();
+    const ultProd = diasComPeso.length ? diasComPeso[diasComPeso.length - 1] : null;
+    const rowsValidas = ultProd ? rows.filter(r => r.dia && r.dia <= ultProd) : rows;
+    dadosProducaoFull = rowsValidas.slice();   // completo — para o cálculo de trocas de item
+    dadosAnalise = rowsValidas.filter(r => String(r.item_cod || '').startsWith('1'));
     return true;
   } catch (e) { return e.message || false; }
 }
@@ -5730,8 +5734,8 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
     if (!acc[c]) acc[c] = { kg: 0, horas: 0 };
     acc[c].kg += kg; acc[c].horas += horas;
     if (d) porDia[d] = (porDia[d] || 0) + kg;
-    if (!porMotivo[mo]) porMotivo[mo] = { kg: 0, horas: 0 };
-    porMotivo[mo].kg += kg; porMotivo[mo].horas += horas;
+    if (!porMotivo[mo]) porMotivo[mo] = { kg: 0, horas: 0, n: 0 };
+    porMotivo[mo].kg += kg; porMotivo[mo].horas += horas; porMotivo[mo].n += 1;
   };
   // 1) PARADAS APONTADAS
   filtraParadas(D.paradas).forEach(p => {
@@ -5786,7 +5790,7 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
   }
   const nomeDe = c => (D.nomeMaq && D.nomeMaq[c]) || c;
   const porMaq = Object.keys(acc).map(c => ({ cod: c, nome: nomeDe(c), kg: acc[c].kg, horas: acc[c].horas })).filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
-  const porMot = Object.keys(porMotivo).map(mo => ({ motivo: mo, kg: porMotivo[mo].kg, horas: porMotivo[mo].horas })).filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
+  const porMot = Object.keys(porMotivo).map(mo => ({ motivo: mo, kg: porMotivo[mo].kg, horas: porMotivo[mo].horas, n: porMotivo[mo].n || 0 })).filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
   const total = porMaq.reduce((a, x) => a + x.kg, 0);
   const horasTot = porMaq.reduce((a, x) => a + x.horas, 0);
   return { total, horasTot, porMaq, porDia, porMot };
@@ -5962,7 +5966,7 @@ function renderPainel() {
         if (kp.porMot && kp.porMot.length) {
           html += card('⏱️ Produção perdida por parada · por motivo',
             'toque num motivo para ver as máquinas · horas × meta kg/h da máquina',
-            barrasHorizontal(kp.porMot.slice(0, 18).map(x => ({ l: x.motivo + ' · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','','${setor || ''}')` })), 'kg'));
+            barrasHorizontal(kp.porMot.slice(0, 18).map(x => ({ l: x.motivo + ' · ' + (x.n || 0) + '× · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','','${setor || ''}')` })), 'kg'));
         }
         const dP = Object.keys(kp.porDia).sort();
         if (dP.length) { const sP = serieProducao(kp.porDia, dP, fmtKg, d => `detPerdaDia('${d}')`);
@@ -6046,7 +6050,7 @@ function renderPainel() {
       if (kpD.porMot && kpD.porMot.length) {
         html += card('⏱️ Perda por parada · por motivo · ' + udTxt,
           'quanto cada motivo custou no dia (horas × meta kg/h)',
-          barrasHorizontal(kpD.porMot.slice(0, 15).map(x => ({ l: x.motivo + ' · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','${ud}','${setor || ''}')` })), 'kg'));
+          barrasHorizontal(kpD.porMot.slice(0, 15).map(x => ({ l: x.motivo + ' · ' + (x.n || 0) + '× · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','${ud}','${setor || ''}')` })), 'kg'));
       }
     } }
   if (ehTermo && (prodUD.length && bobUD.length)) {
@@ -6103,7 +6107,7 @@ function renderPainel() {
       if (kp.porMot && kp.porMot.length) {
         html += card('⏱️ Produção perdida por parada · por motivo',
           'toque num motivo para ver as máquinas · horas × meta kg/h da máquina',
-          barrasHorizontal(kp.porMot.slice(0, 18).map(x => ({ l: x.motivo + ' · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','','${setor || ''}')` })), 'kg'));
+          barrasHorizontal(kp.porMot.slice(0, 18).map(x => ({ l: x.motivo + ' · ' + (x.n || 0) + '× · ' + (x.horas || 0).toLocaleString('pt-BR',{maximumFractionDigits:1}) + 'h', v: Math.round(x.kg), click: `detPerdaMotivo('${encodeURIComponent(x.motivo)}','','${setor || ''}')` })), 'kg'));
       }
       const dP = Object.keys(kp.porDia).sort();
       if (dP.length) { const sP = serieProducao(kp.porDia, dP, fmtKg, d => `detPerdaDia('${d}')`);
