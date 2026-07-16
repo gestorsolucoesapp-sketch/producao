@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.87.0</span>
+        <span class="ver-badge" id="verBadge">v3.88.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.87.0';
+const APP_VER = '3.88.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -4273,6 +4273,27 @@ function detMaquina(cod) {
     ${topMot.length ? '<div style="height:8px"></div>' + tabSimples(['Motivo de parada', 'Horas'], topMot.map(([m, h]) => `<tr><td class="nome">${escapeHtml(m)}</td><td><span class="cel cel-tot">${Math.round(h)}h</span></td></tr>`).join('')) : ''}`);
 }
 // UM motivo de parada: máquinas e horas
+// timeline de setups de UMA máquina num dia: cada troca (saiu→entrou) e as
+// paradas SETUP com início→fim e duração — responde "quanto durou cada setup"
+async function detSetupsMaq(cod, dia, setor) {
+  cod = String(cod);
+  const D = dadosPainel; if (!D) return;
+  let trocas = [];
+  try { const ok = await ensureAnalise();
+    if (ok === true) trocas = calcularTrocas(setor || '').filter(t => String(t.maq) === cod && String(t.dia).slice(0, 10) === dia); } catch (_) {}
+  const pars = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod && /^SETUP$/i.test(p.motivo_desc || '') && (p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null)) === dia);
+  const hhmm = x => { const m = String(x || '').match(/(\d{2}):(\d{2})/); return m ? m[0] : ''; };
+  const eventos = [];
+  trocas.forEach(t => eventos.push({ h: hhmm(t.hora), tipo: 'troca', txt: `🔁 <b>Troca</b> · saiu <span class="cod">${escapeHtml(String(t.deCod || ''))}</span> → entrou <span class="cod">${escapeHtml(String(t.paraCod || ''))}</span><div style="font-size:11px;color:#5C7186">${escapeHtml((t.paraDesc || '').slice(0, 60))}</div>` }));
+  pars.forEach(p => { const hI = hhmm(p.inicio), hF = hhmm(p.fim);
+    eventos.push({ h: hI, tipo: 'parada', txt: `⏸ Parada SETUP · ${hI}${hF ? ' → ' + hF : ''}`, dur: (p.tempo_horas || 0) }); });
+  eventos.sort((a, b) => (a.h || '99:99').localeCompare(b.h || '99:99'));
+  const totH = pars.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
+  abreDet('Setups · ' + cod + ' · ' + fmtDataSem(dia), `
+    <p class="idet-desc">${escapeHtml(nome)} · <b>${trocas.length} troca(s) real(is)</b> · ${pars.length} parada(s) SETUP somando ${totH.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</p>
+    ${tabSimples(['Hora', 'Evento', 'Duração'], eventos.map(e => `<tr><td class="nome" style="white-space:nowrap">${e.h || '—'}</td><td class="nome">${e.txt}</td><td>${e.dur != null ? `<span class=\"cel cel-tot\">${e.dur.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span>` : ''}</td></tr>`).join('') || '<tr><td class="nome" colspan="3">Sem eventos.</td></tr>')}`);
+}
 async function detMotivoParada(setor, motivo, dia) {
   if (!dadosPainel) return; const m = motivo.replace(/&#39;/g, "'"); const D = dadosPainel;
   let par = filtraParadas(D.paradas).filter(p => (p.motivo_desc || '—') === m);
@@ -4294,7 +4315,7 @@ async function detMotivoParada(setor, motivo, dia) {
   // máquinas que TROCARAM mas não apontaram parada de setup → entram com 0h
   if (trocasMaq) Object.keys(trocasMaq).forEach(c => { if (!(c in maq)) { maq[c] = 0; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; top.push([c, 0]); } });
   const linhas = top.map(([c, h]) => {
-    const tr = trocasMaq ? `<td><span class="cel ${(trocasMaq[String(c)] || 0) > 1 ? 'baixo' : 'neutra'}">${trocasMaq[String(c)] || 0}×</span></td>` : '';
+    const tr = trocasMaq ? `<td ${dia ? `onclick=\"detSetupsMaq('${c}','${dia}','${setor || ''}')\" style=\"cursor:pointer\"` : ''}><span class="cel ${(trocasMaq[String(c)] || 0) > 1 ? 'baixo' : 'neutra'}">${trocasMaq[String(c)] || 0}×${dia ? ' ›' : ''}</span></td>` : '';
     return `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td>${tr}<td><span class="cel cel-tot">${Math.round(h)}h</span></td></tr>`;
   }).join('');
   abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)${trocasMaq ? ` · <b>${totTrocas} troca(s) real(is)</b> — em vermelho quem trocou mais de 1×` : ''}</p>
