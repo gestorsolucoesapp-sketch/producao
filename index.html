@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.76.2</span>
+        <span class="ver-badge" id="verBadge">v3.77.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.76.2';
+const APP_VER = '3.77.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -5502,32 +5502,70 @@ const secao = (key, txt) => `<div class="secao-tit pbloco" data-k="s:${key}">${t
 // Descarta apenas INTERROMPIDA (máquina fora de operação); todo o resto conta.
 // Agrega por máquina, por dia e por MOTIVO de parada.
 const PARADA_NAO_PERDE = m => /INTERROMP/i.test(m || '');
-function kgPerdidoParadas(D) {
+const MOTIVO_OCIOSO = 'SEM APONTAMENTO (ociosa)';
+function kgPerdidoParadas(D, codsFiltro, opts) {
   if (!D || !metasData) return null;
+  opts = opts || {};
+  const noFiltro = c => !codsFiltro || codsFiltro.includes(String(c));
   const acc = {}, porDia = {}, porMotivo = {};
-  filtraParadas(D.paradas).forEach(p => {
-    if (PARADA_NAO_PERDE(p.motivo_desc)) return;             // interrompida → fora de operação
-    const c = String(p.recurso_cod);
-    const metas = metasData[c]; if (!metas) return;         // sem meta cadastrada → não estima
-    const b = blocoParada(p); if (!b) return;
-    const kgHora = (metas[b] || 0) / H_TURNO;               // meta do turno ÷ 7,5
-    if (!(kgHora > 0)) return;
-    const horas = p.tempo_horas || 0; const kg = horas * kgHora;
-    if (kg <= 0) return;
+  const addKg = (c, d, mo, kg, horas) => {
     if (!acc[c]) acc[c] = { kg: 0, horas: 0 };
     acc[c].kg += kg; acc[c].horas += horas;
-    const d = p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
     if (d) porDia[d] = (porDia[d] || 0) + kg;
-    const mo = p.motivo_desc || '—';
     if (!porMotivo[mo]) porMotivo[mo] = { kg: 0, horas: 0 };
     porMotivo[mo].kg += kg; porMotivo[mo].horas += horas;
+  };
+  // 1) PARADAS APONTADAS
+  filtraParadas(D.paradas).forEach(p => {
+    if (PARADA_NAO_PERDE(p.motivo_desc)) return;
+    if (opts.dia && _diaDeParada(p) !== opts.dia) return;
+    const c = String(p.recurso_cod); if (!noFiltro(c)) return;
+    const metas = metasData[c]; if (!metas) return;
+    const b = blocoParada(p); if (!b) return;
+    const kgHora = (metas[b] || 0) / H_TURNO; if (!(kgHora > 0)) return;
+    const horas = p.tempo_horas || 0; const kg = horas * kgHora;
+    if (kg <= 0) return;
+    addKg(c, _diaDeParada(p), p.motivo_desc || '—', kg, horas);
   });
-  const porMaq = Object.keys(acc)
-    .map(c => ({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, kg: acc[c].kg, horas: acc[c].horas }))
-    .filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
-  const porMot = Object.keys(porMotivo)
-    .map(m => ({ motivo: m, kg: porMotivo[m].kg, horas: porMotivo[m].horas }))
-    .filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
+  // 2) OCIOSIDADE SEM APONTAMENTO: máquina ativa (produziu no período) com meta, em
+  //    dia operacional do seu setor, que não produziu e não teve parada apontada.
+  if (!opts.soParadas) {
+    const H_DIA = 22.5;
+    const diasSetor = {}, prodMaqDia = {}, ativas = new Set();
+    (D.producao || []).forEach(r => {
+      if ((r.peso || 0) <= 0) return;
+      const c = String(r.recurso_cod), s = setorDe(c), d = r.dia;
+      ativas.add(c);
+      (prodMaqDia[c] = prodMaqDia[c] || new Set()).add(d);
+      (diasSetor[s] = diasSetor[s] || new Set()).add(d);
+    });
+    const parMaqDia = {};
+    filtraParadas(D.paradas).forEach(p => {
+      if (PARADA_NAO_PERDE(p.motivo_desc)) return;
+      const c = String(p.recurso_cod), d = _diaDeParada(p); if (!d) return;
+      const o = (parMaqDia[c] = parMaqDia[c] || {}); o[d] = (o[d] || 0) + (p.tempo_horas || 0);
+    });
+    Object.keys(metasData).forEach(c => {
+      if (!noFiltro(c) || !ativas.has(c)) return;
+      const m = metasData[c], metaDia = (m['Manhã'] || 0) + (m['Tarde'] || 0) + (m['Noite'] || 0);
+      if (metaDia <= 0) return;
+      const kgHoraDia = metaDia / H_DIA, s = setorDe(c);
+      const dias = (diasSetor[s] ? [...diasSetor[s]] : []).filter(d => !opts.dia || d === opts.dia);
+      const prod = prodMaqDia[c] || new Set();
+      dias.forEach(d => {
+        if (prod.has(d)) return;                        // produziu nesse dia → ok
+        if (typeof _diaReduzido === 'function' && _diaReduzido(d)) return;  // sábado/folga
+        const hPar = (parMaqDia[c] && parMaqDia[c][d]) || 0;
+        const hOcio = Math.max(0, H_DIA - hPar);
+        if (hOcio <= 0.05) return;
+        const kg = hOcio * kgHoraDia; if (kg <= 0) return;
+        addKg(c, d, MOTIVO_OCIOSO, kg, hOcio);
+      });
+    });
+  }
+  const nomeDe = c => (D.nomeMaq && D.nomeMaq[c]) || c;
+  const porMaq = Object.keys(acc).map(c => ({ cod: c, nome: nomeDe(c), kg: acc[c].kg, horas: acc[c].horas })).filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
+  const porMot = Object.keys(porMotivo).map(mo => ({ motivo: mo, kg: porMotivo[mo].kg, horas: porMotivo[mo].horas })).filter(x => x.kg > 0).sort((a, b) => b.kg - a.kg);
   const total = porMaq.reduce((a, x) => a + x.kg, 0);
   const horasTot = porMaq.reduce((a, x) => a + x.horas, 0);
   return { total, horasTot, porMaq, porDia, porMot };
@@ -5753,7 +5791,7 @@ function renderPainel() {
       html += card('Paradas do dia · ' + udTxt, 'horas · toque numa barra para ver o resumo', paretoSVG(dd, v => fmtNum(v) + 'h') + paretoHorizontal(dd, v => fmtNum(v) + 'h')); }
   }
   // ⏱️ produção perdida por parada NO ÚLTIMO DIA
-  { const kpD = kgPerdidoParadas({ producao: prodUD, paradas: parUD, nomeMaq: D.nomeMaq });
+  { const kpD = kgPerdidoParadas({ producao: D.producao, paradas: D.paradas, nomeMaq: D.nomeMaq }, (SETOR_MAQ[setor] || []).map(String), { dia: ud });
     if (kpD && kpD.porMaq.length) {
       html += card('⏱️ Produção perdida por parada · ' + udTxt,
         'kg = horas paradas × meta kg/h · descarta só INTERROMPIDA · total ' + fmtKg(kpD.total) + ' em ' + fmtNum(kpD.horasTot) + ' h',
@@ -5810,8 +5848,7 @@ function renderPainel() {
     html += card('Paradas por máquina', 'horas · toque numa barra para ver o resumo', paretoSVG(arr, v => fmtNum(v) + 'h') + paretoHorizontal(arr, v => fmtNum(v) + 'h'));
   }
   // ⏱️ produção perdida por parada — do setor (kg = horas × meta kg/h)
-  { const Dset = { producao: D.producao, paradas: D.paradas.filter(p => setorDe(p.recurso_cod) === setor), nomeMaq: D.nomeMaq };
-    const kp = kgPerdidoParadas(Dset);
+  { const kp = kgPerdidoParadas(D, (SETOR_MAQ[setor] || []).map(String));
     if (kp && kp.porMaq.length) {
       html += card('⏱️ Produção perdida por parada · por máquina',
         'toque numa máquina para ver os motivos · descarta só INTERROMPIDA · total ' + fmtKg(kp.total) + ' em ' + fmtNum(kp.horasTot) + ' h',
