@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.92.5</span>
+        <span class="ver-badge" id="verBadge">v3.92.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.92.5';
+const APP_VER = '3.92.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2548,6 +2548,13 @@ function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
   const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
   return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
 }
+// horas "de taxa" por bloco: era-aware (3 vs 5 turnos), SEM reduzir sábado.
+// a taxa kg/h da máquina é a mesma; sábado só tem menos horas disponíveis, não muda a taxa.
+function horasBlocoRate(dia) {
+  const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
+  return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
+}
+const horasDiaRate = dia => { const h = horasBlocoRate(dia); return h['Manhã'] + h['Tarde'] + h['Noite']; };
 // ===== OEE: regra própria de paradas =====
 // por padrão o OEE ignora as paradas "INTERROMPIDO" (não são perda de disponibilidade da máquina)
 const EH_INTERROMPIDO = m => /INTERROMP/i.test(m || '');
@@ -5866,7 +5873,7 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
     const c = String(p.recurso_cod); if (!noFiltro(c)) return;
     const metas = metasData[c]; if (!metas) return;
     const b = blocoParada(p); if (!b) return;
-    const kgHora = (metas[b] || 0) / H_TURNO; if (!(kgHora > 0)) return;
+    const hb = horasBlocoRate(_diaDeParada(p))[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return;
     const horas = p.tempo_horas || 0; const kg = horas * kgHora;
     if (kg <= 0) return;
     addKg(c, _diaDeParada(p), p.motivo_desc || '—', kg, horas);
@@ -5874,7 +5881,6 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
   // 2) OCIOSIDADE SEM APONTAMENTO: máquina ativa (produziu no período) com meta, em
   //    dia operacional do seu setor, que não produziu e não teve parada apontada.
   if (!opts.soParadas) {
-    const H_DIA = 22.5;
     const diasSetor = {}, prodMaqDia = {};
     (D.producao || []).forEach(r => {
       if ((r.peso || 0) <= 0) return;
@@ -5896,14 +5902,15 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
       if (!noFiltro(c) || !ativas.has(c)) return;
       const m = metasData[c], metaDia = (m['Manhã'] || 0) + (m['Tarde'] || 0) + (m['Noite'] || 0);
       if (metaDia <= 0) return;
-      const kgHoraDia = metaDia / H_DIA, s = setorDe(c);
+      const s = setorDe(c);
       const dias = (diasSetor[s] ? [...diasSetor[s]] : []).filter(d => !opts.dia || d === opts.dia);
       const prod = prodMaqDia[c] || new Set();
       dias.forEach(d => {
         if (prod.has(d)) return;                        // produziu nesse dia → ok
         if (typeof _diaReduzido === 'function' && _diaReduzido(d)) return;  // sábado/folga
+        const hDiaD = horasDiaRate(d); const kgHoraDia = metaDia / hDiaD;
         const hPar = (parMaqDia[c] && parMaqDia[c][d]) || 0;
-        const hOcio = Math.max(0, H_DIA - hPar);
+        const hOcio = Math.max(0, hDiaD - hPar);
         if (hOcio <= 0.05) return;
         const kg = hOcio * kgHoraDia; if (kg <= 0) return;
         addKg(c, d, MOTIVO_OCIOSO, kg, hOcio);
@@ -5922,7 +5929,7 @@ function kgParada(p) {
   if (PARADA_NAO_PERDE(p.motivo_desc)) return 0;
   const c = String(p.recurso_cod); const metas = metasData && metasData[c]; if (!metas) return 0;
   const b = blocoParada(p); if (!b) return 0;
-  const kgHora = (metas[b] || 0) / H_TURNO; if (!(kgHora > 0)) return 0;
+  const hb = horasBlocoRate(_diaDeParada(p))[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return 0;
   return (p.tempo_horas || 0) * kgHora;
 }
 const _diaDeParada = p => p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
