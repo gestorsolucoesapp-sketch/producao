@@ -243,6 +243,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 .rf-fab{position:fixed;left:16px;bottom:calc(env(safe-area-inset-bottom) + 18px);z-index:200;width:52px;height:52px;border-radius:50%;background:#fff;color:var(--navy);font-size:22px;padding:0;box-shadow:0 8px 24px rgba(11,42,74,.28);border:2px solid var(--borda);display:flex;align-items:center;justify-content:center;transition:transform .5s}
 .rf-fab.girando{transform:rotate(360deg)}
 .mnt-fab{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom) + 88px);z-index:200;width:54px;height:54px;border-radius:50%;background:var(--navy);color:#fff;font-size:24px;padding:0;box-shadow:0 8px 24px rgba(11,42,74,.4);border:2px solid #fff;display:flex;align-items:center;justify-content:center}
+#mntBtn{display:none!important}
 .ia-fab img{width:100%;height:100%;object-fit:cover;display:block}
 .ia-fab:active{transform:scale(.94)}
 #iaOverlay{position:fixed;inset:0;z-index:300;background:rgba(11,42,74,.45);display:flex;align-items:flex-end;justify-content:center}
@@ -399,7 +400,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.93.7</span>
+        <span class="ver-badge" id="verBadge">v3.93.8</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1170,7 +1171,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.7';
+const APP_VER = '3.93.8';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1747,6 +1748,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); } catch (_) {} }, 120);
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
   if (souAdmin) { abasPermitidas = ['painel', 'analise', 'analisemais', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
   else {
@@ -1783,6 +1785,28 @@ async function mostrarApp() {
 window.addEventListener('pagehide', () => { navigator.sendBeacon && acessoId && fecharAcesso(); });
 
 // mostra login (ou app) só depois da vinheta terminar de entrar
+// ===== FABs móveis (refresh + IA) — posição salva pra todos (app_config) =====
+let _posFabs = null, _fabsProntos = false;
+function tornarArrastavel(el, id) {
+  if (!el || el._arrst) return; el._arrst = true; el.style.touchAction = 'none';
+  let sx, sy, ox, oy, moveu, ativo = false;
+  el.addEventListener('pointerdown', e => { ativo = true; moveu = false; const r = el.getBoundingClientRect(); ox = r.left; oy = r.top; sx = e.clientX; sy = e.clientY; try { el.setPointerCapture(e.pointerId); } catch (_) {} });
+  el.addEventListener('pointermove', e => {
+    if (!ativo) return; const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moveu = true;
+    if (moveu) {
+      const nx = Math.max(4, Math.min(window.innerWidth - el.offsetWidth - 4, ox + dx));
+      const ny = Math.max(64, Math.min(window.innerHeight - el.offsetHeight - 6, oy + dy));
+      el.style.left = nx + 'px'; el.style.top = ny + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto';
+    }
+  });
+  el.addEventListener('pointerup', e => { if (!ativo) return; ativo = false; try { el.releasePointerCapture(e.pointerId); } catch (_) {} if (moveu) { el._arrastou = true; salvarPosFab(id, el.style.left, el.style.top); } });
+  el.addEventListener('click', e => { if (el._arrastou) { e.preventDefault(); e.stopImmediatePropagation(); el._arrastou = false; } }, true);
+}
+function setupFabsMoviveis() { if (_fabsProntos) return; _fabsProntos = true; tornarArrastavel($('refreshFab'), 'refreshFab'); tornarArrastavel($('iaBtn'), 'iaBtn'); }
+function aplicarPosFabs() { if (!_posFabs) return; ['refreshFab', 'iaBtn'].forEach(id => { const p = _posFabs[id], el = $(id); if (el && p && p.left && p.top) { el.style.left = p.left; el.style.top = p.top; el.style.right = 'auto'; el.style.bottom = 'auto'; } }); }
+async function carregarPosFabs() { try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'fab_pos').maybeSingle(); _posFabs = data && data.valor ? JSON.parse(data.valor) : {}; } catch (_) { _posFabs = {}; } aplicarPosFabs(); }
+async function salvarPosFab(id, left, top) { if (!_posFabs) _posFabs = {}; _posFabs[id] = { left, top }; try { await sb.from('app_config').upsert({ chave: 'fab_pos', valor: JSON.stringify(_posFabs) }, { onConflict: 'chave' }); } catch (_) {} }
 function revelarPosSplash() {
   const sp = $('splash');
   const fim = () => { if (sp) sp.remove(); };
