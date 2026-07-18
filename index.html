@@ -399,7 +399,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.93.2</span>
+        <span class="ver-badge" id="verBadge">v3.93.3</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -506,6 +506,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button id="amTg_mensal" class="am-tg on" onclick="mudarEscopoAM('mensal')">Mensal</button>
           <button id="amTg_anual" class="am-tg" onclick="mudarEscopoAM('anual')">Anual</button>
         </div>
+        <select id="amSetorSel" onchange="mudarSetorAM(this.value)" style="width:100%;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-weight:600;margin-bottom:6px">
+          <option value="transf" selected>Transformação (sem Extrusão)</option>
+          <option value="extrusao">Extrusão (matéria-prima)</option>
+          <option value="todos">Todos os setores</option>
+        </select>
         <div id="anmConteudo"></div>
       </div>
     </section>
@@ -1165,7 +1170,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.2';
+const APP_VER = '3.93.3';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2478,7 +2483,7 @@ async function salvarTarefa() {
 
 /* ================= CENTRAL DE TAREFAS FIM ================= */
 // ================= ANÁLISE+ (TPM / MTBF / Custo não-qualidade / ABC / Scorecard / Matriz) =================
-let _amCache = null, _amScope = 'mensal', _amCustoKg = null;
+let _amCache = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf';
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
 const _amEhFalha = m => /INTERROMP|QUEBRA|CORRETIV|MANUTEN|FALHA|MEC[ÂA]NIC|EL[ÉE]TRIC|ROLAMENTO|MOTOR|DEFEITO/i.test(m || '');
@@ -2540,12 +2545,22 @@ function _amSetToggle() {
   ['diaria', 'mensal', 'anual'].forEach(s => { const b = $('amTg_' + s); if (b) b.className = 'am-tg' + (s === _amScope ? ' on' : ''); });
 }
 function mudarEscopoAM(s) { _amScope = s; _amSetToggle(); renderAnaliseMais(); }
+function mudarSetorAM(s) { _amSetor = s; renderAnaliseMais(); }
+function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return s !== 'Extrusão'; return true; }
 function renderAnaliseMais() {
   const box = $('anmConteudo'); if (!box || !_amCache) return;
   _amSetToggle();
   const E = _amEscopo(_amCache);
+  // separa Extrusão (matéria-prima) da Transformação — evita contar o material 2×
+  E.prod = E.prod.filter(r => _amKeepSetor(r.recurso_cod));
+  E.perd = E.perd.filter(r => _amKeepSetor(r.recurso_cod));
+  E.par = E.par.filter(r => _amKeepSetor(r.recurso_cod));
+  E.os = E.os.filter(r => _amKeepSetor(r.recurso_cod));
+  const osBack = (_amCache.os || []).filter(o => !o.data_reinicio && _amKeepSetor(o.recurso_cod)).length;
+  const osTot = (_amCache.os || []).filter(o => _amKeepSetor(o.recurso_cod)).length;
+  const setorLbl = _amSetor === 'extrusao' ? 'Extrusão (matéria-prima)' : _amSetor === 'transf' ? 'Transformação (sem Extrusão)' : 'Todos os setores';
   const custoKg = _amCustoKg || 8;
-  let html = `<div style="text-align:center;color:#5C7186;font-size:12px;margin:2px 0 8px">${E.rotulo} · até ${fmtData(E.ate)}</div>` +
+  let html = `<div style="text-align:center;color:#5C7186;font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
     `<div style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;background:#EEF3F8;border-radius:10px;padding:9px;margin-bottom:12px"><span style="font-size:12.5px;color:#41505E;font-weight:600">💲 Preço médio do PP:</span><span style="font-weight:700">R$</span><input id="amCustoKg" value="${custoKg.toLocaleString('pt-BR')}" inputmode="decimal" onchange="salvarCustoKg(this.value)" style="width:82px;padding:6px 8px;border:1px solid var(--borda);border-radius:8px;text-align:center">/kg</div>`;
 
   // agregados base
@@ -2567,7 +2582,7 @@ function renderAnaliseMais() {
       <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Paradas</div><div style="font-size:19px;font-weight:800;color:var(--navy)">${_amH(paradasH)}</div></div>
       <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Custo da não-qualidade</div><div style="font-size:19px;font-weight:800;color:#D64545">${_amRS(custoRefugo)}</div></div>
       <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Falhas (quebras)</div><div style="font-size:19px;font-weight:800;color:${sem(nFalhas, 3, 10)}">${nFalhas}</div></div>
-      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">OS em aberto</div><div style="font-size:19px;font-weight:800;color:${sem((_amCache.os||[]).filter(o=>!o.data_reinicio).length,5,15)}">${(_amCache.os||[]).filter(o=>!o.data_reinicio).length}</div><div style="font-size:10px;color:#8395A6">${(_amCache.os||[]).length} no total</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">OS em aberto</div><div style="font-size:19px;font-weight:800;color:${sem(osBack,5,15)}">${osBack}</div><div style="font-size:10px;color:#8395A6">${osTot} no total</div></div>
     </div>`);
 
   // ===== 2) 6 GRANDES PERDAS (TPM) =====
