@@ -65,6 +65,8 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 .campo input:focus{outline:none;border-color:var(--verde)}
 /* iOS Safari dá zoom ao focar campo com fonte < 16px — força 16px em todos os campos de texto */
 input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{font-size:16px!important}
+.am-tg{border:1px solid var(--borda);background:#fff;color:#5C7186;border-radius:9px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer}
+.am-tg.on{background:var(--navy);color:#fff;border-color:var(--navy)}
 .btn{display:block;width:100%;padding:14px;border-radius:11px;font-weight:700;font-size:15.5px;text-align:center;transition:opacity .15s}
 .btn:active{opacity:.75}
 .btn-verde{background:var(--verde);color:#fff}
@@ -397,7 +399,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.92.14</span>
+        <span class="ver-badge" id="verBadge">v3.93.0</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -409,6 +411,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   <nav><div class="abas">
     <button class="aba ativa" data-aba="painel" onclick="trocarAba('painel')">Painel</button>
     <button class="aba" data-aba="analise" onclick="trocarAba('analise')">Itens</button>
+    <button class="aba" data-aba="analisemais" onclick="trocarAba('analisemais')">Análise+</button>
     <button class="aba" data-aba="tarefas" onclick="trocarAba('tarefas')">Tarefas</button>
     <button class="aba oculto" id="abaBtnManut" data-aba="manut" onclick="trocarAba('manut')">Manutenção</button>
     <button class="aba oculto" id="abaBtnOEE" data-aba="oee" onclick="trocarAba('oee')">OEE</button>
@@ -496,6 +499,16 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     </div>
 
     <!-- IMPORTAR -->
+    <section id="abaAnaliseMais" class="oculto">
+      <div class="card">
+        <div style="display:flex;gap:6px;justify-content:center;margin-bottom:6px">
+          <button id="amTg_diaria" class="am-tg" onclick="mudarEscopoAM('diaria')">Diária</button>
+          <button id="amTg_mensal" class="am-tg on" onclick="mudarEscopoAM('mensal')">Mensal</button>
+          <button id="amTg_anual" class="am-tg" onclick="mudarEscopoAM('anual')">Anual</button>
+        </div>
+        <div id="anmConteudo"></div>
+      </div>
+    </section>
     <section id="abaImportar" class="oculto">
       <div class="card">
         <div class="titulo-sec">Importar relatórios do ERP</div>
@@ -1152,7 +1165,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.92.14';
+const APP_VER = '3.93.0';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1730,13 +1743,14 @@ async function mostrarApp() {
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
-  if (souAdmin) { abasPermitidas = ['painel', 'analise', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
+  if (souAdmin) { abasPermitidas = ['painel', 'analise', 'analisemais', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
   else {
     await getTelasSetor(); await getSetorRestrito();
     if (perfil && perfil.abas_excecao && Array.isArray(perfil.abas)) abasPermitidas = perfil.abas.slice();          // exceção individual
     else abasPermitidas = (perfil && perfil.setor && Array.isArray(telasSetor[perfil.setor])) ? telasSetor[perfil.setor].slice() : ['painel']; // padrão do setor
     if (!abasPermitidas.includes('painel')) abasPermitidas.push('painel');
     if (!abasPermitidas.includes('tarefas')) abasPermitidas.push('tarefas'); // tarefas para todos
+    if (!abasPermitidas.includes('analisemais')) abasPermitidas.push('analisemais'); // Análise+ para todos
   }
   // mostra/oculta os botões de aba conforme permissão
   document.querySelectorAll('.aba').forEach(a => {
@@ -2463,6 +2477,161 @@ async function salvarTarefa() {
 }
 
 /* ================= CENTRAL DE TAREFAS FIM ================= */
+// ================= ANÁLISE+ (TPM / MTBF / Custo não-qualidade / ABC / Scorecard / Matriz) =================
+let _amCache = null, _amScope = 'mensal', _amCustoKg = null;
+const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
+const _amEhFalha = m => /INTERROMP|QUEBRA|CORRETIV|MANUTEN|FALHA|MEC[ÂA]NIC|EL[ÉE]TRIC|ROLAMENTO|MOTOR|DEFEITO/i.test(m || '');
+function _amCatTPM(m) {
+  m = (m || '').toUpperCase();
+  if (_amEhFalha(m)) return 'Quebra / Manutenção';
+  if (/SETUP|AJUSTE|REGULAG|TROCA DE|ACERTO|SET UP/.test(m)) return 'Setup / Ajuste';
+  if (/MICRO|PEQUENA|LIMPEZA|ABASTEC|TROCA DE BOBINA|EMENDA/.test(m)) return 'Pequenas paradas';
+  if (/FALTA|AGUARD|SEM MAT|SEM MP|SEM PROGRAM|OCIOS|PROGRAMAD|REFEI[ÇC]|ALMO[ÇC]|REUNI/.test(m)) return 'Espera / Ociosidade';
+  return 'Outros';
+}
+async function getCustoKg() {
+  if (_amCustoKg != null) return _amCustoKg;
+  try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'custo_kg_refugo').maybeSingle();
+    _amCustoKg = data && data.valor ? parseFloat(data.valor) : 8; } catch (_) { _amCustoKg = 8; }
+  if (!(_amCustoKg > 0)) _amCustoKg = 8;
+  return _amCustoKg;
+}
+async function salvarCustoKg(v) {
+  v = parseFloat(String(v).replace(',', '.')) || 0; if (v <= 0) return;
+  _amCustoKg = v;
+  try { await sb.from('app_config').upsert({ chave: 'custo_kg_refugo', valor: String(v) }, { onConflict: 'chave' }); } catch (_) {}
+  renderAnaliseMais();
+}
+async function carregarDadosAM() {
+  const ano = new Date().getFullYear(), de = ano + '-01-01';
+  const [prod, perd, par] = await Promise.all([
+    fetchTudo('producao_resumo', 'dia,recurso_cod,recurso_nome,peso,quantidade,unidade', de),
+    fetchTudo('perdas', 'dia,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de),
+    fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio', de)
+  ]);
+  let os = [];
+  try { const r = await sb.from('manutencao_os').select('recurso_cod,status,data_abertura,atividade').gte('data_abertura', de); os = r.data || []; } catch (_) {}
+  return { prod, perd, par, os, ano };
+}
+function _amEscopo(cache) {
+  // devolve {de,ate,rotulo} + os arrays já filtrados por escopo
+  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const dias = cache.prod.map(r => String(r.dia).slice(0, 10)).filter(Boolean).sort();
+  const ultimo = dias.length ? dias[dias.length - 1] : hoje;
+  let de, ate, rotulo;
+  if (_amScope === 'diaria') { de = ate = ultimo; rotulo = 'Dia ' + fmtData(ultimo); }
+  else if (_amScope === 'anual') { de = cache.ano + '-01-01'; ate = ultimo; rotulo = 'Ano ' + cache.ano; }
+  else { de = ultimo.slice(0, 7) + '-01'; ate = ultimo; rotulo = 'Mês ' + ultimo.slice(0, 7); }
+  const fdia = r => { const d = String(r.dia || '').slice(0, 10); return d >= de && d <= ate; };
+  const fos = r => { const d = String(r.data_abertura || '').slice(0, 10); return d >= de && d <= ate; };
+  return { de, ate, rotulo, prod: cache.prod.filter(fdia), perd: cache.perd.filter(fdia), par: cache.par.filter(fdia), os: cache.os.filter(fos) };
+}
+async function carregarAnaliseMais() {
+  const box = $('anmConteudo'); if (!box) return;
+  box.innerHTML = '<p class="vazio-painel"><span class="spin"></span> Carregando análise…</p>';
+  try {
+    if (!_amCache) _amCache = await carregarDadosAM();
+    await getCustoKg();
+    renderAnaliseMais();
+  } catch (e) { box.innerHTML = '<p class="vazio-painel">Não consegui carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
+}
+function _amSetToggle() {
+  ['diaria', 'mensal', 'anual'].forEach(s => { const b = $('amTg_' + s); if (b) b.className = 'am-tg' + (s === _amScope ? ' on' : ''); });
+}
+function mudarEscopoAM(s) { _amScope = s; _amSetToggle(); renderAnaliseMais(); }
+function renderAnaliseMais() {
+  const box = $('anmConteudo'); if (!box || !_amCache) return;
+  _amSetToggle();
+  const E = _amEscopo(_amCache);
+  const custoKg = _amCustoKg || 8;
+  let html = `<div style="text-align:center;color:#5C7186;font-size:12px;margin:2px 0 10px">${E.rotulo} · até ${fmtData(E.ate)}</div>`;
+
+  // agregados base
+  const prodKg = E.prod.reduce((a, r) => a + (+r.peso || 0), 0);
+  const refugoKg = E.perd.reduce((a, r) => a + (+r.peso || 0), 0);
+  const refugoPct = (prodKg + refugoKg) > 0 ? refugoKg / (prodKg + refugoKg) * 100 : 0;
+  const paradasH = E.par.reduce((a, r) => a + (+r.tempo_horas || 0), 0);
+  const falhas = E.par.filter(r => _amEhFalha(r.motivo_desc));
+  const nFalhas = falhas.length;
+  const custoRefugo = refugoKg * custoKg;
+
+  // ===== 1) SCORECARD =====
+  const sem = (v, g, y) => v <= g ? '#1F9D55' : v <= y ? '#E0A82D' : '#D64545';
+  const corRef = sem(refugoPct, 3, 5);
+  html += card('📋 Scorecard · ' + E.rotulo, 'visão executiva do período',
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Produção</div><div style="font-size:19px;font-weight:800;color:var(--navy)">${fmtKg(prodKg)}</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Refugo</div><div style="font-size:19px;font-weight:800;color:${corRef}">${refugoPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</div><div style="font-size:10px;color:#8395A6">${fmtKg(refugoKg)}</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Paradas</div><div style="font-size:19px;font-weight:800;color:var(--navy)">${_amH(paradasH)}</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Custo da não-qualidade</div><div style="font-size:19px;font-weight:800;color:#D64545">${_amRS(custoRefugo)}</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">Falhas (quebras)</div><div style="font-size:19px;font-weight:800;color:${sem(nFalhas, 3, 10)}">${nFalhas}</div></div>
+      <div style="background:#F7FAFC;border-radius:10px;padding:10px"><div style="font-size:11px;color:#5C7186">OS de manutenção</div><div style="font-size:19px;font-weight:800;color:var(--navy)">${E.os.length}</div></div>
+    </div>`);
+
+  // ===== 2) 6 GRANDES PERDAS (TPM) =====
+  const catH = {};
+  E.par.forEach(r => { const c = _amCatTPM(r.motivo_desc); catH[c] = (catH[c] || 0) + (+r.tempo_horas || 0); });
+  const catArr = Object.entries(catH).sort((a, b) => b[1] - a[1]);
+  const ddTPM = catArr.map(([c, h]) => ({ l: c, v: Math.round(h * 10) / 10 }));
+  html += card('🏭 Grandes Perdas (TPM)', 'horas de parada agrupadas nas perdas do TPM · refugo à parte', paretoHorizontal(ddTPM, v => _amH(v)) +
+    `<div style="margin-top:8px;background:#FBECEC;border-radius:8px;padding:8px;font-size:12px;color:#8A3A3A">🔴 Perda por <b>defeito/refugo</b>: ${fmtKg(refugoKg)} (${_amRS(custoRefugo)})</div>`);
+
+  // ===== 3) MTBF + CRITICIDADE DE MÁQUINAS =====
+  const maqAgg = {};
+  const nomeDe = {};
+  E.prod.forEach(r => { const c = String(r.recurso_cod); (maqAgg[c] = maqAgg[c] || { prodKg: 0, falhas: 0, hFalha: 0, dias: new Set() }); maqAgg[c].prodKg += (+r.peso || 0); if (r.dia) maqAgg[c].dias.add(String(r.dia).slice(0, 10)); if (r.recurso_nome) nomeDe[c] = r.recurso_nome; });
+  E.par.forEach(r => { const c = String(r.recurso_cod); (maqAgg[c] = maqAgg[c] || { prodKg: 0, falhas: 0, hFalha: 0, dias: new Set() }); if (_amEhFalha(r.motivo_desc)) { maqAgg[c].falhas++; maqAgg[c].hFalha += (+r.tempo_horas || 0); } if (r.recurso_nome && !nomeDe[c]) nomeDe[c] = r.recurso_nome; });
+  const critArr = Object.entries(maqAgg).map(([c, m]) => {
+    const hDisp = [...m.dias].reduce((a, d) => a + (typeof horasDiaRate === 'function' ? horasDiaRate(d) : 22.5), 0);
+    const mtbf = m.falhas > 0 ? Math.max(0, (hDisp - m.hFalha)) / m.falhas : null;
+    const mttr = m.falhas > 0 ? m.hFalha / m.falhas : null;
+    const crit = m.hFalha * (m.falhas || 0) * (1 + m.prodKg / 10000); // impacto: parada × falhas × porte
+    return { cod: c, nome: nomeDe[c] || c, setor: setorDe(c), falhas: m.falhas, hFalha: m.hFalha, mtbf, mttr, crit, prodKg: m.prodKg };
+  }).filter(x => x.falhas > 0).sort((a, b) => b.crit - a.crit).slice(0, 15);
+  const cabMTBF = ['Máquina', 'Falhas', 'MTBF', 'MTTR'];
+  const linMTBF = critArr.map(x => `<tr><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 16))}</td><td><span class="cel ${x.falhas > 3 ? 'baixo' : 'neutra'}">${x.falhas}×</span></td><td><span class="cel neutra">${x.mtbf != null ? _amH(x.mtbf) : '—'}</span></td><td><span class="cel ${x.mttr > 2 ? 'baixo' : 'cel-tot'}">${x.mttr != null ? _amH(x.mttr) : '—'}</span></td></tr>`).join('');
+  html += card('🔧 MTBF & Criticidade de máquinas', 'ranqueado por criticidade (parada × falhas × porte) · foco da preventiva',
+    critArr.length ? tabSimples(cabMTBF, linMTBF) : '<p class="desc">Sem falhas registradas no período. 👍</p>');
+
+  // ===== 4) CUSTO DA NÃO-QUALIDADE (R$) =====
+  const cPorSetor = {}, cPorTipo = {};
+  E.perd.forEach(r => { const s = setorDe(r.recurso_cod); cPorSetor[s] = (cPorSetor[s] || 0) + (+r.peso || 0); const t = r.tipo_perda_desc || '—'; cPorTipo[t] = (cPorTipo[t] || 0) + (+r.peso || 0); });
+  const ddCustoSetor = Object.entries(cPorSetor).sort((a, b) => b[1] - a[1]).map(([s, kg]) => ({ l: s, v: Math.round(kg * custoKg) }));
+  html += card('💰 Custo da não-qualidade', `refugo × custo/kg · total <b>${_amRS(custoRefugo)}</b> no período`,
+    `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><span style="font-size:12px;color:#5C7186">Custo por kg de refugo:</span><span style="font-weight:700">R$</span><input id="amCustoKg" value="${custoKg.toLocaleString('pt-BR')}" inputmode="decimal" onchange="salvarCustoKg(this.value)" style="width:80px;padding:6px 8px;border:1px solid var(--borda);border-radius:8px">/kg</div>` +
+    barrasHorizontal(ddCustoSetor.map(x => ({ l: x.l, v: x.v })), 'R$'));
+
+  // ===== 5) CURVA ABC DE ITENS (por refugo) =====
+  const itemKg = {};
+  E.perd.forEach(r => { const k = (r.item_desc || r.item_cod || '—'); itemKg[k] = (itemKg[k] || 0) + (+r.peso || 0); });
+  const itArr = Object.entries(itemKg).sort((a, b) => b[1] - a[1]);
+  const totIt = itArr.reduce((a, x) => a + x[1], 0) || 1;
+  let acc = 0;
+  const abc = itArr.map(([nome, kg]) => { acc += kg; const pct = acc / totIt * 100; const cls = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C'; return { nome, kg, cls }; });
+  const corABC = { A: '#D64545', B: '#E0A82D', C: '#3CA96E' };
+  const nA = abc.filter(x => x.cls === 'A').length;
+  const linABC = abc.slice(0, 15).map(x => `<tr><td class="nome">${escapeHtml(String(x.nome).slice(0, 26))}</td><td><span class="cel" style="background:${corABC[x.cls]};color:#fff">${x.cls}</span></td><td><span class="cel cel-tot">${fmtKg(x.kg)}</span></td></tr>`).join('');
+  html += card('🔠 Curva ABC de itens (refugo)', `${nA} itens classe A concentram ~80% do refugo · foco aqui`,
+    itArr.length ? tabSimples(['Item', 'Classe', 'Refugo'], linABC) : '<p class="desc">Sem refugo por item no período.</p>');
+
+  // ===== 6) MATRIZ IMPACTO × ESFORÇO (onde atacar primeiro) =====
+  const ofensores = [];
+  catArr.slice(0, 4).forEach(([c, h]) => ofensores.push({ nome: c, impacto: Math.round(h * custoKg * 0), tipo: 'parada', txt: _amH(h), h }));
+  // impacto em R$: refugo por tipo (top) + custo estimado das paradas (h × meta perdida não trivial → usa só refugo em R$)
+  const topTipos = Object.entries(cPorTipo).sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([t, kg]) => ({ nome: t, rs: Math.round(kg * custoKg), kg }));
+  const linMat = topTipos.map((x, i) => {
+    const prio = i < 2 ? '🔴 Atacar já' : i < 4 ? '🟡 Planejar' : '🟢 Monitorar';
+    return `<tr><td class="nome">${escapeHtml(String(x.nome).slice(0, 24))}</td><td><span class="cel cel-tot">${_amRS(x.rs)}</span></td><td style="font-size:11px">${prio}</td><td><a onclick="abrirNovaTarefa && abrirNovaTarefa()" style="color:#28348E;cursor:pointer;font-size:11px">+ tarefa</a></td></tr>`;
+  }).join('');
+  html += card('🎯 Onde atacar primeiro', 'maiores ofensores de refugo por impacto (R$) · vira plano de ação',
+    topTipos.length ? tabSimples(['Ofensor', 'Impacto', 'Prioridade', ''], linMat) : '<p class="desc">Sem dados suficientes.</p>');
+
+  box.innerHTML = html;
+  const ck = $('amCustoKg'); // mantém foco não é necessário
+}
+
 function trocarAba(qual) {
   if (qual === 'usuarios' && !souAdmin) return;
   if (qual !== 'usuarios' && !abasPermitidas.includes(qual)) return;
@@ -2477,6 +2646,7 @@ function trocarAba(qual) {
   $('abaMetas').classList.toggle('oculto', qual !== 'metas');
   $('abaOEE').classList.toggle('oculto', qual !== 'oee');
   $('abaManut').classList.toggle('oculto', qual !== 'manut');
+  $('abaAnaliseMais').classList.toggle('oculto', qual !== 'analisemais');
   if (qual === 'painel') carregarPainel();
   if (qual === 'analise') carregarAnalise();
   if (qual === 'tarefas') carregarTarefas();
@@ -2486,6 +2656,7 @@ function trocarAba(qual) {
   if (qual === 'metas')     carregarMetas();
   if (qual === 'oee')       carregarOEE();
   if (qual === 'manut')     carregarManut();
+  if (qual === 'analisemais') carregarAnaliseMais();
 }
 
 /* ================= PAINEL / GRÁFICOS ================= */
