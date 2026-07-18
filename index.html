@@ -395,7 +395,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.92.6</span>
+        <span class="ver-badge" id="verBadge">v3.92.7</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1150,7 +1150,7 @@ main{max-width:920px;margin:0 auto;padding:18px 14px calc(env(safe-area-inset-bo
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.92.6';
+const APP_VER = '3.92.7';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -1291,6 +1291,22 @@ function tipoDia(dia) {
   return 'util';
 }
 const _diaReduzido = d => { const t = tipoDia(d); return t === 'sabado' || t === 'reduzido' || t === 'folga' || t === 'domingo'; };
+// ===== Previsão mensal (dias-equivalentes: útil=1 · sábado/reduzido≈0,46 · domingo/folga=0) =====
+function equivDia(dia) { const t = tipoDia(dia); if (t === 'domingo' || t === 'folga') return 0; if (t === 'sabado' || t === 'reduzido') return 10.98 / 23.92; return 1; }
+function _diasDoMes(ym) { const p = ym.split('-'), a = +p[0], m = +p[1]; const n = new Date(a, m, 0).getDate(); const out = []; for (let d = 1; d <= n; d++) out.push(`${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`); return out; }
+// projeta a média por dia-equivalente decorrido sobre o mês inteiro (só p/ o mês em curso)
+function previsaoMes(rows, valFn) {
+  if (!rows || !rows.length) return null;
+  const dias = rows.map(r => String(r.dia || '').slice(0, 10)).filter(Boolean).sort();
+  if (!dias.length) return null;
+  const ultimo = dias[dias.length - 1], ym = ultimo.slice(0, 7);
+  if (ym !== hojeISO().slice(0, 7)) return null;                 // só o mês em curso
+  const prodMes = rows.filter(r => String(r.dia || '').slice(0, 7) === ym).reduce((a, r) => a + (valFn(r) || 0), 0);
+  let eqDecorr = 0, eqTotal = 0, diasFalta = 0;
+  _diasDoMes(ym).forEach(d => { const e = equivDia(d); eqTotal += e; if (d <= ultimo) eqDecorr += e; else if (e > 0) diasFalta++; });
+  if (eqDecorr <= 0 || prodMes <= 0) return null;
+  return { previsao: prodMes / eqDecorr * eqTotal, prodMes, diasFalta, ultimo };
+}
 const COR_FER = { 'Nacional': '#5B9BD5', 'Estadual (SP)': '#70AD47', 'Municipal': '#E0A82D', 'Facultativo': '#9AA7B4' };
 function faixaFeriado() {
   const f = proximoFeriado(); if (!f) return '';
@@ -6095,8 +6111,9 @@ function renderPainel() {
       if (!dOrd.length) return;
       const s = serieProducao(pd, dOrd, fmtBarSt, d => `detDia('${st}','${d}')`);
       const totSt = dOrd.reduce((a, d) => a + pd[d], 0);
+      const prevSt = s.porMes ? previsaoMes(rowsSt, valSt) : null;
       html += card(s.titulo + ' · ' + st,
-        (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : ''),
+        (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : '') + (prevSt ? ` · 📈 previsão do mês: <b>${fmtVSt(prevSt.previsao)}</b> (faltam ${prevSt.diasFalta} dias)` : ''),
         barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && (emCx || soKg || metrica === 'peso')) ? metaMediaPeriodo(metaDiariaSetor(st), dOrd) : null }),
         'Produção por dia · ' + st);
     });
@@ -6235,7 +6252,8 @@ function renderPainel() {
   { const porDiaS = somaPor(prodS, r => r.dia, val); const diasOrdS = Object.keys(porDiaS).sort();
     const mediaDiaS = diasOrdS.length ? diasOrdS.reduce((a, d) => a + porDiaS[d], 0) / diasOrdS.length : 0;
     if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`);
-      html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : ''),
+      const prevSS = sS.porMes ? previsaoMes(prodS, val) : null;
+      html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : '') + (prevSS ? ` · 📈 previsão do mês: <b>${fmtV(prevSS.previsao)}</b> (faltam ${prevSS.diasFalta} dias)` : ''),
         barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaMediaPeriodo(metaDiariaSetor(setor), diasOrdS) : null }), 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
