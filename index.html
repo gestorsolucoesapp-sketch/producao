@@ -399,7 +399,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge">v3.93.5</span>
+        <span class="ver-badge" id="verBadge">v3.93.6</span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1170,7 +1170,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.5';
+const APP_VER = '3.93.6';
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
 const sb = supabase.createClient(SB_URL, SB_KEY);
@@ -2483,7 +2483,7 @@ async function salvarTarefa() {
 
 /* ================= CENTRAL DE TAREFAS FIM ================= */
 // ================= ANÁLISE+ (TPM / MTBF / Custo não-qualidade / ABC / Scorecard / Matriz) =================
-let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf';
+let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf', _amPrecoHist = null;
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
 const _amEhFalha = m => /INTERROMP|QUEBRA|CORRETIV|MANUTEN|FALHA|MEC[ÂA]NIC|EL[ÉE]TRIC|ROLAMENTO|MOTOR|DEFEITO/i.test(m || '');
@@ -2502,10 +2502,26 @@ async function getCustoKg() {
   if (!(_amCustoKg > 0)) _amCustoKg = 8;
   return _amCustoKg;
 }
+async function getPrecoHist() {
+  if (_amPrecoHist) return _amPrecoHist;
+  try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'preco_pp_hist').maybeSingle();
+    _amPrecoHist = data && data.valor ? JSON.parse(data.valor) : []; } catch (_) { _amPrecoHist = []; }
+  if (!Array.isArray(_amPrecoHist)) _amPrecoHist = [];
+  return _amPrecoHist;
+}
 async function salvarCustoKg(v) {
   v = parseFloat(String(v).replace(',', '.')) || 0; if (v <= 0) return;
   _amCustoKg = v;
-  try { await sb.from('app_config').upsert({ chave: 'custo_kg_refugo', valor: String(v) }, { onConflict: 'chave' }); } catch (_) {}
+  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const hist = await getPrecoHist();
+  const i = hist.findIndex(h => h.data === hoje);
+  if (i >= 0) hist[i].preco = v; else hist.push({ data: hoje, preco: v });
+  hist.sort((a, b) => a.data < b.data ? -1 : 1);
+  _amPrecoHist = hist;
+  try {
+    await sb.from('app_config').upsert({ chave: 'custo_kg_refugo', valor: String(v) }, { onConflict: 'chave' });
+    await sb.from('app_config').upsert({ chave: 'preco_pp_hist', valor: JSON.stringify(hist) }, { onConflict: 'chave' });
+  } catch (_) {}
   renderAnaliseMais();
 }
 async function carregarDadosAM(de) {
@@ -2547,7 +2563,7 @@ async function carregarAnaliseMais() {
   const box = $('anmConteudo'); if (!box) return;
   box.innerHTML = '<p class="vazio-painel"><span class="spin"></span> Carregando análise…</p>';
   try {
-    await getCustoKg();
+    await getCustoKg(); await getPrecoHist();
     const c = await getCacheAM();
     renderAnaliseMais(c);
   } catch (e) { box.innerHTML = '<p class="vazio-painel">Não consegui carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
@@ -2635,7 +2651,8 @@ function renderAnaliseMais(cache) {
   const ddCustoSetor = Object.entries(cPorSetor).sort((a, b) => b[1] - a[1]).map(([s, kg]) => ({ l: s, v: Math.round(kg * custoKg) }));
   html += card('💰 Custo da não-qualidade', `refugo × preço do PP · total <b>${_amRS(custoRefugo)}</b> no período`,
     `<div style="font-size:12px;color:#5C7186;margin-bottom:10px">refugo × R$ ${custoKg.toLocaleString('pt-BR')}/kg (preço do PP — edite no topo da aba)</div>` +
-    barrasHorizontal(ddCustoSetor.map(x => ({ l: x.l, v: x.v })), 'R$'));
+    barrasHorizontal(ddCustoSetor.map(x => ({ l: x.l, v: x.v })), 'R$') +
+    ((_amPrecoHist && _amPrecoHist.length) ? `<div style="margin-top:12px;border-top:1px dashed var(--borda);padding-top:8px"><div style="font-size:11px;color:#5C7186;margin-bottom:5px">📈 Histórico do preço do PP</div>` + _amPrecoHist.slice(-8).reverse().map((h, idx, arr) => { const ant = arr[idx + 1]; const dif = ant ? h.preco - ant.preco : 0; const cor = dif > 0 ? '#D64545' : dif < 0 ? '#1F9D55' : '#8395A6'; return `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0"><span style="color:#5C7186">${fmtData(h.data)}</span><span style="font-weight:700">R$ ${h.preco.toLocaleString('pt-BR')}${dif ? ` <span style="color:${cor};font-size:11px;font-weight:700">${dif > 0 ? '▲' : '▼'} ${Math.abs(dif).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</span>` : ''}</span></div>`; }).join('') + `</div>` : ''));
 
   // ===== 5) CURVA ABC DE ITENS (por refugo) =====
   const itemKg = {};
