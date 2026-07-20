@@ -419,7 +419,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.40<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.41<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1214,7 +1214,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.40';
+const APP_VER = '3.93.41';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2016,6 +2016,18 @@ function medirTopoApp() {
   if (t) document.documentElement.style.setProperty('--topo-app', t.offsetHeight + 'px');
 }
 window.addEventListener('resize', medirTopoApp);
+// registra que o responsável viu a tarefa (data/hora) — só quando ele abre a aba Tarefas
+async function marcarVistas() {
+  if (!tarefasData || !perfil) return;
+  const meuId = perfil.id, meuNome = perfil.nome || perfil.email || '';
+  const pend = tarefasData.filter(t => !t.concluida && t.responsavel_id === meuId && t.criado_por !== meuId && !t.visto_em);
+  if (!pend.length) return;
+  const agora = new Date().toISOString();
+  for (const t of pend) {
+    t.visto_em = agora; t.visto_por_nome = meuNome;
+    try { await sb.from('tarefas').update({ visto_em: agora, visto_por_nome: meuNome }).eq('id', t.id); } catch (_) {}
+  }
+}
 async function carregarTarefas() {
   medirTopoApp();
   const box = $('tarefasConteudo'); if (!box) return;
@@ -2025,7 +2037,7 @@ async function carregarTarefas() {
     box.innerHTML = '<p class="desc" style="color:#D64545">Não consegui ler as tarefas. Rode o SQL de criação da tabela <b>tarefas</b> no Supabase.</p>';
     return;
   }
-  renderTarefas(); atualizarSino();
+  renderTarefas(); atualizarSino(); marcarVistas();
 }
 // transforma URLs do texto em links clicáveis (mantém o resto escapado)
 function linkificar(txt) {
@@ -2124,7 +2136,7 @@ function renderTarefas() {
               oninput="previewProg('${t.id}', this.value)" onchange="salvarProg('${t.id}', this.value)"
               style="width:100%;accent-color:${corProg(t.progresso||0)}" id="pgr-${t.id}">
           </div>` : ''}
-          <div style="font-size:11px;color:#9AA6B2;margin-top:6px">criada por ${escapeHtml(t.criado_por_nome || '—')} · ${fmtDataHora(t.criado_em)}${t.repassado_por_nome ? ` · ↪️ repassada por <b>${escapeHtml(t.repassado_por_nome)}</b>` : ''}
+          <div style="font-size:11px;color:#9AA6B2;margin-top:6px">criada por ${escapeHtml(t.criado_por_nome || '—')} · ${fmtDataHora(t.criado_em)}${t.repassado_por_nome ? ` · ↪️ repassada por <b>${escapeHtml(t.repassado_por_nome)}</b>` : ''}${t.visto_em ? ` · <span style="color:#1F9D55;font-weight:600">👁 visto${t.visto_por_nome ? ' por ' + escapeHtml(t.visto_por_nome) : ''} em ${fmtDataHora(t.visto_em)}</span>` : ''}
             ${t.recorrente ? ` · <a onclick="verHistTarefa('${t.id}')" style="color:#28348E;cursor:pointer">📜 histórico</a>` : ''}${(t.criado_por === meuId || t.responsavel_id === meuId || souAdmin) ? ` · <a onclick="abrirNovaTarefa('${t.id}')" style="color:#28348E;cursor:pointer">editar / repassar</a>` : ''}${(t.criado_por === meuId || souAdmin) ? ` · <a onclick="excluirTarefa('${t.id}')" style="color:#D64545;cursor:pointer">excluir</a>` : ''}</div>
         </div>
       </div>
@@ -2536,7 +2548,7 @@ async function salvarTarefa() {
         recorrente: t.recorrente, recorrencia_dias: t.recorrencia_dias, para_todos: t.para_todos,
         responsavel_id: t.responsavel_id, responsavel_nome: t.responsavel_nome, setor: t.setor,
         subtarefas: t.subtarefas };
-      if (alvoMudou) { upd.repassado_por_nome = (perfil && perfil.nome) || null; upd.repassado_em = new Date().toISOString(); }
+      if (alvoMudou) { upd.repassado_por_nome = (perfil && perfil.nome) || null; upd.repassado_em = new Date().toISOString(); upd.visto_em = null; upd.visto_por_nome = null; }
       if (subs.length) upd.progresso = t.progresso;
       const { error } = await sb.from('tarefas').update(upd).eq('id', tarEditId);
       if (error) throw error;
