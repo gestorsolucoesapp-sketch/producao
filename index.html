@@ -431,7 +431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.51<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.52<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1226,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.51';
+const APP_VER = '3.93.52';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2585,17 +2585,25 @@ let _amFalhasPorMaq = {};
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
 const _amEhFalha = m => /INTERROMP|QUEBRA|CORRETIV|MANUTEN|FALHA|MEC[ÂA]NIC|EL[ÉE]TRIC|ROLAMENTO|MOTOR|DEFEITO/i.test(m || '');
-// lista das falhas (paradas de manutenção) de uma máquina, com o número da ordem — abre ao tocar no nº de falhas no card MTBF
-function detFalhasMaq(cod) {
+// lista das OS de manutenção de uma máquina (número + detalhes) — abre ao tocar no nº de falhas no card MTBF
+async function detFalhasMaq(cod) {
   cod = String(cod); _detVoltar = null;
-  const rows = (_amFalhasPorMaq && _amFalhasPorMaq[cod]) || [];
-  const nome = (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[cod]) || (rows[0] && rows[0].recurso_nome) || cod;
-  if (!rows.length) { abreDet('🔧 Falhas · ' + cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem falhas no período.</p>`); return; }
-  const ord = rows.slice().sort((a, b) => (String(b.dia || '') + String(b.inicio || '')).localeCompare(String(a.dia || '') + String(a.inicio || '')));
-  const tot = ord.reduce((a, r) => a + (+r.tempo_horas || 0), 0);
-  const hhmm = x => { const m = String(x || '').match(/(\d{2}):(\d{2})/); return m ? ' ' + m[0] : ''; };
-  const linhas = ord.map(r => `<tr><td class="nome"><span class="cod">${r.op ? escapeHtml(String(r.op)) : '\u2014'}</span> ${escapeHtml(r.motivo_desc || '\u2014')}</td><td>${r.dia ? fmtData(String(r.dia).slice(0, 10)) : '\u2014'}${hhmm(r.inicio)}</td><td><span class="cel cel-tot">${(+r.tempo_horas || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span></td></tr>`).join('');
-  abreDet('🔧 Falhas · ' + cod, `<p class="idet-desc">${escapeHtml(nome)} · ${ord.length} falha(s) · ${tot.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h paradas</p>` + tabSimples(['OP / motivo', 'Data', 'Tempo'], linhas));
+  const nome = (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[cod]) || cod;
+  let rows = (osLista || []).filter(o => String(o.recurso_cod) === cod);
+  if (!rows.length) {
+    abreDet('🔧 OS · ' + cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Carregando ordens…</p>`);
+    try { const { data } = await sb.from('manutencao_os').select('id,os_num,recurso_cod,maquina_desc,motivo,atividade,detalhes,data_abertura,data_reinicio').eq('recurso_cod', cod).order('data_abertura', { ascending: false }).limit(200); rows = data || []; } catch (_) {}
+  }
+  if (!rows.length) { abreDet('🔧 OS · ' + cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Nenhuma OS registrada pra essa máquina na aba Manutenção.</p>`); return; }
+  const ord = rows.slice().sort((a, b) => String(b.data_abertura || '').localeCompare(String(a.data_abertura || '')));
+  const abertas = ord.filter(o => !o.data_reinicio).length;
+  const linhas = ord.map(o => {
+    const aberta = !o.data_reinicio;
+    const dt = o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '\u2014';
+    const det = o.detalhes || o.motivo || '\u2014';
+    return `<tr><td class="nome"><span class="cod">${escapeHtml(o.os_num || '\u2014')}</span> ${escapeHtml(String(det))}${o.motivo ? `<div style="font-size:11px;color:#8395A6;margin-top:2px">${escapeHtml(o.motivo)}${o.atividade ? ' \u00b7 ' + escapeHtml(o.atividade) : ''}</div>` : ''}</td><td>${dt}</td><td><span class="cel" style="background:${aberta ? '#FBE3E3' : '#E7F6EE'};color:${aberta ? '#B3261E' : '#1F6E43'};font-weight:700">${aberta ? 'em aberto' : 'concluída'}</span></td></tr>`;
+  }).join('');
+  abreDet('🔧 OS · ' + cod, `<p class="idet-desc">${escapeHtml(nome)} \u00b7 ${ord.length} OS \u00b7 ${abertas} em aberto</p>` + tabSimples(['OS / detalhe', 'Abertura', 'Status'], linhas));
 }
 function _amCatTPM(m) {
   m = (m || '').toUpperCase();
