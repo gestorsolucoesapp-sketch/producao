@@ -431,7 +431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.47<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.48<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1226,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.47';
+const APP_VER = '3.93.48';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4859,6 +4859,35 @@ function detMaquinaTurnos(cod) {
   });
   abreDet('📊 ' + cod + ' · por turno', html);
 }
+// 3 gráficos por turno (Manhã/Tarde/Noite) dia a dia de um SETOR (ou todos), com média e meta — clique na barra abre os itens do turno
+function detSetorTurnos(setor) {
+  if (!dadosPainel) return; const D = dadosPainel; setor = setor || ''; _detVoltar = null;
+  const prod = setor ? D.producao.filter(r => setorDe(r.recurso_cod) === setor) : D.producao;
+  const emCx = (setor === 'Embaladeiras');
+  const fmtV = emCx ? (v => fmtNum(v) + ' cxs') : fmtKg;
+  const valF = emCx ? (r => r.quantidade || 0) : (r => r.peso || 0);
+  const porBloco = { 'Manhã': {}, 'Tarde': {}, 'Noite': {} };
+  const diasSet = new Set();
+  prod.forEach(r => { const b = blocoTurno(r.turno, r.dia); if (!porBloco[b]) return; const d = String(r.dia).slice(0, 10); porBloco[b][d] = (porBloco[b][d] || 0) + valF(r); diasSet.add(d); });
+  const dias = [...diasSet].sort();
+  const setEsc = (setor || '').replace(/'/g, '');
+  let html = `<p class="idet-desc">${escapeHtml(setor || 'Todos os setores')} · produção por dia em cada turno · toque numa barra pra ver os itens (com OP)</p>`;
+  let algum = false;
+  ['Manhã', 'Tarde', 'Noite'].forEach(b => {
+    const pd = porBloco[b], meta = metaBlocoSetor(setor, b);
+    const dOrd = dias.filter(d => (pd[d] || 0) > 0);
+    if (!dOrd.length) { html += `<div style="margin-bottom:12px"><div style="font-weight:800;color:var(--navy);font-size:13px">${b}</div><p class="desc" style="margin:2px 0 0">Sem produção nesse turno no período.</p></div>`; return; }
+    algum = true;
+    const dados = dOrd.map(d => ({ l: d.slice(8, 10) + '/' + d.slice(5, 7), v: pd[d], red: (typeof _diaReduzido === 'function' ? _diaReduzido(d) : false), click: `detDiaTurno('${setEsc}','${d}','${b}')` }));
+    const _cheios = dOrd.filter(d => !(typeof _diaReduzido === 'function' && _diaReduzido(d))); const _baseM = _cheios.length ? _cheios : dOrd;
+    const media = _baseM.reduce((a, d) => a + pd[d], 0) / _baseM.length;
+    const pct = meta > 0 ? (media / meta - 1) * 100 : null;
+    const badge = pct != null ? ` <span style="font-size:12.5px;font-weight:800;color:${pct >= 0 ? '#1F9D55' : '#D64545'}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% ${pct >= 0 ? 'acima' : 'abaixo'}</span>` : '';
+    html += `<div style="margin-bottom:14px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:1px">${b}${meta > 0 ? ` · meta ${fmtV(meta)}` : ''}${badge}</div><div style="font-size:10.5px;color:#8395A6;margin-bottom:6px">${emCx ? 'cxs' : 'peso'}/dia · linha azul = meta · média verde (≥) / vermelha (&lt;)</div>${barrasVerticalScroll(dados, () => COR_TURNO[b], { media: true, fmt: fmtV, margemEsq: 44, meta: meta > 0 ? meta : null })}</div>`;
+  });
+  if (!algum) html += '<p class="desc">Sem produção por turno no período.</p>';
+  abreDet('📊 ' + (setor || 'Todos os setores') + ' · por turno', html);
+}
 function detMaquina(cod, dia) {
   if (!dadosPainel) return; const D = dadosPainel; cod = String(cod);
   const prod = D.producao.filter(r => String(r.recurso_cod) === cod && (!dia || r.dia === dia));
@@ -6723,7 +6752,7 @@ function renderPainel() {
       const prevSt = previsaoMes(rowsSt, valSt);
       html += card(s.titulo + ' · ' + st,
         (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : '') + (prevSt ? ` · 📈 previsão do mês: <b>${fmtVSt(prevSt.previsao)}</b> (faltam ${prevSt.diasFalta} dias)` : ''),
-        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && (emCx || soKg || metrica === 'peso')) ? metaDiariaSetor(st) : null }),
+        barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && (emCx || soKg || metrica === 'peso')) ? metaDiariaSetor(st) : null }) + `<button class="btn btn-borda" style="width:100%;margin:8px 0 0" onclick="detSetorTurnos('${st}')">📊 Ver por turno (Manhã / Tarde / Noite)</button>`,
         'Produção por dia · ' + st);
     });
 
@@ -6863,7 +6892,7 @@ function renderPainel() {
     if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`);
       const prevSS = previsaoMes(prodS, val);
       html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : '') + (prevSS ? ` · 📈 previsão do mês: <b>${fmtV(prevSS.previsao)}</b> (faltam ${prevSS.diasFalta} dias)` : ''),
-        barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaDiariaSetor(setor) : null }), 'Produção por dia'); } }
+        barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && metrica === 'peso') ? metaDiariaSetor(setor) : null }) + `<button class="btn btn-borda" style="width:100%;margin:8px 0 0" onclick="detSetorTurnos('${(setor || '').replace(/'/g, '')}')">📊 Ver por turno (Manhã / Tarde / Noite)</button>`, 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
 
