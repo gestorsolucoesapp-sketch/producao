@@ -433,7 +433,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.60<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.61<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1228,7 +1228,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.60';
+const APP_VER = '3.93.61';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5652,6 +5652,40 @@ async function preencherMediaItensMes(ym, setor) {
   const top = itens.slice(0, 15).map((i, k) => ({ l: i.cod + ' · ' + i.desc, v: i.v, click: `verItem(${k})` }));
   html += card('Maiores volumes', (metrica === 'peso' ? 'peso' : 'cxs') + ' · top 15 · toque p/ detalhes' + (grupo === 'kit' ? ' · KITs' : grupo === 'sleeve' ? ' · Sleeve' : grupo === 'rotulagem' ? ' · Rotulagem' : grupo === 'impresso' ? ' · Impressos' : grupo ? ' · itens ' + grupo + '…' : ''),
     barrasHorizontal(top, metrica === 'peso' ? 'kg' : 'cxs'));
+
+  // ===== Relação item × OP no período (cxs / kg / milheiro por unidade nativa do ERP) =====
+  {
+    const rel = {};
+    rows.forEach(r => {
+      const cod = String(r.item_cod || '—'), op = String(r.op || '—'), k = cod + '@@' + op;
+      const o = (rel[k] = rel[k] || { cod, op, desc: r.item_desc || cod, cx: 0, kg: 0, mil: 0 });
+      if ((!o.desc || o.desc === cod) && r.item_desc) o.desc = r.item_desc;
+      const u = String(r.unidade || '').toUpperCase(), q = +r.quantidade || 0;
+      o.kg += (+r.peso || 0);
+      if (u === 'CX') o.cx += q; else if (u === 'MIL') o.mil += q;
+    });
+    let relArr = Object.values(rel).sort((a, b) => b.kg - a.kg);
+    const totCx = relArr.reduce((a, x) => a + x.cx, 0), totKg = relArr.reduce((a, x) => a + x.kg, 0), totMil = relArr.reduce((a, x) => a + x.mil, 0);
+    const nTot = relArr.length, CAP = 600, cortou = nTot > CAP;
+    if (cortou) relArr = relArr.slice(0, CAP);
+    const vazio = '<span style="color:#B8C2CC">—</span>';
+    const nCx = v => v > 0 ? '<span class="cel ok">' + fmtNum(Math.round(v)) + '</span>' : vazio;
+    const nMil = v => v > 0 ? '<span class="cel ok">' + v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio;
+    const linhasRel = relArr.map(x => `<tr>
+      <td class="nome" style="text-align:left"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml(x.desc)}</td>
+      <td><span class="cel neutra">${escapeHtml(x.op)}</span></td>
+      <td>${nCx(x.cx)}</td>
+      <td><span class="cel cel-tot">${fmtKg(x.kg)}</span></td>
+      <td>${nMil(x.mil)}</td></tr>`).join('');
+    const totalRow = `<tr style="border-top:2px solid var(--navy);font-weight:700;background:#f4f7fa">
+      <td class="nome" style="text-align:left">TOTAL · ${nTot} item×OP</td><td></td>
+      <td>${totCx > 0 ? '<span class="cel ok">' + fmtNum(Math.round(totCx)) + '</span>' : vazio}</td>
+      <td><span class="cel cel-tot">${fmtKg(totKg)}</span></td>
+      <td>${totMil > 0 ? '<span class="cel ok">' + totMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio}</td></tr>`;
+    html += card('Relação de itens × OPs', nTot + ' combinação(ões) item/OP · cxs (itens CX) · kg (todos) · milheiro (itens MIL) · ordenado por kg' + (cortou ? ` · mostrando os ${CAP} maiores (recorte o período p/ ver todos)` : ''),
+      `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>OP</th><th>Cxs</th><th>Kg</th><th>Milheiro</th></tr></thead><tbody>${linhasRel}${totalRow}</tbody></table></div>`,
+      'relacao-itens-ops');
+  }
 
   // ===== análise por BOCA (Impressão) =====
   if (anSetor === 'Impressão') {
