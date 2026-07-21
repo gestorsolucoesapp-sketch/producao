@@ -90,6 +90,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 .rel-cab img{width:120px;height:auto}
 .rel-cab h1{font-size:20px;color:var(--navy);margin:0}
 .rel-cab p{font-size:11px;color:#5C7186;margin:2px 0 0}
+@page{size:A4 landscape;margin:10mm}
 @media print{
   body.imprimindo > *:not(#relImpr){display:none!important}
   #relImpr{display:block!important;padding:0 4px}
@@ -431,7 +432,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.53<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.54<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1227,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.53';
+const APP_VER = '3.93.54';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4855,7 +4856,28 @@ async function detItensMaqDia(cod, dia, bloco) {
   const totP = itens.reduce((a, x) => a + x[1].peso, 0), totQ = itens.reduce((a, x) => a + x[1].qtd, 0);
   _detVoltar = () => detMaquinaTurnos(cod);
   abreDet('📦 ' + tit, `<p class="idet-desc">${escapeHtml(nome)} · ${itens.length} item(ns) · ${fmtKg(totP)} · ${fmtNum(totQ)} cxs</p>` +
-    tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => { const ops = [...v.ops]; const opTxt = ops.length ? ` <span style="color:#8395A6;font-weight:600">· OP ${escapeHtml(ops.slice(0, 3).join(', '))}${ops.length > 3 ? ' +' + (ops.length - 3) : ''}</span>` : ''; return `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}${opTxt}</td><td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td><td>${fmtNum(v.qtd)}</td></tr>`; }).join('')));
+    tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => { const ops = [...v.ops]; const opTxt = ops.length ? ` <span style="color:#8395A6;font-weight:600">· OP ${escapeHtml(ops.slice(0, 3).join(', '))}${ops.length > 3 ? ' +' + (ops.length - 3) : ''}</span>` : ''; return `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}${opTxt}</td><td><span class="cel cel-tot" style="cursor:pointer" onclick="detParadasMaqDia('${cod}','${dia}','${bloco || ''}')" title="Ver paradas desse dia">${fmtKg(v.peso)} ›</span></td><td>${fmtNum(v.qtd)}</td></tr>`; }).join('')));
+}
+
+// paradas de uma máquina num dia (clique no kg do modal de itens)
+async function detParadasMaqDia(cod, dia, bloco) {
+  cod = String(cod); bloco = bloco || '';
+  const nome = (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[cod]) || cod;
+  const tit = '🛑 Paradas · ' + cod + ' · ' + fmtData(dia);
+  _detVoltar = () => detItensMaqDia(cod, dia, bloco);
+  let rows = [];
+  try {
+    const { data, error } = await sb.from('paradas').select('motivo_desc,tempo_horas,inicio,op').eq('recurso_cod', cod).eq('dia', dia);
+    if (error) throw error;
+    rows = data || [];
+  } catch (e) { abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Erro ao buscar paradas: ${escapeHtml(e.message || String(e))}</p>`); return; }
+  if (!rows.length) { abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem paradas registradas nesse dia. 🎉</p>`); return; }
+  const porMot = {};
+  rows.forEach(r => { const k = (r.motivo_desc || '—'); const o = (porMot[k] = porMot[k] || { h: 0, n: 0 }); o.h += (+r.tempo_horas || 0); o.n++; });
+  const mot = Object.entries(porMot).sort((a, b) => b[1].h - a[1].h);
+  const totH = mot.reduce((a, x) => a + x[1].h, 0);
+  abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)} · ${mot.length} motivo(s) · ${_amH(totH)}</p>` +
+    tabSimples(['Motivo', 'Horas', 'Qtd'], mot.map(([k, v]) => `<tr><td class="nome">${escapeHtml(k)}</td><td><span class="cel cel-tot">${_amH(v.h)}</span></td><td>${v.n}</td></tr>`).join('')));
 }
 // gráfico por turno (Manhã/Tarde/Noite) dia a dia de uma máquina, com média e meta de cada turno
 function detMaquinaTurnos(cod) {
