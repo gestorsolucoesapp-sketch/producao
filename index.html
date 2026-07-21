@@ -431,7 +431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.44<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.45<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1226,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.44';
+const APP_VER = '3.93.45';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4684,29 +4684,51 @@ function mediaDiaPorMaquina(rows) {
   return out;
 }
 // PRODUÇÃO de um dia
-function detDia(setor, dia) {
+// meta somada de um bloco (turno) para um setor
+function metaBlocoSetor(setor, bloco) {
+  if (!metasData) return 0;
+  const cods = setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat();
+  let s = 0; cods.forEach(c => { const m = metasData[String(c)]; if (m && m[bloco]) s += m[bloco]; });
+  return s;
+}
+async function detDia(setor, dia) {
   if (!dadosPainel) return;
   const D = dadosPainel;
+  const emCx = (setor === 'Embaladeiras');
+  const fmtV = emCx ? (v => fmtNum(v) + ' cxs') : fmtKg;
+  const val = r => emCx ? (r.quantidade || 0) : (r.peso || 0);
   let prod = D.producao.filter(r => r.dia === dia); if (setor) prod = prod.filter(r => setorDe(r.recurso_cod) === setor);
-  const kg = prod.reduce((a, r) => a + (r.peso || 0), 0), cx = prod.reduce((a, r) => a + (r.quantidade || 0), 0);
-  const bloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; prod.forEach(r => bloco[blocoTurno(r.turno, r.dia)] += (r.peso || 0));
+  const kg = prod.reduce((a, r) => a + (r.peso || 0), 0);
+  const bloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; prod.forEach(r => bloco[blocoTurno(r.turno, r.dia)] += val(r));
   const maq = {}, nm = {}; prod.forEach(r => { maq[r.recurso_cod] = (maq[r.recurso_cod] || 0) + (r.peso || 0); nm[r.recurso_cod] = r.recurso_nome || r.recurso_cod; });
   const topMaq = Object.entries(maq).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const per = D.perdas.filter(r => r.dia === dia && perdaConta(r) && (!setor || setorPerda(r) === setor)).reduce((a, r) => a + (r.peso || 0), 0);
   const perdaPct = (kg + per) > 0 ? (per / (kg + per) * 100).toFixed(1) : '0';
 
-  // ---- máquinas do setor que NÃO rodaram neste dia + produção perdida estimada ----
+  const turnoRows = ['Manhã', 'Tarde', 'Noite'].map(t => {
+    const meta = metaBlocoSetor(setor, t);
+    const pct = meta > 0 ? (bloco[t] / meta - 1) * 100 : null;
+    const badge = pct != null ? ` <span style="color:${pct >= 0 ? '#1F9D55' : '#D64545'};font-weight:700;font-size:11px">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}%</span>` : '';
+    return `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${fmtV(bloco[t])}</span></td><td style="font-size:11.5px;color:#5C7186">${meta > 0 ? 'meta ' + fmtV(meta) : '\u2014'}${badge}</td></tr>`;
+  }).join('');
+
+  let itensHtml = '<p class="desc">Sem itens detalhados nesse dia.</p>';
+  try {
+    const cods = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
+    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,recurso_cod').eq('dia', dia).in('recurso_cod', cods);
+    if (error) throw error;
+    const porItem = {};
+    (data || []).forEach(r => { const k = r.item_cod || r.item_desc || '\u2014'; (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '\u2014', peso: 0, qtd: 0 }); porItem[k].peso += (+r.peso || 0); porItem[k].qtd += (+r.quantidade || 0); });
+    const itens = Object.entries(porItem).sort((a, b) => emCx ? b[1].qtd - a[1].qtd : b[1].peso - a[1].peso);
+    if (itens.length) itensHtml = tabSimples(['Item', emCx ? 'Cxs' : 'Peso'], itens.map(([k, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}</td><td><span class="cel cel-tot">${emCx ? fmtNum(v.qtd) + ' cx' : fmtKg(v.peso)}</span></td></tr>`).join(''));
+  } catch (_) { itensHtml = '<p class="desc">Não consegui carregar os itens.</p>'; }
+
   const codsSetor = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
   const rodaram = new Set(Object.keys(maq).filter(c => (maq[c] || 0) > 0).map(String));
   const medMaq = mediaDiaPorMaquina(D.producao);
-  const paradas = codsSetor.filter(c => !rodaram.has(c)).map(c => ({
-    cod: c,
-    nome: (D.nomeMaq && D.nomeMaq[c]) || nm[c] || c,
-    perda: medMaq[c] ? medMaq[c].media : 0,
-    temHist: !!(medMaq[c] && medMaq[c].dias > 0)
-  })).sort((a, b) => b.perda - a.perda);
-  const paradasHist = paradas.filter(p => p.temHist);      // com baseline real (rodou em algum dia)
-  const semHist = paradas.length - paradasHist.length;      // sem produção no período (provável desativada)
+  const paradas = codsSetor.filter(c => !rodaram.has(c)).map(c => ({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || nm[c] || c, perda: medMaq[c] ? medMaq[c].media : 0, temHist: !!(medMaq[c] && medMaq[c].dias > 0) })).sort((a, b) => b.perda - a.perda);
+  const paradasHist = paradas.filter(p => p.temHist);
+  const semHist = paradas.length - paradasHist.length;
   const perdaEstTot = paradasHist.reduce((a, p) => a + p.perda, 0);
   const secaoParadas = paradasHist.length ? `
     <div style="height:12px"></div>
@@ -4716,11 +4738,15 @@ function detDia(setor, dia) {
 
   abreDet('Dia ' + fmtDataSem(dia), `
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
-    ${tabSimples(['Turno', 'Peso'], ['Manhã', 'Tarde', 'Noite'].map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${fmtKg(bloco[t])}</span></td></tr>`).join(''))}
-    <div style="height:8px"></div>
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:4px 0 3px">Turnos · produção vs meta</div>
+    ${tabSimples(['Turno', 'Produção', 'Meta'], turnoRows)}
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">📦 Itens do dia</div>
+    ${itensHtml}
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">Máquinas</div>
     ${tabSimples(['Máquina', 'Peso'], topMaq.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}
     ${secaoParadas}`);
 }
+
 // PRODUÇÃO de um turno (bloco)
 function detTurno(setor, bloco, dia) {
   if (!dadosPainel) return;
