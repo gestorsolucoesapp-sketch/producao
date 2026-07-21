@@ -431,7 +431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.50<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.51<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1226,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.50';
+const APP_VER = '3.93.51';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2581,9 +2581,22 @@ async function salvarTarefa() {
 /* ================= CENTRAL DE TAREFAS FIM ================= */
 // ================= ANÁLISE+ (TPM / MTBF / Custo não-qualidade / ABC / Scorecard / Matriz) =================
 let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf', _amPrecoHist = null;
+let _amFalhasPorMaq = {};
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
 const _amEhFalha = m => /INTERROMP|QUEBRA|CORRETIV|MANUTEN|FALHA|MEC[ÂA]NIC|EL[ÉE]TRIC|ROLAMENTO|MOTOR|DEFEITO/i.test(m || '');
+// lista das falhas (paradas de manutenção) de uma máquina, com o número da ordem — abre ao tocar no nº de falhas no card MTBF
+function detFalhasMaq(cod) {
+  cod = String(cod); _detVoltar = null;
+  const rows = (_amFalhasPorMaq && _amFalhasPorMaq[cod]) || [];
+  const nome = (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[cod]) || (rows[0] && rows[0].recurso_nome) || cod;
+  if (!rows.length) { abreDet('🔧 Falhas · ' + cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem falhas no período.</p>`); return; }
+  const ord = rows.slice().sort((a, b) => (String(b.dia || '') + String(b.inicio || '')).localeCompare(String(a.dia || '') + String(a.inicio || '')));
+  const tot = ord.reduce((a, r) => a + (+r.tempo_horas || 0), 0);
+  const hhmm = x => { const m = String(x || '').match(/(\d{2}):(\d{2})/); return m ? ' ' + m[0] : ''; };
+  const linhas = ord.map(r => `<tr><td class="nome"><span class="cod">${r.op ? escapeHtml(String(r.op)) : '\u2014'}</span> ${escapeHtml(r.motivo_desc || '\u2014')}</td><td>${r.dia ? fmtData(String(r.dia).slice(0, 10)) : '\u2014'}${hhmm(r.inicio)}</td><td><span class="cel cel-tot">${(+r.tempo_horas || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span></td></tr>`).join('');
+  abreDet('🔧 Falhas · ' + cod, `<p class="idet-desc">${escapeHtml(nome)} · ${ord.length} falha(s) · ${tot.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h paradas</p>` + tabSimples(['OP / motivo', 'Data', 'Tempo'], linhas));
+}
 function _amCatTPM(m) {
   m = (m || '').toUpperCase();
   if (_amEhFalha(m)) return 'Quebra / Manutenção';
@@ -2626,7 +2639,7 @@ async function carregarDadosAM(de) {
   const [prod, perd, par] = await Promise.all([
     fetchTudo('producao_resumo', 'dia,recurso_cod,recurso_nome,peso,quantidade,unidade', de),
     fetchTudo('perdas', 'dia,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de),
-    fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio', de)
+    fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,op', de)
   ]);
   let os = [];
   try { const r = await sb.from('manutencao_os').select('recurso_cod,setor,data_reinicio,data_abertura,custo,horas_parada,motivo,atividade').limit(3000); os = r.data || []; } catch (_) {}
@@ -2730,6 +2743,8 @@ function renderAnaliseMais(cache) {
   const nomeDe = {};
   E.prod.forEach(r => { const c = String(r.recurso_cod); (maqAgg[c] = maqAgg[c] || { prodKg: 0, falhas: 0, hFalha: 0, dias: new Set() }); maqAgg[c].prodKg += (+r.peso || 0); if (r.dia) maqAgg[c].dias.add(String(r.dia).slice(0, 10)); if (r.recurso_nome) nomeDe[c] = r.recurso_nome; });
   E.par.forEach(r => { const c = String(r.recurso_cod); (maqAgg[c] = maqAgg[c] || { prodKg: 0, falhas: 0, hFalha: 0, dias: new Set() }); if (_amEhFalha(r.motivo_desc)) { maqAgg[c].falhas++; maqAgg[c].hFalha += (+r.tempo_horas || 0); } if (r.recurso_nome && !nomeDe[c]) nomeDe[c] = r.recurso_nome; });
+  _amFalhasPorMaq = {};
+  E.par.forEach(r => { if (!_amEhFalha(r.motivo_desc)) return; const c = String(r.recurso_cod); (_amFalhasPorMaq[c] = _amFalhasPorMaq[c] || []).push(r); });
   const critArr = Object.entries(maqAgg).map(([c, m]) => {
     const hDisp = [...m.dias].reduce((a, d) => a + (typeof horasDiaRate === 'function' ? horasDiaRate(d) : 22.5), 0);
     const mtbf = m.falhas > 0 ? Math.max(0, (hDisp - m.hFalha)) / m.falhas : null;
@@ -2738,8 +2753,8 @@ function renderAnaliseMais(cache) {
     return { cod: c, nome: nomeDe[c] || c, setor: setorDe(c), falhas: m.falhas, hFalha: m.hFalha, mtbf, mttr, crit, prodKg: m.prodKg };
   }).filter(x => x.falhas > 0).sort((a, b) => b.crit - a.crit).slice(0, 15);
   const cabMTBF = ['Máquina', 'Falhas', 'MTBF', 'MTTR'];
-  const linMTBF = critArr.map(x => `<tr><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 16))}</td><td><span class="cel ${x.falhas > 3 ? 'baixo' : 'neutra'}">${x.falhas}×</span></td><td><span class="cel neutra">${x.mtbf != null ? _amH(x.mtbf) : '—'}</span></td><td><span class="cel ${x.mttr > 2 ? 'baixo' : 'cel-tot'}">${x.mttr != null ? _amH(x.mttr) : '—'}</span></td></tr>`).join('');
-  html += card('🔧 MTBF & Criticidade de máquinas', 'ranqueado por criticidade (parada × falhas × porte) · foco da preventiva',
+  const linMTBF = critArr.map(x => `<tr><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 16))}</td><td><span class="cel ${x.falhas > 3 ? 'baixo' : 'neutra'}" style="cursor:pointer" onclick="detFalhasMaq('${x.cod}')">${x.falhas}× \u203a</span></td><td><span class="cel neutra">${x.mtbf != null ? _amH(x.mtbf) : '—'}</span></td><td><span class="cel ${x.mttr > 2 ? 'baixo' : 'cel-tot'}">${x.mttr != null ? _amH(x.mttr) : '—'}</span></td></tr>`).join('');
+  html += card('🔧 MTBF & Criticidade de máquinas', 'ranqueado por criticidade (parada × falhas × porte) · foco da preventiva · toque nas falhas pra ver as ordens',
     critArr.length ? tabSimples(cabMTBF, linMTBF) : '<p class="desc">Sem falhas registradas no período. 👍</p>');
 
   // ===== 4) CUSTO DA NÃO-QUALIDADE (R$) =====
