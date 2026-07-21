@@ -431,7 +431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.45<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.46<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1226,7 +1226,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.45';
+const APP_VER = '3.93.46';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4713,14 +4713,19 @@ async function detDia(setor, dia) {
   }).join('');
 
   let itensHtml = '<p class="desc">Sem itens detalhados nesse dia.</p>';
+  let itensResumo = '';
   try {
     const cods = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
-    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,recurso_cod').eq('dia', dia).in('recurso_cod', cods);
+    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,recurso_cod,op').eq('dia', dia).in('recurso_cod', cods);
     if (error) throw error;
     const porItem = {};
-    (data || []).forEach(r => { const k = r.item_cod || r.item_desc || '\u2014'; (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '\u2014', peso: 0, qtd: 0 }); porItem[k].peso += (+r.peso || 0); porItem[k].qtd += (+r.quantidade || 0); });
+    (data || []).forEach(r => { const k = r.item_cod || r.item_desc || '\u2014'; const o = (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '\u2014', peso: 0, qtd: 0, ops: new Set() }); o.peso += (+r.peso || 0); o.qtd += (+r.quantidade || 0); if (r.op != null && String(r.op).trim() !== '') o.ops.add(String(r.op).trim()); });
     const itens = Object.entries(porItem).sort((a, b) => emCx ? b[1].qtd - a[1].qtd : b[1].peso - a[1].peso);
-    if (itens.length) itensHtml = tabSimples(['Item', emCx ? 'Cxs' : 'Peso'], itens.map(([k, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}</td><td><span class="cel cel-tot">${emCx ? fmtNum(v.qtd) + ' cx' : fmtKg(v.peso)}</span></td></tr>`).join(''));
+    if (itens.length) {
+      const tP = itens.reduce((a, x) => a + x[1].peso, 0), tQ = itens.reduce((a, x) => a + x[1].qtd, 0);
+      itensResumo = ' \u00b7 ' + itens.length + ' item(ns) \u00b7 ' + fmtKg(tP) + ' \u00b7 ' + fmtNum(tQ) + ' cxs';
+      itensHtml = tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => { const ops = [...v.ops]; const opTxt = ops.length ? ` <span style="color:#8395A6;font-weight:600">\u00b7 OP ${escapeHtml(ops.slice(0, 3).join(', '))}${ops.length > 3 ? ' +' + (ops.length - 3) : ''}</span>` : ''; return `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}${opTxt}</td><td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td><td>${fmtNum(v.qtd)}</td></tr>`; }).join(''));
+    }
   } catch (_) { itensHtml = '<p class="desc">Não consegui carregar os itens.</p>'; }
 
   const codsSetor = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
@@ -4740,7 +4745,7 @@ async function detDia(setor, dia) {
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
     <div style="font-weight:800;color:var(--navy);font-size:13px;margin:4px 0 3px">Turnos · produção vs meta</div>
     ${tabSimples(['Turno', 'Produção', 'Meta'], turnoRows)}
-    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">📦 Itens do dia</div>
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">📦 Itens do dia${itensResumo}</div>
     ${itensHtml}
     <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">Máquinas</div>
     ${tabSimples(['Máquina', 'Peso'], topMaq.map(([c, k]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td><span class="cel neutra">${fmtKg(k)}</span></td></tr>`).join(''))}
@@ -4770,19 +4775,19 @@ async function detItensMaqDia(cod, dia, bloco) {
   const tit = cod + ' · ' + fmtData(dia) + (bloco ? ' · ' + bloco : '');
   let rows = [];
   try {
-    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,turno').eq('recurso_cod', cod).eq('dia', dia);
+    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,turno,op').eq('recurso_cod', cod).eq('dia', dia);
     if (error) throw error;
     rows = data || [];
   } catch (e) { abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Erro ao buscar itens: ${escapeHtml(e.message || String(e))}</p>`); return; }
   if (bloco) rows = rows.filter(r => blocoTurno(r.turno, dia) === bloco);
   if (!rows.length) { abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem itens nesse ${bloco ? 'turno' : 'dia'}.</p>`); return; }
   const porItem = {};
-  rows.forEach(r => { const k = r.item_cod || r.item_desc || '—'; (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '—', peso: 0, qtd: 0 }); porItem[k].peso += (+r.peso || 0); porItem[k].qtd += (+r.quantidade || 0); });
+  rows.forEach(r => { const k = r.item_cod || r.item_desc || '—'; const o = (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '—', peso: 0, qtd: 0, ops: new Set() }); o.peso += (+r.peso || 0); o.qtd += (+r.quantidade || 0); if (r.op != null && String(r.op).trim() !== '') o.ops.add(String(r.op).trim()); });
   const itens = Object.entries(porItem).sort((a, b) => b[1].peso - a[1].peso);
   const totP = itens.reduce((a, x) => a + x[1].peso, 0), totQ = itens.reduce((a, x) => a + x[1].qtd, 0);
   _detVoltar = () => detMaquinaTurnos(cod);
   abreDet('📦 ' + tit, `<p class="idet-desc">${escapeHtml(nome)} · ${itens.length} item(ns) · ${fmtKg(totP)} · ${fmtNum(totQ)} cxs</p>` +
-    tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}</td><td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td><td>${fmtNum(v.qtd)}</td></tr>`).join('')));
+    tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => { const ops = [...v.ops]; const opTxt = ops.length ? ` <span style="color:#8395A6;font-weight:600">· OP ${escapeHtml(ops.slice(0, 3).join(', '))}${ops.length > 3 ? ' +' + (ops.length - 3) : ''}</span>` : ''; return `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}${opTxt}</td><td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td><td>${fmtNum(v.qtd)}</td></tr>`; }).join('')));
 }
 // gráfico por turno (Manhã/Tarde/Noite) dia a dia de uma máquina, com média e meta de cada turno
 function detMaquinaTurnos(cod) {
