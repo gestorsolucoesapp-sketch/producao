@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (auto-update)
-const CACHE = 'producao-rioplastic-v3.93.58';
+const CACHE = 'producao-rioplastic-v3.93.59';
 const APP_SHELL = ['./index.html', './logo_full.png', './logo_mark.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
@@ -31,11 +31,20 @@ self.addEventListener('fetch', e => {
     url.pathname.endsWith('sw.js');
 
   if (ehNavegacao) {
-    // NETWORK-FIRST sempre pega a versão mais nova; cache só como fallback offline
+    // sw.js sempre pela rede (detecção de update); index.html = stale-while-revalidate
+    if (url.pathname.endsWith('sw.js')) {
+      e.respondWith(fetch(e.request, { cache: 'no-store' }).catch(() => caches.match(e.request)));
+      return;
+    }
+    // STALE-WHILE-REVALIDATE: entrega o cache na hora (abre rápido) e busca a nova em 2º plano.
+    // O auto-update do SW recarrega sozinho quando uma versão nova assume o controle.
     e.respondWith(
-      fetch(e.request, { cache: 'no-store' })
-        .then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put('./index.html', c)); return r; })
-        .catch(() => caches.match('./index.html'))
+      caches.match('./index.html').then(cacheado => {
+        const rede = fetch(e.request).then(r => {
+          const c = r.clone(); caches.open(CACHE).then(x => x.put('./index.html', c)); return r;
+        }).catch(() => cacheado);
+        return cacheado || rede;
+      })
     );
     return;
   }
