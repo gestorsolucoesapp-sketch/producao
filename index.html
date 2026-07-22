@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.83<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.84<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.83';
+const APP_VER = '3.93.84';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3374,6 +3374,98 @@ async function salvarOrdens(ordens) {
   if (atualizadas.length) toast(`🔄 ${atualizadas.length} OS fechadas no ERP foram atualizadas aqui`);
   return { ok, erro };
 }
+// ---------- RSMI005 · Ordens Detalhadas (OS do ERP) ----------
+// 1 OS por página. Lê por posição (mesmo padrão dos RPCP): sem IA.
+function ehRSMI005(linhas) {
+  return linhas.slice(0, 40).some(l => /RSMI005/i.test(l.texto)) &&
+         linhas.slice(0, 40).some(l => /Ordens\s+Detalhadas/i.test(l.texto));
+}
+
+function parseRSMI005(linhas) {
+  const dt = s => {
+    const m = /(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/.exec(s || '');
+    return m ? `${m[3]}-${m[2]}-${m[1]}T${m[4] || '00'}:${m[5] || '00'}:00` : null;
+  };
+  const lim = s => (s == null ? '' : String(s).replace(/\s+/g, ' ').trim());
+  const num = s => {
+    if (!s) return 0;
+    const t = String(s).replace(/\./g, '').replace(',', '.');
+    const v = parseFloat(t); return isNaN(v) ? 0 : v;
+  };
+
+  const porPag = {};
+  linhas.forEach(l => { (porPag[l.pagina] = porPag[l.pagina] || []).push(l); });
+
+  const ordens = [];
+  Object.keys(porPag).map(Number).sort((a, b) => a - b).forEach(pg => {
+    const ls = porPag[pg];
+    let os = null, m;
+
+    for (let i = 0; i < ls.length; i++) {
+      const t = ls[i].texto;
+
+      if ((m = /^\s*OS:\s*(\d{4,})\s*$/.exec(t))) { os = { os_num: m[1] }; continue; }
+      if (!os) continue;
+
+      if ((m = /Última\s+Altera[çc][ãa]o:\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?)/i.exec(t)))
+        os.ultima_alteracao = dt(m[1]);
+
+      // Setor + (Data Parada) + (Data Reinício) + Autor
+      if (/^\s*Setor:/i.test(t)) {
+        const datas = t.match(/\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g) || [];
+        if (datas[0]) os.data_parada = dt(datas[0]);
+        if (datas[1]) os.data_reinicio = dt(datas[1]);
+        if ((m = /Autor:\s*(.*)$/i.exec(t))) os.autor = lim(m[1]);
+        let st = t.replace(/^\s*Setor:\s*/i, '');
+        st = st.split(/\s*Autor:/i)[0];
+        st = st.replace(/\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g, '');
+        os.setor_erp = lim(st);
+      }
+
+      // Máquina: <cod> <descrição> Situação Máquina: <situação>
+      if ((m = /M[áa]quina:\s*(\d{2,5})\s*(.*?)\s*(?:Situa[çc][ãa]o\s+M[áa]quina:\s*(.*))?$/i.exec(t)) && !/Situa/i.test(m[1] || '')) {
+        if (!os.recurso_cod) {
+          os.recurso_cod = m[1];
+          os.maquina_desc = lim(m[2]);
+          if (m[3]) os.situacao_maquina = lim(m[3]);
+        }
+      }
+
+      if ((m = /Urg[êe]ncia:\s*(\S+)/i.exec(t))) os.urgencia = lim(m[1]);
+      if ((m = /Data\s+Abertura:\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?)/i.exec(t))) os.data_abertura = dt(m[1]);
+      if ((m = /Divis[ãa]o:\s*(.*?)\s*(?:Urg[êe]ncia:|$)/i.exec(t))) os.divisao = lim(m[1]);
+      if ((m = /Atividade:\s*(.*?)\s*(?:Seq\.?:|$)/i.exec(t))) os.atividade = lim(m[1]);
+
+      if (/^\s*Motivo:/i.test(t)) {
+        if ((m = /Motivo:\s*(.*?)\s*(?:Submotivo:|Previs[ãa]o|$)/i.exec(t))) os.motivo = lim(m[1]);
+        if ((m = /Submotivo:\s*(.*?)\s*(?:Previs[ãa]o|$)/i.exec(t))) os.submotivo = lim(m[1]);
+      }
+
+      if (/Detalhes:/i.test(t)) {
+        if ((m = /Detalhes:\s*(.*?)\s*(?:Conclus[ãa]o:|$)/i.exec(t))) os.detalhes = lim(m[1]);
+        if ((m = /Conclus[ãa]o:\s*(.*)$/i.exec(t))) os.conclusao = lim(m[1]);
+        // linhas de continuação: x < 300 → detalhes · x >= 300 → conclusão
+        for (let j = i + 1; j < ls.length; j++) {
+          const tt = ls[j].texto;
+          if (/Colaboradores|Nome\s+In[íi]cio|Total\s+Custo|Observa[çc]|Entrega\s+T[ée]cnica|Assinatura/i.test(tt)) break;
+          const x0 = (ls[j].itens && ls[j].itens[0]) ? ls[j].itens[0].x : 0;
+          if (x0 >= 300) os.conclusao = lim((os.conclusao || '') + ' ' + tt);
+          else os.detalhes = lim((os.detalhes || '') + ' ' + tt);
+        }
+      }
+
+      if ((m = /Total\s+Custo\s+OS:\s*([\d.,]+)/i.exec(t))) os.custo = num(m[1]);
+    }
+
+    if (os && os.os_num) {
+      os.maquina_parada = /parada/i.test(os.situacao_maquina || '');
+      ordens.push(os);
+    }
+  });
+  return ordens;
+}
+
+
 // extrai o texto do PDF (pdf.js) — sem limite de páginas e muito mais barato que enviar o PDF
 async function textoDoPDF(file, onProg) {
   await garantirPdfJs();
@@ -3390,6 +3482,27 @@ async function textoDoPDF(file, onProg) {
 }
 // manda o texto em blocos de páginas e junta todas as OS
 async function lerPdfTexto(file, st) {
+  // 1) PDF do ERP (RSMI005) → parser local, SEM IA: grátis, instantâneo e sem alucinação
+  try {
+    await garantirPdfJs();
+    const buf0 = await file.arrayBuffer();
+    const pdf0 = await pdfjsLib.getDocument({ data: new Uint8Array(buf0) }).promise;
+    if (st) st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo o PDF do ERP…';
+    const linhas0 = await RioParsers.extrairLinhas(pdf0);
+    if (ehRSMI005(linhas0)) {
+      const lidas = parseRSMI005(linhas0).map(o => ({
+        ...o,
+        setor: setorDe(o.recurso_cod),          // setor do app (pelo código da máquina)
+        colaboradores: o.colaboradores || null
+      }));
+      if (lidas.length) {
+        if (st) st.innerHTML = `✅ <b>${lidas.length} OS lida(s)</b> direto do PDF do ERP <span class="desc">(sem IA)</span>`;
+        return lidas;
+      }
+    }
+  } catch (_) { /* qualquer falha → cai no caminho da IA */ }
+
+  // 2) outros PDFs (layout desconhecido) → IA
   const pgs = await textoDoPDF(file, (i, n) => {
     if (st) st.innerHTML = `<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo o PDF… página ${i} de ${n}`;
   });
