@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.91<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.92<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.91';
+const APP_VER = '3.93.92';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6075,6 +6075,19 @@ function abrirIA() {
   setTimeout(() => $('iaInput').focus(), 100);
 }
 function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
+// abre o relatório completo do dia no chat (calculado no app, sem IA)
+function verBriefingCompleto(dia) {
+  try { localStorage.setItem('rp_briefing_visto', dia); } catch (_) {}
+  abrirIA();
+  setTimeout(() => {
+    const perg = 'relatório completo do dia ' + dia.slice(8, 10) + '/' + dia.slice(5, 7);
+    addIA('user', perg); iaHist.push({ role: 'user', content: perg });
+    let r = null; try { r = respostaLocal(perg); } catch (_) {}
+    if (!r) r = 'Não consegui montar o relatório desse dia agora.';
+    const txt = r + '\n\n⚡ resposta calculada no app · sem IA';
+    addIA('assistente', txt); iaHist.push({ role: 'assistant', content: r });
+  }, 250);
+}
 function mdIA(txt) {
   let s = escapeHtml(String(txt || ''));
   s = s.replace(/^######?\s*(.+)$/gm, '<div style="font-weight:800;margin:8px 0 2px">$1</div>');
@@ -7335,6 +7348,34 @@ function renderPainel() {
   $('faixaAtualiz').innerHTML = faixaFeriado() + cabecalhoInfo();
   try { const _at = dadosPainel && dadosPainel.info && dadosPainel.info.atualizado; const _vd = $('verData'); if (_vd && _at) { const _atD = new Date(_at).toLocaleDateString('pt-BR'); const _hjD = new Date().toLocaleDateString('pt-BR'); const _hoje = (_atD === _hjD); _vd.textContent = 'atualizado ' + (_hoje ? 'hoje' : _atD.slice(0, 5)); _vd.style.background = _hoje ? '#F0821E' : 'rgba(255,255,255,.12)'; _vd.style.color = _hoje ? '#fff' : '#9FB6CC'; } } catch (_) {}
   let html = cardAbaixoMeta(D, setor);
+  // ===== BRIEFING DO DIA: aparece quando o último dia produtivo é novo (uma vez por dia, por aparelho) =====
+  try {
+    const udB = (D.info && D.info.ultimoDiaProd) || null;
+    if (udB && !setor) {
+      const jaVi = localStorage.getItem('rp_briefing_visto');
+      if (jaVi !== udB) {
+        const rsB = D.producao.filter(r => r.dia === udB);
+        if (rsB.length) {
+          const kgB = rsB.reduce((a, r) => a + (+r.peso || 0), 0);
+          const cxB = rsB.filter(r => String(r.unidade || '').toUpperCase() === 'CX').reduce((a, r) => a + (+r.quantidade || 0), 0);
+          const hParB = (D.paradas || []).filter(p => p.dia === udB).reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+          const refB = (D.perdas || []).filter(r => r.dia === udB && (typeof perdaConta !== 'function' || perdaConta(r))).reduce((a, r) => a + (+r.peso || 0), 0);
+          html += `<div style="background:linear-gradient(135deg,#0B2A4A,#16406b);color:#fff;border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 4px 14px rgba(11,42,74,.22)">
+            <div style="font-size:11px;font-weight:700;color:#9Fc4e8;letter-spacing:.5px;text-transform:uppercase">📋 Briefing · ${diaSemana(udB)}, ${fmtData(udB)}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;margin:10px 0 4px">
+              <div><div style="font-size:19px;font-weight:800">${fmtKg(kgB)}</div><div style="font-size:10.5px;color:#9FB6CC">produção${cxB > 0 ? ' · ' + fmtNum(cxB) + ' cxs' : ''}</div></div>
+              <div><div style="font-size:19px;font-weight:800;color:#F0821E">${fmtHoras(hParB)}</div><div style="font-size:10.5px;color:#9FB6CC">paradas</div></div>
+              <div><div style="font-size:19px;font-weight:800;color:#E67E22">${fmtKg(refB)}</div><div style="font-size:10.5px;color:#9FB6CC">refugo</div></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button onclick="verBriefingCompleto('${udB}')" style="flex:1;background:#fff;color:var(--navy);border:none;border-radius:9px;padding:9px;font-weight:800;font-size:13px;cursor:pointer">📄 Relatório completo</button>
+              <button onclick="this.closest('div').parentElement.remove();try{localStorage.setItem('rp_briefing_visto','${udB}')}catch(_){}" style="background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:9px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer">Ok</button>
+            </div></div>`;
+        }
+      }
+    }
+  } catch (_) {}
+
   const perLabel = (periodoSel ? periodoSel.label : 'Período') + rangeReal(D.producao);
   const comPer = h => h;
   html += `<div style="position:sticky;top:var(--topo-app,96px);z-index:6;background:#EAF1F8;border:1px solid #cfe0ee;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;font-weight:700;color:var(--navy);box-shadow:0 2px 8px rgba(11,42,74,.08);display:flex;gap:8px;align-items:center;justify-content:space-between">
