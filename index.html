@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.89<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.90<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.89';
+const APP_VER = '3.93.90';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6417,8 +6417,13 @@ function respostaLocal(perg) {
   const D = dadosPainel;
   if (!D || !D.producao || !D.producao.length) return null;
   const sa = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const q = sa(perg);
+  let q = sa(perg);
   if (!q.trim()) return null;
+  // "separe por setor", "e por turno?", "detalha" → herda o assunto da pergunta anterior
+  if (q.length < 40 && /(por setor|por turno|separ|detalh|e agora|e a|desse|deste)/.test(q)) {
+    const ult = [...(iaHist || [])].reverse().find(m => m.role === 'user' && sa(m.content) !== q);
+    if (ult) q = sa(ult.content) + ' ' + q;
+  }
 
   // ---------- período ----------
   const diasProd = [...new Set(D.producao.map(r => r.dia).filter(Boolean))].sort();
@@ -6453,6 +6458,20 @@ function respostaLocal(perg) {
   const nomeM = c => (D.nomeMaq && D.nomeMaq[c]) || c;
   const escopo = maq ? `${maq} ${nomeM(maq)}` : (setor || 'todos os setores');
   const cab = `📊 **${escopo}** · ${plabel}`;
+  const porSetorPedido = /por setor|separad[oa] por setor|de cada setor|cada setor|setor a setor/.test(q) && !maq;
+
+  // === quando pedem "por setor", quebra a métrica pedida em cada setor ===
+  function agruparPorSetor(rows, valor, fmt, titulo, icone) {
+    const ps = {};
+    rows.forEach(r => { const st = setorDe(r.recurso_cod); ps[st] = (ps[st] || 0) + valor(r); });
+    const ord = Object.entries(ps).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    if (!ord.length) return `${cab}\nSem dados nesse recorte.`;
+    const totG = ord.reduce((a, x) => a + x[1], 0);
+    return `📊 **${plabel}** · ${icone} ${titulo} por setor\n\n` +
+      ord.map(([st, v]) => `**${st}** — **${fmt(v)}**`).join('\n') +
+      `\n\n**Total:** ${fmt(totG)}`;
+  }
+
   const top = (obj, n, fmt) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
     .map(([k, v], i) => `${i + 1}. ${k} — **${fmt(v)}**`).join('\n');
 
@@ -6460,6 +6479,7 @@ function respostaLocal(perg) {
   if (/parad|parou|motivo|setup|quebr/.test(q) && !/perd(a|i|eu) por parada|deixou de produzir/.test(q)) {
     const ps = (D.paradas || []).filter(dentro);
     if (!ps.length) return `${cab}\nSem paradas apontadas nesse recorte.`;
+    if (porSetorPedido && /parad|parou|motivo|setup|quebr/.test(q)) return agruparPorSetor(ps, p => +p.tempo_horas || 0, fmtHoras, 'paradas', '⏸️');
     const porMot = {}; let tot = 0;
     ps.forEach(p => { const m = p.motivo_desc || '—'; const h = +p.tempo_horas || 0; porMot[m] = (porMot[m] || 0) + h; tot += h; });
     return `${cab}\n⏸️ **${fmtHoras(tot)}** paradas em ${ps.length} apontamento(s).\n\n**Maiores motivos:**\n${top(porMot, 5, fmtHoras)}`;
@@ -6469,6 +6489,7 @@ function respostaLocal(perg) {
   if (/refug|perda de material|sucata|defeito/.test(q)) {
     const pr = (D.perdas || []).filter(r => dentro(r) && (typeof perdaConta !== 'function' || perdaConta(r)));
     if (!pr.length) return `${cab}\nSem refugo registrado nesse recorte.`;
+    if (porSetorPedido && /refug|perda de material|sucata|defeito/.test(q)) return agruparPorSetor(pr, r => +r.peso || 0, fmtKg, 'refugo', '♻️');
     const porTipo = {}; let tot = 0;
     pr.forEach(r => { const t = r.tipo_perda_desc || '—'; const k = +r.peso || 0; porTipo[t] = (porTipo[t] || 0) + k; tot += k; });
     return `${cab}\n♻️ Refugo: **${fmtKg(tot)}**\n\n**Maiores tipos:**\n${top(porTipo, 5, fmtKg)}`;
@@ -6508,6 +6529,7 @@ function respostaLocal(perg) {
   if (/produ|fabric|saiu|rendeu|quanto|total|kg|caixa|cxs|melhor|maior|pior|como (foi|esta|ta)|resumo|desempenho/.test(q) || maq || setor) {
     const rs = D.producao.filter(dentro);
     if (!rs.length) return `${cab}\nSem produção nesse recorte.`;
+    if (porSetorPedido) return agruparPorSetor(rs, r => +r.peso || 0, fmtKg, 'produção', '📦');
     let kg = 0, cx = 0; const porMaq = {}, porTurno = {};
     rs.forEach(r => {
       const k = +r.peso || 0, c2 = +r.quantidade || 0;
