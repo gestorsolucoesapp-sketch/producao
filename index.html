@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.85<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.86<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.85';
+const APP_VER = '3.93.86';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6396,11 +6396,136 @@ function _iaErroAmigavel(e) {
     return '🔑 A chave da IA não está configurada certa. Avise o administrador.';
   return 'Não consegui responder agora. Detalhe: ' + String(e).slice(0, 120);
 }
+// ============ ASSISTENTE LOCAL (sem IA, sem custo) ============
+// Responde as perguntas recorrentes calculando direto do que já está carregado no app.
+// Retorna texto pronto ou null (aí o chat cai na IA).
+function respostaLocal(perg) {
+  const D = dadosPainel;
+  if (!D || !D.producao || !D.producao.length) return null;
+  const sa = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const q = sa(perg);
+  if (!q.trim()) return null;
+
+  // ---------- período ----------
+  const diasProd = [...new Set(D.producao.map(r => r.dia).filter(Boolean))].sort();
+  const ud = ULTIMO_DIA_PROD || diasProd[diasProd.length - 1];
+  let de, ate, plabel;
+  const mData = /(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/.exec(q);
+  if (/\bhoje\b|ultimo dia/.test(q)) { de = ate = ud; plabel = 'último dia · ' + fmtData(ud); }
+  else if (/\bontem\b|dia anterior/.test(q)) {
+    const i = diasProd.indexOf(ud); const d = i > 0 ? diasProd[i - 1] : ud;
+    de = ate = d; plabel = 'dia anterior · ' + fmtData(d);
+  } else if (/semana|7 dias|ultimos dias/.test(q)) { de = addDiasISO(ud, -6); ate = ud; plabel = 'últimos 7 dias'; }
+  else if (mData) {
+    const dd = String(+mData[1]).padStart(2, '0'), mm = String(+mData[2]).padStart(2, '0');
+    const yy = mData[3] ? (mData[3].length === 2 ? '20' + mData[3] : mData[3]) : String(ud).slice(0, 4);
+    de = ate = `${yy}-${mm}-${dd}`; plabel = 'dia ' + fmtData(de);
+  } else if (/\bmes\b|mensal/.test(q)) { const ym = String(ud).slice(0, 7); de = ym + '-01'; ate = ultimoDiaMes(ym); plabel = 'mês ' + mesLabel(ym); }
+  else { de = (periodoSel && periodoSel.de) || diasProd[0]; ate = (periodoSel && periodoSel.ate) || ud; plabel = (periodoSel && periodoSel.label) || 'período carregado'; }
+
+  // ---------- setor / máquina ----------
+  let setor = null;
+  SETORES.forEach(s => { if (q.includes(sa(s))) setor = s; });
+  let maq = null;
+  const semData = q.replace(/\d{1,2}\/\d{1,2}(\/\d{2,4})?/g, ' ');
+  const todasMaq = Object.values(SETOR_MAQ || {}).flat().map(String);
+  const mm = semData.match(/\b\d{3,4}\b/g) || [];
+  for (const c of mm) { if (todasMaq.includes(c)) { maq = c; break; } }
+  if (maq && !setor) setor = null;
+
+  const dentro = r => r.dia >= de && r.dia <= ate
+    && (!setor || setorDe(r.recurso_cod) === setor)
+    && (!maq || String(r.recurso_cod) === maq);
+  const nomeM = c => (D.nomeMaq && D.nomeMaq[c]) || c;
+  const escopo = maq ? `${maq} ${nomeM(maq)}` : (setor || 'todos os setores');
+  const cab = `📊 <b>${escopo}</b> · ${plabel}`;
+  const top = (obj, n, fmt) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
+    .map(([k, v], i) => `${i + 1}. ${k} — <b>${fmt(v)}</b>`).join('<br>');
+
+  // ---------- PARADAS ----------
+  if (/parad|parou|motivo|setup|quebr/.test(q) && !/perd(a|i|eu) por parada|deixou de produzir/.test(q)) {
+    const ps = (D.paradas || []).filter(dentro);
+    if (!ps.length) return `${cab}<br>Sem paradas apontadas nesse recorte.`;
+    const porMot = {}; let tot = 0;
+    ps.forEach(p => { const m = p.motivo_desc || '—'; const h = +p.tempo_horas || 0; porMot[m] = (porMot[m] || 0) + h; tot += h; });
+    return `${cab}<br>⏸️ <b>${fmtHoras(tot)}</b> paradas em ${ps.length} apontamento(s).<br><br><b>Maiores motivos:</b><br>${top(porMot, 5, fmtHoras)}`;
+  }
+
+  // ---------- REFUGO ----------
+  if (/refug|perda de material|sucata|defeito/.test(q)) {
+    const pr = (D.perdas || []).filter(r => dentro(r) && (typeof perdaConta !== 'function' || perdaConta(r)));
+    if (!pr.length) return `${cab}<br>Sem refugo registrado nesse recorte.`;
+    const porTipo = {}; let tot = 0;
+    pr.forEach(r => { const t = r.tipo_perda_desc || '—'; const k = +r.peso || 0; porTipo[t] = (porTipo[t] || 0) + k; tot += k; });
+    return `${cab}<br>♻️ Refugo: <b>${fmtKg(tot)}</b><br><br><b>Maiores tipos:</b><br>${top(porTipo, 5, fmtKg)}`;
+  }
+
+  // ---------- OS / MANUTENÇÃO ----------
+  if (/\bos\b|ordem de servico|ordens|manutencao aberta|em aberto/.test(q)) {
+    const lista = (osLista || []).filter(o => !setor || setorDe(o.recurso_cod) === setor).filter(o => !maq || String(o.recurso_cod) === maq);
+    const abertas = lista.filter(o => !o.data_reinicio);
+    const porMaq = {}; abertas.forEach(o => { const c = String(o.recurso_cod); porMaq[`${c} ${nomeM(c)}`] = (porMaq[`${c} ${nomeM(c)}`] || 0) + 1; });
+    return `🔧 <b>${escopo}</b><br>OS em aberto: <b>${abertas.length}</b> de ${lista.length} no total.` +
+      (abertas.length ? `<br><br><b>Máquinas com mais OS abertas:</b><br>${top(porMaq, 5, v => v + ' OS')}` : '');
+  }
+
+  // ---------- META ----------
+  if (/meta|atingiu|abaixo|bateu/.test(q)) {
+    const emCx = setor && typeof setorEmCx === 'function' && setorEmCx(setor);
+    const agg = {};
+    D.producao.filter(dentro).forEach(r => {
+      const c = String(r.recurso_cod);
+      agg[c] = (agg[c] || 0) + (emCx ? (+r.quantidade || 0) : (+r.peso || 0));
+    });
+    const dias = [...new Set(D.producao.filter(dentro).map(r => r.dia))].length || 1;
+    const linhas = Object.entries(agg).map(([c, v]) => {
+      const metaDia = ['Manhã', 'Tarde', 'Noite'].reduce((a, b) => a + ((metasData && metasData[c] && metasData[c][b]) || 0), 0);
+      const alvo = metaDia * dias;
+      return { c, v, alvo, pct: alvo > 0 ? v / alvo : null };
+    }).filter(x => x.pct != null).sort((a, b) => a.pct - b.pct);
+    if (!linhas.length) return `${cab}<br>Não há meta cadastrada para esse recorte.`;
+    const ab = linhas.filter(x => x.pct < 1);
+    const fmtv = v => emCx ? fmtNum(v) + ' cxs' : fmtKg(v);
+    return `${cab}<br>🎯 <b>${ab.length}</b> de ${linhas.length} máquina(s) abaixo da meta em ${dias} dia(s).<br><br><b>Piores:</b><br>` +
+      ab.slice(0, 5).map((x, i) => `${i + 1}. ${x.c} ${nomeM(x.c)} — <b>${(x.pct * 100).toFixed(0)}%</b> (${fmtv(x.v)} de ${fmtv(x.alvo)})`).join('<br>');
+  }
+
+  // ---------- PRODUÇÃO (padrão) ----------
+  if (/produ|fabric|saiu|rendeu|quanto|total|kg|caixa|cxs|melhor|maior|pior|como (foi|esta|ta)|resumo|desempenho/.test(q) || maq || setor) {
+    const rs = D.producao.filter(dentro);
+    if (!rs.length) return `${cab}<br>Sem produção nesse recorte.`;
+    let kg = 0, cx = 0; const porMaq = {}, porTurno = {};
+    rs.forEach(r => {
+      const k = +r.peso || 0, c2 = +r.quantidade || 0;
+      kg += k; if (String(r.unidade || '').toUpperCase() === 'CX') cx += c2;
+      const c = String(r.recurso_cod); porMaq[`${c} ${nomeM(c)}`] = (porMaq[`${c} ${nomeM(c)}`] || 0) + k;
+      const b = blocoTurno(r.turno, r.dia); if (b) porTurno[b] = (porTurno[b] || 0) + k;
+    });
+    const nd = [...new Set(rs.map(r => r.dia))].length;
+    let out = `${cab}<br>📦 Produção: <b>${fmtKg(kg)}</b>${cx > 0 ? ` · <b>${fmtNum(cx)} cxs</b>` : ''} em ${nd} dia(s)`;
+    if (nd > 1) out += `<br>Média/dia: <b>${fmtKg(kg / nd)}</b>`;
+    if (Object.keys(porTurno).length > 1) out += `<br><br><b>Por turno:</b><br>` + ['Manhã', 'Tarde', 'Noite'].filter(b => porTurno[b]).map(b => `${b} — <b>${fmtKg(porTurno[b])}</b>`).join('<br>');
+    if (!maq) out += `<br><br><b>Maiores máquinas:</b><br>${top(porMaq, 5, fmtKg)}`;
+    return out;
+  }
+
+  return null;   // não entendi → deixa a IA responder
+}
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   registrarUsoIA(q);
+  // ===== tenta responder LOCALMENTE (sem IA, sem custo, instantâneo) =====
+  try {
+    const rl = respostaLocal(q);
+    if (rl) {
+      const txt = rl + '<br><span style="font-size:10.5px;color:#8395A6">⚡ resposta calculada no app · sem IA</span>';
+      addIA('assistente', txt); iaHist.push({ role: 'assistant', content: rl.replace(/<[^>]+>/g, ' ') });
+      return;
+    }
+  } catch (_) { /* qualquer erro → segue para a IA */ }
   // ===== confirmação de ação pendente (SIM/NÃO) =====
   if (acaoPendente) {
     if (/^\s*(sim|confirmo?|confirmar|pode|isso|ok|faz|fazer|manda|beleza|claro|positivo|aplica|aplicar)\b/i.test(q)) {
