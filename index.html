@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.79<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.80<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1239,7 +1239,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.79';
+const APP_VER = '3.93.80';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4273,7 +4273,13 @@ function kghDaCelula(cod, bloco) {
   if (rr) { const horas = rr.dias * H_TURNO - (rr.h_parada || 0); realKgh = horas > 0 ? rr.kg / horas : null; }
   const f = n => (n == null || !(n > 0)) ? '—' : Math.round(n).toLocaleString('pt-BR');
   const linhaReal = MOSTRAR_REAL_KGH ? `<br>real ${f(realKgh)}/h` : '';
-  return `<div style="font-size:10px;color:#5C7186;margin-top:3px;line-height:1.3">meta ${f(metaKgh)}/h${linhaReal}</div>`;
+  // setor medido em caixas: mostra cxs/h e o kg/h equivalente (≈, pelo mix real da máquina)
+  if (setorEmCx(setorDe(cod))) {
+    const fx = kgPorCxMaq(cod);
+    const kgh = (fx && metaKgh > 0) ? metaKgh * fx : null;
+    return `<div style="font-size:10px;color:#5C7186;margin-top:3px;line-height:1.3">meta ${f(metaKgh)} cxs/h${kgh ? `<br><span style="color:#3A6FB0;font-weight:700">\u2248 ${f(kgh)} kg/h</span>` : ''}${linhaReal}</div>`;
+  }
+  return `<div style="font-size:10px;color:#5C7186;margin-top:3px;line-height:1.3">meta ${f(metaKgh)} kg/h${linhaReal}</div>`;
 }
 async function carregarMetas() {
   // usa cache: metas mudam pouco; a view do real (pesada) só é buscada se o real/h estiver visível
@@ -4589,7 +4595,7 @@ async function carregarPainel() {
   }
   renderPainel();
 }
-function recarregarPainel() { dadosPainel = null; carregarPainel(); }
+function recarregarPainel() { dadosPainel = null; _kgcxCache = null; carregarPainel(); }
 // ao trocar de setor, define a métrica padrão: Embaladeiras = Cxs; demais = Peso
 function mudarSetor() {
   const s = $('fSetor').value;
@@ -6662,6 +6668,32 @@ const secao = (key, txt) => `<div class="secao-tit pbloco" data-k="s:${key}">${t
 // Agrega por máquina, por dia e por MOTIVO de parada.
 const PARADA_NAO_PERDE = m => /INTERROMP/i.test(m || '');
 const MOTIVO_OCIOSO = 'SEM APONTAMENTO (ociosa)';
+// ===== conversão kg <-> caixas por MÁQUINA (média real do período carregado) =====
+// cada máquina tem mix de produto diferente, então o fator é por máquina e é sempre aproximado (≈)
+let _kgcxCache = null;
+function kgPorCxMaq(cod) {
+  const prod = (dadosPainel && dadosPainel.producao) || null;
+  if (!prod || !prod.length) return null;          // sem dados ainda: não cacheia vazio
+  if (!_kgcxCache) {
+    _kgcxCache = {};
+    const ag = {};
+    prod.forEach(r => {
+      if (String(r.unidade || '').toUpperCase() !== 'CX') return;
+      const q = +r.quantidade || 0, kg = +r.peso || 0;
+      if (q <= 0 || kg <= 0) return;
+      const c = String(r.recurso_cod); const o = (ag[c] = ag[c] || { kg: 0, cx: 0 });
+      o.kg += kg; o.cx += q;
+    });
+    Object.entries(ag).forEach(([c, o]) => { if (o.cx > 0) _kgcxCache[c] = o.kg / o.cx; });
+  }
+  return _kgcxCache[String(cod)] || null;
+}
+// converte o valor nativo da perda (kg na maioria; CAIXAS nos setores em cxs) para as duas unidades
+function perdaKgCx(cod, v) {
+  const f = kgPorCxMaq(cod);
+  if (setorEmCx(setorDe(cod))) return { kg: f ? v * f : v, cx: v };
+  return { kg: v, cx: f ? v / f : 0 };
+}
 function kgPerdidoParadas(D, codsFiltro, opts) {
   if (!D || !metasData) return null;
   opts = opts || {};
@@ -6742,10 +6774,11 @@ function kgParada(p) {
 }
 const _diaDeParada = p => p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
 // linha de valor com a conta pequena embaixo: "1,2 t" + "3,1h × 388kg/h"
-function celKgHoras(kg, h) {
+function celKgHoras(kg, h, cx) {
   const kgh = (h > 0) ? Math.round(kg / h) : null;
+  const cxTxt = (cx && cx > 0) ? `<div style="font-size:10px;color:#3A6FB0;font-weight:800;margin-top:2px">\u2248 ${fmtNum(Math.round(cx))} cxs</div>` : '';
   const sub = (h > 0) ? `<div style="font-size:10px;color:#8A97A6;margin-top:2px">${h.toLocaleString('pt-BR',{maximumFractionDigits:1})}h × ${kgh ? kgh.toLocaleString('pt-BR') : '—'}kg/h</div>` : '';
-  return `<span class="cel neutra">${fmtKg(kg)}</span>${sub}`;
+  return `<span class="cel neutra">${fmtKg(kg)}</span>${cxTxt}${sub}`;
 }
 
 // clique numa barra de DIA → máquinas e motivos daquele dia
@@ -6753,37 +6786,41 @@ function detPerdaDia(dia) {
   const D = dadosPainel; if (!D) return;
   const ps = filtraParadas(D.paradas).filter(p => _diaDeParada(p) === dia);
   const porMaq = {}, porMot = {}, nm = {};
-  ps.forEach(p => { const kg = kgParada(p); if (kg <= 0) return; const h = p.tempo_horas || 0; const c = String(p.recurso_cod);
-    (porMaq[c] = porMaq[c] || { kg: 0, h: 0 }); porMaq[c].kg += kg; porMaq[c].h += h; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c;
-    const m = p.motivo_desc || '—'; (porMot[m] = porMot[m] || { kg: 0, h: 0 }); porMot[m].kg += kg; porMot[m].h += h; });
+  ps.forEach(p => { const v0 = kgParada(p); if (v0 <= 0) return; const h = p.tempo_horas || 0; const c = String(p.recurso_cod);
+    const u = perdaKgCx(c, v0);
+    (porMaq[c] = porMaq[c] || { kg: 0, cx: 0, h: 0 }); porMaq[c].kg += u.kg; porMaq[c].cx += u.cx; porMaq[c].h += h; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c;
+    const m = p.motivo_desc || '—'; (porMot[m] = porMot[m] || { kg: 0, cx: 0, h: 0 }); porMot[m].kg += u.kg; porMot[m].cx += u.cx; porMot[m].h += h; });
   const total = Object.values(porMaq).reduce((a, v) => a + v.kg, 0);
+  const totalCx = Object.values(porMaq).reduce((a, v) => a + (v.cx || 0), 0);
   const totalH = Object.values(porMaq).reduce((a, v) => a + v.h, 0);
   const maq = Object.entries(porMaq).sort((a, b) => b[1].kg - a[1].kg);
   const mot = Object.entries(porMot).sort((a, b) => b[1].kg - a[1].kg);
   abreDet('Perda por parada · ' + fmtDataSem(dia), `
-    <p class="idet-desc">Total ${fmtKg(total)} deixaram de ser produzidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h paradas</p>
-    ${tabSimples(['Máquina', 'kg'], maq.map(([c, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td>${celKgHoras(v.kg, v.h)}</td></tr>`).join('') || '<tr><td class="nome">—</td><td>—</td></tr>')}
+    <p class="idet-desc">Total ${fmtKg(total)}${totalCx > 0 ? ' \u00b7 \u2248 ' + fmtNum(Math.round(totalCx)) + ' cxs' : ''} deixaram de ser produzidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h paradas</p>
+    ${tabSimples(['Máquina', 'kg'], maq.map(([c, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td>${celKgHoras(v.kg, v.h, v.cx)}</td></tr>`).join('') || '<tr><td class="nome">—</td><td>—</td></tr>')}
     <div style="height:8px"></div>
-    ${tabSimples(['Motivo', 'kg'], mot.map(([m, v]) => `<tr><td class="nome">${escapeHtml(m)}</td><td>${celKgHoras(v.kg, v.h)}</td></tr>`).join(''))}`);
+    ${tabSimples(['Motivo', 'kg'], mot.map(([m, v]) => `<tr><td class="nome">${escapeHtml(m)}</td><td>${celKgHoras(v.kg, v.h, v.cx)}</td></tr>`).join(''))}`);
 }
 // clique numa MÁQUINA → motivos daquela máquina
 function detPerdaMaq(cod, dia) {
   const D = dadosPainel; if (!D) return; cod = String(cod);
   const ps = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod && (!dia || _diaDeParada(p) === dia));
   const porMot = {};
-  ps.forEach(p => { const kg = kgParada(p); if (kg <= 0) return; const h = p.tempo_horas || 0; const m = p.motivo_desc || '—';
-    (porMot[m] = porMot[m] || { kg: 0, h: 0 }); porMot[m].kg += kg; porMot[m].h += h; });
+  ps.forEach(p => { const v0 = kgParada(p); if (v0 <= 0) return; const h = p.tempo_horas || 0; const m = p.motivo_desc || '—';
+    const u = perdaKgCx(cod, v0);
+    (porMot[m] = porMot[m] || { kg: 0, cx: 0, h: 0 }); porMot[m].kg += u.kg; porMot[m].cx += u.cx; porMot[m].h += h; });
   // ociosidade sem apontamento desta máquina (vem do mesmo cálculo da barra)
   { const kp = kgPerdidoParadas(D, [cod], dia ? { dia } : undefined);
     if (kp) { const oc = kp.porMot.find(x => x.motivo === MOTIVO_OCIOSO);
-      if (oc && oc.kg > 0) { (porMot[MOTIVO_OCIOSO] = porMot[MOTIVO_OCIOSO] || { kg: 0, h: 0 }); porMot[MOTIVO_OCIOSO].kg += oc.kg; porMot[MOTIVO_OCIOSO].h += (oc.horas || 0); } } }
+      if (oc && oc.kg > 0) { const uo = perdaKgCx(cod, oc.kg); (porMot[MOTIVO_OCIOSO] = porMot[MOTIVO_OCIOSO] || { kg: 0, cx: 0, h: 0 }); porMot[MOTIVO_OCIOSO].kg += uo.kg; porMot[MOTIVO_OCIOSO].cx += uo.cx; porMot[MOTIVO_OCIOSO].h += (oc.horas || 0); } } }
   const total = Object.values(porMot).reduce((a, v) => a + v.kg, 0);
+  const totalCx = Object.values(porMot).reduce((a, v) => a + (v.cx || 0), 0);
   const totalH = Object.values(porMot).reduce((a, v) => a + v.h, 0);
   const mot = Object.entries(porMot).sort((a, b) => b[1].kg - a[1].kg);
   const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
   abreDet('Perda · ' + cod + ' ' + nome + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}
-    <p class="idet-desc">Total ${fmtKg(total)} perdidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h paradas${dia ? ' neste dia' : ''}</p>
-    ${tabSimples(['Motivo', 'kg'], mot.map(([m, v]) => `<tr><td class="nome">${escapeHtml(m)}</td><td>${celKgHoras(v.kg, v.h)}</td></tr>`).join(''))}`);
+    <p class="idet-desc">Total ${fmtKg(total)}${totalCx > 0 ? ' \u00b7 \u2248 ' + fmtNum(Math.round(totalCx)) + ' cxs' : ''} perdidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h paradas${dia ? ' neste dia' : ''}</p>
+    ${tabSimples(['Motivo', 'kg'], mot.map(([m, v]) => `<tr><td class="nome">${escapeHtml(m)}</td><td>${celKgHoras(v.kg, v.h, v.cx)}</td></tr>`).join(''))}`);
 }
 // clique num MOTIVO → máquinas afetadas por aquele motivo
 function detPerdaMotivo(motivoEnc, dia, setor) {
@@ -6796,19 +6833,21 @@ function detPerdaMotivo(motivoEnc, dia, setor) {
     cods.forEach(c => {
       const kp = kgPerdidoParadas(D, [c], dia ? { dia } : undefined);
       const oc = kp.porMot.find(x => x.motivo === MOTIVO_OCIOSO);
-      if (oc && oc.kg > 0) { porMaq[c] = { kg: oc.kg, h: oc.horas || 0 }; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; }
+      if (oc && oc.kg > 0) { const uo = perdaKgCx(c, oc.kg); porMaq[c] = { kg: uo.kg, cx: uo.cx, h: oc.horas || 0 }; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; }
     });
   } else {
     const ps = filtraParadas(D.paradas).filter(p => (p.motivo_desc || '—') === motivo && (!dia || _diaDeParada(p) === dia) && (!setor || setorDe(p.recurso_cod) === setor));
-    ps.forEach(p => { const kg = kgParada(p); if (kg <= 0) return; const h = p.tempo_horas || 0; const c = String(p.recurso_cod);
-      (porMaq[c] = porMaq[c] || { kg: 0, h: 0 }); porMaq[c].kg += kg; porMaq[c].h += h; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; });
+    ps.forEach(p => { const v0 = kgParada(p); if (v0 <= 0) return; const h = p.tempo_horas || 0; const c = String(p.recurso_cod);
+      const u = perdaKgCx(c, v0);
+      (porMaq[c] = porMaq[c] || { kg: 0, cx: 0, h: 0 }); porMaq[c].kg += u.kg; porMaq[c].cx += u.cx; porMaq[c].h += h; nm[c] = (D.nomeMaq && D.nomeMaq[c]) || c; });
   }
   const total = Object.values(porMaq).reduce((a, v) => a + v.kg, 0);
+  const totalCx = Object.values(porMaq).reduce((a, v) => a + (v.cx || 0), 0);
   const totalH = Object.values(porMaq).reduce((a, v) => a + v.h, 0);
   const maq = Object.entries(porMaq).sort((a, b) => b[1].kg - a[1].kg);
   abreDet('Perda · ' + motivo + (setor ? ' · ' + setor : '') + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}
-    <p class="idet-desc">Total ${fmtKg(total)} perdidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h${dia ? ' no dia' : ''}</p>
-    ${tabSimples(['Máquina', 'kg'], maq.map(([c, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td>${celKgHoras(v.kg, v.h)}</td></tr>`).join(''))}`);
+    <p class="idet-desc">Total ${fmtKg(total)}${totalCx > 0 ? ' \u00b7 \u2248 ' + fmtNum(Math.round(totalCx)) + ' cxs' : ''} perdidos em ${totalH.toLocaleString('pt-BR',{maximumFractionDigits:1})} h${dia ? ' no dia' : ''}</p>
+    ${tabSimples(['Máquina', 'kg'], maq.map(([c, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td><td>${celKgHoras(v.kg, v.h, v.cx)}</td></tr>`).join(''))}`);
 }
 
 // preenche o N do SETUP nos Paretos com as TROCAS REAIS (mesma conta da aba Itens)
