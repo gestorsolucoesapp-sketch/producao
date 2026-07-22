@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.92<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.93<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -639,6 +639,14 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="card">
         <div class="titulo-sec">Usuários</div>
         <div id="listaUsuarios"><p class="desc">Carregando…</p></div>
+      </div>
+      <div class="card oculto" id="cardBriefing">
+        <div class="titulo-sec">Briefing diário automático</div>
+        <p class="desc" style="margin-bottom:10px">Quando os dados de um novo dia entram, o app cria automaticamente uma tarefa com o resumo do dia (produção, paradas, refugo) para a pessoa escolhida — cai direto na aba Tarefas dela.</p>
+        <div class="campo" style="margin-bottom:8px"><label for="briefDest">Enviar o briefing para</label>
+          <select id="briefDest"><option value="">— desativado —</option></select></div>
+        <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário</button>
+        <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
       <div class="card oculto" id="cardRoteamento">
         <div class="titulo-sec">Direcionamento automático (Manutenção)</div>
@@ -1240,7 +1248,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.92';
+const APP_VER = '3.93.93';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6074,6 +6082,57 @@ function abrirIA() {
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
   setTimeout(() => $('iaInput').focus(), 100);
 }
+// ===== BRIEFING DIÁRIO AUTOMÁTICO (vira tarefa para o destinatário escolhido) =====
+let _briefDest = undefined;
+async function getBriefDest() {
+  try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_dest').maybeSingle(); _briefDest = data ? data.valor : null; }
+  catch (_) { _briefDest = null; }
+  return _briefDest;
+}
+async function renderBriefingConfig() {
+  const c = $('cardBriefing'); if (!c) return;
+  c.classList.toggle('oculto', !souAdmin);
+  if (!souAdmin) return;
+  const sel = $('briefDest'); if (!sel) return;
+  let colegas = [];
+  try { const { data } = await sb.from('colegas').select('id,nome,setor').order('nome'); colegas = data || []; } catch (_) {}
+  await getBriefDest();
+  sel.innerHTML = '<option value="">— desativado —</option>' +
+    colegas.map(u => `<option value="${u.id}" ${_briefDest === u.id ? 'selected' : ''}>${escapeHtml(u.nome)}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('');
+}
+async function salvarBriefingDest() {
+  const v = $('briefDest').value || null;
+  const st = $('briefStatus'); st.textContent = 'Salvando…';
+  try {
+    await sb.from('app_config').upsert({ chave: 'briefing_dest', valor: v }, { onConflict: 'chave' });
+    _briefDest = v;
+    st.innerHTML = v ? '✅ Briefing será enviado automaticamente para essa pessoa.' : 'Briefing automático desativado.';
+  } catch (e) { st.textContent = '❌ ' + (e.message || 'não salvou'); }
+}
+// chamada quando o painel carrega: se entrou dia novo e há destinatário, cria a tarefa (uma vez por dia)
+async function gerarBriefingTarefa() {
+  try {
+    const D = dadosPainel; if (!D || !D.info) return;
+    const ud = D.info.ultimoDiaProd; if (!ud) return;
+    if (_briefDest === undefined) await getBriefDest();
+    if (!_briefDest) return;
+    // já existe tarefa desse dia? (marca de controle em app_config)
+    const { data: ctrl } = await sb.from('app_config').select('valor').eq('chave', 'briefing_ultimo').maybeSingle();
+    if (ctrl && ctrl.valor === ud) return;                 // já gerado para esse dia
+    // monta o texto (mesmo relatório do assistente local)
+    let corpo = null; try { corpo = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
+    if (!corpo) return;
+    const { error } = await sb.from('tarefas').insert({
+      titulo: '📋 Briefing de produção · ' + fmtData(ud),
+      responsavel_id: _briefDest,
+      criado_por: (perfil && perfil.id) || null,
+      criado_por_nome: (perfil && perfil.nome) || 'Sistema',
+      prioridade: 'media',
+      descricao: corpo
+    });
+    if (!error) await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
+  } catch (_) { /* silencioso: nunca trava o painel */ }
+}
 function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
 // abre o relatório completo do dia no chat (calculado no app, sem IA)
 function verBriefingCompleto(dia) {
@@ -7643,6 +7702,7 @@ function renderPainel() {
 
 
   box.innerHTML = comPer(html); posRenderPainel(); setTimeout(() => preencherSetupsReais(setor, ud), 0);
+  setTimeout(() => { try { gerarBriefingTarefa(); } catch (_) {} }, 1500);
 }
 
 let novosIntegrantes = [];   // cadastros recentes (só o gestor é avisado)
@@ -7761,6 +7821,7 @@ async function carregarUsuarios() {
   if (!souAdmin) return;
   // direcionamento automático (Manutenção) — agora mora nesta aba
   try { await getUsuariosOS(); await getRoteamento(); renderRoteamento(); } catch (_) {}
+  try { await renderBriefingConfig(); } catch (_) {}
   atualizarInfoUltima();
   const box = $('listaUsuarios');
   box.innerHTML = '<p class="desc">Carregando…</p>';
