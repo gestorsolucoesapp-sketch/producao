@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.93<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.94<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -646,6 +646,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <div class="campo" style="margin-bottom:8px"><label for="briefDest">Enviar o briefing para</label>
           <select id="briefDest"><option value="">— desativado —</option></select></div>
         <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário</button>
+        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="dispararBriefingAgora()">📨 Disparar agora (dia atual)</button>
         <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
       <div class="card oculto" id="cardRoteamento">
@@ -675,6 +676,18 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <p class="desc" style="margin-top:6px;text-align:center;font-size:12px">O PDF do ERP é lido com mais precisão que a foto do papel</p>
         <div id="osStatus" class="desc" style="margin-top:8px;text-align:center"></div>
         <div id="osForm" class="oculto" style="margin-top:12px"></div>
+      </div>
+      <div class="card">
+        <div class="titulo-sec">📚 Manuais das máquinas</div>
+        <p class="desc" style="margin-bottom:10px">Guarde aqui os manuais (PDF). Depois é só perguntar ao assistente — ex.: <i>"como troco o rolo da 1703?"</i> — que ele consulta o manual da máquina.</p>
+        <input type="file" id="manualFile" accept="application/pdf" style="display:none" onchange="subirManual(this)">
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div class="campo" style="margin:0;flex:1;min-width:120px"><label for="manualMaq">Máquina (opcional)</label>
+            <select id="manualMaq"><option value="">Geral / sem máquina</option></select></div>
+          <button class="btn btn-verde" style="flex:1;min-width:120px" onclick="document.getElementById('manualFile').click()">📎 Adicionar manual (PDF)</button>
+        </div>
+        <div id="manualStatus" class="desc" style="margin-top:8px;text-align:center"></div>
+        <div id="manuaisLista" style="margin-top:12px"><p class="desc">Carregando…</p></div>
       </div>
       <div class="card">
         <div id="mntResumo" style="text-align:center;margin-bottom:6px"></div>
@@ -1248,7 +1261,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.93';
+const APP_VER = '3.93.94';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3963,6 +3976,7 @@ async function carregarManut() {
     osLista = await buscarTodasOS();
   } catch (_) { osLista = []; }
   renderManut();
+  try { carregarManuais(); } catch (_) {}
 }
 
 // tempo rodando desde que alguém pegou a OS
@@ -6110,6 +6124,25 @@ async function salvarBriefingDest() {
   } catch (e) { st.textContent = '❌ ' + (e.message || 'não salvou'); }
 }
 // chamada quando o painel carrega: se entrou dia novo e há destinatário, cria a tarefa (uma vez por dia)
+async function dispararBriefingAgora() {
+  const st = $('briefStatus'); const dest = $('briefDest').value || _briefDest;
+  if (!dest) { st.textContent = '⚠️ Escolha e salve um destinatário primeiro.'; return; }
+  st.textContent = 'Enviando…';
+  try {
+    const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
+    if (!ud) { st.textContent = 'Sem dia de produção carregado.'; return; }
+    let corpo = null; try { corpo = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
+    if (!corpo) { st.textContent = 'Não consegui montar o relatório.'; return; }
+    const { error } = await sb.from('tarefas').insert({
+      titulo: '📋 Briefing de produção · ' + fmtData(ud),
+      responsavel_id: dest, criado_por: (perfil && perfil.id) || null,
+      criado_por_nome: (perfil && perfil.nome) || 'Sistema', prioridade: 'media', descricao: corpo
+    });
+    if (error) { st.textContent = '❌ ' + error.message; return; }
+    await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
+    st.innerHTML = '✅ Briefing enviado como tarefa para o destinatário.';
+  } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
+}
 async function gerarBriefingTarefa() {
   try {
     const D = dadosPainel; if (!D || !D.info) return;
@@ -6132,6 +6165,80 @@ async function gerarBriefingTarefa() {
     });
     if (!error) await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
   } catch (_) { /* silencioso: nunca trava o painel */ }
+}
+// ===== MANUAIS DAS MÁQUINAS =====
+async function carregarManuais() {
+  // popular seletor de máquina
+  const sel = $('manualMaq');
+  if (sel && sel.options.length <= 1) {
+    const maqs = [];
+    Object.entries(SETOR_MAQ || {}).forEach(([st, cods]) => cods.forEach(c => maqs.push({ c, st })));
+    maqs.sort((a, b) => a.c.localeCompare(b.c, 'pt', { numeric: true }));
+    sel.innerHTML = '<option value="">Geral / sem máquina</option>' +
+      maqs.map(m => `<option value="${m.c}">${m.c} · ${m.st}</option>`).join('');
+  }
+  const box = $('manuaisLista'); if (!box) return;
+  try {
+    const { data } = await sb.from('manuais').select('id,titulo,recurso_cod,setor,arquivo_url,criado_em').order('criado_em', { ascending: false });
+    if (!data || !data.length) { box.innerHTML = '<p class="desc">Nenhum manual cadastrado ainda.</p>'; return; }
+    box.innerHTML = data.map(m => `<div style="display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;margin-bottom:6px">
+      <span style="font-size:18px">📄</span>
+      <div style="flex:1;min-width:0"><div style="font-weight:700;color:var(--navy);font-size:13.5px">${escapeHtml(m.titulo)}</div>
+      <div class="desc" style="font-size:11px">${m.recurso_cod ? 'máq ' + escapeHtml(m.recurso_cod) : 'geral'}${m.setor ? ' · ' + escapeHtml(m.setor) : ''}</div></div>
+      <a href="${escapeHtml(m.arquivo_url)}" target="_blank" style="color:#3A6FB0;font-weight:700;font-size:12px;text-decoration:none">abrir</a>
+      <a onclick="excluirManual('${m.id}')" style="color:#D64545;cursor:pointer;font-size:12px">excluir</a></div>`).join('');
+  } catch (e) { box.innerHTML = '<p class="desc">Erro ao listar: ' + escapeHtml(e.message) + '</p>'; }
+}
+async function subirManual(input) {
+  const f = (input.files || [])[0]; if (!f) return;
+  const st = $('manualStatus'); const cod = $('manualMaq').value || null;
+  st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Enviando e lendo o PDF…';
+  try {
+    // 1) extrai o texto (para a IA consultar depois) — sem custo, local
+    let texto = '';
+    try { await garantirPdfJs(); const buf = await f.arrayBuffer(); const pgs = await textoDoPDF(new Blob([buf], { type: 'application/pdf' })); texto = (pgs || []).join('\n'); } catch (_) {}
+    // 2) sobe o arquivo pro Storage
+    const nome = 'manuais/' + Date.now() + '_' + f.name.replace(/[^\w.\-]+/g, '_');
+    const { error: eup } = await sb.storage.from('os-fotos').upload(nome, f, { contentType: 'application/pdf', upsert: false });
+    if (eup) { st.textContent = '❌ Upload: ' + eup.message; return; }
+    const { data: pub } = sb.storage.from('os-fotos').getPublicUrl(nome);
+    // 3) indexa
+    const { error } = await sb.from('manuais').insert({
+      titulo: f.name.replace(/\.pdf$/i, ''), recurso_cod: cod, setor: cod ? setorDe(cod) : null,
+      arquivo_url: pub.publicUrl, arquivo_nome: f.name, texto: texto.slice(0, 500000),
+      criado_por: (perfil && perfil.id) || null, criado_por_nome: (perfil && perfil.nome) || null
+    });
+    if (error) { st.textContent = '❌ ' + error.message; return; }
+    st.innerHTML = '✅ Manual adicionado' + (texto ? ' e indexado para a IA.' : ' (sem texto legível — a IA não vai conseguir ler este).');
+    input.value = ''; _manuaisCache = null; carregarManuais();
+  } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
+}
+async function excluirManual(id) {
+  if (!confirm('Excluir este manual?')) return;
+  try { await sb.from('manuais').delete().eq('id', id); _manuaisCache = null; carregarManuais(); } catch (_) {}
+}
+// busca nos manuais para o assistente responder (procura trecho relevante)
+let _manuaisCache = null;
+async function buscarNoManual(pergunta, cod) {
+  try {
+    if (!_manuaisCache) { const { data } = await sb.from('manuais').select('titulo,recurso_cod,texto'); _manuaisCache = data || []; }
+    const cands = _manuaisCache.filter(m => m.texto && (!cod || !m.recurso_cod || String(m.recurso_cod) === String(cod)));
+    if (!cands.length) return null;
+    const palavras = pergunta.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').match(/[a-z0-9]{4,}/g) || [];
+    let melhor = null, melhorScore = 0, trecho = '';
+    cands.forEach(m => {
+      const t = m.texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      // acha a janela de texto com mais palavras da pergunta
+      const paras = m.texto.split(/\n{2,}|\.\s+/);
+      paras.forEach(p => {
+        const pl = p.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const sc = palavras.reduce((a, w) => a + (pl.includes(w) ? 1 : 0), 0);
+        if (sc > melhorScore) { melhorScore = sc; melhor = m; trecho = p.trim(); }
+      });
+    });
+    if (!melhor || melhorScore < 2) return null;
+    return `📖 **Do manual: ${melhor.titulo}**\n\n${trecho.slice(0, 600)}${trecho.length > 600 ? '…' : ''}`;
+  } catch (_) { return null; }
 }
 function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
 // abre o relatório completo do dia no chat (calculado no app, sem IA)
@@ -6576,6 +6683,11 @@ function respostaLocal(perg) {
       (abertas.length ? `\n\n**Máquinas com mais OS abertas:**\n${top(porMaq, 5, v => v + ' OS')}` : '');
   }
 
+  // ---------- MANUAL (como fazer / trocar / ajustar / erro) ----------
+  if (/como (troc|faz|ajust|regul|calibr|limp|monta|desmonta)|manual|procedimento|passo a passo|erro |alarme|codigo de erro/.test(q)) {
+    // resolvido de forma assíncrona: marca para o enviarIA consultar
+    return { _consultarManual: true, cod: maq };
+  }
   // ---------- RELATÓRIO COMPLETO ----------
   if (/relatorio|relatório|completo|panorama|resumo (geral|completo)|analise (do|do periodo)|o que (influenciou|aconteceu)/.test(q)) {
     const rs = D.producao.filter(dentro);
@@ -6709,6 +6821,13 @@ async function enviarIA() {
   // ===== tenta responder LOCALMENTE (sem IA, sem custo, instantâneo) =====
   try {
     const rl = respostaLocal(q);
+    if (rl && rl._consultarManual) {
+      const man = await buscarNoManual(q, rl.cod);
+      const txt = man ? man + '\n\n⚡ resposta do manual · sem IA'
+                      : 'Não encontrei isso nos manuais cadastrados. Você pode adicionar o manual dessa máquina na aba Manutenção › 📚 Manuais.';
+      addIA('assistente', txt); iaHist.push({ role: 'assistant', content: txt.replace(/\n\n⚡.*/, '') });
+      return;
+    }
     if (rl) {
       const txt = rl + '\n\n⚡ resposta calculada no app · sem IA';
       addIA('assistente', txt); iaHist.push({ role: 'assistant', content: rl });
