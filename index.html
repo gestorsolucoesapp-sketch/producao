@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.90<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.91<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.90';
+const APP_VER = '3.93.91';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6502,6 +6502,87 @@ function respostaLocal(perg) {
     const porMaq = {}; abertas.forEach(o => { const c = String(o.recurso_cod); porMaq[`${c} ${nomeM(c)}`] = (porMaq[`${c} ${nomeM(c)}`] || 0) + 1; });
     return `🔧 **${escopo}**\nOS em aberto: **${abertas.length}** de ${lista.length} no total.` +
       (abertas.length ? `\n\n**Máquinas com mais OS abertas:**\n${top(porMaq, 5, v => v + ' OS')}` : '');
+  }
+
+  // ---------- RELATÓRIO COMPLETO ----------
+  if (/relatorio|relatório|completo|panorama|resumo (geral|completo)|analise (do|do periodo)|o que (influenciou|aconteceu)/.test(q)) {
+    const rs = D.producao.filter(dentro);
+    if (!rs.length) return `${cab}\n📄 **Relatório** — sem produção nesse recorte.`;
+    const emCx = setor && typeof setorEmCx === 'function' && setorEmCx(setor);
+    const vlr = r => emCx ? (+r.quantidade || 0) : (+r.peso || 0);
+    const fmtv = v => emCx ? fmtNum(v) + ' cxs' : fmtKg(v);
+    const dias = [...new Set(rs.map(r => r.dia))].length || 1;
+
+    // produção total + kg/cxs
+    let kg = 0, cx = 0; const porMaqV = {};
+    rs.forEach(r => { kg += (+r.peso || 0); if (String(r.unidade || '').toUpperCase() === 'CX') cx += (+r.quantidade || 0); const c = String(r.recurso_cod); porMaqV[c] = (porMaqV[c] || 0) + vlr(r); });
+
+    // meta por máquina
+    const metaLinhas = Object.entries(porMaqV).map(([c, v]) => {
+      const metaDia = ['Manhã', 'Tarde', 'Noite'].reduce((a, b) => a + ((metasData && metasData[c] && metasData[c][b]) || 0), 0);
+      const alvo = metaDia * dias;
+      return { c, v, alvo, pct: alvo > 0 ? v / alvo : null };
+    });
+    const comMeta = metaLinhas.filter(x => x.pct != null);
+    const abaixo = comMeta.filter(x => x.pct < 1).sort((a, b) => a.pct - b.pct);
+    const metaTot = comMeta.reduce((a, x) => a + x.alvo, 0);
+    const realMeta = comMeta.reduce((a, x) => a + x.v, 0);
+    const buraco = Math.max(0, metaTot - realMeta);
+
+    // paradas
+    const ps = (D.paradas || []).filter(dentro);
+    const horasPar = ps.reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+    const porMot = {}; ps.forEach(p => { const m = p.motivo_desc || '—'; porMot[m] = (porMot[m] || 0) + (+p.tempo_horas || 0); });
+
+    // kg estimados perdidos nas paradas (horas × meta/h da máquina)
+    let kgPerdido = 0;
+    ps.forEach(p => {
+      if (typeof PARADA_NAO_PERDE === 'function' && PARADA_NAO_PERDE(p.motivo_desc)) return;
+      const c = String(p.recurso_cod); const md = metasData && metasData[c];
+      if (!md) return;
+      const metaDiaKg = ['Manhã', 'Tarde', 'Noite'].reduce((a, b) => a + ((md[b]) || 0), 0);
+      const kgh = metaDiaKg / 22.5;   // 22,5 h úteis/dia
+      kgPerdido += (+p.tempo_horas || 0) * kgh;
+    });
+
+    // refugo
+    const pr = (D.perdas || []).filter(r => dentro(r) && (typeof perdaConta !== 'function' || perdaConta(r)));
+    const refKg = pr.reduce((a, r) => a + (+r.peso || 0), 0);
+
+    // monta o relatório
+    let out = `📄 **RELATÓRIO — ${escopo}**\n${plabel} · ${dias} dia(s)\n\n`;
+    out += `**📦 Produção**\n${fmtKg(kg)}${cx > 0 ? ` · ${fmtNum(cx)} cxs` : ''}`;
+    if (dias > 1) out += ` · média ${fmtKg(kg / dias)}/dia`;
+    out += `\n\n`;
+
+    if (comMeta.length) {
+      const pctG = metaTot > 0 ? (realMeta / metaTot * 100) : 0;
+      out += `**🎯 Meta**\nAtingiu **${pctG.toFixed(0)}%** da meta (${fmtv(realMeta)} de ${fmtv(metaTot)})`;
+      if (buraco > 0) out += ` — faltaram **${fmtv(buraco)}**`;
+      out += `\n${abaixo.length} de ${comMeta.length} máquina(s) abaixo da meta`;
+      if (abaixo.length) out += `\n\n**Piores:**\n` + abaixo.slice(0, 5).map((x, i) => `${i + 1}. ${x.c} ${nomeM(x.c)} — **${(x.pct * 100).toFixed(0)}%**`).join('\n');
+      out += `\n\n`;
+    }
+
+    out += `**⏸️ Paradas** (o que travou a produção)\n${fmtHoras(horasPar)} em ${ps.length} apontamento(s)`;
+    if (kgPerdido > 0) out += ` · ≈ **${fmtKg(kgPerdido)}** deixaram de ser produzidos`;
+    if (Object.keys(porMot).length) out += `\n\n**Maiores motivos:**\n` + top(porMot, 5, fmtHoras);
+    out += `\n\n`;
+
+    out += `**♻️ Refugo**\n${fmtKg(refKg)} de material perdido\n\n`;
+
+    // conclusão: conecta parada+refugo com o buraco da meta
+    out += `**🔎 O que influenciou**\n`;
+    const perdaTotal = kgPerdido + refKg;
+    if (buraco > 0 && perdaTotal > 0) {
+      const expl = Math.min(100, (perdaTotal / buraco) * 100);
+      out += `Do que faltou pra meta (${fmtv(buraco)}), cerca de **${expl.toFixed(0)}%** se explica por parada + refugo. `;
+    }
+    const maiorMot = Object.entries(porMot).sort((a, b) => b[1] - a[1])[0];
+    if (maiorMot) out += `Maior ofensor: **${maiorMot[0]}** (${fmtHoras(maiorMot[1])}).`;
+    if (buraco <= 0 && comMeta.length) out += `Meta batida no período. 👏`;
+
+    return out;
   }
 
   // ---------- META ----------
