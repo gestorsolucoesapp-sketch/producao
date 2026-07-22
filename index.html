@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.87<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.88<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1240,7 +1240,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.87';
+const APP_VER = '3.93.88';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1849,7 +1849,7 @@ async function mostrarApp() {
   if (souAdmin) carregarNovosIntegrantes();
   Promise.all([
     getTarefas().catch(() => {}),
-    (async () => { try { const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500); if (!osLista || !osLista.length) osLista = data || []; } catch (_) {} })()
+    (async () => { try { const d = await buscarTodasOS(); if (!osLista || !osLista.length) osLista = d; } catch (_) {} })()
   ]).then(() => atualizarSino());
 }
 // fecha o acesso ao fechar/atualizar a aba
@@ -2668,7 +2668,7 @@ async function carregarDadosAM(de) {
     fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,op', de)
   ]);
   let os = [];
-  try { const r = await sb.from('manutencao_os').select('recurso_cod,setor,data_reinicio,data_abertura,custo,horas_parada,motivo,atividade').limit(3000); os = r.data || []; } catch (_) {}
+  try { os = await buscarTodasOS('recurso_cod,setor,data_reinicio,data_abertura,custo,horas_parada,motivo,atividade'); } catch (_) {}
   return { prod, perd, par, os, ano };
 }
 function _amCacheAtual() { return _amScope === 'anual' ? _amCacheAno : _amCacheMes; }
@@ -3930,6 +3930,20 @@ function ligarDropOS() {
   dz.addEventListener('click', () => $('osFoto').click());
   dz.style.cursor = 'pointer';
 }
+// carrega TODAS as OS (o Supabase corta em 1000 por requisição → pagina)
+const OS_COLS = 'id,os_num,data_abertura,data_parada,data_reinicio,recurso_cod,maquina_desc,setor,atividade,motivo,submotivo,urgencia,situacao_maquina,autor,detalhes,conclusao,colaboradores,custo,horas_parada,criado_por,criado_por_nome,criado_em,escopo,maquina_parada,responsavel_id,responsavel_nome,responsaveis,iniciada_em,iniciada_por,iniciada_por_nome,horas_execucao,foto_url';
+async function buscarTodasOS(cols) {
+  const passo = 1000; let ini = 0, tudo = [];
+  while (ini < 20000) {
+    const { data, error } = await sb.from('manutencao_os').select(cols || OS_COLS)
+      .order('data_abertura', { ascending: false }).range(ini, ini + passo - 1);
+    if (error) break;
+    tudo = tudo.concat(data || []);
+    if (!data || data.length < passo) break;
+    ini += passo;
+  }
+  return tudo;
+}
 async function carregarManut() {
   setTimeout(travarSetores, 0);
   ligarDropOS();
@@ -3938,8 +3952,7 @@ async function carregarManut() {
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
   try {
-    const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500);
-    osLista = data || [];
+    osLista = await buscarTodasOS();
   } catch (_) { osLista = []; }
   renderManut();
 }
@@ -4052,7 +4065,7 @@ async function aplicarRoteamento() {
   // pode ser chamado pela aba Usuários, onde a lista de OS ainda não foi carregada
   if (!osLista || !osLista.length) {
     try {
-      const { data } = await sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(500);
+      const data = await buscarTodasOS();
       osLista = data || [];
     } catch (_) { osLista = []; }
   }
@@ -4695,7 +4708,7 @@ async function carregarPainel() {
         (getRegrasPerda()),
         getMaqsAtivas(),
         (diasOverride === null ? getDiasOverride() : Promise.resolve()),
-        sb.from('manutencao_os').select('*').order('data_abertura', { ascending: false }).limit(300).then(ro => { osLista = ro.data || []; }).catch(() => {}),
+        buscarTodasOS().then(ro => { osLista = ro || []; }).catch(() => {}),
         sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20).then(re2 => { evtOS = re2.data || []; }).catch(() => { evtOS = []; })
       ]);
       classificarPerdas(perdas);
