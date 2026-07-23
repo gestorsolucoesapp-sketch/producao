@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.97<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.98<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -648,7 +648,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <div class="campo" style="margin-bottom:8px"><label for="briefHora">Horário do envio no Telegram (todo dia)</label>
           <select id="briefHora"></select></div>
         <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário e horário</button>
-        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="dispararBriefingAgora()">📨 Disparar agora (dia atual)</button>
+        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="abrirPreviewBriefing()">👁️ Conferir / editar e enviar</button>
+        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="dispararBriefingAgora()">📨 Enviar como tarefa (sem editar)</button>
         <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
       <div class="card oculto" id="cardRoteamento">
@@ -811,6 +812,24 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 <button id="mntBtn" class="mnt-fab oculto" onclick="menuManut()" aria-label="Manutenção" title="Manutenção">🔧</button>
 <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
 <button id="refreshFab" class="rf-fab" onclick="refreshAbaAtiva()" aria-label="Atualizar" title="Atualizar dados">🔄</button>
+<div id="briefPreview" class="oculto" style="position:fixed;inset:0;background:rgba(11,42,74,.55);z-index:950;display:flex;align-items:center;justify-content:center;padding:16px">
+  <div style="background:#fff;border-radius:16px;width:100%;max-width:560px;max-height:88vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.3)">
+    <div style="padding:14px 16px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0">
+      <b>👁️ Conferir briefing</b>
+      <span onclick="$('briefPreview').classList.add('oculto')" style="cursor:pointer;font-size:20px;line-height:1">✕</span>
+    </div>
+    <div style="padding:16px">
+      <p class="desc" style="margin-bottom:8px">Edite o texto se quiser. Depois escolha para onde enviar. <b>*negrito*</b> vira negrito no Telegram.</p>
+      <textarea id="briefTexto" style="width:100%;min-height:280px;padding:12px;border:1px solid var(--borda);border-radius:10px;font-size:14px;font-family:inherit;line-height:1.5;box-sizing:border-box;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-borda" style="flex:1;min-width:130px" onclick="recarregarPreviewBriefing()">↻ Recalcular do dia</button>
+        <button class="btn btn-verde" style="flex:1;min-width:130px" onclick="enviarBriefingEditado('telegram')">📨 Enviar ao Telegram</button>
+        <button class="btn btn-borda" style="flex:1;min-width:130px" onclick="enviarBriefingEditado('tarefa')">📋 Enviar como tarefa</button>
+      </div>
+      <div id="briefPvStatus" class="desc" style="margin-top:8px;text-align:center"></div>
+    </div>
+  </div>
+</div>
 <div id="iaOverlay" class="oculto">
   <div class="ia-sheet">
     <div class="ia-head">
@@ -1263,7 +1282,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.97';
+const APP_VER = '3.93.98';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6097,6 +6116,57 @@ function abrirIA() {
   ensureAnalise(); // pré-carrega itens (622) em segundo plano para a IA ver tudo
   if (!iaHist.length) addIA('assistente', 'Oi! Sou o assistente de produção. Posso analisar produção, paradas, perdas e aproveitamento de bobina. O que você quer saber?');
   setTimeout(() => $('iaInput').focus(), 100);
+}
+// ===== preview / edição do briefing =====
+function _gerarTextoBriefing() {
+  const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
+  if (!ud) return null;
+  let r = null; try { r = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
+  if (r && typeof r === 'object') r = null;   // ignora ramos especiais (manual)
+  // converte markdown do app (**x**) para o formato do textarea (mantém ** para o Telegram entender depois)
+  return r;
+}
+function abrirPreviewBriefing() {
+  const txt = _gerarTextoBriefing();
+  if (!txt) { toast('Sem dia de produção carregado para gerar o briefing.'); return; }
+  $('briefTexto').value = txt;
+  $('briefPvStatus').textContent = '';
+  $('briefPreview').classList.remove('oculto');
+}
+function recarregarPreviewBriefing() {
+  const txt = _gerarTextoBriefing();
+  if (txt) { $('briefTexto').value = txt; $('briefPvStatus').textContent = 'Texto recalculado do último dia.'; }
+}
+async function enviarBriefingEditado(destino) {
+  const texto = $('briefTexto').value.trim();
+  const st = $('briefPvStatus');
+  if (!texto) { st.textContent = 'O texto está vazio.'; return; }
+  st.textContent = 'Enviando…';
+  try {
+    if (destino === 'telegram') {
+      const { data } = await sb.from('app_config').select('valor').eq('chave', 'cron_key').maybeSingle();
+      const key = data && data.valor;
+      if (!key) { st.textContent = 'Falta a chave do disparo (cron_key) no banco.'; return; }
+      // manda o texto customizado: **x** -> HTML <b>, quebras preservadas
+      const html = texto.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+      const r = await fetch(`${SB_URL}/functions/v1/briefing-telegram?key=${encodeURIComponent(key)}&force=1`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto_custom: html })
+      });
+      const d = await r.json();
+      st.innerHTML = d && d.telegram_ok ? '✅ Enviado ao grupo do Telegram.' : '⚠️ Resposta: ' + JSON.stringify(d).slice(0, 120);
+    } else {
+      const dest = _briefDest || ($('briefDest') && $('briefDest').value);
+      if (!dest) { st.textContent = 'Escolha um destinatário no card antes de enviar como tarefa.'; return; }
+      const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
+      const { error } = await sb.from('tarefas').insert({
+        titulo: '📋 Briefing de produção · ' + (ud ? fmtData(ud) : ''),
+        responsavel_id: dest, criado_por: (perfil && perfil.id) || null,
+        criado_por_nome: (perfil && perfil.nome) || 'Sistema', prioridade: 'media', descricao: texto
+      });
+      st.innerHTML = error ? '❌ ' + error.message : '✅ Enviado como tarefa no app.';
+    }
+  } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
 }
 // ===== BRIEFING DIÁRIO AUTOMÁTICO (vira tarefa para o destinatário escolhido) =====
 let _briefDest = undefined;
