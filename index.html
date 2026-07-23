@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.2<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.3<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1303,7 +1303,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.94.2';
+const APP_VER = '3.94.3';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6028,7 +6028,8 @@ async function preencherMediaItensMes(ym, setor) {
 
 // Relação item × OP do MÊS ATUAL + ANTERIOR (independe do seletor de período), com busca ao vivo
 let _relCache = { chave: null, html: '' };
-let _relMaqStats = {}, _relEmCx = false;
+let _relMaqStats = {}, _relMeses = [], _relEmCx = false;
+const _relMesAbrev = ym => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][(+String(ym).slice(5, 7)) - 1] || ym;
 // meta diária da máquina = soma dos blocos Manhã+Tarde+Noite
 function relMetaDiaMaq(cod) {
   if (!metasData) return null;
@@ -6037,8 +6038,8 @@ function relMetaDiaMaq(cod) {
   ['Manhã', 'Tarde', 'Noite'].forEach(b => { if (m[b]) { s += m[b]; achou = true; } });
   return achou ? s : null;
 }
-function relChipMaq(cod) {
-  const e = _relMaqStats[String(cod)];
+function relChipMaq(cod, ym) {
+  const e = _relMaqStats[ym + '|' + String(cod)];
   const meta = relMetaDiaMaq(cod);
   const vol = e ? (_relEmCx ? e.cx : e.kg) : 0;
   const dias = e ? e.dias.size : 0;
@@ -6052,8 +6053,9 @@ function relChipMaq(cod) {
     else { cor = '#B0281A'; bg = '#FBE3E0'; }
   } else { txt = ' · sem meta'; }
   const un = _relEmCx ? ' cxs/dia' : ' kg/dia';
-  const tip = dias ? (Math.round(media).toLocaleString('pt-BR') + un + (meta ? ' · meta ' + Math.round(meta).toLocaleString('pt-BR') : '') + ' · ' + dias + ' dias') : 'sem produção';
-  return '<span title="' + escapeHtml(tip) + '" style="font-size:11px;font-weight:700;color:' + cor + ';background:' + bg + ';border:1px solid ' + cor + '33;padding:2px 7px;border-radius:10px;white-space:nowrap">' + escapeHtml(String(cod)) + txt + '</span>';
+  const tip = dias ? (_relMesAbrev(ym) + ': ' + Math.round(media).toLocaleString('pt-BR') + un + (meta ? ' · meta ' + Math.round(meta).toLocaleString('pt-BR') : '') + ' · ' + dias + ' dias') : 'sem produção';
+  return '<span title="' + escapeHtml(tip) + '" style="font-size:11px;font-weight:700;color:' + cor + ';background:' + bg + ';border:1px solid ' + cor + '33;padding:2px 7px;border-radius:10px;white-space:nowrap">' +
+    '<span style="opacity:.7;font-weight:600">' + _relMesAbrev(ym) + '</span> · ' + escapeHtml(String(cod)) + txt + '</span>';
 }
 async function preencherRelItensOps(setor) {
   const box = document.getElementById('relItensOpsBox'); if (!box) return;
@@ -6080,14 +6082,18 @@ async function preencherRelItensOps(setor) {
       if (u === 'CX') o.cx += q; else if (u === 'MIL') o.milNat += q;
     });
     // estatística por máquina: volume e dias em que rodou (base do "abaixo da meta")
-    _relMaqStats = {}; _relEmCx = !!(setor && typeof setorEmCx === 'function' && setorEmCx(setor));
+    _relMaqStats = {}; _relMeses = []; _relEmCx = !!(setor && typeof setorEmCx === 'function' && setorEmCx(setor));
     rows.forEach(r => {
-      const c = String(r.recurso_cod || ''); if (!c) return;
-      const e = (_relMaqStats[c] = _relMaqStats[c] || { kg: 0, cx: 0, dias: new Set() });
+      const c = String(r.recurso_cod || ''); if (!c || !r.dia) return;
+      const ym = String(r.dia).slice(0, 7);
+      if (!_relMeses.includes(ym)) _relMeses.push(ym);
+      const k = ym + '|' + c;
+      const e = (_relMaqStats[k] = _relMaqStats[k] || { kg: 0, cx: 0, dias: new Set() });
       e.kg += (+r.peso || 0);
       if (String(r.unidade || '').toUpperCase() === 'CX') e.cx += (+r.quantidade || 0);
-      if (r.dia) e.dias.add(r.dia);
+      e.dias.add(r.dia);
     });
+    _relMeses.sort();
     try { await getMetas(); } catch (_) {}
     const relArr = Object.values(rel).sort((a, b) => b.kg - a.kg);
     // milheiro = nativo MIL + (cxs × unidades por caixa extraídas da descrição) / 1000
@@ -6149,7 +6155,9 @@ function filtrarRelItensOps() {
       (tr.getAttribute('data-m') || '').split(',').forEach(c => { if (c) set.add(c); });
     });
     const arr = [...set].sort((a, b) => (+a || 0) - (+b || 0));
-    box.innerHTML = arr.length ? arr.map(relChipMaq).join('') : '';
+    const out = [];
+    arr.forEach(c => _relMeses.forEach(ym => { if (_relMaqStats[ym + '|' + c]) out.push(relChipMaq(c, ym)); }));
+    box.innerHTML = out.join('');
   }
 }
 
