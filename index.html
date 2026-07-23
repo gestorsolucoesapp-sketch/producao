@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.94<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.95<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -642,10 +642,12 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       </div>
       <div class="card oculto" id="cardBriefing">
         <div class="titulo-sec">Briefing diário automático</div>
-        <p class="desc" style="margin-bottom:10px">Quando os dados de um novo dia entram, o app cria automaticamente uma tarefa com o resumo do dia (produção, paradas, refugo) para a pessoa escolhida — cai direto na aba Tarefas dela.</p>
+        <p class="desc" style="margin-bottom:10px">Todo dia, no horário escolhido, o resumo do dia é enviado ao <b>grupo do Telegram</b> (produção, paradas, refugo). O destinatário abaixo também recebe uma <b>tarefa no app</b> com o mesmo resumo.</p>
         <div class="campo" style="margin-bottom:8px"><label for="briefDest">Enviar o briefing para</label>
           <select id="briefDest"><option value="">— desativado —</option></select></div>
-        <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário</button>
+        <div class="campo" style="margin-bottom:8px"><label for="briefHora">Horário do envio no Telegram (todo dia)</label>
+          <select id="briefHora"></select></div>
+        <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário e horário</button>
         <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="dispararBriefingAgora()">📨 Disparar agora (dia atual)</button>
         <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
@@ -1261,7 +1263,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.94';
+const APP_VER = '3.93.95';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6113,14 +6115,23 @@ async function renderBriefingConfig() {
   await getBriefDest();
   sel.innerHTML = '<option value="">— desativado —</option>' +
     colegas.map(u => `<option value="${u.id}" ${_briefDest === u.id ? 'selected' : ''}>${escapeHtml(u.nome)}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('');
+  // horário (0–23h)
+  const selH = $('briefHora');
+  if (selH) {
+    let horaCfg = '6';
+    try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_hora').maybeSingle(); if (data && data.valor != null) horaCfg = String(parseInt(data.valor, 10)); } catch (_) {}
+    selH.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${String(h) === horaCfg ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
+  }
 }
 async function salvarBriefingDest() {
   const v = $('briefDest').value || null;
+  const h = $('briefHora') ? $('briefHora').value : null;
   const st = $('briefStatus'); st.textContent = 'Salvando…';
   try {
     await sb.from('app_config').upsert({ chave: 'briefing_dest', valor: v }, { onConflict: 'chave' });
+    if (h != null) await sb.from('app_config').upsert({ chave: 'briefing_hora', valor: String(h) }, { onConflict: 'chave' });
     _briefDest = v;
-    st.innerHTML = v ? '✅ Briefing será enviado automaticamente para essa pessoa.' : 'Briefing automático desativado.';
+    st.innerHTML = v ? `✅ Briefing no Telegram todo dia às ${String(h).padStart(2, '0')}:00.` : `Briefing (tarefa no app) desativado. Telegram continua no horário ${String(h).padStart(2, '0')}:00 se houver grupo configurado.`;
   } catch (e) { st.textContent = '❌ ' + (e.message || 'não salvou'); }
 }
 // chamada quando o painel carrega: se entrou dia novo e há destinatário, cria a tarefa (uma vez por dia)
