@@ -509,7 +509,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.104.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.105.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1380,7 +1380,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.104.0';
+const APP_VER = '3.105.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9154,6 +9154,7 @@ function renderOrg() {
 
   let h = '<div class="orgv2">';
   if (pend) h += '<div class="card" style="border-left:4px solid #E67E22;margin-bottom:10px"><b>⚠️ ' + pend + ' vínculo(s) pendente(s).</b><div class="desc">Toque no nome laranja para escolher a pessoa certa.</div></div>';
+  h += orgImpCard('colab');
   h += orgFaixaSupervisor();
   h += orgFaixaCelulas();
 
@@ -9335,6 +9336,175 @@ function orgCardOperador(ref, linhas, aloc, turno, dup, rep) {
   return '<div style="margin-bottom:18px">' + no +
     '<div style="margin-left:15px;padding-left:15px;border-left:2px solid #e2e8f0;padding-top:2px">' + aprHTML +
     '<div style="display:flex;flex-wrap:wrap;gap:9px;padding-top:9px">' + cards.join('') + '</div></div></div>';
+}
+
+/* ===================== IMPORTAÇÃO (colaboradores / faltas / horas) ===================== */
+let orgImpBuf = { tipo: null, linhas: [] };
+
+const ORG_IMP_CFG = {
+  colab:  { titulo: 'Importar colaboradores', tabela: 'colaboradores',    dica: 'matrícula · nome · cargo · setor  — aceita o relatório do RH colado ou CSV' },
+  faltas: { titulo: 'Importar faltas',        tabela: 'org_afastamentos', dica: 'matrícula ou nome · data · tipo (falta, atestado, ferias, folga, afastamento)' },
+  horas:  { titulo: 'Importar banco de horas',tabela: 'org_banco_horas',  dica: 'matrícula ou nome · data · horas (+/−) · motivo' }
+};
+
+function orgImpCard(tipo) {
+  const c = ORG_IMP_CFG[tipo];
+  let h = '<div class="card"><div class="titulo-sec">📥 ' + c.titulo + '</div>';
+  h += '<div class="desc" style="font-size:11.5px;margin-bottom:7px">' + escapeHtml(c.dica) + '</div>';
+  h += '<textarea id="impTxt_' + tipo + '" rows="4" placeholder="cole aqui (uma linha por registro)" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px;font-family:monospace"></textarea>';
+  h += '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:8px">';
+  h += '<input type="file" id="impFile_' + tipo + '" accept=".csv,.txt,.tsv" onchange="orgImpArquivo(\'' + tipo + '\')" style="font-size:13px;flex:1 1 160px">';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:8px 14px" onclick="orgImpAnalisa(\'' + tipo + '\')">Analisar</button>';
+  h += '</div>';
+  h += '<div id="impPrev_' + tipo + '"></div></div>';
+  return h;
+}
+
+function orgImpArquivo(tipo) {
+  const f = $('impFile_' + tipo).files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { $('impTxt_' + tipo).value = r.result; orgImpAnalisa(tipo); };
+  r.onerror = () => toast('Não consegui ler o arquivo');
+  r.readAsText(f, 'UTF-8');
+}
+
+function orgImpNorm(s) {
+  return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function orgImpData(tok) {
+  let m = tok.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return m[3] + '-' + m[2] + '-' + m[1];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(tok)) return tok;
+  return null;
+}
+
+/* acha a pessoa: matrícula exata > nome completo > primeiro nome (ambíguo se 2+) */
+function orgImpPessoa(mat, nome) {
+  if (mat) {
+    const c = orgDados.colab.find(x => x.matricula === mat);
+    if (c) return { mat: c.matricula, nome: c.nome, st: 'ok' };
+    return { mat: mat, nome: null, st: 'nova' };
+  }
+  const n = orgImpNorm(nome);
+  if (!n) return { st: 'erro', msg: 'sem nome nem matrícula' };
+  let cand = orgDados.colab.filter(x => orgImpNorm(x.nome) === n);
+  if (cand.length === 1) return { mat: cand[0].matricula, nome: cand[0].nome, st: 'ok' };
+  cand = orgDados.colab.filter(x => orgImpNorm(x.nome).startsWith(n + ' ') || orgImpNorm(x.nome) === n);
+  if (cand.length === 1) return { mat: cand[0].matricula, nome: cand[0].nome, st: 'ok' };
+  if (cand.length > 1) return { st: 'ambiguo', msg: cand.length + ' pessoas com esse nome' };
+  return { st: 'erro', msg: 'não encontrado' };
+}
+
+function orgImpAnalisa(tipo) {
+  const txt = ($('impTxt_' + tipo) || {}).value || '';
+  const linhas = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  linhas.forEach((linha, i) => {
+    // divide por ; | tab | 2+ espaços; se não der, usa espaço simples
+    let toks = linha.split(/\s*[;|\t]\s*|\s{2,}/).map(t => t.trim()).filter(Boolean);
+    if (toks.length < 2) toks = [linha];
+    const bruto = toks.join(' ');
+    const reg = { n: i + 1, linha: linha, st: 'erro', msg: 'não entendi a linha' };
+
+    // matrícula = número solto de 3 a 6 dígitos (não é data nem horas)
+    let mat = null;
+    const mm = bruto.match(/(?:^|\s)(\d{3,6})(?=\s|$)/);
+    if (mm) mat = mm[1];
+
+    // datas
+    let data = null;
+    (bruto.match(/\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2}/g) || []).forEach(d => { if (!data) data = orgImpData(d); });
+
+    if (tipo === 'colab') {
+      // nome = trecho depois da matrícula até uma data ou o marcador MM
+      let resto = bruto;
+      if (mat) resto = bruto.slice(bruto.indexOf(mat) + mat.length);
+      resto = resto.replace(/\bMM\b/g, '|').replace(/\d{2}\/\d{2}\/\d{4}/g, '|').replace(/\d+\.\d{3},\d{2}/g, '|');
+      const partes = resto.split('|').map(x => x.trim()).filter(Boolean);
+      const nome = partes[0] || '';
+      const cargo = partes[1] || '';
+      if (!mat || !nome) { reg.msg = 'faltou matrícula ou nome'; out.push(reg); return; }
+      const setor = /rotulagem/i.test(cargo) ? 'Rotulagem'
+                  : /impress/i.test(cargo) ? 'Impressão'
+                  : /termoform/i.test(cargo) ? 'Termoformagem' : null;
+      const existe = orgDados.colab.some(x => x.matricula === mat);
+      out.push({ n: i + 1, st: 'ok', mat: mat, nome: nome, extra: cargo + (setor ? ' · ' + setor : ' · setor?'),
+                 msg: existe ? 'atualiza' : 'novo',
+                 dados: { matricula: mat, nome: nome, cargo: cargo || null, setor: setor, admissao: data, ativo: true } });
+      return;
+    }
+
+    // faltas e horas precisam de data
+    if (!data) { reg.msg = 'sem data válida'; out.push(reg); return; }
+
+    // nome = tokens que não são matrícula, data, número ou palavra-chave
+    const chaves = (tipo === 'faltas') ? ORG_TIPOS : ORG_MOTIVOS;
+    let achou = null;
+    chaves.forEach(k => { if (!achou && new RegExp('\\b' + k.replace(/_/g, '[ _]') + '\\b', 'i').test(bruto)) achou = k; });
+    const nome = toks.filter(t => t !== mat && !orgImpData(t) && !/^[-+]?\d+([.,]\d+)?$/.test(t) &&
+                 !chaves.some(k => orgImpNorm(k.replace(/_/g, ' ')) === orgImpNorm(t))).join(' ')
+                 .replace(/\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2}/g, '').replace(/—|-\s*$/g, '').trim();
+    const p = orgImpPessoa(mat, nome);
+    if (p.st !== 'ok') { reg.msg = p.msg || p.st; reg.st = p.st; reg.mat = mat; reg.nome = nome; out.push(reg); return; }
+
+    if (tipo === 'faltas') {
+      if (!achou) { out.push({ n: i + 1, st: 'erro', mat: p.mat, nome: p.nome, msg: 'tipo inválido (use: ' + ORG_TIPOS.join('/') + ')' }); return; }
+      out.push({ n: i + 1, st: 'ok', mat: p.mat, nome: p.nome, extra: data + ' · ' + achou, msg: '',
+                 dados: { matricula: p.mat, data: data, tipo: achou, observacao: 'importado' } });
+    } else {
+      const hm = bruto.match(/(?:^|\s)([-+]?\d+(?:[.,]\d+)?)\s*h?(?=\s|$)/i);
+      const hrs = hm ? parseFloat(hm[1].replace(',', '.')) : NaN;
+      if (isNaN(hrs)) { out.push({ n: i + 1, st: 'erro', mat: p.mat, nome: p.nome, msg: 'não achei as horas' }); return; }
+      out.push({ n: i + 1, st: 'ok', mat: p.mat, nome: p.nome, extra: data + ' · ' + (hrs > 0 ? '+' : '') + hrs + 'h · ' + (achou || 'outro'), msg: '',
+                 dados: { matricula: p.mat, data: data, horas: hrs, motivo: achou || ORG_MOTIVOS[0] } });
+    }
+  });
+
+  orgImpBuf = { tipo: tipo, linhas: out };
+  orgImpPreview(tipo);
+}
+
+function orgImpPreview(tipo) {
+  const alvo = $('impPrev_' + tipo); if (!alvo) return;
+  const L = orgImpBuf.linhas;
+  if (!L.length) { alvo.innerHTML = '<div class="desc" style="margin-top:10px">Nada para analisar.</div>'; return; }
+  const ok = L.filter(x => x.st === 'ok');
+  const ruim = L.filter(x => x.st !== 'ok');
+  const cor = { ok: '#16a34a', ambiguo: '#d97706', nova: '#2563eb', erro: '#dc2626' };
+  let h = '<div style="margin-top:12px;border-top:1px dashed #e2e8f0;padding-top:10px">';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+  h += '<span style="font-size:12px;font-weight:800;background:#dcfce7;color:#166534;padding:3px 10px;border-radius:20px">' + ok.length + ' prontos</span>';
+  if (ruim.length) h += '<span style="font-size:12px;font-weight:800;background:#fee2e2;color:#b91c1c;padding:3px 10px;border-radius:20px">' + ruim.length + ' com problema</span>';
+  h += '</div>';
+  h += '<div style="max-height:260px;overflow:auto;border:1px solid #e2e8f0;border-radius:9px">';
+  L.forEach(r => {
+    h += '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 9px;border-bottom:1px solid #f1f5f9;font-size:12.5px">' +
+      '<span style="color:#94a3b8;min-width:22px">' + r.n + '</span>' +
+      '<span style="width:9px;height:9px;border-radius:50%;background:' + (cor[r.st] || '#94a3b8') + ';flex:none;align-self:center"></span>' +
+      '<span style="flex:1;min-width:0"><b>' + escapeHtml(r.nome || r.mat || '—') + '</b>' +
+      (r.extra ? ' <span style="color:#64748b">' + escapeHtml(r.extra) + '</span>' : '') +
+      (r.msg ? ' <span style="color:' + (r.st === 'ok' ? '#64748b' : '#b91c1c') + '">· ' + escapeHtml(r.msg) + '</span>' : '') +
+      '</span></div>';
+  });
+  h += '</div>';
+  if (ok.length) h += '<button class="btn btn-verde" style="margin-top:10px" onclick="orgImpGravar(\'' + tipo + '\')">Gravar ' + ok.length + ' registro(s)</button>';
+  if (ruim.length) h += '<div class="desc" style="font-size:11px;margin-top:6px">As linhas com problema são ignoradas. Corrija e analise de novo.</div>';
+  alvo.innerHTML = h + '</div>';
+}
+
+async function orgImpGravar(tipo) {
+  const ok = orgImpBuf.linhas.filter(x => x.st === 'ok');
+  if (!ok.length) return;
+  const linhas = ok.map(x => x.dados);
+  let res;
+  if (tipo === 'colab') res = await sb.from('colaboradores').upsert(linhas, { onConflict: 'matricula' });
+  else res = await sb.from(ORG_IMP_CFG[tipo].tabela).insert(linhas);
+  if (res.error) { toast('Erro: ' + res.error.message); return; }
+  toast(ok.length + ' registro(s) gravados ✔');
+  orgImpBuf = { tipo: null, linhas: [] };
+  const t = $('impTxt_' + tipo); if (t) t.value = '';
+  await carregarOrganograma();
 }
 
 /* ---------- modo apresentação (tela cheia, para projetar/apresentar) ---------- */
@@ -9559,6 +9729,7 @@ async function renderOrgFaltas() {
   h += '<select id="faTipo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">' + ORG_TIPOS.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select>';
   h += '<div class="desc" style="font-size:11px;color:#c0392b">⚠️ Não registre informação de saúde. Só o tipo.</div>';
   h += '<button class="btn btn-verde" onclick="orgSalvaFalta()">Salvar</button></div></div>';
+  h += orgImpCard('faltas');
   h += '<div class="card"><div class="titulo-sec">Últimos 30 dias · ' + regs.length + '</div>';
   h += regs.map(r => '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;font-size:13px">' +
     '<span>' + escapeHtml(orgPrimeiro(orgNome(r.matricula)) || r.matricula) + '</span>' +
@@ -9600,6 +9771,7 @@ async function renderOrgHoras() {
   h += '<select id="bhMotivo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">' + ORG_MOTIVOS.map(m => '<option value="' + m + '">' + m.replace(/_/g, ' ') + '</option>').join('') + '</select>';
   h += '<button class="btn btn-verde" onclick="orgSalvaHoras()">Salvar</button>';
   h += '<div class="desc" style="font-size:11px">Gerencial — não substitui a folha de pagamento.</div></div></div>';
+  h += orgImpCard('horas');
   const chaves = Object.keys(saldo).sort((a, b) => saldo[b] - saldo[a]);
   h += '<div class="card"><div class="titulo-sec">Saldo por colaborador</div>';
   h += chaves.map(m => '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;font-size:13px">' +
