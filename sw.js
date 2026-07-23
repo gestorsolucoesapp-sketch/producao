@@ -1,12 +1,18 @@
-// Produção Rioplastic — service worker (auto-update)
-const CACHE = 'producao-rioplastic-v3.95.0';
-const APP_SHELL = ['./index.html', './logo_full.png', './logo_mark.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
+// Produção Rioplastic — service worker (network-first no index; auto-update)
+const CACHE = 'producao-rioplastic-v3.95.1';
+const APP_SHELL = ['./logo_full.png', './logo_mark.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
-  // baixa a casca nova já na instalação
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(APP_SHELL)).catch(() => {}));
-  // NÃO pula a espera sozinho aqui — quem manda pular é a página (mensagem),
-  // garantindo o reload controlado (uma vez só).
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    try { await c.addAll(APP_SHELL); } catch (_) {}
+    // index.html SEMPRE da rede, ignorando o cache HTTP do navegador.
+    // (era aqui que entrava versão velha na casca nova)
+    try {
+      const r = await fetch('./index.html', { cache: 'no-store' });
+      if (r && r.ok) await c.put('./index.html', r.clone());
+    } catch (_) {}
+  })());
 });
 
 self.addEventListener('message', e => {
@@ -26,35 +32,47 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return; // CDNs / Supabase seguem direto
 
-  const ehNavegacao = e.request.mode === 'navigate' ||
-    url.pathname.endsWith('/') || url.pathname.endsWith('index.html') ||
-    url.pathname.endsWith('sw.js');
-
-  if (ehNavegacao) {
-    // sw.js sempre pela rede (detecção de update); index.html = stale-while-revalidate
-    if (url.pathname.endsWith('sw.js')) {
-      e.respondWith(fetch(e.request, { cache: 'no-store' }).catch(() => caches.match(e.request)));
-      return;
-    }
-    // STALE-WHILE-REVALIDATE: entrega o cache na hora (abre rápido) e busca a nova em 2º plano.
-    // O auto-update do SW recarrega sozinho quando uma versão nova assume o controle.
-    e.respondWith(
-      caches.match('./index.html').then(cacheado => {
-        const rede = fetch(e.request).then(r => {
-          const c = r.clone(); caches.open(CACHE).then(x => x.put('./index.html', c)); return r;
-        }).catch(() => cacheado);
-        return cacheado || rede;
-      })
-    );
+  // sw.js sempre pela rede (detecção de update)
+  if (url.pathname.endsWith('sw.js')) {
+    e.respondWith(fetch(e.request, { cache: 'no-store' }).catch(() => caches.match(e.request)));
     return;
   }
-  // demais assets: cache-first com atualização em segundo plano
-  e.respondWith(
-    caches.match(e.request).then(cacheado => {
-      const rede = fetch(e.request).then(r => {
-        const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r;
-      }).catch(() => cacheado);
-      return cacheado || rede;
-    })
-  );
+
+  const ehNavegacao = e.request.mode === 'navigate' ||
+    url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+
+  if (ehNavegacao) {
+    // NETWORK-FIRST com timeout: online = sempre a versão publicada;
+    // offline/lento = cai no cache. Nunca mais volta de versão.
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4500);
+        const r = await fetch(e.request, { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(t);
+        if (r && r.ok) {
+          e.waitUntil(cache.put('./index.html', r.clone()));
+          return r;
+        }
+        throw new Error('resposta ruim');
+      } catch (_) {
+        const c = await cache.match('./index.html');
+        return c || new Response('Sem conexão e sem cópia local.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+    })());
+    return;
+  }
+
+  // demais assets: cache-first com revalidação garantida (e.waitUntil segura o SW vivo)
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cacheado = await cache.match(e.request);
+    const rede = fetch(e.request).then(r => {
+      if (r && r.ok) cache.put(e.request, r.clone());
+      return r;
+    }).catch(() => null);
+    if (cacheado) { e.waitUntil(rede); return cacheado; }
+    return (await rede) || new Response('', { status: 504 });
+  })());
 });
