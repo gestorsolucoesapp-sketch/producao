@@ -509,7 +509,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.106.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.106.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1380,7 +1380,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.106.0';
+const APP_VER = '3.106.1';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9522,9 +9522,17 @@ function orgHeadcount() {
       maq: [...new Set(dt.filter(a => a.funcao === 'operador' && a.maquina_codigo).map(a => a.maquina_codigo))].length
     };
     r[t].tot = r[t].op + r[t].aux + r[t].apr;
+    const mats = [...new Set(dt.filter(a => a.matricula && !a.sem_auxiliar).map(a => a.matricula))];
+    const fora = mats.filter(m => orgAfastadoHoje(m));
+    r[t].fora = fora.length;
+    r[t].presentes = r[t].tot - fora.length;
+    r[t].tipos = {};
+    fora.forEach(m => { const a = orgAfastadoHoje(m); if (a) r[t].tipos[a.tipo] = (r[t].tipos[a.tipo] || 0) + 1; });
   });
   const todos = [...new Set(al.filter(a => !a.sem_auxiliar).map(a => a.matricula || ('?' + (a.apelido_origem || ''))).filter(Boolean))].length;
-  return { turnos: r, total: todos };
+  const matsTodos = [...new Set(al.filter(a => a.matricula && !a.sem_auxiliar).map(a => a.matricula))];
+  const foraTodos = matsTodos.filter(m => orgAfastadoHoje(m)).length;
+  return { turnos: r, total: todos, fora: foraTodos, presentes: todos - foraTodos };
 }
 
 function orgCardHeadcount() {
@@ -9538,17 +9546,30 @@ function orgCardHeadcount() {
     h += '<div style="font-size:26px;font-weight:800;line-height:1.1;color:#0f172a">' + d.tot + '</div>';
     h += '<div style="font-size:11.5px;color:#64748b;margin-top:2px">' + d.op + ' oper · ' + d.aux + ' aux' + (d.apr ? ' · ' + d.apr + ' aprendiz' : '') + '</div>';
     h += '<div style="font-size:11px;color:#94a3b8;margin-top:2px">' + d.maq + ' máquinas</div>';
+    if (d.fora) {
+      const det = Object.keys(d.tipos).map(k => d.tipos[k] + ' ' + k).join(' · ');
+      h += '<div style="margin-top:6px;padding-top:5px;border-top:1px dashed ' + tint.br + '66;font-size:11.5px">' +
+        '<span style="color:#b45309;font-weight:700">🟡 ' + d.fora + ' fora</span>' +
+        '<span style="color:#94a3b8"> · ' + escapeHtml(det) + '</span>' +
+        '<div style="color:#166534;font-weight:700;margin-top:1px">✅ ' + d.presentes + ' presentes hoje</div></div>';
+    } else {
+      h += '<div style="margin-top:6px;padding-top:5px;border-top:1px dashed ' + tint.br + '66;font-size:11.5px;color:#166534;font-weight:700">✅ efetivo completo hoje</div>';
+    }
     h += '</div>';
   });
   h += '<div style="flex:1 1 150px;background:#0f172a;border-radius:11px;padding:10px 12px;color:#fff">';
   h += '<div style="font-size:12px;font-weight:800">Total no setor</div>';
   h += '<div style="font-size:26px;font-weight:800;line-height:1.1">' + hc.total + '</div>';
   h += '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px">pessoas distintas escaladas</div>';
+  h += '<div style="margin-top:6px;padding-top:5px;border-top:1px dashed #334155;font-size:11.5px">' +
+    (hc.fora ? '<span style="color:#fbbf24;font-weight:700">🟡 ' + hc.fora + ' afastados/férias</span><div style="color:#4ade80;font-weight:700;margin-top:1px">✅ ' + hc.presentes + ' presentes hoje</div>'
+             : '<span style="color:#4ade80;font-weight:700">✅ ninguém afastado hoje</span>') + '</div>';
   h += '</div>';
   h += '</div>';
   h += '<div style="margin-top:12px">' + barrasVertical(
-    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].tot, rot: String(hc.turnos[t].tot) })),
+    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].presentes, rot: String(hc.turnos[t].presentes) + (hc.turnos[t].fora ? ' /' + hc.turnos[t].tot : '') })),
     d => ORG_CORES[d.l] || '#94a3b8') + '</div>';
+  h += '<div class="desc" style="font-size:11px;text-align:center;margin-top:-4px">barras = presentes hoje' + (hc.fora ? ' (rótulo: presentes / escalados)' : '') + '</div>';
   h += '</div>';
   return h;
 }
