@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.95.3<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.96.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1303,7 +1303,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.95.3';
+const APP_VER = '3.96.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6047,7 +6047,23 @@ let _relRowsCache = { chave: null, rows: [], setor: '' };
 let _relRef = { ref: '', ymAnt: '' };
 let _relMesSel = null;   // null = ainda não definido; '' = ambos os meses
 let _relUltGlobal = '';  // último mês visto no seletor global
-let _relMaqStats = {}, _relMeses = [], _relEmCx = false;
+let _relMaqStats = {}, _relMeses = [], _relEmCx = false, _relDiasMes = {}, _relOeeCache = {};
+// OEE da máquina no mês — usa exatamente o computeOEE do app (mesma fórmula da aba OEE).
+// Só vale para o mês que está no seletor global, porque é dele que vem o dadosPainel.
+function relOeeMaq(cod, ym) {
+  const glYM = (typeof periodoSel === 'object' && periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : '';
+  if (!glYM || ym !== glYM) return undefined;      // mês diferente do painel → não dá pra afirmar
+  if (typeof computeOEE !== 'function' || !dadosPainel) return undefined;
+  const st = (typeof setorDe === 'function') ? setorDe(cod) : '';
+  if (!st) return undefined;
+  if (!(st in _relOeeCache)) {
+    const m = {};
+    try { const r = computeOEE(st); (r && r.porMaq || []).forEach(x => { m[String(x.cod)] = x.oee; }); } catch (_) {}
+    _relOeeCache[st] = m;
+  }
+  const v = _relOeeCache[st][String(cod)];
+  return (v == null) ? undefined : v;
+}
 function relPreencheSelMes() {
   const sel = document.getElementById('relMes'); if (!sel) return;
   const a = _relRef.ymAnt, b = _relRef.ref;
@@ -6082,7 +6098,18 @@ function relChipMaq(cod, ym) {
     else { cor = '#B0281A'; bg = '#FBE3E0'; }
   } else { txt = ' · sem meta'; }
   const un = _relEmCx ? ' cxs/dia' : ' kg/dia';
-  const tip = dias ? (_relMesAbrev(ym) + ': ' + Math.round(media).toLocaleString('pt-BR') + un + (meta ? ' · meta ' + Math.round(meta).toLocaleString('pt-BR') : '') + ' · ' + dias + ' dias') : 'sem produção';
+  // dias que rodou × dias em que houve produção no período (denominador vindo do próprio dado)
+  const diasPer = (_relDiasMes[ym] ? _relDiasMes[ym].size : 0);
+  const parou = Math.max(0, diasPer - dias);
+  if (diasPer) txt += ' · <span style="opacity:.85">▶' + dias + ' ⏸' + parou + '</span>';
+  const oee = relOeeMaq(cod, ym);
+  if (oee !== undefined) txt += ' · OEE ' + Math.round(oee * 100) + '%';
+  const un2 = _relEmCx ? ' cxs' : ' kg';
+  const tip = dias
+    ? (_relMesAbrev(ym) + ': ' + Math.round(media).toLocaleString('pt-BR') + un + (meta ? ' · meta ' + Math.round(meta).toLocaleString('pt-BR') + un2 + '/dia' : ' · sem meta') +
+       ' · rodou ' + dias + ' de ' + diasPer + ' dias com produção no setor · parada em ' + parou +
+       (oee !== undefined ? ' · OEE ' + (oee * 100).toFixed(1) + '%' : ' · OEE só no mês do seletor de cima'))
+    : 'sem produção';
   return '<span title="' + escapeHtml(tip) + '" style="font-size:11px;font-weight:700;color:' + cor + ';background:' + bg + ';border:1px solid ' + cor + '33;padding:2px 7px;border-radius:10px;white-space:nowrap">' +
     '<span style="opacity:.7;font-weight:600">' + _relMesAbrev(ym) + '</span> · ' + escapeHtml(String(cod)) + txt + '</span>';
 }
@@ -6135,11 +6162,12 @@ async function relMontaTabela() {
       if (u === 'CX') o.cx += q; else if (u === 'MIL') o.milNat += q;
     });
     // estatística por máquina: volume e dias em que rodou (base do "abaixo da meta")
-    _relMaqStats = {}; _relMeses = []; _relEmCx = !!(setor && typeof setorEmCx === 'function' && setorEmCx(setor));
+    _relMaqStats = {}; _relMeses = []; _relDiasMes = {}; _relOeeCache = {}; _relEmCx = !!(setor && typeof setorEmCx === 'function' && setorEmCx(setor));
     rows.forEach(r => {
       const c = String(r.recurso_cod || ''); if (!c || !r.dia) return;
       const ym = String(r.dia).slice(0, 7);
       if (!_relMeses.includes(ym)) _relMeses.push(ym);
+      (_relDiasMes[ym] = _relDiasMes[ym] || new Set()).add(r.dia);
       const k = ym + '|' + c;
       const e = (_relMaqStats[k] = _relMaqStats[k] || { kg: 0, cx: 0, dias: new Set() });
       e.kg += (+r.peso || 0);
