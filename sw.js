@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (network-first no index; auto-update)
-const CACHE = 'producao-rioplastic-v3.95.2';
+const CACHE = 'producao-rioplastic-v3.95.3';
 const APP_SHELL = ['./logo_full.png', './logo_mark.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
@@ -9,7 +9,7 @@ self.addEventListener('install', e => {
     // index.html SEMPRE da rede, ignorando o cache HTTP do navegador.
     // (era aqui que entrava versão velha na casca nova)
     try {
-      const r = await fetch('./index.html', { cache: 'no-store' });
+      const r = await fetch('./index.html?v=' + encodeURIComponent(CACHE), { cache: 'no-store' });
       if (r && r.ok) await c.put('./index.html', r.clone());
     } catch (_) {}
   })());
@@ -49,7 +49,9 @@ self.addEventListener('fetch', e => {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 4500);
-        const r = await fetch(e.request, { cache: 'no-store', signal: ctrl.signal });
+        // ?v=CACHE = URL única por versão publicada: o CDN do GitHub Pages não
+        // consegue devolver uma cópia antiga guardada na borda.
+        const r = await fetch('./index.html?v=' + encodeURIComponent(CACHE), { cache: 'no-store', signal: ctrl.signal });
         clearTimeout(t);
         if (r && r.ok) {
           e.waitUntil(cache.put('./index.html', r.clone()));
