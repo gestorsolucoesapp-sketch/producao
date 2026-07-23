@@ -441,7 +441,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.98.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.98.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -655,6 +655,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           </div>
           <button class="btn btn-navy" style="width:auto;padding:12px 18px" onclick="salvarTimeout()">Salvar</button>
         </div>
+      </div>
+      <div class="card">
+        <div class="titulo-sec">Presen&ccedil;a no app</div>
+        <div class="usr-telas"><label><input type="checkbox" id="chkPresenca" onchange="togPresencaOnline(this.checked)"> Mostrar a bolinha de quem est&aacute; online (para todos os usu&aacute;rios)</label></div>
+        <p class="desc" style="margin-top:4px">Desmarcado, ningu&eacute;m v&ecirc; a bolinha nem o aviso de quem entrou.</p>
       </div>
       <div class="card">
         <div class="titulo-sec">Usuários</div>
@@ -1305,7 +1310,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.98.0';
+const APP_VER = '3.98.1';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1796,6 +1801,7 @@ async function posLogin() {
   if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
   await registrarAcesso();
   await carregarTimeout();
+  await getPresencaCfg();
   iniciarPresenca(user);
   mostrarApp();
 }
@@ -1814,7 +1820,7 @@ function iniciarPresenca(user) {
       presPronto = true; // depois do primeiro sync, joins geram aviso
     });
     presCanal.on('presence', { event: 'join' }, ({ key, newPresences }) => {
-      if (!presPronto || key === user.id) return;
+      if (!presPronto || key === user.id || !presAtiva) return;
       const quem = (newPresences && newPresences[0] && newPresences[0].nome) || 'Alguém';
       toast('🟢 ' + quem + ' entrou no app');
       if (navigator.vibrate) navigator.vibrate(120);
@@ -1825,17 +1831,31 @@ function iniciarPresenca(user) {
     });
   } catch (_) {}
 }
+let presAtiva = true;   // config global: mostrar ou não a presença
+async function getPresencaCfg() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'presenca_online').maybeSingle();
+    presAtiva = (data && data.valor != null) ? (JSON.parse(data.valor) !== false) : true;   // padrão: ligada
+  } catch (_) { presAtiva = true; }
+  return presAtiva;
+}
+async function togPresencaOnline(on) {
+  presAtiva = !!on;
+  if (!(await salvarCfg('presenca_online', presAtiva))) { toast('❌ Não consegui salvar.'); return; }
+  toast(presAtiva ? '✅ Presença visível para todos.' : '🚫 Presença desligada.');
+  atualizarOnline();
+}
 function atualizarOnline() {
-  // conta só as OUTRAS pessoas (você não entra na contagem)
-  const outros = Object.keys(presUsuarios || {}).filter(k => k !== presMeuId).length;
   const b = $('onlineBadge'); if (!b) return;
-  if (!souAdmin) { b.classList.add('oculto'); return; }   // presença só para gestores (admin)
-  b.textContent = '🟢 ' + outros;
-  b.classList.toggle('oculto', outros < 1);
+  if (!presAtiva) { b.classList.add('oculto'); return; }
+  // conta TODO mundo no app, você inclusive — assim a bolinha nunca some sozinha
+  const total = Object.keys(presUsuarios || {}).length || 1;
+  b.textContent = '🟢 ' + total;
+  b.classList.remove('oculto');
 }
 function mostrarOnline() {
   const lista = Object.entries(presUsuarios || {}).filter(([k]) => k !== presMeuId).map(([, arr]) => arr[0]).filter(Boolean);
-  if (!lista.length) { toast('Ninguém mais online agora.'); return; }
+  if (!lista.length) { toast('Só você no app agora.'); return; }
   $('itemDetTitulo').textContent = '🟢 Online agora (' + lista.length + ')';
   $('itemDetCorpo').innerHTML = '<div class="idet-grid">' + lista.map(u =>
     `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>`).join('') + '</div>';
@@ -8323,6 +8343,7 @@ async function rmSetor(nome) {
 }
 async function carregarUsuarios() {
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
+  try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; } catch (_) {}
   if (!souAdmin) return;
   // direcionamento automático (Manutenção) — agora mora nesta aba
   try { await getUsuariosOS(); await getRoteamento(); renderRoteamento(); } catch (_) {}
