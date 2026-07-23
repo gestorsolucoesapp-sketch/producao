@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.4<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.95.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1303,7 +1303,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.94.4';
+const APP_VER = '3.95.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2665,6 +2665,17 @@ async function salvarTarefa() {
 
 /* ================= CENTRAL DE TAREFAS FIM ================= */
 // ================= ANÁLISE+ (TPM / MTBF / Custo não-qualidade / ABC / Scorecard / Matriz) =================
+let _amCacheChave = '';
+// âncora da Análise+ = período escolhido no seletor global (o toggle define só a granularidade)
+function _amAncora() {
+  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  if (typeof periodoSel === 'object' && periodoSel) {
+    if (periodoSel.tipo === 'mes') return { ym: periodoSel.ym, ano: periodoSel.ym.slice(0, 4) };
+    if (periodoSel.tipo === 'ano') return { ym: String(periodoSel.ano) + '-12', ano: String(periodoSel.ano) };
+    if (periodoSel.de) return { ym: String(periodoSel.de).slice(0, 7), ano: String(periodoSel.de).slice(0, 4) };
+  }
+  return { ym: hoje.slice(0, 7), ano: hoje.slice(0, 4) };
+}
 let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf', _amPrecoHist = null;
 let _amFalhasPorMaq = {};
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -2727,12 +2738,12 @@ async function salvarCustoKg(v) {
   } catch (_) {}
   renderAnaliseMais();
 }
-async function carregarDadosAM(de) {
-  const ano = new Date(Date.now() - 3 * 3600 * 1000).getFullYear();
+async function carregarDadosAM(de, ate, anoRef) {
+  const ano = anoRef || new Date(Date.now() - 3 * 3600 * 1000).getFullYear();
   const [prod, perd, par] = await Promise.all([
-    fetchTudo('producao_resumo', 'dia,recurso_cod,recurso_nome,peso,quantidade,unidade', de),
-    fetchTudo('perdas', 'dia,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de),
-    fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,op', de)
+    fetchTudo('producao_resumo', 'dia,recurso_cod,recurso_nome,peso,quantidade,unidade', de, ate),
+    fetchTudo('perdas', 'dia,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de, ate),
+    fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,op', de, ate)
   ]);
   let os = [];
   try { os = await buscarTodasOS('recurso_cod,setor,data_reinicio,data_abertura,custo,horas_parada,motivo,atividade'); } catch (_) {}
@@ -2741,23 +2752,26 @@ async function carregarDadosAM(de) {
 function _amCacheAtual() { return _amScope === 'anual' ? _amCacheAno : _amCacheMes; }
 async function getCacheAM() {
   const anual = _amScope === 'anual';
+  const a = _amAncora();
+  const chave = (anual ? 'A' + a.ano : 'M' + a.ym);
+  if (_amCacheChave !== chave) { _amCacheMes = null; _amCacheAno = null; _amCacheChave = chave; }
   if (anual && _amCacheAno) return _amCacheAno;
   if (!anual && _amCacheMes) return _amCacheMes;
-  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-  const de = anual ? (hoje.slice(0, 4) + '-01-01') : (hoje.slice(0, 7) + '-01');
-  const c = await carregarDadosAM(de);
+  const de = anual ? (a.ano + '-01-01') : (a.ym + '-01');
+  const ate = anual ? (a.ano + '-12-31') : ultimoDiaMes(a.ym);
+  const c = await carregarDadosAM(de, ate, a.ano);
   if (anual) _amCacheAno = c; else _amCacheMes = c;
   return c;
 }
 function _amEscopo(cache) {
   // devolve {de,ate,rotulo} + os arrays já filtrados por escopo
-  const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const a = _amAncora();
   const dias = cache.prod.map(r => String(r.dia).slice(0, 10)).filter(Boolean).sort();
-  const ultimo = dias.length ? dias[dias.length - 1] : hoje;
+  const ultimo = dias.length ? dias[dias.length - 1] : (a.ym + '-01');
   let de, ate, rotulo;
   if (_amScope === 'diaria') { de = ate = ultimo; rotulo = 'Dia ' + fmtData(ultimo); }
-  else if (_amScope === 'anual') { de = cache.ano + '-01-01'; ate = ultimo; rotulo = 'Ano ' + cache.ano; }
-  else { de = ultimo.slice(0, 7) + '-01'; ate = ultimo; rotulo = 'Mês ' + ultimo.slice(0, 7); }
+  else if (_amScope === 'anual') { de = a.ano + '-01-01'; ate = ultimo; rotulo = 'Ano ' + a.ano; }
+  else { de = a.ym + '-01'; ate = ultimo; rotulo = 'Mês ' + (typeof mesLabel === 'function' ? mesLabel(a.ym) : a.ym); }
   const fdia = r => { const d = String(r.dia || '').slice(0, 10); return d >= de && d <= ate; };
   const fos = r => { const d = String(r.data_abertura || '').slice(0, 10); return d >= de && d <= ate; };
   return { de, ate, rotulo, prod: cache.prod.filter(fdia), perd: cache.perd.filter(fdia), par: cache.par.filter(fdia), os: cache.os.filter(fos) };
