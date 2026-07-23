@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.96.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.96.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -553,6 +553,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button id="amTg_mensal" class="am-tg on" onclick="mudarEscopoAM('mensal')">Mensal</button>
           <button id="amTg_anual" class="am-tg" onclick="mudarEscopoAM('anual')">Anual</button>
         </div>
+        <select id="amMaqSel" onchange="mudarMaquinaAM(this.value)" style="width:100%;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-weight:600;margin-bottom:6px"><option value="">Todas as m&aacute;quinas</option></select>
         <select id="amSetorSel" onchange="mudarSetorAM(this.value)" style="width:100%;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-weight:600;margin-bottom:6px">
           <option value="transf" selected>Todos os setores menos Extrusão</option>
           <option value="todos">Todos os setores</option>
@@ -1303,7 +1304,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.96.0';
+const APP_VER = '3.96.1';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2676,7 +2677,7 @@ function _amAncora() {
   }
   return { ym: hoje.slice(0, 7), ano: hoje.slice(0, 4) };
 }
-let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf', _amPrecoHist = null;
+let _amCacheMes = null, _amCacheAno = null, _amScope = 'mensal', _amCustoKg = null, _amSetor = 'transf', _amMaq = '', _amPrecoHist = null;
 let _amFalhasPorMaq = {};
 const _amRS = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 const _amH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
@@ -2796,21 +2797,37 @@ async function mudarEscopoAM(s) {
   try { const c = await getCacheAM(); renderAnaliseMais(c); }
   catch (e) { if (box) box.innerHTML = '<p class="vazio-painel">Não consegui carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
 }
-function mudarSetorAM(s) { _amSetor = s; renderAnaliseMais(); }
+function mudarSetorAM(s) { _amSetor = s; _amMaq = ''; renderAnaliseMais(); }
+function mudarMaquinaAM(m) { _amMaq = m || ''; renderAnaliseMais(); }
+// preenche o seletor com as máquinas que têm dado no período e no setor escolhido
+function _amPreencheMaquinas(cache) {
+  const sel = document.getElementById('amMaqSel'); if (!sel || !cache) return;
+  const cods = new Set();
+  (cache.prod || []).forEach(r => { const c = String(r.recurso_cod || ''); if (c && _amKeepSetor(c)) cods.add(c); });
+  const arr = [...cods].sort((a, b) => (+a || 0) - (+b || 0));
+  const nome = {}; (cache.prod || []).forEach(r => { const c = String(r.recurso_cod || ''); if (c && !nome[c] && r.recurso_nome) nome[c] = r.recurso_nome; });
+  sel.innerHTML = '<option value="">Todas as máquinas (' + arr.length + ')</option>' +
+    arr.map(c => '<option value="' + escapeHtml(c) + '"' + (c === _amMaq ? ' selected' : '') + '>' + escapeHtml(c + (nome[c] ? ' · ' + nome[c] : '')) + '</option>').join('');
+  if (_amMaq && !arr.includes(_amMaq)) { _amMaq = ''; sel.value = ''; }
+}
 function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'todos') return true; if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return s !== 'Extrusão'; return s === _amSetor; }
+// máquina tem precedência: escolhida uma, o setor deixa de importar
+function _amKeep(cod) { return _amMaq ? (String(cod) === _amMaq) : _amKeepSetor(cod); }
 function renderAnaliseMais(cache) {
   cache = cache || _amCacheAtual();
   const box = $('anmConteudo'); if (!box || !cache) return;
   _amSetToggle();
+  _amPreencheMaquinas(cache);
   const E = _amEscopo(cache);
   // separa Extrusão (matéria-prima) da Transformação — evita contar o material 2×
-  E.prod = E.prod.filter(r => _amKeepSetor(r.recurso_cod));
-  E.perd = E.perd.filter(r => _amKeepSetor(r.recurso_cod));
-  E.par = E.par.filter(r => _amKeepSetor(r.recurso_cod));
-  E.os = E.os.filter(r => _amKeepSetor(r.recurso_cod));
-  const osBack = (cache.os || []).filter(o => !o.data_reinicio && _amKeepSetor(o.recurso_cod)).length;
-  const osTot = (cache.os || []).filter(o => _amKeepSetor(o.recurso_cod)).length;
-  const setorLbl = _amSetor === 'extrusao' ? 'Extrusão (matéria-prima)' : _amSetor === 'transf' ? 'Todos os setores menos Extrusão' : _amSetor === 'todos' ? 'Todos os setores' : _amSetor;
+  E.prod = E.prod.filter(r => _amKeep(r.recurso_cod));
+  E.perd = E.perd.filter(r => _amKeep(r.recurso_cod));
+  E.par = E.par.filter(r => _amKeep(r.recurso_cod));
+  E.os = E.os.filter(r => _amKeep(r.recurso_cod));
+  const osBack = (cache.os || []).filter(o => !o.data_reinicio && _amKeep(o.recurso_cod)).length;
+  const osTot = (cache.os || []).filter(o => _amKeep(o.recurso_cod)).length;
+  let setorLbl = _amSetor === 'extrusao' ? 'Extrusão (matéria-prima)' : _amSetor === 'transf' ? 'Todos os setores menos Extrusão' : _amSetor === 'todos' ? 'Todos os setores' : _amSetor;
+  if (_amMaq) setorLbl = 'Máquina ' + _amMaq;
   const custoKg = _amCustoKg || 8;
   let html = `<div style="text-align:center;color:#5C7186;font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
     `<div style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;background:#EEF3F8;border-radius:10px;padding:9px;margin-bottom:12px"><span style="font-size:12.5px;color:#41505E;font-weight:600">💲 Preço médio do PP:</span><span style="font-weight:700">R$</span><input id="amCustoKg" value="${custoKg.toLocaleString('pt-BR')}" inputmode="decimal" onchange="salvarCustoKg(this.value)" style="width:82px;padding:6px 8px;border:1px solid var(--borda);border-radius:8px;text-align:center">/kg</div>`;
