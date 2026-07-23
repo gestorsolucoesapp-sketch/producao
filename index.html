@@ -441,7 +441,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.96.4<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.97.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1305,7 +1305,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.96.4';
+const APP_VER = '3.97.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6160,6 +6160,44 @@ async function preencherRelItensOps(setor) {
 
 function relTrocaMes(v) { _relMesSel = v || ''; relMontaTabela(); }
 
+// Paradas da máquina filtrada — agrupadas por motivo, somadas e em ordem decrescente
+async function relParadasMaq(cod) {
+  const ym = _relMesSel || _relRef.ref;
+  const de = ym + '-01', ate = ultimoDiaMes(ym);
+  abreDet('Paradas · máquina ' + cod, '<p class="idet-desc"><span class="spin"></span> Carregando…</p>');
+  try {
+    const linhas0 = await fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,inicio', de, ate);
+    const linhas = (linhas0 || []).filter(r => String(r.recurso_cod) === String(cod));
+    if (!linhas.length) { $('itemDetCorpo').innerHTML = seloPeriodo('Mês', mesLabel(ym)) + '<p class="idet-desc">Nenhuma parada registrada nesta máquina no período.</p>'; return; }
+    const ag = {};
+    linhas.forEach(r => {
+      const m = (r.motivo_desc || '—').trim();
+      const o = (ag[m] = ag[m] || { m, h: 0, n: 0, dias: new Set() });
+      o.h += (+r.tempo_horas || 0); o.n++; if (r.dia) o.dias.add(String(r.dia).slice(0, 10));
+    });
+    const arr = Object.values(ag).sort((a, b) => b.h - a.h);
+    const totH = arr.reduce((a, x) => a + x.h, 0), totN = arr.reduce((a, x) => a + x.n, 0);
+    let acc = 0;
+    const fh = v => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h';
+    const corpo = arr.map(x => {
+      acc += x.h;
+      const pc = totH > 0 ? (x.h / totH * 100) : 0;
+      const ac = totH > 0 ? (acc / totH * 100) : 0;
+      return '<tr><td class="nome">' + escapeHtml(x.m) + '<div class="desc" style="font-size:10px">' + x.n + ' ocorr. · ' + x.dias.size + ' dia(s)</div></td>' +
+        '<td><span class="cel cel-tot">' + fh(x.h) + '</span></td>' +
+        '<td><span class="cel ' + (pc >= 20 ? 'baixo' : 'neutra') + '">' + pc.toFixed(1) + '%</span></td>' +
+        '<td><span class="cel neutra">' + ac.toFixed(0) + '%</span></td></tr>';
+    }).join('') +
+      '<tr style="border-top:2px solid var(--navy);font-weight:700;background:#f4f7fa"><td class="nome">TOTAL · ' + arr.length + ' motivo(s) · ' + totN + ' ocorr.</td>' +
+      '<td><span class="cel cel-tot">' + fh(totH) + '</span></td><td></td><td></td></tr>';
+    $('itemDetCorpo').innerHTML = seloPeriodo('Mês', mesLabel(ym)) +
+      '<p class="idet-desc">Somadas por motivo, da maior para a menor · % acum. mostra o corte de Pareto.</p>' +
+      tabSimples(['Motivo', 'Horas', '%', '% acum.'], corpo);
+  } catch (e) {
+    $('itemDetCorpo').innerHTML = '<p class="idet-desc">Erro ao carregar paradas: ' + escapeHtml(e.message || String(e)) + '</p>';
+  }
+}
+
 async function relMontaTabela() {
   const box = document.getElementById('relItensOpsBox'); if (!box) return;
   try {
@@ -6277,6 +6315,7 @@ function filtrarRelItensOps() {
       out.push('<span title="soma do que está filtrado · ' + nL + ' item×OP" style="font-size:11px;font-weight:800;color:#fff;background:var(--navy);padding:2px 8px;border-radius:10px;white-space:nowrap">Σ ' + escapeHtml(partes.join(' · ')) + '</span>');
     }
     arr.forEach(c => _relMeses.forEach(ym => { if (_relMaqStats[ym + '|' + c]) out.push(relChipMaq(c, ym)); }));
+    if (mq) out.push('<span onclick="relParadasMaq(\'' + mq + '\')" title="paradas somadas por motivo, da maior para a menor" style="cursor:pointer;font-size:11px;font-weight:800;color:#B0281A;background:#FBE3E0;border:1px solid #B0281A33;padding:2px 8px;border-radius:10px;white-space:nowrap">⏸ paradas de ' + escapeHtml(mq) + ' ›</span>');
     box.innerHTML = out.join('');
   }
 }
