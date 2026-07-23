@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.3<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.4<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1303,7 +1303,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.94.3';
+const APP_VER = '3.94.4';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5946,6 +5946,7 @@ async function preencherMediaItensMes(ym, setor) {
     `<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
        <select id="relSetor" onchange="preencherRelItensOps(this.value)" style="flex:1;min-width:150px;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-size:15px;background:#fff"><option value="">Todos os setores</option>${SETORES.filter(x => x !== 'Outros').map(sx => `<option value="${escapeHtml(sx)}" ${anSetor === sx ? 'selected' : ''}>${escapeHtml(sx)}</option>`).join('')}</select>
        <select id="relMaq" onchange="filtrarRelItensOps()" style="flex:1;min-width:130px;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-size:15px;background:#fff"><option value="">Todas as m&aacute;quinas</option></select>
+       <select id="relMes" onchange="relTrocaMes(this.value)" style="flex:1;min-width:120px;padding:9px 10px;border:1px solid var(--borda);border-radius:9px;font-size:15px;background:#fff"></select>
      </div>
      <div style="position:relative;margin-bottom:8px"><span onclick="filtrarRelItensOps()" title="Pesquisar" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:16px;cursor:pointer;padding:6px;opacity:.65">🔍</span><input id="relBusca" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" oninput="filtrarRelItensOps()" onkeyup="filtrarRelItensOps()" onchange="filtrarRelItensOps()" onsearch="filtrarRelItensOps()" placeholder="buscar por código, OP ou palavra…" style="width:100%;padding:9px 12px 9px 42px;border:1px solid var(--borda);border-radius:9px;font-size:16px;box-sizing:border-box"></div>
      <div id="relItensOpsBox"><p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando mês atual + anterior…</p></div>`,
@@ -6028,7 +6029,21 @@ async function preencherMediaItensMes(ym, setor) {
 
 // Relação item × OP do MÊS ATUAL + ANTERIOR (independe do seletor de período), com busca ao vivo
 let _relCache = { chave: null, html: '' };
+let _relRowsCache = { chave: null, rows: [], setor: '' };
+let _relRef = { ref: '', ymAnt: '' };
+let _relMesSel = null;   // null = ainda não definido; '' = ambos os meses
+let _relUltGlobal = '';  // último mês visto no seletor global
 let _relMaqStats = {}, _relMeses = [], _relEmCx = false;
+function relPreencheSelMes() {
+  const sel = document.getElementById('relMes'); if (!sel) return;
+  const a = _relRef.ymAnt, b = _relRef.ref;
+  sel.innerHTML = [
+    '<option value="' + b + '">Mês ' + mesLabel(b) + '</option>',
+    '<option value="' + a + '">Mês ' + mesLabel(a) + '</option>',
+    '<option value="">Os dois meses</option>'
+  ].join('');
+  sel.value = _relMesSel === null ? b : _relMesSel;
+}
 const _relMesAbrev = ym => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][(+String(ym).slice(5, 7)) - 1] || ym;
 // meta diária da máquina = soma dos blocos Manhã+Tarde+Noite
 function relMetaDiaMaq(cod) {
@@ -6061,16 +6076,40 @@ async function preencherRelItensOps(setor) {
   const box = document.getElementById('relItensOpsBox'); if (!box) return;
   try {
     await getUltimoDiaProd();
-    const ref = (ULTIMO_DIA_PROD || hojeISO()).slice(0, 7);   // 'YYYY-MM' do último dia com produção
+    // mês de referência = o do seletor global de período (se for 'mes'); senão, o último dia com produção
+    const glYM = (typeof periodoSel === 'object' && periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : '';
+    const ref = glYM || (ULTIMO_DIA_PROD || hojeISO()).slice(0, 7);
+    if (glYM && glYM !== _relUltGlobal) { _relUltGlobal = glYM; _relMesSel = null; }   // trocou o mês lá em cima → re-sincroniza
     const [y, m] = ref.split('-').map(Number);
     const ymAnt = (m === 1) ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
     const de = ymAnt + '-01', ate = ultimoDiaMes(ref);
     const chave = de + '|' + ate + '|' + (setor || '');
-    if (_relCache.chave === chave) { box.innerHTML = _relCache.html; filtrarRelItensOps(); return; }
+    _relRef = { ref, ymAnt };
+    if (_relRowsCache.chave === chave) { await relMontaTabela(); return; }
     box.innerHTML = '<p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando' + (setor ? ' · ' + escapeHtml(setor) : '') + '…</p>';
     const rows0 = await fetchTudo('producao', 'dia,op,item_cod,item_desc,recurso_cod,quantidade,unidade,peso', de, ate);
     let rows = rows0.filter(r => r.item_cod);
     if (setor) rows = rows.filter(r => setorDe(r.recurso_cod) === setor);
+    _relRowsCache = { chave, rows, setor };
+    await relMontaTabela();
+    return;
+  } catch (e) { box.innerHTML = '<p class="vazio-painel">Erro ao carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
+}
+
+function relTrocaMes(v) { _relMesSel = v || ''; relMontaTabela(); }
+
+async function relMontaTabela() {
+  const box = document.getElementById('relItensOpsBox'); if (!box) return;
+  try {
+    const setor = _relRowsCache.setor || '';
+    const ref = _relRef.ref, ymAnt = _relRef.ymAnt;
+    // mês padrão = o do seletor global, se existir nos dois meses carregados
+    if (_relMesSel === null) {
+      const gl = (typeof periodoSel === 'object' && periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : '';
+      _relMesSel = (gl === ref || gl === ymAnt) ? gl : ref;
+    }
+    let rows = _relRowsCache.rows || [];
+    if (_relMesSel) rows = rows.filter(r => String(r.dia || '').slice(0, 7) === _relMesSel);
     const rel = {};
     rows.forEach(r => {
       const cod = String(r.item_cod || '—'), op = String(r.op || '—'), k = cod + '@@' + op;
@@ -6099,7 +6138,7 @@ async function preencherRelItensOps(setor) {
     // milheiro = nativo MIL + (cxs × unidades por caixa extraídas da descrição) / 1000
     const _unidCx = d => { const s = String(d || ''); let m = /(\d{1,6})\s*UNID/i.exec(s); if (m) return +m[1]; m = /\bCX\s*(\d{2,6})/i.exec(s); return m ? +m[1] : null; };
     relArr.forEach(x => { const u = _unidCx(x.desc); x.unid = u; x.mil = x.milNat + (u ? x.cx * u / 1000 : 0); });
-    if (!relArr.length) { box.innerHTML = '<p class="vazio-painel">Sem produção no mês atual + anterior' + (setor ? ' neste setor' : '') + '.</p>'; return; }
+    if (!relArr.length) { box.innerHTML = '<p class="vazio-painel">Sem produção em ' + (_relMesSel ? mesLabel(_relMesSel) : 'mês atual + anterior') + (setor ? ' neste setor' : '') + '.</p>'; relPreencheSelMes(); return; }
     const totCx = relArr.reduce((a, x) => a + x.cx, 0), totKg = relArr.reduce((a, x) => a + x.kg, 0), totMil = relArr.reduce((a, x) => a + x.mil, 0);
     const vazio = '<span style="color:#B8C2CC">—</span>';
     const nCx = v => v > 0 ? '<span class="cel ok">' + fmtNum(Math.round(v)) + '</span>' : vazio;
@@ -6118,10 +6157,10 @@ async function preencherRelItensOps(setor) {
       <td>${totMil > 0 ? '<span class="cel ok">' + totMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio}</td>
       <td>${totCx > 0 ? '<span class="cel ok">' + fmtNum(Math.round(totCx)) + '</span>' : vazio}</td>
       <td><span class="cel cel-tot">${fmtKg(totKg)}</span></td></tr>`;
-    const per = mesLabel(ymAnt) + ' + ' + mesLabel(ref);
+    const per = _relMesSel ? mesLabel(_relMesSel) : (mesLabel(ymAnt) + ' + ' + mesLabel(ref));
     const html = `<div style="font-size:11px;color:#5C7186;margin:-2px 0 6px">período: <b>${per}</b> · ${relArr.length} item×OP <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div id="relMaqChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px"></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>OP</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
-    _relCache = { chave, html };
     box.innerHTML = html;
+    relPreencheSelMes();
     { const todas = [...new Set(relArr.flatMap(x => [...x.maqs]))].sort((a, b) => (+a || 0) - (+b || 0));
       const selM = document.getElementById('relMaq');
       if (selM) { const atual = selM.value;
