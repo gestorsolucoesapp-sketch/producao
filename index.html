@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.98<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.99<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -642,14 +642,20 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       </div>
       <div class="card oculto" id="cardBriefing">
         <div class="titulo-sec">Briefing diário automático</div>
-        <p class="desc" style="margin-bottom:10px">Todo dia, no horário escolhido, o resumo do dia é enviado ao <b>grupo do Telegram</b> (produção, paradas, refugo). O destinatário abaixo também recebe uma <b>tarefa no app</b> com o mesmo resumo.</p>
-        <div class="campo" style="margin-bottom:8px"><label for="briefDest">Enviar o briefing para</label>
-          <select id="briefDest"><option value="">— desativado —</option></select></div>
-        <div class="campo" style="margin-bottom:8px"><label for="briefHora">Horário do envio no Telegram (todo dia)</label>
+        <p class="desc" style="margin-bottom:10px">O resumo do dia (produção, paradas, refugo) vai ao <b>grupo do Telegram</b> e vira <b>tarefa no app</b> para as pessoas escolhidas.</p>
+        <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#F4F7FA;border-radius:10px;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" id="briefAuto" style="width:20px;height:20px;accent-color:var(--verde)">
+          <span style="flex:1;font-size:13.5px;font-weight:700;color:var(--navy)">Enviar automático quando os dados do dia entrarem<span style="display:block;font-weight:500;color:#5C7186;font-size:12px">desmarque para nunca mandar sozinho</span></span>
+        </label>
+        <div class="campo" style="margin-bottom:8px"><label for="briefDest">Pessoas que recebem a tarefa <span style="font-weight:500;color:#8395A6">(toque para marcar várias)</span></label>
+          <select id="briefDest" multiple size="4"></select></div>
+        <div class="campo" style="margin-bottom:8px"><label for="briefHora">Horário do envio no Telegram</label>
           <select id="briefHora"></select></div>
-        <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar destinatário e horário</button>
-        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="abrirPreviewBriefing()">👁️ Conferir / editar e enviar</button>
-        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="dispararBriefingAgora()">📨 Enviar como tarefa (sem editar)</button>
+        <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar configuração</button>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-borda" style="flex:1" onclick="abrirPreviewBriefing()">👁️ Conferir / editar</button>
+          <button class="btn btn-borda" style="flex:1" onclick="dispararBriefingAgora()">📨 Mandar já</button>
+        </div>
         <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
       <div class="card oculto" id="cardRoteamento">
@@ -1282,7 +1288,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.98';
+const APP_VER = '3.93.99';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6156,23 +6162,30 @@ async function enviarBriefingEditado(destino) {
       const d = await r.json();
       st.innerHTML = d && d.telegram_ok ? '✅ Enviado ao grupo do Telegram.' : '⚠️ Resposta: ' + JSON.stringify(d).slice(0, 120);
     } else {
-      const dest = _briefDest || ($('briefDest') && $('briefDest').value);
-      if (!dest) { st.textContent = 'Escolha um destinatário no card antes de enviar como tarefa.'; return; }
+      const sel = $('briefDest');
+      const dests = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : (Array.isArray(_briefDest) ? _briefDest : []);
+      if (!dests.length) { st.textContent = 'Marque ao menos uma pessoa no card antes de enviar como tarefa.'; return; }
       const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
-      const { error } = await sb.from('tarefas').insert({
-        titulo: '📋 Briefing de produção · ' + (ud ? fmtData(ud) : ''),
-        responsavel_id: dest, criado_por: (perfil && perfil.id) || null,
-        criado_por_nome: (perfil && perfil.nome) || 'Sistema', prioridade: 'media', descricao: texto
-      });
-      st.innerHTML = error ? '❌ ' + error.message : '✅ Enviado como tarefa no app.';
+      const linhas = dests.map(id => ({
+        titulo: '📋 Briefing de produção · ' + (ud ? fmtData(ud) : ''), responsavel_id: id,
+        criado_por: (perfil && perfil.id) || null, criado_por_nome: (perfil && perfil.nome) || 'Sistema',
+        prioridade: 'media', descricao: texto
+      }));
+      const { error } = await sb.from('tarefas').insert(linhas);
+      st.innerHTML = error ? '❌ ' + error.message : `✅ Enviado como ${dests.length} tarefa(s) no app.`;
     }
   } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
 }
 // ===== BRIEFING DIÁRIO AUTOMÁTICO (vira tarefa para o destinatário escolhido) =====
 let _briefDest = undefined;
 async function getBriefDest() {
-  try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_dest').maybeSingle(); _briefDest = data ? data.valor : null; }
-  catch (_) { _briefDest = null; }
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_dest').maybeSingle();
+    const v = data ? data.valor : null;
+    if (!v) { _briefDest = []; }
+    else if (v.trim().startsWith('[')) { try { _briefDest = JSON.parse(v); } catch (_) { _briefDest = []; } }
+    else { _briefDest = [v]; }   // formato antigo (id único)
+  } catch (_) { _briefDest = []; }
   return _briefDest;
 }
 async function renderBriefingConfig() {
@@ -6182,68 +6195,91 @@ async function renderBriefingConfig() {
   const sel = $('briefDest'); if (!sel) return;
   let colegas = [];
   try { const { data } = await sb.from('colegas').select('id,nome,setor').order('nome'); colegas = data || []; } catch (_) {}
-  await getBriefDest();
-  sel.innerHTML = '<option value="">— desativado —</option>' +
-    colegas.map(u => `<option value="${u.id}" ${_briefDest === u.id ? 'selected' : ''}>${escapeHtml(u.nome)}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('');
-  // horário (0–23h)
+  await getBriefDest();   // _briefDest = array de ids
+  const marcados = Array.isArray(_briefDest) ? _briefDest : (_briefDest ? [_briefDest] : []);
+  sel.innerHTML = colegas.map(u => `<option value="${u.id}" ${marcados.includes(u.id) ? 'selected' : ''}>${escapeHtml(u.nome)}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('');
+  // horário
   const selH = $('briefHora');
   if (selH) {
     let horaCfg = '6';
     try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_hora').maybeSingle(); if (data && data.valor != null) horaCfg = String(parseInt(data.valor, 10)); } catch (_) {}
     selH.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${String(h) === horaCfg ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
   }
+  // toggle automático (padrão ligado)
+  const chk = $('briefAuto');
+  if (chk) {
+    let auto = '1';
+    try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'briefing_auto').maybeSingle(); if (data && data.valor != null) auto = String(data.valor); } catch (_) {}
+    chk.checked = auto !== '0';
+  }
 }
 async function salvarBriefingDest() {
-  const v = $('briefDest').value || null;
+  const sel = $('briefDest');
+  const ids = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : [];
   const h = $('briefHora') ? $('briefHora').value : null;
+  const auto = ($('briefAuto') && $('briefAuto').checked) ? '1' : '0';
   const st = $('briefStatus'); st.textContent = 'Salvando…';
   try {
-    await sb.from('app_config').upsert({ chave: 'briefing_dest', valor: v }, { onConflict: 'chave' });
+    await sb.from('app_config').upsert({ chave: 'briefing_dest', valor: JSON.stringify(ids) }, { onConflict: 'chave' });
+    await sb.from('app_config').upsert({ chave: 'briefing_auto', valor: auto }, { onConflict: 'chave' });
     if (h != null) await sb.from('app_config').upsert({ chave: 'briefing_hora', valor: String(h) }, { onConflict: 'chave' });
-    _briefDest = v;
-    st.innerHTML = v ? `✅ Briefing no Telegram todo dia às ${String(h).padStart(2, '0')}:00.` : `Briefing (tarefa no app) desativado. Telegram continua no horário ${String(h).padStart(2, '0')}:00 se houver grupo configurado.`;
+    _briefDest = ids;
+    st.innerHTML = auto === '0'
+      ? '✅ Salvo. Envio automático DESLIGADO — só sai quando você mandar.'
+      : `✅ Salvo. Automático ligado · ${ids.length} pessoa(s) · Telegram às ${String(h).padStart(2, '0')}:00.`;
   } catch (e) { st.textContent = '❌ ' + (e.message || 'não salvou'); }
 }
 // chamada quando o painel carrega: se entrou dia novo e há destinatário, cria a tarefa (uma vez por dia)
 async function dispararBriefingAgora() {
-  const st = $('briefStatus'); const dest = $('briefDest').value || _briefDest;
-  if (!dest) { st.textContent = '⚠️ Escolha e salve um destinatário primeiro.'; return; }
+  const st = $('briefStatus');
+  const sel = $('briefDest');
+  const dests = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : (Array.isArray(_briefDest) ? _briefDest : []);
   st.textContent = 'Enviando…';
   try {
     const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
     if (!ud) { st.textContent = 'Sem dia de produção carregado.'; return; }
     let corpo = null; try { corpo = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
-    if (!corpo) { st.textContent = 'Não consegui montar o relatório.'; return; }
-    const { error } = await sb.from('tarefas').insert({
-      titulo: '📋 Briefing de produção · ' + fmtData(ud),
-      responsavel_id: dest, criado_por: (perfil && perfil.id) || null,
-      criado_por_nome: (perfil && perfil.nome) || 'Sistema', prioridade: 'media', descricao: corpo
-    });
-    if (error) { st.textContent = '❌ ' + error.message; return; }
-    await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
-    st.innerHTML = '✅ Briefing enviado como tarefa para o destinatário.';
+    if (!corpo || typeof corpo === 'object') { st.textContent = 'Não consegui montar o relatório.'; return; }
+    // tarefa para cada pessoa marcada
+    if (dests.length) {
+      const linhas = dests.map(id => ({
+        titulo: '📋 Briefing de produção · ' + fmtData(ud), responsavel_id: id,
+        criado_por: (perfil && perfil.id) || null, criado_por_nome: (perfil && perfil.nome) || 'Sistema',
+        prioridade: 'media', descricao: corpo
+      }));
+      await sb.from('tarefas').insert(linhas);
+    }
+    // e dispara no Telegram na hora (força)
+    let tgOk = false;
+    try {
+      const { data } = await sb.from('app_config').select('valor').eq('chave', 'cron_key').maybeSingle();
+      const key = data && data.valor;
+      if (key) { const r = await fetch(`${SB_URL}/functions/v1/briefing-telegram?key=${encodeURIComponent(key)}&force=1`); const d = await r.json(); tgOk = !!(d && d.telegram_ok); }
+    } catch (_) {}
+    st.innerHTML = `✅ Enviado${dests.length ? ' · ' + dests.length + ' tarefa(s)' : ''}${tgOk ? ' · Telegram ✓' : ''}.`;
   } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
 }
 async function gerarBriefingTarefa() {
   try {
     const D = dadosPainel; if (!D || !D.info) return;
     const ud = D.info.ultimoDiaProd; if (!ud) return;
+    // respeita o liga/desliga do automático
+    try { const { data: a } = await sb.from('app_config').select('valor').eq('chave', 'briefing_auto').maybeSingle(); if (a && String(a.valor) === '0') return; } catch (_) {}
     if (_briefDest === undefined) await getBriefDest();
-    if (!_briefDest) return;
-    // já existe tarefa desse dia? (marca de controle em app_config)
+    const dests = Array.isArray(_briefDest) ? _briefDest : (_briefDest ? [_briefDest] : []);
+    if (!dests.length) return;
     const { data: ctrl } = await sb.from('app_config').select('valor').eq('chave', 'briefing_ultimo').maybeSingle();
     if (ctrl && ctrl.valor === ud) return;                 // já gerado para esse dia
-    // monta o texto (mesmo relatório do assistente local)
     let corpo = null; try { corpo = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
-    if (!corpo) return;
-    const { error } = await sb.from('tarefas').insert({
+    if (!corpo || typeof corpo === 'object') return;
+    const linhas = dests.map(id => ({
       titulo: '📋 Briefing de produção · ' + fmtData(ud),
-      responsavel_id: _briefDest,
+      responsavel_id: id,
       criado_por: (perfil && perfil.id) || null,
       criado_por_nome: (perfil && perfil.nome) || 'Sistema',
-      prioridade: 'media',
-      descricao: corpo
-    });
+      prioridade: 'media', descricao: corpo
+    }));
+    const { error } = await sb.from('tarefas').insert(linhas);
     if (!error) await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
   } catch (_) { /* silencioso: nunca trava o painel */ }
 }
