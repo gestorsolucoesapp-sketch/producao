@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.94.2<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1303,7 +1303,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.94.1';
+const APP_VER = '3.94.2';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6028,6 +6028,33 @@ async function preencherMediaItensMes(ym, setor) {
 
 // Relação item × OP do MÊS ATUAL + ANTERIOR (independe do seletor de período), com busca ao vivo
 let _relCache = { chave: null, html: '' };
+let _relMaqStats = {}, _relEmCx = false;
+// meta diária da máquina = soma dos blocos Manhã+Tarde+Noite
+function relMetaDiaMaq(cod) {
+  if (!metasData) return null;
+  const m = metasData[String(cod)]; if (!m) return null;
+  let s = 0, achou = false;
+  ['Manhã', 'Tarde', 'Noite'].forEach(b => { if (m[b]) { s += m[b]; achou = true; } });
+  return achou ? s : null;
+}
+function relChipMaq(cod) {
+  const e = _relMaqStats[String(cod)];
+  const meta = relMetaDiaMaq(cod);
+  const vol = e ? (_relEmCx ? e.cx : e.kg) : 0;
+  const dias = e ? e.dias.size : 0;
+  const media = dias ? vol / dias : 0;
+  let cor = '#5C7186', bg = '#EEF2F6', txt = '';
+  if (meta && dias) {
+    const pc = media / meta * 100;
+    txt = ' · ' + Math.round(pc) + '%';
+    if (pc >= 100) { cor = '#1E7B45'; bg = '#E4F5EA'; }
+    else if (pc >= 85) { cor = '#9A6B00'; bg = '#FBF0D6'; }
+    else { cor = '#B0281A'; bg = '#FBE3E0'; }
+  } else { txt = ' · sem meta'; }
+  const un = _relEmCx ? ' cxs/dia' : ' kg/dia';
+  const tip = dias ? (Math.round(media).toLocaleString('pt-BR') + un + (meta ? ' · meta ' + Math.round(meta).toLocaleString('pt-BR') : '') + ' · ' + dias + ' dias') : 'sem produção';
+  return '<span title="' + escapeHtml(tip) + '" style="font-size:11px;font-weight:700;color:' + cor + ';background:' + bg + ';border:1px solid ' + cor + '33;padding:2px 7px;border-radius:10px;white-space:nowrap">' + escapeHtml(String(cod)) + txt + '</span>';
+}
 async function preencherRelItensOps(setor) {
   const box = document.getElementById('relItensOpsBox'); if (!box) return;
   try {
@@ -6052,6 +6079,16 @@ async function preencherRelItensOps(setor) {
       o.kg += (+r.peso || 0);
       if (u === 'CX') o.cx += q; else if (u === 'MIL') o.milNat += q;
     });
+    // estatística por máquina: volume e dias em que rodou (base do "abaixo da meta")
+    _relMaqStats = {}; _relEmCx = !!(setor && typeof setorEmCx === 'function' && setorEmCx(setor));
+    rows.forEach(r => {
+      const c = String(r.recurso_cod || ''); if (!c) return;
+      const e = (_relMaqStats[c] = _relMaqStats[c] || { kg: 0, cx: 0, dias: new Set() });
+      e.kg += (+r.peso || 0);
+      if (String(r.unidade || '').toUpperCase() === 'CX') e.cx += (+r.quantidade || 0);
+      if (r.dia) e.dias.add(r.dia);
+    });
+    try { await getMetas(); } catch (_) {}
     const relArr = Object.values(rel).sort((a, b) => b.kg - a.kg);
     // milheiro = nativo MIL + (cxs × unidades por caixa extraídas da descrição) / 1000
     const _unidCx = d => { const s = String(d || ''); let m = /(\d{1,6})\s*UNID/i.exec(s); if (m) return +m[1]; m = /\bCX\s*(\d{2,6})/i.exec(s); return m ? +m[1] : null; };
@@ -6076,7 +6113,7 @@ async function preencherRelItensOps(setor) {
       <td>${totCx > 0 ? '<span class="cel ok">' + fmtNum(Math.round(totCx)) + '</span>' : vazio}</td>
       <td><span class="cel cel-tot">${fmtKg(totKg)}</span></td></tr>`;
     const per = mesLabel(ymAnt) + ' + ' + mesLabel(ref);
-    const html = `<div style="font-size:11px;color:#5C7186;margin:-2px 0 6px">período: <b>${per}</b> · ${relArr.length} item×OP <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>OP</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
+    const html = `<div style="font-size:11px;color:#5C7186;margin:-2px 0 6px">período: <b>${per}</b> · ${relArr.length} item×OP <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div id="relMaqChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px"></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>OP</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
     _relCache = { chave, html };
     box.innerHTML = html;
     { const todas = [...new Set(relArr.flatMap(x => [...x.maqs]))].sort((a, b) => (+a || 0) - (+b || 0));
@@ -6103,7 +6140,17 @@ function filtrarRelItensOps() {
     if (mostra) vis++;
   });
   const inf = document.getElementById('relInfoFiltro');
-  if (inf) inf.textContent = (q || mq) ? (vis + ' item×OP' + (mq ? ' · máquina ' + mq : '')) : '';
+  if (inf) inf.textContent = (q || mq) ? (vis + ' item×OP') : '';
+  const box = document.getElementById('relMaqChips');
+  if (box) {
+    const set = new Set();
+    tab.querySelectorAll('tbody tr').forEach(tr => {
+      if (tr.style.display === 'none' || (tr.getAttribute('data-b') || '') === '__total') return;
+      (tr.getAttribute('data-m') || '').split(',').forEach(c => { if (c) set.add(c); });
+    });
+    const arr = [...set].sort((a, b) => (+a || 0) - (+b || 0));
+    box.innerHTML = arr.length ? arr.map(relChipMaq).join('') : '';
+  }
 }
 
 // máquinas que fizeram setup num dia (clique nas barras de "Setups por dia")
