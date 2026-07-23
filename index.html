@@ -440,7 +440,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.104<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.93.105<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -606,19 +606,18 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     <section id="abaUsuarios" class="oculto">
       <div class="card oculto" id="cardBriefing">
         <div class="titulo-sec">Briefing diário automático</div>
-        <p class="desc" style="margin-bottom:10px">O resumo do dia (produção, paradas, refugo) vai ao <b>grupo do Telegram</b> e vira <b>tarefa no app</b> para as pessoas escolhidas.</p>
+        <p class="desc" style="margin-bottom:10px">Os gráficos do dia (produção e perdas por setor) são enviados ao <b>grupo do Telegram</b>. Não cria tarefas no app.</p>
         <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#F4F7FA;border-radius:10px;margin-bottom:10px;cursor:pointer">
           <input type="checkbox" id="briefAuto" style="width:20px;height:20px;accent-color:var(--verde)">
           <span style="flex:1;font-size:13.5px;font-weight:700;color:var(--navy)">Enviar automático quando os dados do dia entrarem<span style="display:block;font-weight:500;color:#5C7186;font-size:12px">desmarque para nunca mandar sozinho</span></span>
         </label>
-        <div class="campo" style="margin-bottom:8px"><label for="briefDest">Pessoas que recebem a tarefa <span style="font-weight:500;color:#8395A6">(toque para marcar várias)</span></label>
-          <select id="briefDest" multiple size="4"></select></div>
+        <select id="briefDest" multiple size="4" class="oculto"></select>
         <div class="campo" style="margin-bottom:8px"><label for="briefHora">Horário do envio no Telegram</label>
           <select id="briefHora"></select></div>
         <button class="btn btn-verde" style="width:100%" onclick="salvarBriefingDest()">💾 Salvar configuração</button>
         <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-borda" style="flex:1" onclick="abrirPreviewBriefing()">👁️ Conferir / editar</button>
-          <button class="btn btn-borda" style="flex:1" onclick="dispararBriefingAgora()">📨 Mandar já</button>
+          <button class="btn btn-borda" style="flex:1" onclick="abrirPreviewBriefing()">👁️ Conferir texto</button>
+          <button class="btn btn-borda" style="flex:1" onclick="dispararBriefingAgora()">📨 Enviar ao Telegram</button>
         </div>
         <div id="briefStatus" class="desc" style="margin-top:8px;text-align:center"></div>
       </div>
@@ -1288,7 +1287,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.93.104';
+const APP_VER = '3.93.105';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6249,31 +6248,17 @@ async function salvarBriefingDest() {
 // chamada quando o painel carrega: se entrou dia novo e há destinatário, cria a tarefa (uma vez por dia)
 async function dispararBriefingAgora() {
   const st = $('briefStatus');
-  const sel = $('briefDest');
-  const dests = sel ? [...sel.selectedOptions].map(o => o.value).filter(Boolean) : (Array.isArray(_briefDest) ? _briefDest : []);
-  st.textContent = 'Enviando…';
+  st.textContent = 'Enviando ao Telegram…';
   try {
     const D = dadosPainel; const ud = D && D.info && D.info.ultimoDiaProd;
     if (!ud) { st.textContent = 'Sem dia de produção carregado.'; return; }
-    let corpo = null; try { corpo = respostaLocal('relatório completo do dia ' + ud.slice(8, 10) + '/' + ud.slice(5, 7)); } catch (_) {}
-    if (!corpo || typeof corpo === 'object') { st.textContent = 'Não consegui montar o relatório.'; return; }
-    // tarefa para cada pessoa marcada
-    if (dests.length) {
-      const linhas = dests.map(id => ({
-        titulo: '📋 Briefing de produção · ' + fmtData(ud), responsavel_id: id,
-        criado_por: (perfil && perfil.id) || null, criado_por_nome: (perfil && perfil.nome) || 'Sistema',
-        prioridade: 'media', descricao: _semMd(corpo)
-      }));
-      await sb.from('tarefas').insert(linhas);
-    }
-    // e dispara no Telegram na hora (força)
     let tgOk = false;
     try {
       const { data } = await sb.from('app_config').select('valor').eq('chave', 'cron_key').maybeSingle();
       const key = data && data.valor;
       if (key) { const r = await fetch(`${SB_URL}/functions/v1/briefing-telegram?key=${encodeURIComponent(key)}&force=1`); const d = await r.json(); tgOk = !!(d && d.telegram_ok); }
     } catch (_) {}
-    st.innerHTML = `✅ Enviado${dests.length ? ' · ' + dests.length + ' tarefa(s)' : ''}${tgOk ? ' · Telegram ✓' : ''}.`;
+    st.innerHTML = tgOk ? '✅ Briefing enviado ao grupo do Telegram.' : '⚠️ Não consegui enviar ao Telegram — confira a configuração.';
   } catch (e) { st.textContent = '❌ ' + (e.message || 'falhou'); }
 }
 async function gerarBriefingTarefa() {
@@ -7956,7 +7941,6 @@ function renderPainel() {
 
 
   box.innerHTML = comPer(html); posRenderPainel(); setTimeout(() => preencherSetupsReais(setor, ud), 0);
-  setTimeout(() => { try { gerarBriefingTarefa(); } catch (_) {} }, 1500);
 }
 
 let novosIntegrantes = [];   // cadastros recentes (só o gestor é avisado)
