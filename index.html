@@ -509,7 +509,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.105.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.106.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1380,7 +1380,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.105.0';
+const APP_VER = '3.106.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9154,6 +9154,7 @@ function renderOrg() {
 
   let h = '<div class="orgv2">';
   if (pend) h += '<div class="card" style="border-left:4px solid #E67E22;margin-bottom:10px"><b>⚠️ ' + pend + ' vínculo(s) pendente(s).</b><div class="desc">Toque no nome laranja para escolher a pessoa certa.</div></div>';
+  h += orgCardHeadcount();
   h += orgImpCard('colab');
   h += orgFaixaSupervisor();
   h += orgFaixaCelulas();
@@ -9507,6 +9508,116 @@ async function orgImpGravar(tipo) {
   await carregarOrganograma();
 }
 
+/* ---------- headcount por turno ---------- */
+function orgHeadcount() {
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const r = {};
+  ORG_TURNOS.forEach(t => {
+    const dt = al.filter(a => a.turno === t);
+    const pes = m => [...new Set(dt.filter(m).map(a => a.matricula || ('?' + (a.apelido_origem || ''))).filter(Boolean))].length;
+    r[t] = {
+      op: pes(a => a.funcao === 'operador' && !a.aprendiz && !a.sem_auxiliar),
+      aux: pes(a => a.funcao === 'auxiliar' && !a.aprendiz && !a.sem_auxiliar),
+      apr: pes(a => a.aprendiz),
+      maq: [...new Set(dt.filter(a => a.funcao === 'operador' && a.maquina_codigo).map(a => a.maquina_codigo))].length
+    };
+    r[t].tot = r[t].op + r[t].aux + r[t].apr;
+  });
+  const todos = [...new Set(al.filter(a => !a.sem_auxiliar).map(a => a.matricula || ('?' + (a.apelido_origem || ''))).filter(Boolean))].length;
+  return { turnos: r, total: todos };
+}
+
+function orgCardHeadcount() {
+  const hc = orgHeadcount();
+  let h = '<div class="card"><div class="titulo-sec">👥 Efetivo por turno · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<div style="display:flex;gap:9px;flex-wrap:wrap">';
+  ORG_TURNOS.forEach(t => {
+    const d = hc.turnos[t], cor = ORG_CORES[t], tint = ORG_TINT[t] || { bg: '#f8fafc', br: '#cbd5e1' };
+    h += '<div style="flex:1 1 150px;background:' + tint.bg + ';border:1px solid ' + tint.br + '66;border-left:5px solid ' + cor + ';border-radius:11px;padding:10px 12px">';
+    h += '<div style="font-size:12px;font-weight:800;color:#0f172a">' + t + '</div>';
+    h += '<div style="font-size:26px;font-weight:800;line-height:1.1;color:#0f172a">' + d.tot + '</div>';
+    h += '<div style="font-size:11.5px;color:#64748b;margin-top:2px">' + d.op + ' oper · ' + d.aux + ' aux' + (d.apr ? ' · ' + d.apr + ' aprendiz' : '') + '</div>';
+    h += '<div style="font-size:11px;color:#94a3b8;margin-top:2px">' + d.maq + ' máquinas</div>';
+    h += '</div>';
+  });
+  h += '<div style="flex:1 1 150px;background:#0f172a;border-radius:11px;padding:10px 12px;color:#fff">';
+  h += '<div style="font-size:12px;font-weight:800">Total no setor</div>';
+  h += '<div style="font-size:26px;font-weight:800;line-height:1.1">' + hc.total + '</div>';
+  h += '<div style="font-size:11.5px;color:#94a3b8;margin-top:2px">pessoas distintas escaladas</div>';
+  h += '</div>';
+  h += '</div>';
+  h += '<div style="margin-top:12px">' + barrasVertical(
+    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].tot, rot: String(hc.turnos[t].tot) })),
+    d => ORG_CORES[d.l] || '#94a3b8') + '</div>';
+  h += '</div>';
+  return h;
+}
+
+/* ---------- gráficos de faltas ---------- */
+function orgGraficoFaltas(af) {
+  let h = '';
+  const porTipo = {};
+  af.forEach(a => porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1);
+  const tipos = ORG_TIPOS.filter(t => porTipo[t]);
+  const CORT = { falta: '#dc2626', atestado: '#d97706', ferias: '#2563eb', folga: '#16a34a', afastamento: '#7c3aed' };
+
+  h += '<div class="card"><div class="titulo-sec">📊 Faltas e atestados · últimos 30 dias</div>';
+  if (!tipos.length) {
+    h += '<div class="desc">sem registros no período</div></div>';
+    return h;
+  }
+  h += barrasVertical(tipos.map(t => ({ l: t, v: porTipo[t], rot: String(porTipo[t]) })), d => CORT[d.l] || '#94a3b8');
+
+  /* por dia — últimos 14 */
+  const dias = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10);
+    dias.push({ d: d, n: af.filter(a => a.data === d).length });
+  }
+  if (dias.some(x => x.n)) {
+    h += '<div class="titulo-sec" style="margin-top:14px">Por dia · últimos 14</div>';
+    h += barrasVerticalScroll(dias.map(x => ({
+      l: x.d.slice(8, 10) + '/' + x.d.slice(5, 7), v: x.n, rot: x.n ? String(x.n) : ''
+    })), d => d.v ? '#dc2626' : '#e2e8f0', { trend: true });
+  }
+
+  /* por turno */
+  const porTurno = {};
+  af.forEach(a => {
+    const al = orgDados.aloc.find(x => x.matricula === a.matricula && x.setor === orgSetorSel);
+    if (al) porTurno[al.turno] = (porTurno[al.turno] || 0) + 1;
+  });
+  if (Object.keys(porTurno).length) {
+    h += '<div class="titulo-sec" style="margin-top:14px">Por turno</div>';
+    h += barrasVertical(ORG_TURNOS.map(t => ({ l: t, v: porTurno[t] || 0, rot: String(porTurno[t] || 0) })), d => ORG_CORES[d.l]);
+  }
+  h += '</div>';
+  return h;
+}
+
+/* ---------- análises extras ---------- */
+function orgCardCobertura() {
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
+  let h = '<div class="card"><div class="titulo-sec">🧩 Cobertura das máquinas</div>';
+  h += '<div style="display:flex;gap:9px;flex-wrap:wrap">';
+  ORG_TURNOS.forEach(t => {
+    const dt = al.filter(a => a.turno === t);
+    const comOp = [...new Set(dt.filter(a => a.funcao === 'operador' && a.maquina_codigo).map(a => a.maquina_codigo))];
+    const semAux = dt.filter(a => a.funcao === 'auxiliar' && a.sem_auxiliar).length;
+    const pct = maqSetor.length ? Math.round(comOp.length / maqSetor.length * 100) : 0;
+    const cor = pct >= 95 ? '#16a34a' : pct >= 70 ? '#d97706' : '#dc2626';
+    h += '<div style="flex:1 1 150px;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px">';
+    h += '<div style="font-size:12px;font-weight:800;color:#0f172a">' + t + '</div>';
+    h += '<div style="font-size:24px;font-weight:800;color:' + cor + ';line-height:1.15">' + pct + '%</div>';
+    h += '<div style="font-size:11.5px;color:#64748b">' + comOp.length + ' de ' + maqSetor.length + ' máquinas</div>';
+    h += '<div style="font-size:11px;color:' + (semAux ? '#d97706' : '#94a3b8') + ';margin-top:2px">' + semAux + ' sem auxiliar</div>';
+    h += '</div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
 /* ---------- modo apresentação (tela cheia, para projetar/apresentar) ---------- */
 let orgApresZ = 1;
 
@@ -9811,6 +9922,9 @@ async function renderOrgAnalise() {
       '<span>' + escapeHtml(orgPrimeiro(orgNome(a.matricula))) + ' <b style="color:#e74c3c">' + escapeHtml(t ? t.tipo : '') + '</b></span></div>';
   }).join('') : '<div class="desc">nenhum posto descoberto hoje ✔</div>';
   h += '</div>';
+  h += orgCardHeadcount();
+  h += orgCardCobertura();
+  h += orgGraficoFaltas(af);
   const porTipo = {}; af.forEach(a => porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1);
   h += '<div class="card"><div class="titulo-sec">Faltas · últimos 30 dias</div>';
   h += Object.keys(porTipo).sort((a, b) => porTipo[b] - porTipo[a]).map(t =>
