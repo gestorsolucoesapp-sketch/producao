@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.114.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.115.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1398,7 +1398,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.114.0';
+const APP_VER = '3.115.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10044,7 +10044,8 @@ function renderOrgRelatorio() {
 
   setores.forEach(st => { h += orgRelBloco(st); });
 
-  h += '<div class="card"><button class="btn btn-verde" onclick="orgRelCopiar()">📋 Copiar resumo para WhatsApp</button>';
+  h += '<div class="card"><button class="btn btn-verde" onclick="orgRelImagem()">🖼️ Mandar gráfico por WhatsApp</button>';
+  h += '<button class="btn btn-borda" style="margin-top:8px" onclick="orgRelCopiar()">📋 Copiar resumo em texto</button>';
   h += '<div class="desc" style="font-size:11px;margin-top:6px">Para mandar como imagem, use ⛶ Apresentar e tire o print.</div></div>';
   h += '</div>';
   wrap.innerHTML = h;
@@ -10085,6 +10086,143 @@ function orgRelCopiar() {
     try { document.execCommand('copy'); done(); } catch (e) { toast('Não consegui copiar'); }
     ta.remove();
   }
+}
+
+/* ---------- imagem do relatório (retrato, barras em pé) para WhatsApp ---------- */
+async function orgRelImagem() {
+  const setores = orgRelTodos
+    ? [...new Set(orgDados.maquinas.map(m => m.setor).filter(Boolean))].sort()
+    : [orgSetorSel];
+
+  const blocos = [];
+  setores.forEach(st => {
+    const d = orgRelDados(st);
+    if (d.length) blocos.push({ setor: st, dados: d });
+  });
+  if (!blocos.length) { toast('Sem dados para gerar'); return; }
+
+  const W = 1080, PAD = 44, COLS = 2, GAPC = 26;
+  const CW = (W - PAD * 2 - GAPC * (COLS - 1)) / COLS;   // largura do card de máquina
+  const CH = 300;                                        // altura do card
+  const HDR = 250;                                       // cabeçalho por setor
+
+  let H = 150;
+  blocos.forEach(b => { H += HDR + Math.ceil(b.dados.length / COLS) * (CH + 20) + 30; });
+  H += 90;
+
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const x = cv.getContext('2d');
+  const F = (p, w) => (w || 400) + ' ' + p + 'px -apple-system, "Segoe UI", Roboto, Arial';
+  const rr = (a, b, c, d, r) => { x.beginPath(); x.moveTo(a + r, b); x.arcTo(a + c, b, a + c, b + d, r); x.arcTo(a + c, b + d, a, b + d, r); x.arcTo(a, b + d, a, b, r); x.arcTo(a, b, a + c, b, r); x.closePath(); };
+
+  x.fillStyle = '#f1f5f9'; x.fillRect(0, 0, W, H);
+
+  // cabeçalho geral
+  x.fillStyle = '#0f172a'; x.fillRect(0, 0, W, 120);
+  x.fillStyle = '#fff'; x.font = F(40, 800);
+  x.fillText('Comparativo de turnos', PAD, 60);
+  x.fillStyle = '#94a3b8'; x.font = F(24);
+  x.fillText('Rioplastic · mês até ' + new Date().toLocaleDateString('pt-BR'), PAD, 96);
+
+  let y = 150;
+
+  blocos.forEach(b => {
+    const st = b.setor, dados = b.dados;
+    const dias = Math.max(0, ...dados.map(r => Math.max(...ORG_TURNOS.map(t => (r.t[t] ? r.t[t].dias : 0)))));
+
+    // faixa do setor
+    x.fillStyle = '#0f172a'; rr(PAD, y, W - PAD * 2, HDR - 30, 20); x.fill();
+    x.fillStyle = '#fff'; x.font = F(34, 800);
+    x.fillText(st, PAD + 28, y + 52);
+    x.fillStyle = '#94a3b8'; x.font = F(21);
+    x.fillText(dias + ' dias · em ' + orgUnid(st), PAD + 28, y + 84);
+
+    const bw = (W - PAD * 2 - 56) / 3;
+    ORG_TURNOS.forEach((t, i) => {
+      let p = 0, rels = [], pk = 0;
+      dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
+      const rm = rels.length ? Math.round(rels.reduce((a, c) => a + c, 0) / rels.length) : null;
+      const pp = (p + pk) > 0 ? (pk / (p + pk) * 100) : null;
+      const bx = PAD + 28 + i * bw;
+      x.fillStyle = ORG_CORES[t]; x.fillRect(bx, y + 108, 6, 72);
+      x.fillStyle = ORG_CORES[t]; x.font = F(22, 800);
+      x.fillText(t, bx + 18, y + 128);
+      x.fillStyle = '#fff'; x.font = F(34, 800);
+      x.fillText(orgFmtProd(p, st), bx + 18, y + 164);
+      x.fillStyle = '#cbd5e1'; x.font = F(18);
+      x.fillText('meta ' + (rm == null ? '—' : rm + '%') + ' · perda ' + (pp == null ? '—' : pp.toFixed(1).replace('.', ',') + '%'), bx + 18, y + 190);
+    });
+
+    y += HDR;
+
+    dados.forEach((r, idx) => {
+      const col = idx % COLS, lin = Math.floor(idx / COLS);
+      const cx0 = PAD + col * (CW + GAPC);
+      const cy0 = y + lin * (CH + 20);
+
+      x.fillStyle = '#fff'; rr(cx0, cy0, CW, CH, 18); x.fill();
+      x.strokeStyle = '#e2e8f0'; x.lineWidth = 2; rr(cx0, cy0, CW, CH, 18); x.stroke();
+
+      // pill da máquina
+      x.fillStyle = '#0f172a'; rr(cx0 + 18, cy0 + 16, 150, 44, 12); x.fill();
+      x.fillStyle = '#94a3b8'; x.font = F(15, 700); x.fillText('MÁQ', cx0 + 32, cy0 + 44);
+      x.fillStyle = '#fff'; x.font = F(26, 800); x.fillText(r.maq, cx0 + 82, cy0 + 46);
+
+      // 3 mini-gráficos de barras em pé
+      const metricas = [
+        { rot: 'PRODUÇÃO', get: k => k.prod, fmt: v => orgFmtProd(v, st) },
+        { rot: 'META', get: k => k.rel, fmt: v => v == null ? '—' : Math.round(v) + '%' },
+        { rot: 'PERDA', get: k => k.perda, fmt: v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%' }
+      ];
+      const mw = (CW - 36) / 3, baseY = cy0 + CH - 30, altura = 128;
+
+      metricas.forEach((mt, mi) => {
+        const mx = cx0 + 18 + mi * mw;
+        x.fillStyle = '#94a3b8'; x.font = F(15, 700);
+        x.fillText(mt.rot, mx, cy0 + 88);
+        const vals = ORG_TURNOS.map(t => (r.t[t] ? mt.get(r.t[t]) : null));
+        const mx2 = Math.max(1, ...vals.filter(v => v != null));
+        const bwid = (mw - 26) / 3;
+        ORG_TURNOS.forEach((t, ti) => {
+          const v = vals[ti];
+          const hh = (v == null || mx2 <= 0) ? 3 : Math.max(4, v / mx2 * altura);
+          const bx = mx + ti * bwid;
+          x.fillStyle = '#f1f5f9'; rr(bx, baseY - altura, bwid - 6, altura, 5); x.fill();
+          x.fillStyle = ORG_CORES[t]; rr(bx, baseY - hh, bwid - 6, hh, 5); x.fill();
+          x.save();
+          x.translate(bx + (bwid - 6) / 2, baseY - hh - 8);
+          x.fillStyle = '#334155'; x.font = F(14, 800); x.textAlign = 'center';
+          x.fillText(mt.fmt(v), 0, 0);
+          x.restore();
+          x.textAlign = 'left';
+          x.fillStyle = (ORG_TINT[t] || {}).br || '#64748b'; x.font = F(13, 800);
+          x.save(); x.translate(bx + (bwid - 6) / 2, baseY + 20); x.textAlign = 'center';
+          x.fillText(t.slice(0, 3).toUpperCase(), 0, 0); x.restore();
+          x.textAlign = 'left';
+        });
+      });
+    });
+
+    y += Math.ceil(dados.length / COLS) * (CH + 20) + 30;
+  });
+
+  x.fillStyle = '#94a3b8'; x.font = F(20);
+  x.fillText('Controle de Produção · gerado pelo app', PAD, H - 36);
+
+  const blob = await new Promise(res => cv.toBlob(res, 'image/png', 0.92));
+  if (!blob) { toast('Não consegui gerar a imagem'); return; }
+  const nome = 'turnos-' + new Date().toISOString().slice(0, 10) + '.png';
+  const file = new File([blob], nome, { type: 'image/png' });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+    try { await navigator.share({ files: [file], title: 'Comparativo de turnos' }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('Imagem salva — anexe no WhatsApp');
 }
 
 /* ---------- modo apresentação (tela cheia, para projetar/apresentar) ---------- */
