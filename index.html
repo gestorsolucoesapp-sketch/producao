@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.129.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.130.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -864,6 +864,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
               <option value="fe">Concluídas</option>
             </select>
           </div>
+        </div>
+        <div class="campo" style="margin:0 0 8px">
+          <label for="manutBusca">Buscar por motivo, detalhe ou nº da OS</label>
+          <input type="search" id="manutBusca" oninput="manutBuscaMuda()" placeholder="ex.: elétrico, rolo, U801, 116918…" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:9px">
+          <div id="manutSugestoes" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         </div>
         <div class="painel-filtros" style="margin-bottom:8px">
           <div class="campo" style="margin:0;flex:1">
@@ -1439,7 +1444,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.129.0';
+const APP_VER = '3.130.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4561,6 +4566,10 @@ function verOSGrupo(chave) {
     : '<p class="desc">Nenhuma OS neste grupo.</p>';
   $('itemDetOverlay').classList.remove('oculto');
 }
+let _mbT = null;
+function manutBuscaMuda() { clearTimeout(_mbT); _mbT = setTimeout(renderManut, 220); }
+function manutUsaTermo(t) { const i = $('manutBusca'); if (!i) return; i.value = t; renderManut(); }
+
 function renderManut() {
   const box = $('manutConteudo');
   const st = $('manutSetor').value, sit = ($('manutStatus') && $('manutStatus').value) || '';
@@ -4585,6 +4594,28 @@ function renderManut() {
       if (maqF) L = L.filter(o => String(o.recurso_cod) === maqF);
     }
   }
+
+  // busca livre: motivo, submotivo, detalhes, atividade, nº da OS e máquina
+  {
+    const q = _norm((($('manutBusca') && $('manutBusca').value) || '').trim());
+    if (q) {
+      const termos = q.split(/\s+/).filter(Boolean);
+      L = L.filter(o => {
+        const alvo = _norm([o.motivo, o.submotivo, o.detalhes, o.atividade, o.os_num, o.recurso_cod, o.maquina_desc, o.conclusao].filter(Boolean).join(' '));
+        return termos.every(t => alvo.includes(t));
+      });
+    }
+    const sg = $('manutSugestoes');
+    if (sg) {
+      if (q && L.length) {
+        const m = {};
+        L.forEach(o => { const k = (o.motivo || '—').trim(); if (k) m[k] = (m[k] || 0) + 1; });
+        const top = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        sg.innerHTML = top.map(([k, n]) =>
+          `<span onclick="manutUsaTermo(${JSON.stringify(k).replace(/"/g, '&quot;')})" style="cursor:pointer;font-size:11.5px;font-weight:700;background:#eef2f6;color:#334155;border:1px solid #dbe3ea;border-radius:20px;padding:3px 10px">${escapeHtml(k)} <span style="color:#8395A6">${n}</span></span>`).join('');
+      } else sg.innerHTML = '';
+    }
+  }
   if (sit === 'ab') L = L.filter(o => !o.data_reinicio);
   if (sit === 'fe') L = L.filter(o => !!o.data_reinicio);
   const urgF = ($('manutUrg') && $('manutUrg').value) || '';
@@ -4596,7 +4627,7 @@ function renderManut() {
 
   { const r = $('mntResumo'); if (r) r.innerHTML =
       `<div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Ordens de Serviço</div>` +
-      `<div style="font-size:11px;color:#5C7186;margin-top:1px">${escapeHtml(st || 'Todos os setores')}${($('manutMaq') && $('manutMaq').value) ? ' · máq. ' + escapeHtml($('manutMaq').value) : ''} · ${sit === 'ab' ? 'em aberto' : sit === 'fe' ? 'concluídas' : 'todas'} · ${L.length} OS</div>`; }
+      `<div style="font-size:11px;color:#5C7186;margin-top:1px">${escapeHtml(st || 'Todos os setores')}${($('manutMaq') && $('manutMaq').value) ? ' · máq. ' + escapeHtml($('manutMaq').value) : ''}${($('manutBusca') && $('manutBusca').value.trim()) ? ' · "' + escapeHtml($('manutBusca').value.trim()) + '"' : ''} · ${sit === 'ab' ? 'em aberto' : sit === 'fe' ? 'concluídas' : 'todas'} · ${L.length} OS</div>`; }
 
   // ===== Minhas OS (direcionadas a mim) =====
   let htmlMinhas = '';
