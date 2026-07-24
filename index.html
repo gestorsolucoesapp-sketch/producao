@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.110.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.111.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1396,7 +1396,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.110.1';
+const APP_VER = '3.111.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9839,8 +9839,19 @@ function orgSeloAuditoria() {
 }
 
 /* ---------- relatório diário: comparação de turnos por máquina ---------- */
-function orgRelDados() {
-  const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
+function orgEmCaixas(setor) { return setor === 'Embalagem'; }
+function orgUnid(setor) { return orgEmCaixas(setor) ? 'cx' : 'kg'; }
+function orgFmtProd(v, setor) {
+  if (v == null) return '—';
+  const n = Number(v);
+  if (orgEmCaixas(setor)) return n >= 1000 ? (n / 1000).toFixed(1).replace('.', ',') + ' mil cx' : Math.round(n) + ' cx';
+  return n >= 1000 ? (n / 1000).toFixed(1).replace('.', ',') + ' t' : Math.round(n) + ' kg';
+}
+
+function orgRelDados(setor) {
+  setor = setor || orgSetorSel;
+  const cx = orgEmCaixas(setor);
+  const maqSetor = orgDados.maquinas.filter(m => m.setor === setor).map(m => m.codigo);
   const K = orgDados.kpis || [];
   return maqSetor.map(m => {
     const r = { maq: m, t: {} };
@@ -9849,10 +9860,11 @@ function orgRelDados() {
       const k = K.find(x => x.recurso_cod === m && x.bloco === t);
       if (!k) { r.t[t] = null; return; }
       tem = true;
-      const media = k.media == null ? null : Number(k.media);
+      const bruto = cx ? (Number(k.quantidade) || 0) : (Number(k.producao) || 0);
+      const media = k.dias ? bruto / k.dias : null;
       const meta = k.meta == null ? null : Number(k.meta);
       r.t[t] = {
-        prod: Number(k.producao) || 0,
+        prod: bruto,
         media: media, meta: meta,
         rel: (media != null && meta) ? (media / meta * 100) : null,
         perda: k.perda_pct == null ? null : Number(k.perda_pct),
@@ -9875,7 +9887,7 @@ function orgRelCelula(turno, v, max, txt, melhor, pior) {
     ';border:1px solid ' + cor + '55;border-radius:8px;overflow:hidden;padding:5px 7px">' +
     '<div style="position:absolute;left:0;top:0;bottom:0;width:' + pct.toFixed(0) + '%;background:' + cor + ';opacity:.30"></div>' +
     '<div style="position:relative">' +
-    '<div style="font-size:8.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:' + cor + ';line-height:1.1">' + turno + '</div>' +
+    '<div style="font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:' + tint.br + ';line-height:1.1">' + turno + '</div>' +
     '<div style="font-size:13.5px;font-weight:800;color:#0f172a;line-height:1.25;white-space:nowrap">' + (v == null ? '\u2014' : txt) + marca + '</div>' +
     '</div></div>';
 }
@@ -9896,43 +9908,58 @@ function orgRelLinha(rot, vals, fmt, maiorMelhor) {
   return h + '</div></div>';
 }
 
-function renderOrgRelatorio() {
-  const wrap = $('orgWrap');
-  const dados = orgRelDados();
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  const dias = Math.max(0, ...dados.map(r => Math.max(...ORG_TURNOS.map(t => (r.t[t] ? r.t[t].dias : 0)))));
+let orgRelTodos = false;
+function orgRelAlterna() { orgRelTodos = !orgRelTodos; renderOrgRelatorio(); }
 
-  let h = '<div class="orgv2">';
-  h += '<div class="card" style="background:#0f172a;color:#fff">';
-  h += '<div style="font-size:16px;font-weight:800">Comparativo de turnos · ' + escapeHtml(orgSetorSel) + '</div>';
-  h += '<div style="font-size:12px;color:#94a3b8;margin-top:2px">mês até ' + hoje + ' · ' + dias + ' dias de produção</div>';
+function orgRelBloco(setor) {
+  const dados = orgRelDados(setor);
+  if (!dados.length) return '';
+  const dias = Math.max(0, ...dados.map(r => Math.max(...ORG_TURNOS.map(t => (r.t[t] ? r.t[t].dias : 0)))));
+  let h = '<div class="card" style="background:#0f172a;color:#fff">';
+  h += '<div style="font-size:16px;font-weight:800">' + escapeHtml(setor) + '</div>';
+  h += '<div style="font-size:12px;color:#94a3b8;margin-top:2px">mês até ' + new Date().toLocaleDateString('pt-BR') + ' · ' + dias + ' dias · em ' + orgUnid(setor) + '</div>';
   h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">';
   ORG_TURNOS.forEach(t => {
-    let p = 0, rels = [], pk = 0, pp = 0;
-    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; pp += k.prod; if (k.rel != null) rels.push(k.rel); });
+    let p = 0, rels = [], pk = 0;
+    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
     const relMed = rels.length ? rels.reduce((a, b) => a + b, 0) / rels.length : null;
-    const perdaPct = (pp + pk) > 0 ? pk / (pp + pk) * 100 : null;
+    const perdaPct = (p + pk) > 0 ? pk / (p + pk) * 100 : null;
+    const tint = ORG_TINT[t] || { br: '#94a3b8' };
     h += '<div style="flex:1 1 100px;border-left:4px solid ' + ORG_CORES[t] + ';padding-left:9px">';
     h += '<div style="font-size:12px;font-weight:800;color:' + ORG_CORES[t] + '">' + t + '</div>';
-    h += '<div style="font-size:19px;font-weight:800;line-height:1.2">' + (p / 1000).toFixed(1).replace('.', ',') + ' t</div>';
+    h += '<div style="font-size:19px;font-weight:800;line-height:1.2">' + orgFmtProd(p, setor) + '</div>';
     h += '<div style="font-size:11px;color:#cbd5e1">meta ' + (relMed == null ? '—' : Math.round(relMed) + '%') + ' · perda ' + (perdaPct == null ? '—' : perdaPct.toFixed(1).replace('.', ',') + '%') + '</div>';
     h += '</div>';
   });
   h += '</div></div>';
 
-  h += '<div class="card" style="padding:9px 12px"><div class="desc" style="font-size:11px">▲ melhor turno · ▼ pior · barra proporcional ao maior da linha</div></div>';
-
   dados.forEach(r => {
     h += '<div class="card" style="padding:11px 12px">';
-    h += '<div style="display:inline-flex;align-items:baseline;gap:6px;background:#0f172a;border-radius:8px;padding:4px 10px;margin-bottom:4px">' +
+    h += '<div style="display:inline-flex;align-items:baseline;gap:6px;background:#0f172a;border-radius:8px;padding:4px 10px;margin-bottom:2px">' +
       '<span style="font-size:9px;font-weight:700;letter-spacing:.7px;color:#94a3b8">MÁQ</span>' +
       '<span style="font-size:16px;font-weight:800;color:#fff">' + r.maq + '</span></div>';
-    const g = f => { const o = {}; ORG_TURNOS.forEach(t => o[t] = r.t[t] ? f(r.t[t]) : null); return o; };
-    h += orgRelLinha('Produção', g(k => k.prod), v => v == null ? '—' : (v >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + 't' : Math.round(v) + 'kg'), true);
+    const g = fn => { const o = {}; ORG_TURNOS.forEach(t => o[t] = r.t[t] ? fn(r.t[t]) : null); return o; };
+    h += orgRelLinha('Produção', g(k => k.prod), v => orgFmtProd(v, setor), true);
     h += orgRelLinha('Méd × meta', g(k => k.rel), v => v == null ? '—' : Math.round(v) + '%', true);
     h += orgRelLinha('Perda', g(k => k.perda), v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%', false);
     h += '</div>';
   });
+  return h;
+}
+
+function renderOrgRelatorio() {
+  const wrap = $('orgWrap');
+  const setores = orgRelTodos
+    ? [...new Set(orgDados.maquinas.map(m => m.setor).filter(Boolean))].sort()
+    : [orgSetorSel];
+
+  let h = '<div class="orgv2">';
+  h += '<div class="card" style="padding:9px 12px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:7px 13px" onclick="orgRelAlterna()">' +
+    (orgRelTodos ? '📍 Só ' + escapeHtml(orgSetorSel) : '🏭 Todos os setores') + '</button>';
+  h += '<span class="desc" style="font-size:11px;flex:1;min-width:140px">▲ melhor turno · ▼ pior · barra proporcional ao maior da linha</span></div>';
+
+  setores.forEach(st => { h += orgRelBloco(st); });
 
   h += '<div class="card"><button class="btn btn-verde" onclick="orgRelCopiar()">📋 Copiar resumo para WhatsApp</button>';
   h += '<div class="desc" style="font-size:11px;margin-top:6px">Para mandar como imagem, use ⛶ Apresentar e tire o print.</div></div>';
@@ -9941,25 +9968,30 @@ function renderOrgRelatorio() {
 }
 
 function orgRelCopiar() {
-  const dados = orgRelDados();
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  let txt = '*Comparativo de turnos · ' + orgSetorSel + '*\nmês até ' + hoje + '\n';
-  ORG_TURNOS.forEach(t => {
-    let p = 0, rels = [], pk = 0;
-    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
-    const rm = rels.length ? Math.round(rels.reduce((a, b) => a + b, 0) / rels.length) : '—';
-    const pp = (p + pk) > 0 ? (pk / (p + pk) * 100).toFixed(1).replace('.', ',') : '—';
-    txt += '\n' + t + ': ' + (p / 1000).toFixed(1).replace('.', ',') + 't · meta ' + rm + '% · perda ' + pp + '%';
-  });
-  txt += '\n\n*Por máquina* (prod · meta% · perda%)\n';
-  dados.forEach(r => {
-    txt += '\n' + r.maq + '\n';
+  const setores = orgRelTodos
+    ? [...new Set(orgDados.maquinas.map(m => m.setor).filter(Boolean))].sort()
+    : [orgSetorSel];
+  let txt = '*Comparativo de turnos*\nmês até ' + new Date().toLocaleDateString('pt-BR') + '\n';
+  setores.forEach(st => {
+    const dados = orgRelDados(st);
+    if (!dados.length) return;
+    txt += '\n*' + st + '* (' + orgUnid(st) + ')\n';
     ORG_TURNOS.forEach(t => {
-      const k = r.t[t];
-      if (!k) { txt += '  ' + t + ': —\n'; return; }
-      txt += '  ' + t + ': ' + (k.prod >= 1000 ? (k.prod / 1000).toFixed(1).replace('.', ',') + 't' : Math.round(k.prod) + 'kg') +
-        ' · ' + (k.rel == null ? '—' : Math.round(k.rel) + '%') +
-        ' · ' + (k.perda == null ? '—' : k.perda.toFixed(1).replace('.', ',') + '%') + '\n';
+      let p = 0, rels = [], pk = 0;
+      dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
+      const rm = rels.length ? Math.round(rels.reduce((a, b) => a + b, 0) / rels.length) : '—';
+      const pp = (p + pk) > 0 ? (pk / (p + pk) * 100).toFixed(1).replace('.', ',') : '—';
+      txt += t + ': ' + orgFmtProd(p, st) + ' · meta ' + rm + '% · perda ' + pp + '%\n';
+    });
+    dados.forEach(r => {
+      txt += '\n' + r.maq + '\n';
+      ORG_TURNOS.forEach(t => {
+        const k = r.t[t];
+        if (!k) { txt += '  ' + t + ': —\n'; return; }
+        txt += '  ' + t + ': ' + orgFmtProd(k.prod, st) +
+          ' · ' + (k.rel == null ? '—' : Math.round(k.rel) + '%') +
+          ' · ' + (k.perda == null ? '—' : k.perda.toFixed(1).replace('.', ',') + '%') + '\n';
+      });
     });
   });
   const done = () => toast('Resumo copiado ✔');
