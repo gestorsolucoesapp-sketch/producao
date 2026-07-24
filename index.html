@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.109.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.110.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -767,6 +767,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="faltas" onclick="orgVer('faltas')">Faltas</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="horas" onclick="orgVer('horas')">Horas</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="analise" onclick="orgVer('analise')">An&aacute;lise</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="rel" onclick="orgVer('rel')">📊 Relat&oacute;rio</button>
           <button class="btn" id="orgLayBtn" onclick="orgTrocaLayout()" title="Alternar layout" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px;margin-left:auto">📱 Coluna</button>
           <button class="btn" id="orgApresBtn" onclick="orgApresentar()" title="Modo apresentação" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⛶ Apresentar</button>
         </div>
@@ -1395,7 +1396,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.109.0';
+const APP_VER = '3.110.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9124,11 +9125,12 @@ function renderOrgVista() {
   document.querySelectorAll('.org-vbtn').forEach(b => b.classList.toggle('ativa', b.dataset.v === orgVista));
   orgAtualizaBtnLayout();
   const lb = $('orgLayBtn'); if (lb) lb.style.display = (orgVista === 'org') ? '' : 'none';
-  const ab = $('orgApresBtn'); if (ab) ab.style.display = (orgVista === 'org') ? '' : 'none';
+  const ab = $('orgApresBtn'); if (ab) ab.style.display = (orgVista === 'org' || orgVista === 'rel') ? '' : 'none';
   if (orgVista === 'org') return renderOrg();
   if (orgVista === 'faltas') return renderOrgFaltas();
   if (orgVista === 'horas') return renderOrgHoras();
   if (orgVista === 'analise') return renderOrgAnalise();
+  if (orgVista === 'rel') return renderOrgRelatorio();
 }
 
 /* ---------- organograma ---------- */
@@ -9834,6 +9836,140 @@ function orgSeloAuditoria() {
   if (d) h += '<span style="font-size:12px;font-weight:800;background:#fffbeb;color:#d97706;border:1px solid #fde68a;padding:4px 12px;border-radius:20px">❓ ' + d + ' dúvida' + (d > 1 ? 's' : '') + '</span>';
   h += '<span style="font-size:11.5px;color:#94a3b8;align-self:center">veja o detalhe na aba Análise</span></div>';
   return h;
+}
+
+/* ---------- relatório diário: comparação de turnos por máquina ---------- */
+function orgRelDados() {
+  const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
+  const K = orgDados.kpis || [];
+  return maqSetor.map(m => {
+    const r = { maq: m, t: {} };
+    let tem = false;
+    ORG_TURNOS.forEach(t => {
+      const k = K.find(x => x.recurso_cod === m && x.bloco === t);
+      if (!k) { r.t[t] = null; return; }
+      tem = true;
+      const media = k.media == null ? null : Number(k.media);
+      const meta = k.meta == null ? null : Number(k.meta);
+      r.t[t] = {
+        prod: Number(k.producao) || 0,
+        media: media, meta: meta,
+        rel: (media != null && meta) ? (media / meta * 100) : null,
+        perda: k.perda_pct == null ? null : Number(k.perda_pct),
+        perdaKg: Number(k.perda) || 0,
+        dias: k.dias
+      };
+    });
+    r.tem = tem;
+    return r;
+  }).filter(r => r.tem);
+}
+
+function orgRelCelula(v, max, cor, txt, melhor, pior) {
+  const pct = (max > 0 && v != null) ? Math.max(3, Math.min(100, v / max * 100)) : 0;
+  const marca = melhor ? '▲' : pior ? '▼' : '';
+  return '<div style="position:relative;flex:1;min-width:0;background:#f1f5f9;border-radius:6px;overflow:hidden;height:30px">' +
+    '<div style="position:absolute;inset:0 auto 0 0;width:' + pct.toFixed(0) + '%;background:' + cor + ';opacity:.28"></div>' +
+    '<div style="position:relative;display:flex;align-items:center;height:100%;padding:0 6px;font-size:11.5px;font-weight:800;color:#0f172a;white-space:nowrap;overflow:hidden">' +
+    (v == null ? '—' : txt) + (marca ? ' <span style="font-size:9px;margin-left:3px;color:' + (melhor ? '#16a34a' : '#dc2626') + '">' + marca + '</span>' : '') +
+    '</div></div>';
+}
+
+function orgRelLinha(rot, vals, cor, fmt, maiorMelhor) {
+  const nums = ORG_TURNOS.map(t => vals[t]).filter(v => v != null);
+  const max = nums.length ? Math.max(...nums) : 0;
+  const min = nums.length ? Math.min(...nums) : 0;
+  let h = '<div style="display:flex;align-items:center;gap:6px;margin-top:5px">';
+  h += '<span style="width:74px;flex:none;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#94a3b8">' + rot + '</span>';
+  ORG_TURNOS.forEach(t => {
+    const v = vals[t];
+    const eMax = nums.length > 1 && v != null && v === max;
+    const eMin = nums.length > 1 && v != null && v === min;
+    h += orgRelCelula(v, max, ORG_CORES[t], fmt(v), maiorMelhor ? eMax : eMin, maiorMelhor ? eMin : eMax);
+  });
+  return h + '</div>';
+}
+
+function renderOrgRelatorio() {
+  const wrap = $('orgWrap');
+  const dados = orgRelDados();
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const dias = Math.max(0, ...dados.map(r => Math.max(...ORG_TURNOS.map(t => (r.t[t] ? r.t[t].dias : 0)))));
+
+  let h = '<div class="orgv2">';
+  h += '<div class="card" style="background:#0f172a;color:#fff">';
+  h += '<div style="font-size:16px;font-weight:800">Comparativo de turnos · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<div style="font-size:12px;color:#94a3b8;margin-top:2px">mês até ' + hoje + ' · ' + dias + ' dias de produção</div>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">';
+  ORG_TURNOS.forEach(t => {
+    let p = 0, rels = [], pk = 0, pp = 0;
+    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; pp += k.prod; if (k.rel != null) rels.push(k.rel); });
+    const relMed = rels.length ? rels.reduce((a, b) => a + b, 0) / rels.length : null;
+    const perdaPct = (pp + pk) > 0 ? pk / (pp + pk) * 100 : null;
+    h += '<div style="flex:1 1 100px;border-left:4px solid ' + ORG_CORES[t] + ';padding-left:9px">';
+    h += '<div style="font-size:12px;font-weight:800;color:' + ORG_CORES[t] + '">' + t + '</div>';
+    h += '<div style="font-size:19px;font-weight:800;line-height:1.2">' + (p / 1000).toFixed(1).replace('.', ',') + ' t</div>';
+    h += '<div style="font-size:11px;color:#cbd5e1">meta ' + (relMed == null ? '—' : Math.round(relMed) + '%') + ' · perda ' + (perdaPct == null ? '—' : perdaPct.toFixed(1).replace('.', ',') + '%') + '</div>';
+    h += '</div>';
+  });
+  h += '</div></div>';
+
+  h += '<div class="card"><div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">';
+  h += '<span style="width:74px;flex:none"></span>';
+  ORG_TURNOS.forEach(t => {
+    h += '<span style="flex:1;min-width:0;font-size:10.5px;font-weight:800;color:' + ORG_CORES[t] + ';text-align:center">' + t + '</span>';
+  });
+  h += '</div>';
+  h += '<div class="desc" style="font-size:11px">▲ melhor turno · ▼ pior · barra proporcional ao maior da linha</div></div>';
+
+  dados.forEach(r => {
+    h += '<div class="card" style="padding:11px 12px">';
+    h += '<div style="display:inline-flex;align-items:baseline;gap:6px;background:#0f172a;border-radius:8px;padding:4px 10px;margin-bottom:4px">' +
+      '<span style="font-size:9px;font-weight:700;letter-spacing:.7px;color:#94a3b8">MÁQ</span>' +
+      '<span style="font-size:16px;font-weight:800;color:#fff">' + r.maq + '</span></div>';
+    const g = f => { const o = {}; ORG_TURNOS.forEach(t => o[t] = r.t[t] ? f(r.t[t]) : null); return o; };
+    h += orgRelLinha('Produção', g(k => k.prod), null, v => v == null ? '—' : (v >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + 't' : Math.round(v) + 'kg'), true);
+    h += orgRelLinha('Méd × meta', g(k => k.rel), null, v => v == null ? '—' : Math.round(v) + '%', true);
+    h += orgRelLinha('Perda', g(k => k.perda), null, v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%', false);
+    h += '</div>';
+  });
+
+  h += '<div class="card"><button class="btn btn-verde" onclick="orgRelCopiar()">📋 Copiar resumo para WhatsApp</button>';
+  h += '<div class="desc" style="font-size:11px;margin-top:6px">Para mandar como imagem, use ⛶ Apresentar e tire o print.</div></div>';
+  h += '</div>';
+  wrap.innerHTML = h;
+}
+
+function orgRelCopiar() {
+  const dados = orgRelDados();
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  let txt = '*Comparativo de turnos · ' + orgSetorSel + '*\nmês até ' + hoje + '\n';
+  ORG_TURNOS.forEach(t => {
+    let p = 0, rels = [], pk = 0;
+    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
+    const rm = rels.length ? Math.round(rels.reduce((a, b) => a + b, 0) / rels.length) : '—';
+    const pp = (p + pk) > 0 ? (pk / (p + pk) * 100).toFixed(1).replace('.', ',') : '—';
+    txt += '\n' + t + ': ' + (p / 1000).toFixed(1).replace('.', ',') + 't · meta ' + rm + '% · perda ' + pp + '%';
+  });
+  txt += '\n\n*Por máquina* (prod · meta% · perda%)\n';
+  dados.forEach(r => {
+    txt += '\n' + r.maq + '\n';
+    ORG_TURNOS.forEach(t => {
+      const k = r.t[t];
+      if (!k) { txt += '  ' + t + ': —\n'; return; }
+      txt += '  ' + t + ': ' + (k.prod >= 1000 ? (k.prod / 1000).toFixed(1).replace('.', ',') + 't' : Math.round(k.prod) + 'kg') +
+        ' · ' + (k.rel == null ? '—' : Math.round(k.rel) + '%') +
+        ' · ' + (k.perda == null ? '—' : k.perda.toFixed(1).replace('.', ',') + '%') + '\n';
+    });
+  });
+  const done = () => toast('Resumo copiado ✔');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(() => toast('Não consegui copiar'));
+  else {
+    const ta = document.createElement('textarea');
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { toast('Não consegui copiar'); }
+    ta.remove();
+  }
 }
 
 /* ---------- modo apresentação (tela cheia, para projetar/apresentar) ---------- */
