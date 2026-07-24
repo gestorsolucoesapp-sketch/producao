@@ -159,6 +159,17 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 .spin{display:inline-block;width:16px;height:16px;border:2.5px solid #fff;border-top-color:transparent;border-radius:50%;animation:g .7s linear infinite;vertical-align:-3px;margin-right:8px}
 @keyframes g{to{transform:rotate(360deg)}}
 /* ---------- vinheta / splash ---------- */
+/* vinheta em vídeo */
+#splash video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;
+  transition:opacity .35s ease;background:#0B1B2B}
+#splash.video-on video{opacity:1}
+#splash.video-on .sp-in{opacity:0;pointer-events:none;transition:opacity .3s}
+#splash.video-on::before{opacity:0}
+#spPular{display:none;position:absolute;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));
+  z-index:3;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3);
+  border-radius:99px;padding:8px 16px;font-size:13px;font-weight:700;width:auto;backdrop-filter:blur(6px)}
+#splash.video-on #spPular{display:block}
+
 #splash{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;
   background:linear-gradient(160deg,var(--navy) 0%,var(--azul-marca) 68%,#0E4D33 150%)}
 #splash::before{content:'';position:absolute;width:420px;height:420px;border-radius:50%;
@@ -415,6 +426,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 
 <!-- ============ VINHETA / SPLASH ============ -->
 <div id="splash">
+  <video id="spVideo" playsinline muted autoplay preload="auto" poster="logo_splash.png"></video>
+  <button id="spPular" onclick="pularVinheta()">pular ›</button>
   <div class="sp-in">
     <div class="sp-card"><img src="logo_splash.png" alt="Rioplastic"></div>
     <div class="sp-slogan">
@@ -511,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.107.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.108.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1382,7 +1395,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.107.1';
+const APP_VER = '3.108.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2053,6 +2066,15 @@ function setupFabsMoviveis() { if (_fabsProntos) return; _fabsProntos = true; to
 function aplicarPosFabs() { if (!_posFabs) return; ['refreshFab', 'iaBtn'].forEach(id => { const p = _posFabs[id], el = $(id); if (el && p && p.left && p.top) { el.style.left = p.left; el.style.top = p.top; el.style.right = 'auto'; el.style.bottom = 'auto'; } }); }
 async function carregarPosFabs() { try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'fab_pos').maybeSingle(); _posFabs = data && data.valor ? JSON.parse(data.valor) : {}; } catch (_) { _posFabs = {}; } aplicarPosFabs(); }
 async function salvarPosFab(id, left, top) { if (!_posFabs) _posFabs = {}; _posFabs[id] = { left, top }; try { await sb.from('app_config').upsert({ chave: 'fab_pos', valor: JSON.stringify(_posFabs) }, { onConflict: 'chave' }); } catch (_) {} }
+let _vinhetaTimer = null, _vinhetaAtiva = false, _vinhetaSaiu = false;
+function pularVinheta() {
+  if (_vinhetaSaiu) return;
+  _vinhetaSaiu = true;
+  const v = $('spVideo'); if (v) { try { v.pause(); } catch (e) {} }
+  if (_vinhetaTimer) { clearTimeout(_vinhetaTimer); _vinhetaTimer = null; }
+  if (typeof _vinhetaSegue === 'function') _vinhetaSegue();
+}
+let _vinhetaSegue = null;
 function revelarPosSplash() {
   const sp = $('splash');
   const fim = () => { if (sp) sp.remove(); };
@@ -2060,16 +2082,33 @@ function revelarPosSplash() {
   if (emRecovery || /type=recovery/.test(HASH_INICIAL)) {
     mostrarNovaSenha(); fim(); return;
   }
-  const SPLASH_MS = 1400; // vinheta rápida
+  // vinheta em vídeo: completa 1x por dia; nos demais abertos, splash rápida
+  let SPLASH_MS = 1400;
+  const hojeStr = new Date().toISOString().slice(0, 10);
+  let jaViu = true;
+  try { jaViu = (localStorage.getItem('vinhetaDia') === hojeStr); } catch (e) {}
+  const vid = $('spVideo');
+  if (vid && !jaViu && !emRecovery) {
+    try { localStorage.setItem('vinhetaDia', hojeStr); } catch (e) {}
+    vid.src = 'vinheta.mp4';
+    vid.addEventListener('loadeddata', () => { sp && sp.classList.add('video-on'); }, { once: true });
+    vid.addEventListener('ended', () => { window.pularVinheta && pularVinheta(); }, { once: true });
+    vid.addEventListener('error', () => { sp && sp.classList.remove('video-on'); }, { once: true });
+    const p = vid.play();
+    if (p && p.catch) p.catch(() => { sp && sp.classList.remove('video-on'); });
+    SPLASH_MS = 8600;              // duração do vídeo + folga
+    _vinhetaAtiva = true;
+  }
   sb.auth.getSession().then(({ data }) => {
-    setTimeout(() => {
+    _vinhetaSegue = () => {
       sp && sp.classList.add('ir');           // começa a saída da vinheta
       setTimeout(async () => {
         fim();                                 // remove a vinheta
         if (data.session) await posLogin();    // só então entra no app
         else $('telaLogin').classList.remove('oculto');
       }, 520);
-    }, SPLASH_MS);
+    };
+    _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, SPLASH_MS);
   });
 }
 if (document.readyState === 'complete') revelarPosSplash();
