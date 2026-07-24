@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.134.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.135.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1444,7 +1444,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.134.0';
+const APP_VER = '3.135.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9869,6 +9869,43 @@ const ORG_IMP_CFG = {
   horas:  { titulo: 'Importar banco de horas',tabela: 'org_banco_horas',  dica: 'matrícula ou nome · data · horas (+/−) · motivo' }
 };
 
+// quem está no app mas não veio no último relatório do RH
+function orgForaDoRH(setor) {
+  const doSetor = orgDados.colab.filter(c => c.setor === setor && c.ativo !== false);
+  const ult = doSetor.map(c => c.visto_rh).filter(Boolean).sort().pop();
+  if (!ult) return { ult: null, lista: [] };
+  return { ult: ult, lista: doSetor.filter(c => !c.visto_rh || c.visto_rh < ult) };
+}
+
+function orgAvisaForaDoRH(setores, importados) {
+  const st = (setores && setores[0]) || orgSetorSel;
+  const r = orgForaDoRH(st);
+  if (!r.lista.length) { toast('Cadastro bate com o relatório ✔'); return; }
+  const escalados = new Set(orgDados.aloc.filter(a => a.matricula).map(a => a.matricula));
+  let h = '<p class="desc">Estas pessoas estão no app mas <b>não vieram</b> no relatório de ' + fmtDataSem(r.ult) + '. Provável desligamento ou troca de setor.</p>';
+  h += '<div style="max-height:46vh;overflow:auto;border:1px solid #e2e8f0;border-radius:10px;margin-top:8px">';
+  r.lista.forEach(c => {
+    const esc = escalados.has(c.matricula);
+    h += '<div style="display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid #f1f5f9;font-size:12.5px">' +
+      '<b style="flex:1;min-width:0">' + escapeHtml(c.nome) + '</b>' +
+      (esc ? '<span style="font-size:10px;font-weight:800;background:#fee2e2;color:#b91c1c;padding:2px 7px;border-radius:20px">na escala</span>' : '') +
+      '<span style="color:#94a3b8">' + escapeHtml(c.matricula) + '</span></div>';
+  });
+  h += '</div>';
+  h += '<button class="btn" style="width:100%;margin-top:10px;background:#e74c3c;color:#fff" onclick="orgDesativaForaRH(' + JSON.stringify(r.lista.map(c => c.matricula)).replace(/"/g, '&quot;') + ')">Marcar as ' + r.lista.length + ' como inativas</button>';
+  h += '<div class="desc" style="font-size:11px;margin-top:6px">Quem está <b>na escala</b> precisa de substituto antes — o posto fica descoberto.</div>';
+  orgModal('⚠️ ' + r.lista.length + ' fora do relatório', h);
+}
+
+async function orgDesativaForaRH(mats) {
+  if (!mats || !mats.length) return;
+  const { error } = await sb.from('colaboradores').update({ ativo: false }).in('matricula', mats);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(mats.length + ' marcada(s) como inativa(s)');
+  orgFechaModal();
+  await carregarOrganograma();
+}
+
 function orgImpCard(tipo) {
   const c = ORG_IMP_CFG[tipo];
   let h = '<div class="card"><div class="titulo-sec">📥 ' + c.titulo + '</div>';
@@ -9980,7 +10017,7 @@ function orgImpAnalisa(tipo) {
       out.push({ n: i + 1, st: 'ok', mat: mt, nome: nome,
                  extra: cargo + ' · ' + setor + (sit ? ' · ' + sit : ''),
                  msg: existe ? 'atualiza' : 'novo',
-                 dados: { matricula: mt, nome: nome, cargo: cargo || null, setor: setor, admissao: adm, ativo: !inativo } });
+                 dados: { matricula: mt, nome: nome, cargo: cargo || null, setor: setor, admissao: adm, ativo: !inativo, visto_rh: new Date().toISOString().slice(0, 10) } });
       return;
     }
 
@@ -10053,9 +10090,11 @@ async function orgImpGravar(tipo) {
   else res = await sb.from(ORG_IMP_CFG[tipo].tabela).insert(linhas);
   if (res.error) { toast('Erro: ' + res.error.message); return; }
   toast(ok.length + ' registro(s) gravados ✔');
+  const setoresImp = [...new Set(linhas.map(x => x.setor).filter(Boolean))];
   orgImpBuf = { tipo: null, linhas: [] };
   const t = $('impTxt_' + tipo); if (t) t.value = '';
   await carregarOrganograma();
+  if (tipo === 'colab') orgAvisaForaDoRH(setoresImp, linhas.map(x => x.matricula));
 }
 
 /* ---------- headcount por turno ---------- */
@@ -10228,6 +10267,19 @@ function orgAuditoria() {
     });
   });
 
+  /* 2b. escalado mas fora do último relatório do RH */
+  try {
+    const fr = orgForaDoRH(orgSetorSel);
+    if (fr.ult) {
+      const mats = new Set(fr.lista.map(c => c.matricula));
+      const vistos = {};
+      al.filter(a => a.matricula && mats.has(a.matricula)).forEach(a => {
+        if (vistos[a.matricula]) return; vistos[a.matricula] = 1;
+        av.push({ g: 'grave', t: 'Fora do RH', d: (orgNome(a.matricula) || a.matricula) + ' está na escala mas não veio no relatório de ' + fmtDataSem(fr.ult), id: a.id });
+      });
+    }
+  } catch (_) {}
+
   /* 3. vínculo pendente (nome não identificado) */
   al.filter(a => a.pendente).forEach(a => {
     av.push({ g: 'duvida', t: 'A identificar', d: (a.apelido_origem || '?') + ' — ' + (a.maquina_codigo || 'sem máquina') + ' · ' + a.turno + ' · ' + a.funcao, id: a.id });
@@ -10279,6 +10331,47 @@ function orgFamiliaCargo(cargo) {
   if (/auxiliar de producao/.test(c)) return 'Auxiliar de produção';
   if (/limpeza/.test(c)) return 'Limpeza';
   return 'Outros';
+}
+
+function orgCardForaRH() {
+  const r = orgForaDoRH(orgSetorSel);
+  if (!r.ult) return '';
+  const escalados = new Set(orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula).map(a => a.matricula));
+  const naEscala = r.lista.filter(c => escalados.has(c.matricula));
+  const soCadastro = r.lista.filter(c => !escalados.has(c.matricula));
+
+  let h = '<div class="card"><div class="titulo-sec">🧾 Cadastro × relatório do RH</div>';
+  h += '<p class="desc" style="margin-bottom:9px">último relatório importado: <b>' + fmtDataSem(r.ult) + '</b></p>';
+
+  if (!r.lista.length) return h + '<div class="desc">todo o cadastro ativo bate com o relatório ✔</div></div>';
+
+  if (naEscala.length) {
+    h += '<div style="background:#fef2f2;border:1px solid #fecaca;border-left:5px solid #dc2626;border-radius:11px;padding:10px 12px;margin-bottom:9px">';
+    h += '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#b91c1c">⚠️ Na escala e fora do relatório · ' + naEscala.length + '</div>';
+    h += '<div style="font-size:11.5px;color:#7f1d1d;margin:3px 0 6px">saíram do RH mas continuam ocupando posto — precisam de substituto</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:5px">';
+    naEscala.forEach(c => {
+      const onde = orgDados.aloc.filter(a => a.matricula === c.matricula && a.setor === orgSetorSel)
+        .map(a => a.turno + (a.maquina_codigo ? ' ' + a.maquina_codigo : '')).join(' · ');
+      h += '<span style="font-size:12.5px;background:#fff;border:1px solid #fecaca;border-radius:14px;padding:4px 10px;color:#0f172a">' +
+        escapeHtml(orgPrimeiro(c.nome) || c.nome) + '<span style="color:#b91c1c;font-size:10px;font-weight:700"> · ' + escapeHtml(onde) + '</span></span>';
+    });
+    h += '</div></div>';
+  }
+
+  if (soCadastro.length) {
+    h += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:11px;padding:10px 12px">';
+    h += '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:#64748b">Só no cadastro · ' + soCadastro.length + '</div>';
+    h += '<div style="font-size:11.5px;color:#64748b;margin:3px 0 6px">não vieram no relatório e não estão em escala — limpeza de cadastro</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:5px">';
+    soCadastro.forEach(c => {
+      h += '<span style="font-size:12.5px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:4px 10px;color:#334155">' + escapeHtml(orgPrimeiro(c.nome) || c.nome) + '</span>';
+    });
+    h += '</div></div>';
+  }
+
+  h += '<button class="btn" style="width:100%;margin-top:10px;background:#e74c3c;color:#fff" onclick="orgDesativaForaRH(' + JSON.stringify(r.lista.map(c => c.matricula)).replace(/"/g, '&quot;') + ')">Marcar as ' + r.lista.length + ' como inativas</button>';
+  return h + '</div>';
 }
 
 function orgCardCargoTurno() {
@@ -11051,6 +11144,7 @@ async function renderOrgAnalise() {
   }).join('') : '<div class="desc">nenhum posto descoberto hoje ✔</div>';
   h += '</div>';
   h += orgCardAuditoria();
+  h += orgCardForaRH();
   h += orgCardCargoTurno();
   h += orgCardSobrando();
   h += orgCardHeadcount();
