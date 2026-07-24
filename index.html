@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.121.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.122.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1435,7 +1435,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.121.0';
+const APP_VER = '3.122.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9701,7 +9701,7 @@ function orgCardOperador(ref, linhas, aloc, turno, dup, rep) {
 let orgImpBuf = { tipo: null, linhas: [] };
 
 const ORG_IMP_CFG = {
-  colab:  { titulo: 'Importar colaboradores', tabela: 'colaboradores',    dica: 'matrícula · nome · cargo — sem setor no cargo, entra no setor selecionado acima' },
+  colab:  { titulo: 'Importar colaboradores', tabela: 'colaboradores',    dica: 'PDF do RH, CSV ou texto colado · matrícula · nome · cargo — sem setor no cargo, entra no setor selecionado acima' },
   faltas: { titulo: 'Importar faltas',        tabela: 'org_afastamentos', dica: 'matrícula ou nome · data · tipo (falta, atestado, ferias, folga, afastamento)' },
   horas:  { titulo: 'Importar banco de horas',tabela: 'org_banco_horas',  dica: 'matrícula ou nome · data · horas (+/−) · motivo' }
 };
@@ -9712,17 +9712,36 @@ function orgImpCard(tipo) {
   h += '<div class="desc" style="font-size:11.5px;margin-bottom:7px">' + escapeHtml(c.dica) + '</div>';
   h += '<textarea id="impTxt_' + tipo + '" rows="4" placeholder="cole aqui (uma linha por registro)" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px;font-family:monospace"></textarea>';
   h += '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:8px">';
-  h += '<input type="file" id="impFile_' + tipo + '" accept=".csv,.txt,.tsv" onchange="orgImpArquivo(\'' + tipo + '\')" style="font-size:13px;flex:1 1 160px">';
+  h += '<input type="file" id="impFile_' + tipo + '" accept=".csv,.txt,.tsv,.pdf,application/pdf" onchange="orgImpArquivo(\'' + tipo + '\')" style="font-size:13px;flex:1 1 160px">';
   h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:8px 14px" onclick="orgImpAnalisa(\'' + tipo + '\')">Analisar</button>';
   h += '</div>';
   h += '<div id="impPrev_' + tipo + '"></div></div>';
   return h;
 }
 
-function orgImpArquivo(tipo) {
+async function orgImpArquivo(tipo) {
   const f = $('impFile_' + tipo).files[0]; if (!f) return;
+  const ehPdf = /pdf$/i.test(f.type || '') || /\.pdf$/i.test(f.name || '');
+  const alvo = $('impTxt_' + tipo);
+  if (ehPdf) {
+    const prev = $('impPrev_' + tipo);
+    if (prev) prev.innerHTML = '<div class="desc" style="margin-top:10px">lendo o PDF…</div>';
+    try {
+      await garantirPdfJs();
+      const buf = await f.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      const linhas = await RioParsers.extrairLinhas(pdf);
+      const txt = linhas.map(l => l.texto).join('\n');
+      if (!txt.trim()) { if (prev) prev.innerHTML = '<div class="desc" style="color:#b91c1c;margin-top:10px">Esse PDF não tem texto (é imagem). Copie e cole, ou exporte de novo pelo ERP.</div>'; return; }
+      alvo.value = txt;
+      orgImpAnalisa(tipo);
+    } catch (e) {
+      if (prev) prev.innerHTML = '<div class="desc" style="color:#b91c1c;margin-top:10px">Não consegui ler o PDF: ' + escapeHtml(String(e.message || e)) + '</div>';
+    }
+    return;
+  }
   const r = new FileReader();
-  r.onload = () => { $('impTxt_' + tipo).value = r.result; orgImpAnalisa(tipo); };
+  r.onload = () => { alvo.value = r.result; orgImpAnalisa(tipo); };
   r.onerror = () => toast('Não consegui ler o arquivo');
   r.readAsText(f, 'UTF-8');
 }
