@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.108.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.109.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1395,7 +1395,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.108.0';
+const APP_VER = '3.109.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9057,7 +9057,7 @@ if ('serviceWorker' in navigator) {
 const ORG_CORES = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
 const ORG_TINT = { 'Manhã': { bg: '#fbf3df', br: '#b8871f' }, 'Tarde': { bg: '#eef7e8', br: '#558234' }, 'Noite': { bg: '#eaf3fb', br: '#3d7ab8' } };
 const ORG_TURNOS = ['Manhã', 'Tarde', 'Noite'];
-let orgDados = { colab: [], aloc: [], celulas: [], maqCel: [], maquinas: [], afast: [], sup: [] };
+let orgDados = { colab: [], aloc: [], celulas: [], maqCel: [], maquinas: [], afast: [], sup: [], kpis: [] };
 let orgSetorSel = 'Termoformagem';
 let orgVista = 'org';
 let orgLayout = (function () { try { return localStorage.getItem('orgLayout') || 'col'; } catch (e) { return 'col'; } })();
@@ -9092,16 +9092,17 @@ async function carregarOrganograma() {
   el.innerHTML = '<div class="desc" style="text-align:center;padding:20px">carregando…</div>';
   try {
     const hoje = new Date().toISOString().slice(0, 10);
-    const [c, a, ce, mc, mq, af, sup] = await Promise.all([
+    const [c, a, ce, mc, mq, af, sup, kp] = await Promise.all([
       sb.from('colaboradores').select('matricula,nome,cargo,setor,ativo').order('nome'),
       sb.from('org_alocacoes').select('*').is('vigencia_fim', null),
       sb.from('org_celulas').select('*'),
       sb.from('org_maquina_celula').select('*'),
       sb.from('maquinas').select('codigo,setor,modelo'),
       sb.from('org_afastamentos').select('*').eq('data', hoje),
-      sb.from('app_config').select('chave,valor').like('chave', 'org_supervisor_%')
+      sb.from('app_config').select('chave,valor').like('chave', 'org_supervisor_%'),
+      sb.rpc('org_kpis_mes', { p_ini: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10), p_fim: hoje })
     ]);
-    orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [] };
+    orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [], kpis: kp.data || [] };
     orgMontaSetores();
     renderOrgVista();
   } catch (e) {
@@ -9291,6 +9292,41 @@ function orgNomeDe(a) {
   return a.pendente ? (a.apelido_origem || '?') : (orgPrimeiro(orgNome(a.matricula)) || '?');
 }
 
+function orgFmtKg(v) {
+  if (v == null) return '—';
+  const n = Number(v);
+  return n >= 1000 ? (n / 1000).toFixed(1).replace('.', ',') + ' t' : Math.round(n) + ' kg';
+}
+
+function orgKpiMaq(maq, turno) {
+  const k = (orgDados.kpis || []).find(x => x.recurso_cod === maq && x.bloco === turno);
+  if (!k) return '<div style="margin-top:9px;font-size:11px;color:#cbd5e1;font-style:italic">sem produção no mês</div>';
+  const media = k.media == null ? null : Number(k.media);
+  const meta = k.meta == null ? null : Number(k.meta);
+  const rel = (media != null && meta) ? (media / meta * 100) : null;
+  const corRel = rel == null ? '#94a3b8' : rel >= 100 ? '#16a34a' : rel >= 85 ? '#d97706' : '#dc2626';
+  const pp = k.perda_pct == null ? null : Number(k.perda_pct);
+  const corPerda = pp == null ? '#94a3b8' : pp <= 3 ? '#16a34a' : pp <= 6 ? '#d97706' : '#dc2626';
+  const ap = k.aproveit_maq == null ? null : Number(k.aproveit_maq);
+
+  const item = (rot, val, cor, sub) =>
+    '<div style="flex:1 1 62px;min-width:58px">' +
+    '<div style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8">' + rot + '</div>' +
+    '<div style="font-size:13px;font-weight:800;color:' + (cor || '#0f172a') + ';line-height:1.2">' + val + '</div>' +
+    (sub ? '<div style="font-size:9.5px;color:#94a3b8;line-height:1.2">' + sub + '</div>' : '') + '</div>';
+
+  let h = '<div style="margin-top:9px;padding:8px 9px;background:rgba(15,23,42,.035);border-radius:9px">';
+  h += '<div style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:5px">Mês · ' + k.dias + ' dias</div>';
+  h += '<div style="display:flex;gap:7px;flex-wrap:wrap">';
+  h += item('Produção', orgFmtKg(k.producao), '#0f172a');
+  h += item('Méd × meta', rel == null ? '—' : Math.round(rel) + '%', corRel,
+            media == null ? '' : Math.round(media) + (meta ? ' / ' + Math.round(meta) : ''));
+  h += item('Perda', pp == null ? '—' : pp.toFixed(1).replace('.', ',') + '%', corPerda, orgFmtKg(k.perda));
+  h += item('Bobina', ap == null ? '—' : Math.round(ap) + '%', '#334155', 'máquina');
+  h += '</div></div>';
+  return h;
+}
+
 function orgCardMaq(l, ref, aloc, turno, dup, rep, tint) {
   const des = (orgDados.maqCel.find(x => x.maquina_codigo === l.maquina_codigo) || {}).desativada_org;
   const auxs = aloc.filter(a => a.funcao === 'auxiliar' && a.maquina_codigo === l.maquina_codigo && !a.aprendiz);
@@ -9316,6 +9352,7 @@ function orgCardMaq(l, ref, aloc, turno, dup, rep, tint) {
     h += '</div>';
   }
 
+  h += orgKpiMaq(l.maquina_codigo, turno);
   h += '<div style="margin-top:9px"><div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#94a3b8;margin-bottom:4px">Auxiliar</div>';
   h += '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">';
   let temAux = false;
