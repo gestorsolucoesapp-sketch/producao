@@ -9032,6 +9032,12 @@ function orgAtualizaBtnLayout() {
 }
 let orgArrasto = null;
 
+function orgMatsSetor() {
+  return new Set(orgDados.colab.filter(c => c.setor === orgSetorSel).map(c => c.matricula));
+}
+function orgColabSetor() {
+  return orgDados.colab.filter(c => c.setor === orgSetorSel);
+}
 function orgNome(mat) { const c = orgDados.colab.find(x => x.matricula === mat); return c ? c.nome : null; }
 function orgPrimeiro(n) { return (n || '').split(' ').slice(0, 2).join(' '); }
 function orgAfastadoHoje(mat) { return orgDados.afast.find(a => a.matricula === mat) || null; }
@@ -9343,7 +9349,7 @@ function orgCardOperador(ref, linhas, aloc, turno, dup, rep) {
 let orgImpBuf = { tipo: null, linhas: [] };
 
 const ORG_IMP_CFG = {
-  colab:  { titulo: 'Importar colaboradores', tabela: 'colaboradores',    dica: 'matrícula · nome · cargo · setor  — aceita o relatório do RH colado ou CSV' },
+  colab:  { titulo: 'Importar colaboradores', tabela: 'colaboradores',    dica: 'matrícula · nome · cargo — sem setor no cargo, entra no setor selecionado acima' },
   faltas: { titulo: 'Importar faltas',        tabela: 'org_afastamentos', dica: 'matrícula ou nome · data · tipo (falta, atestado, ferias, folga, afastamento)' },
   horas:  { titulo: 'Importar banco de horas',tabela: 'org_banco_horas',  dica: 'matrícula ou nome · data · horas (+/−) · motivo' }
 };
@@ -9428,9 +9434,9 @@ function orgImpAnalisa(tipo) {
       if (!mat || !nome) { reg.msg = 'faltou matrícula ou nome'; out.push(reg); return; }
       const setor = /rotulagem/i.test(cargo) ? 'Rotulagem'
                   : /impress/i.test(cargo) ? 'Impressão'
-                  : /termoform/i.test(cargo) ? 'Termoformagem' : null;
+                  : /termoform/i.test(cargo) ? 'Termoformagem' : orgSetorSel;
       const existe = orgDados.colab.some(x => x.matricula === mat);
-      out.push({ n: i + 1, st: 'ok', mat: mat, nome: nome, extra: cargo + (setor ? ' · ' + setor : ' · setor?'),
+      out.push({ n: i + 1, st: 'ok', mat: mat, nome: nome, extra: cargo + ' · ' + setor,
                  msg: existe ? 'atualiza' : 'novo',
                  dados: { matricula: mat, nome: nome, cargo: cargo || null, setor: setor, admissao: data, ativo: true } });
       return;
@@ -9860,11 +9866,12 @@ async function renderOrgFaltas() {
   wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
   const ini = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
   const { data } = await sb.from('org_afastamentos').select('*').gte('data', ini).order('data', { ascending: false });
-  const regs = data || [];
+  const mats = orgMatsSetor();
+  const regs = (data || []).filter(r => mats.has(r.matricula));
   let h = '<div class="card"><div class="titulo-sec">Lançar falta</div>';
   h += '<div style="display:flex;flex-direction:column;gap:8px">';
   h += '<input id="faBusca" list="faLista" placeholder="colaborador (nome ou matrícula)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">';
-  h += '<datalist id="faLista">' + orgDados.colab.map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
+  h += '<datalist id="faLista">' + orgColabSetor().map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
   h += '<input id="faData" type="date" value="' + new Date().toISOString().slice(0, 10) + '" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">';
   h += '<select id="faTipo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">' + ORG_TIPOS.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select>';
   h += '<div class="desc" style="font-size:11px;color:#c0392b">⚠️ Não registre informação de saúde. Só o tipo.</div>';
@@ -9899,13 +9906,14 @@ const ORG_MOTIVOS = ['hora_extra', 'compensacao', 'atraso', 'saida_antecipada', 
 async function renderOrgHoras() {
   const wrap = $('orgWrap');
   wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
-  const { data } = await sb.from('org_banco_horas').select('*').order('data', { ascending: false }).limit(200);
-  const regs = data || [];
+  const { data } = await sb.from('org_banco_horas').select('*').order('data', { ascending: false }).limit(400);
+  const matsH = orgMatsSetor();
+  const regs = (data || []).filter(r => matsH.has(r.matricula));
   const saldo = {};
   regs.forEach(r => { saldo[r.matricula] = (saldo[r.matricula] || 0) + Number(r.horas); });
   let h = '<div class="card"><div class="titulo-sec">Lançar horas</div><div style="display:flex;flex-direction:column;gap:8px">';
   h += '<input id="bhBusca" list="faLista2" placeholder="colaborador (nome ou matrícula)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">';
-  h += '<datalist id="faLista2">' + orgDados.colab.map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
+  h += '<datalist id="faLista2">' + orgColabSetor().map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
   h += '<input id="bhData" type="date" value="' + new Date().toISOString().slice(0, 10) + '" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">';
   h += '<input id="bhHoras" type="number" step="0.25" placeholder="horas (+ ou −)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">';
   h += '<select id="bhMotivo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:8px">' + ORG_MOTIVOS.map(m => '<option value="' + m + '">' + m.replace(/_/g, ' ') + '</option>').join('') + '</select>';
@@ -9940,7 +9948,9 @@ async function renderOrgAnalise() {
     sb.from('org_afastamentos').select('*').gte('data', ini),
     sb.from('org_banco_horas').select('*').gte('data', ini)
   ]);
-  const af = afR.data || [], bh = bhR.data || [];
+  const matsA = orgMatsSetor();
+  const af = (afR.data || []).filter(r => matsA.has(r.matricula));
+  const bh = (bhR.data || []).filter(r => matsA.has(r.matricula));
   const hojeAf = af.filter(a => a.data === hoje).map(a => a.matricula);
   const aloc = orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula && hojeAf.includes(a.matricula));
   let h = '<div class="card"><div class="titulo-sec">🚨 Postos descobertos hoje</div>';
