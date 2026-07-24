@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.113.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.114.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -787,6 +787,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button class="btn btn-borda" style="flex:1" onclick="document.getElementById('osFoto').click()">📎 Galeria ou PDF</button>
         </div>
         <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="osExtraida=null;osFotoB64=null;osFotoMime=null;formOS({})">✍️ Digitar OS manualmente (sem IA)</button>
+        <button class="btn btn-borda" style="width:100%;margin-top:8px" onclick="$('osFotoLocal').click()">📷 Ler foto no aparelho (sem IA · mais lento)</button>
+        <input type="file" id="osFotoLocal" accept="image/*" class="oculto" onchange="lerFotoLocalUI(this)">
         <div id="osDrop" style="margin-top:10px;border:2px dashed #C7D4E0;border-radius:12px;padding:16px;text-align:center;color:#5C7186;font-size:13px;background:#FAFCFE">
           📥 <b>Arraste várias OS aqui</b> (fotos ou PDFs) — ou toque em “Galeria ou PDF” e selecione várias
         </div>
@@ -1396,7 +1398,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.113.0';
+const APP_VER = '3.114.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1421,6 +1423,11 @@ async function garantirPdfJs() {
   await carregarLib('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
+async function garantirTesseract() {
+  if (window.Tesseract) return;
+  await carregarLib('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js');
+}
+
 async function garantirSortable() {
   if (window.Sortable) return;
   await carregarLib('https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js');
@@ -3805,6 +3812,48 @@ function msgErroIA(e) {
   return t;
 }
 
+// OCR no próprio aparelho (Tesseract) — sem API. Usa o MESMO parser do PDF do ERP.
+async function lerFotoSemIA(file, st) {
+  await garantirTesseract();
+  if (st) st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo a foto no próprio aparelho… (pode levar ~30s)';
+  const url = URL.createObjectURL(file);
+  let txt = '';
+  try {
+    const r = await Tesseract.recognize(url, 'por', {
+      logger: m => {
+        if (st && m.status === 'recognizing text') {
+          st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo no aparelho… ' + Math.round((m.progress || 0) * 100) + '%';
+        }
+      }
+    });
+    txt = (r && r.data && r.data.text) || '';
+  } finally { URL.revokeObjectURL(url); }
+  if (!txt.trim()) throw new Error('não saiu texto da foto');
+
+  // transforma em "linhas" no formato que o parser do PDF espera
+  const linhas = txt.split(/\r?\n/).map(t => ({ texto: t.trim(), pagina: 1 })).filter(l => l.texto);
+  if (!ehRSMI005(linhas)) throw new Error('layout não reconhecido na foto');
+  const lidas = parseRSMI005(linhas).map(o => ({ ...o, setor: setorDe(o.recurso_cod), colaboradores: o.colaboradores || null }));
+  if (!lidas.length) throw new Error('não achei os campos da OS na foto');
+  if (st) st.innerHTML = '✅ <b>' + lidas.length + ' OS lida(s)</b> pelo aparelho <span class="desc">(sem IA — confira os campos)</span>';
+  return lidas;
+}
+
+async function lerFotoLocalUI(input) {
+  const f = (input.files || [])[0]; if (!f) return;
+  const st = $('osStatus');
+  $('osForm').classList.add('oculto');
+  try {
+    const ordens = await lerFotoSemIA(f, st);
+    if (ordens.length === 1) { osExtraida = normalizarOS(ordens[0]); formOS(osExtraida); }
+    else { const r = await salvarOrdens(ordens, st); st.innerHTML = '✅ <b>' + r.ok.length + ' OS importada(s)</b> pelo aparelho'; carregarManut(); }
+  } catch (e) {
+    st.innerHTML = '❌ <b>Não consegui ler pelo aparelho</b><br>' + escapeHtml(String(e.message || e)) +
+      '<br><span class="desc">Fotos de tela ou tortas costumam falhar. Use o PDF do ERP, ou digite manualmente.</span>';
+  }
+  input.value = '';
+}
+
 // ===== leitura em LOTE (várias OS de uma vez) =====
 async function lerArquivoOS(f, st) {
   const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
@@ -3831,7 +3880,19 @@ async function lerLoteOS(files) {
       const r2 = await salvarOrdens(ordens, st);
       res.ok.push(...r2.ok); res.erro.push(...r2.erro.map(e => (files[i].name || '') + ' · ' + e));
       try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (lote)' }); } catch (_) {}
-    } catch (e) { res.erro.push((files[i].name || 'arquivo') + ': ' + msgErroIA(e)); }
+    } catch (e) {
+      const ehFoto = !/pdf$/i.test(files[i].type) && !/\.pdf$/i.test(files[i].name || '');
+      let salvou = false;
+      if (ehFoto && /credit|billing|quota|429|401|403|50\d/i.test(String(e.message || e))) {
+        try {
+          const ordens = await lerFotoSemIA(files[i], st);
+          const r3 = await salvarOrdens(ordens, st);
+          res.ok.push(...r3.ok); res.erro.push(...r3.erro.map(x => (files[i].name || '') + ' · ' + x));
+          salvou = true;
+        } catch (e2) { /* segue para o erro original */ }
+      }
+      if (!salvou) res.erro.push((files[i].name || 'arquivo') + ': ' + msgErroIA(e));
+    }
   }
   const _amostra = (arr) => arr.length <= 12 ? arr.join(', ') : arr.slice(0, 12).join(', ') + ' … +' + (arr.length - 12) + ' outras';
   st.innerHTML = `✅ <b>${res.ok.length} OS importada(s)</b>${res.ok.length ? ' — ' + _amostra(res.ok) : ''}` +
