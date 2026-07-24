@@ -524,7 +524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small>Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.112.1<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.112.2<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1396,7 +1396,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.112.1';
+const APP_VER = '3.112.2';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3785,6 +3785,20 @@ async function lerPdfTexto(file, st) {
   }
   return todas;
 }
+// traduz erros técnicos da IA para algo acionável no chão de fábrica
+function msgErroIA(e) {
+  const t = String((e && e.message) || e || '');
+  if (/credit balance|Plans & Billing|insufficient|quota|billing/i.test(t))
+    return 'A leitura por IA está sem crédito na conta. Use "Digitar OS manualmente" que funciona normal — e avise o João para recarregar.';
+  if (/rate.?limit|429/i.test(t))
+    return 'Muitas leituras ao mesmo tempo. Espere alguns segundos e tente de novo, ou digite manualmente.';
+  if (/401|403|unauthor|api key|invalid.*key/i.test(t))
+    return 'A chave da IA está inválida ou expirada. Digite a OS manualmente e avise o João.';
+  if (/50\d|timeout|network|fetch|failed/i.test(t))
+    return 'A IA não respondeu agora. Tente de novo em instantes ou digite manualmente.';
+  return t;
+}
+
 // ===== leitura em LOTE (várias OS de uma vez) =====
 async function lerArquivoOS(f, st) {
   const ehPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '');
@@ -3811,7 +3825,7 @@ async function lerLoteOS(files) {
       const r2 = await salvarOrdens(ordens, st);
       res.ok.push(...r2.ok); res.erro.push(...r2.erro.map(e => (files[i].name || '') + ' · ' + e));
       try { await sb.from('ia_uso').insert({ user_id: perfil && perfil.id, nome: perfil && perfil.nome, pergunta: 'OCR OS (lote)' }); } catch (_) {}
-    } catch (e) { res.erro.push((files[i].name || 'arquivo') + ': ' + (e.message || 'falhou')); }
+    } catch (e) { res.erro.push((files[i].name || 'arquivo') + ': ' + msgErroIA(e)); }
   }
   const _amostra = (arr) => arr.length <= 12 ? arr.join(', ') : arr.slice(0, 12).join(', ') + ' … +' + (arr.length - 12) + ' outras';
   st.innerHTML = `✅ <b>${res.ok.length} OS importada(s)</b>${res.ok.length ? ' — ' + _amostra(res.ok) : ''}` +
@@ -3870,9 +3884,11 @@ function lerFotoOS(input) {
       if (!r.ok || !d || d.error || !os1 || os1.erro) {
         if (d && d.bruto) console.log('OS-OCR resposta bruta:', d.bruto);
         const motivo = (os1 && os1.erro) || (d && (d.error || d.message || d.msg)) || (bruto ? bruto.slice(0, 160) : 'sem resposta');
-        st.innerHTML = `❌ <b>HTTP ${r.status}</b> — ${escapeHtml(String(motivo))}` +
+        const amigavel = msgErroIA(String(motivo));
+        st.innerHTML = `❌ <b>Não consegui ler a OS</b><br>${escapeHtml(amigavel)}` +
           (r.status === 404 ? '<br><span class="desc">A função <b>os-ocr</b> não foi encontrada. Publique-a no Supabase com esse nome exato.</span>' : '') +
-          (r.status === 401 || r.status === 403 ? '<br><span class="desc">Problema de autenticação — saia e entre no app de novo.</span>' : '');
+          (r.status === 401 || r.status === 403 ? '<br><span class="desc">Problema de autenticação — saia e entre no app de novo.</span>' : '') +
+          `<br><span class="desc" style="opacity:.6">detalhe técnico: HTTP ${r.status}</span>`;
         return;
       }
       osExtraida = normalizarOS(os1); st.textContent = '✅ OS lida — confira os campos e salve.';
