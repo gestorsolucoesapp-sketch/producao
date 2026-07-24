@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.138.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.139.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -805,6 +805,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="horas" onclick="orgVer('horas')">Horas</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="analise" onclick="orgVer('analise')">An&aacute;lise</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="rel" onclick="orgVer('rel')">📊 Relat&oacute;rio</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="ferias" onclick="orgVer('ferias')">🏖️ F&eacute;rias</button>
           <button class="btn" id="orgLayBtn" onclick="orgTrocaLayout()" title="Alternar layout" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px;margin-left:auto">📱 Coluna</button>
           <button class="btn" id="orgApresBtn" onclick="orgApresentar()" title="Modo apresentação" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⛶ Apresentar</button>
         </div>
@@ -1444,7 +1445,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.138.0';
+const APP_VER = '3.139.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9496,6 +9497,7 @@ async function carregarOrganograma() {
       sb.from('app_config').select('chave,valor').like('chave', 'org_supervisor_%'),
       sb.rpc('org_kpis_mes', { p_ini: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10), p_fim: hoje })
     ]);
+    carregarFerias();
     orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [], kpis: kp.data || [] };
     orgMontaSetores();
     renderOrgVista();
@@ -9539,6 +9541,7 @@ function renderOrgVista() {
   if (orgVista === 'horas') return renderOrgHoras();
   if (orgVista === 'analise') return renderOrgAnalise();
   if (orgVista === 'rel') return renderOrgRelatorio();
+  if (orgVista === 'ferias') return renderOrgFerias();
 }
 
 /* ---------- organograma ---------- */
@@ -10844,6 +10847,327 @@ async function orgRelImagem() {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
   toast(files.length + ' imagem(ns) salva(s) — anexe no WhatsApp');
+}
+
+/* ===================== FÉRIAS: timeline + programação ===================== */
+let orgFerias = [];
+let ferAno = new Date().getFullYear();
+let ferFiltro = 'todos';   // todos | marcadas | pendentes | vencendo
+
+async function carregarFerias() {
+  try {
+    const { data } = await sb.from('org_ferias').select('*').order('inicio', { ascending: true, nullsFirst: false });
+    orgFerias = data || [];
+  } catch (_) { orgFerias = []; }
+}
+
+async function garantirXlsx() {
+  if (window.XLSX) return;
+  await carregarLib('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+}
+
+function ferDiasNoMes(ano, mes) { return new Date(ano, mes, 0).getDate(); }
+function ferData(d) { return d ? new Date(d + 'T12:00:00') : null; }
+function ferFmt(d) { return d ? d.split('-').reverse().slice(0, 2).join('/') : '—'; }
+
+/* quanto falta para o limite legal (data_limite) */
+function ferUrgencia(f) {
+  if (!f.data_limite) return null;
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const lim = ferData(f.data_limite);
+  return Math.round((lim - hoje) / 86400000);
+}
+
+function ferLinhas() {
+  const mats = new Set(orgColabSetor().map(c => c.matricula));
+  return orgFerias.filter(f => f.setor === orgSetorSel || mats.has(f.matricula));
+}
+
+/* ---------- timeline ---------- */
+function ferTimeline(lista) {
+  const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const ini = new Date(ferAno, 0, 1), fimA = new Date(ferAno, 11, 31);
+  const totalDias = Math.round((fimA - ini) / 86400000) + 1;
+
+  const comData = lista.filter(f => f.inicio && f.fim &&
+    ferData(f.fim) >= ini && ferData(f.inicio) <= fimA)
+    .sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
+
+  if (!comData.length) return '<p class="vazio-painel">Nenhuma férias marcada em ' + ferAno + '.</p>';
+
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const pctHoje = (hoje >= ini && hoje <= fimA) ? ((hoje - ini) / 86400000 / totalDias * 100) : null;
+
+  let h = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+  h += '<div style="min-width:760px">';
+
+  // régua de meses
+  h += '<div style="display:flex;position:sticky;top:0;background:#fff;z-index:2;border-bottom:1px solid #e2e8f0;padding-bottom:3px">';
+  h += '<div style="width:150px;flex:none"></div><div style="flex:1;display:flex">';
+  for (let m = 1; m <= 12; m++) {
+    const w = ferDiasNoMes(ferAno, m) / totalDias * 100;
+    h += '<div style="width:' + w.toFixed(3) + '%;font-size:10px;font-weight:800;color:#64748b;text-align:center;border-left:1px solid #eef2f6">' + MES[m - 1] + '</div>';
+  }
+  h += '</div></div>';
+
+  // uma faixa por período
+  comData.forEach(f => {
+    const a = ferData(f.inicio), b = ferData(f.fim);
+    const off = Math.max(0, (a - ini) / 86400000 / totalDias * 100);
+    const larg = Math.max(0.6, ((Math.min(b, fimA) - Math.max(a, ini)) / 86400000 + 1) / totalDias * 100);
+    const nome = orgNome(f.matricula) || f.matricula;
+    const emCurso = hoje >= a && hoje <= b;
+    const passou = b < hoje;
+    const cor = emCurso ? '#dc2626' : passou ? '#94a3b8' : '#2563eb';
+    const nv = (f.nivel || '').toUpperCase();
+    const corNv = nv === 'OP' ? '#8b5cf6' : nv === 'AP' ? '#0891b2' : '#64748b';
+
+    h += '<div style="display:flex;align-items:center;height:26px;border-bottom:1px solid #f5f7fa">';
+    h += '<div style="width:150px;flex:none;font-size:11.5px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:6px" onclick="ferEditar(' + f.id + ')">' +
+      (nv ? '<span style="font-size:8.5px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:4px;padding:0 4px;margin-right:4px">' + nv + '</span>' : '') +
+      escapeHtml(orgPrimeiro(nome) || nome) + '</div>';
+    h += '<div style="flex:1;position:relative;height:100%">';
+    for (let m = 1; m < 12; m++) {
+      let acc = 0; for (let k = 1; k <= m; k++) acc += ferDiasNoMes(ferAno, k);
+      h += '<div style="position:absolute;left:' + (acc / totalDias * 100).toFixed(3) + '%;top:0;bottom:0;border-left:1px solid #f1f5f9"></div>';
+    }
+    if (pctHoje != null) h += '<div style="position:absolute;left:' + pctHoje.toFixed(2) + '%;top:0;bottom:0;border-left:2px solid #dc2626;opacity:.5"></div>';
+    h += '<div onclick="ferEditar(' + f.id + ')" title="' + escapeHtml(nome + ' · ' + ferFmt(f.inicio) + ' a ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + ' dias') +
+      '" style="position:absolute;left:' + off.toFixed(3) + '%;width:' + larg.toFixed(3) + '%;top:4px;bottom:4px;background:' + cor +
+      ';border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:800;overflow:hidden">' +
+      (larg > 4 ? (f.dias || '') : '') + '</div>';
+    h += '</div></div>';
+  });
+  return h + '</div></div>';
+}
+
+/* ---------- carga por mês: quantos de férias ao mesmo tempo ---------- */
+function ferCargaMes(lista) {
+  const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const cont = Array(12).fill(0), op = Array(12).fill(0);
+  lista.forEach(f => {
+    if (!f.inicio || !f.fim) return;
+    const a = ferData(f.inicio), b = ferData(f.fim);
+    for (let m = 0; m < 12; m++) {
+      const mi = new Date(ferAno, m, 1), mf = new Date(ferAno, m + 1, 0);
+      if (a <= mf && b >= mi) { cont[m]++; if ((f.nivel || '').toUpperCase() === 'OP') op[m]++; }
+    }
+  });
+  const mx = Math.max(1, ...cont);
+  let h = '<div style="display:flex;gap:3px;align-items:flex-end;height:80px;margin-top:4px">';
+  for (let m = 0; m < 12; m++) {
+    const alt = cont[m] / mx * 62;
+    const altOp = op[m] / mx * 62;
+    const alerta = op[m] >= 3;
+    h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">';
+    h += '<div style="font-size:9.5px;font-weight:800;color:' + (alerta ? '#dc2626' : '#334155') + '">' + (cont[m] || '') + '</div>';
+    h += '<div style="width:100%;height:' + Math.max(2, alt).toFixed(0) + 'px;background:#cbd5e1;border-radius:3px 3px 0 0;position:relative">' +
+      '<div style="position:absolute;left:0;right:0;bottom:0;height:' + Math.max(0, altOp).toFixed(0) + 'px;background:' + (alerta ? '#dc2626' : '#8b5cf6') + ';border-radius:3px 3px 0 0"></div></div>';
+    h += '<div style="font-size:9px;color:#94a3b8;margin-top:2px">' + MES[m] + '</div></div>';
+  }
+  h += '</div><div style="font-size:10.5px;color:#94a3b8;margin-top:5px">barra cinza = total · roxo = operadores · <b style="color:#dc2626">vermelho quando 3+ operadores no mesmo mês</b></div>';
+  return h;
+}
+
+/* ---------- vista ---------- */
+function renderOrgFerias() {
+  const wrap = $('orgWrap');
+  const lista = ferLinhas();
+  const marcadas = lista.filter(f => f.inicio);
+  const semData = lista.filter(f => !f.inicio);
+  const vencendo = lista.filter(f => { const d = ferUrgencia(f); return !f.inicio && d != null && d <= 180; });
+
+  let h = '<div class="orgv2">';
+
+  h += '<div class="card" style="padding:10px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:14px;padding:6px 11px" onclick="ferAno--;renderOrgFerias()">‹</button>';
+  h += '<b style="font-size:17px;color:#0f172a">' + ferAno + '</b>';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:14px;padding:6px 11px" onclick="ferAno++;renderOrgFerias()">›</button>';
+  h += '<button class="btn btn-verde" style="display:inline-block;width:auto;font-size:13px;padding:7px 13px;margin-left:auto" onclick="ferNova()">+ Programar</button>';
+  h += '</div>';
+
+  // resumo
+  h += '<div class="card"><div class="titulo-sec">🏖️ Férias · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<div style="display:flex;gap:9px;flex-wrap:wrap">';
+  const kpi = (v, l, cor) => '<div style="flex:1 1 92px;background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid ' + cor + ';border-radius:11px;padding:9px 11px">' +
+    '<div style="font-size:22px;font-weight:800;color:' + cor + ';line-height:1.15">' + v + '</div><div style="font-size:11px;color:#64748b">' + l + '</div></div>';
+  h += kpi(marcadas.length, 'programadas', '#2563eb');
+  h += kpi(semData.length, 'sem data', '#94a3b8');
+  h += kpi(vencendo.length, 'limite em 6 meses', vencendo.length ? '#dc2626' : '#16a34a');
+  h += '</div>';
+  h += '<div class="titulo-sec" style="margin-top:14px">Quantos de férias por mês</div>';
+  h += ferCargaMes(lista);
+  h += '</div>';
+
+  h += '<div class="card"><div class="titulo-sec">Linha do tempo ' + ferAno + '</div>';
+  h += '<p class="desc" style="margin-bottom:8px">azul = programado · vermelho = em curso hoje · cinza = já voltou · toque para editar</p>';
+  h += ferTimeline(lista);
+  h += '</div>';
+
+  if (vencendo.length) {
+    h += '<div class="card" style="border-left:5px solid #dc2626"><div class="titulo-sec">⚠️ Precisam marcar</div>';
+    h += '<p class="desc" style="margin-bottom:8px">data limite do período aquisitivo chegando e ainda sem férias marcada</p>';
+    h += '<div style="max-height:38vh;overflow:auto;border:1px solid #e2e8f0;border-radius:10px">';
+    vencendo.sort((a, b) => (a.data_limite || '').localeCompare(b.data_limite || '')).forEach(f => {
+      const d = ferUrgencia(f);
+      h += '<div onclick="ferEditar(' + f.id + ')" style="cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid #f1f5f9;font-size:12.5px">' +
+        '<b style="flex:1;min-width:0">' + escapeHtml(orgNome(f.matricula) || f.matricula) + '</b>' +
+        '<span style="font-size:10px;font-weight:800;color:#fff;background:' + (d < 0 ? '#7f1d1d' : d < 60 ? '#dc2626' : '#d97706') + ';padding:2px 8px;border-radius:20px">' +
+        (d < 0 ? 'vencido' : d + ' dias') + '</span>' +
+        '<span style="color:#94a3b8">' + ferFmt(f.data_limite) + '</span></div>';
+    });
+    h += '</div></div>';
+  }
+
+  // importação anual
+  h += '<div class="card"><div class="titulo-sec">📥 Carregar programação do ano</div>';
+  h += '<p class="desc" style="margin-bottom:8px">planilha do RH (.xlsx) — lê a aba <b>Programação</b> e o <b>Relatório de Ferias</b></p>';
+  h += '<input type="file" id="ferFile" accept=".xlsx,.xls" onchange="ferImportar()" style="font-size:13px;width:100%">';
+  h += '<div id="ferImpPrev"></div></div>';
+
+  h += '</div>';
+  wrap.innerHTML = h;
+}
+
+/* ---------- importar xlsx ---------- */
+async function ferImportar() {
+  const f = ($('ferFile').files || [])[0]; if (!f) return;
+  const prev = $('ferImpPrev');
+  prev.innerHTML = '<div class="desc" style="margin-top:10px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> lendo planilha…</div>';
+  try {
+    await garantirXlsx();
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+    const abaP = wb.SheetNames.find(n => /program/i.test(n));
+    if (!abaP) throw new Error('não achei a aba "Programação"');
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[abaP], { header: 1, raw: false, dateNF: 'yyyy-mm-dd' });
+
+    // limites do "Relatório de Ferias"
+    const lim = {};
+    const abaR = wb.SheetNames.find(n => /relat/i.test(n));
+    if (abaR) {
+      XLSX.utils.sheet_to_json(wb.Sheets[abaR], { header: 1, raw: false }).forEach(r => {
+        const m = String(r[0] || '').trim();
+        if (/^\d{3,6}$/.test(m)) lim[m] = ferISO(r[4]);
+      });
+    }
+
+    const out = [];
+    rows.forEach(r => {
+      const mat = String(r[0] || '').trim();
+      if (!/^\d{3,6}$/.test(mat)) return;
+      const ini = ferISO(r[7]);
+      const dias = parseInt(String(r[8] || '').replace(/\D/g, ''), 10) || null;
+      let fim = null;
+      if (ini && dias) { const d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + dias - 1); fim = d.toISOString().slice(0, 10); }
+      const st = String(r[12] || '').trim().toLowerCase();
+      out.push({
+        matricula: mat, setor: orgSetorSel,
+        aquisitivo_ini: ferISO(r[2]), aquisitivo_fim: ferISO(r[3]), data_limite: lim[mat] || null,
+        inicio: ini, dias: dias, fim: fim,
+        nivel: String(r[9] || '').trim().slice(0, 6) || null,
+        turno_planilha: String(r[5] || '').trim().slice(0, 1) || null,
+        status: ['ok', 'de ferias', 'pendente'].includes(st) ? st : (ini ? 'ok' : 'pendente')
+      });
+    });
+    if (!out.length) throw new Error('nenhuma linha com matrícula na aba Programação');
+
+    const conhecidos = new Set(orgDados.colab.map(c => c.matricula));
+    const naoAchei = out.filter(x => !conhecidos.has(x.matricula));
+    _ferBuf = out;
+    prev.innerHTML = '<div style="margin-top:10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">' +
+      '<b>' + out.length + ' linha(s)</b> · ' + out.filter(x => x.inicio).length + ' com data marcada' +
+      (naoAchei.length ? '<div style="font-size:11.5px;color:#b91c1c;margin-top:4px">' + naoAchei.length + ' matrícula(s) sem cadastro no app — vão entrar mesmo assim</div>' : '') +
+      '<button class="btn btn-verde" style="margin-top:9px" onclick="ferGravarImport()">Gravar em ' + escapeHtml(orgSetorSel) + '</button></div>';
+  } catch (e) {
+    prev.innerHTML = '<div class="desc" style="color:#b91c1c;margin-top:10px">Não consegui ler: ' + escapeHtml(String(e.message || e)) + '</div>';
+  }
+  $('ferFile').value = '';
+}
+let _ferBuf = null;
+function ferISO(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/); if (m) return m[3] + '-' + m[2] + '-' + m[1];
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[0];
+  const d = new Date(s); return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+
+async function ferGravarImport() {
+  if (!_ferBuf || !_ferBuf.length) return;
+  await sb.from('org_ferias').delete().eq('setor', orgSetorSel);
+  for (let i = 0; i < _ferBuf.length; i += 200) {
+    const { error } = await sb.from('org_ferias').insert(_ferBuf.slice(i, i + 200));
+    if (error) { toast('Erro: ' + error.message); return; }
+  }
+  toast(_ferBuf.length + ' linha(s) gravadas ✔');
+  _ferBuf = null;
+  await carregarFerias();
+  renderOrgFerias();
+}
+
+/* ---------- programar / editar ---------- */
+function ferNova() { ferForm(null); }
+function ferEditar(id) { ferForm(orgFerias.find(f => f.id === id) || null); }
+
+function ferForm(f) {
+  const pes = orgColabSetor().filter(c => c.ativo !== false)
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+  let h = '<div class="campo"><label>Colaborador</label><select id="ferMat" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:9px">' +
+    pes.map(c => '<option value="' + c.matricula + '"' + (f && f.matricula === c.matricula ? ' selected' : '') + '>' + escapeHtml(c.nome) + '</option>').join('') + '</select></div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+  h += '<div class="campo" style="flex:1 1 130px"><label>Início</label><input type="date" id="ferIni" value="' + (f && f.inicio ? f.inicio : '') + '" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:9px"></div>';
+  h += '<div class="campo" style="flex:1 1 90px"><label>Dias</label><input type="number" id="ferDias" value="' + (f && f.dias ? f.dias : 30) + '" min="1" max="30" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:9px"></div>';
+  h += '</div>';
+  h += '<div class="campo"><label>Nível</label><select id="ferNivel" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:9px">' +
+    ['', 'OP', 'AUX', 'AP'].map(n => '<option value="' + n + '"' + (f && (f.nivel || '') === n ? ' selected' : '') + '>' + (n || '—') + '</option>').join('') + '</select></div>';
+  h += '<div id="ferAviso"></div>';
+  h += '<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="ferSalvar(' + (f ? f.id : 'null') + ')">Salvar</button>';
+  if (f) h += '<button class="btn" style="width:100%;margin-top:8px;background:#e74c3c;color:#fff" onclick="ferExcluir(' + f.id + ')">Excluir período</button>';
+  orgModal(f ? 'Editar férias' : 'Programar férias', h);
+  setTimeout(ferChecaConflito, 60);
+  ['ferMat', 'ferIni', 'ferDias'].forEach(id => { const e = $(id); if (e) e.addEventListener('change', ferChecaConflito); });
+}
+
+function ferChecaConflito() {
+  const av = $('ferAviso'); if (!av) return;
+  const mat = $('ferMat').value, ini = $('ferIni').value, dias = parseInt($('ferDias').value, 10);
+  if (!ini || !dias) { av.innerHTML = ''; return; }
+  const a = new Date(ini + 'T12:00:00'), b = new Date(a); b.setDate(b.getDate() + dias - 1);
+  const fimISO = b.toISOString().slice(0, 10);
+  // quem mais está de férias nesse intervalo, no mesmo setor
+  const junto = ferLinhas().filter(f => f.matricula !== mat && f.inicio && f.fim && f.inicio <= fimISO && f.fim >= ini);
+  const ops = junto.filter(f => (f.nivel || '').toUpperCase() === 'OP');
+  // o operador tem posto na escala?
+  const posto = orgDados.aloc.filter(x => x.matricula === mat && x.setor === orgSetorSel && x.funcao === 'operador' && x.maquina_codigo);
+  let h = '<div style="font-size:12px;color:#334155;margin-top:4px">Volta em <b>' + fimISO.split('-').reverse().join('/') + '</b></div>';
+  if (posto.length) h += '<div style="margin-top:6px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:9px;font-size:12px;color:#b91c1c">⚠️ É operador de <b>' + posto.map(x => x.maquina_codigo).join(', ') + '</b> (' + posto[0].turno + ') — precisa de substituto</div>';
+  if (junto.length) h += '<div style="margin-top:6px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;font-size:12px;color:#92400e">' +
+    junto.length + ' pessoa(s) de férias no mesmo intervalo' + (ops.length ? ', sendo <b>' + ops.length + ' operador(es)</b>' : '') + ':<br>' +
+    junto.slice(0, 6).map(f => escapeHtml(orgPrimeiro(orgNome(f.matricula)) || f.matricula)).join(' · ') + '</div>';
+  av.innerHTML = h;
+}
+
+async function ferSalvar(id) {
+  const mat = $('ferMat').value, ini = $('ferIni').value || null, dias = parseInt($('ferDias').value, 10) || null;
+  let fim = null;
+  if (ini && dias) { const d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + dias - 1); fim = d.toISOString().slice(0, 10); }
+  const reg = { matricula: mat, setor: orgSetorSel, inicio: ini, dias: dias, fim: fim,
+                nivel: $('ferNivel').value || null, status: ini ? 'ok' : 'pendente', atualizado_em: new Date().toISOString() };
+  const r = id ? await sb.from('org_ferias').update(reg).eq('id', id) : await sb.from('org_ferias').insert(reg);
+  if (r.error) { toast('Erro: ' + r.error.message); return; }
+  toast('Salvo ✔');
+  orgFechaModal();
+  await carregarFerias();
+  renderOrgFerias();
+}
+
+async function ferExcluir(id) {
+  const { error } = await sb.from('org_ferias').delete().eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Período removido');
+  orgFechaModal();
+  await carregarFerias();
+  renderOrgFerias();
 }
 
 /* ---------- modo apresentação (tela cheia, para projetar/apresentar) ---------- */
