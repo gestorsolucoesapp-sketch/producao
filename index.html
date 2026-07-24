@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.131.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.132.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1444,7 +1444,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.131.0';
+const APP_VER = '3.132.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10241,6 +10241,82 @@ function orgAuditoria() {
   return av;
 }
 
+// classifica o cargo em famílias que fazem sentido no chão de fábrica
+function orgFamiliaCargo(cargo) {
+  const c = orgImpNorm(cargo || '');
+  if (!c) return 'Sem cargo';
+  if (/lider/.test(c)) return 'Líder';
+  if (/operador/.test(c)) return 'Operador';
+  if (/oficial/.test(c)) return '½ Oficial';
+  if (/auxiliar de termoform|auxiliar de impress|auxiliar de rotulagem|auxiliar de injecao/.test(c)) return 'Auxiliar técnico';
+  if (/auxiliar de producao/.test(c)) return 'Auxiliar de produção';
+  if (/limpeza/.test(c)) return 'Limpeza';
+  return 'Outros';
+}
+
+function orgCardCargoTurno() {
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula);
+  const fam = {}, totT = {};
+  ORG_TURNOS.forEach(t => totT[t] = 0);
+  const vistos = {};
+  al.forEach(a => {
+    const k = a.turno + '|' + a.matricula;
+    if (vistos[k]) return; vistos[k] = 1;                    // conta pessoa, não linha
+    const c = orgDados.colab.find(x => x.matricula === a.matricula);
+    const f = a.aprendiz ? 'Aprendiz' : orgFamiliaCargo(c && c.cargo);
+    if (!fam[f]) { fam[f] = {}; ORG_TURNOS.forEach(t => fam[f][t] = 0); }
+    fam[f][a.turno]++; totT[a.turno]++;
+  });
+
+  const ordem = ['Líder', 'Operador', '½ Oficial', 'Aprendiz', 'Auxiliar técnico', 'Auxiliar de produção', 'Limpeza', 'Outros', 'Sem cargo'];
+  const chaves = Object.keys(fam).sort((a, b) => {
+    const ia = ordem.indexOf(a), ib = ordem.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  if (!chaves.length) return '';
+
+  let h = '<div class="card"><div class="titulo-sec">📊 Cargos por turno · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<p class="desc" style="margin-bottom:10px">pessoas distintas escaladas em cada função</p>';
+
+  // composição de cada turno (barra empilhada)
+  const tons = ['#0f172a', '#334155', '#64748b', '#8e44ad', '#0e7490', '#0891b2', '#94a3b8', '#cbd5e1', '#e2e8f0'];
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  ORG_TURNOS.forEach(t => {
+    const tot = totT[t] || 0;
+    h += '<div style="flex:1 1 100px">';
+    h += '<div style="font-size:11.5px;font-weight:800;color:' + ORG_CORES[t] + '">' + t + ' <span style="color:#94a3b8">' + tot + '</span></div>';
+    h += '<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin-top:4px;background:#f1f5f9">';
+    chaves.forEach((k, i) => {
+      const v = fam[k][t] || 0; if (!v || !tot) return;
+      h += '<div title="' + escapeHtml(k) + ': ' + v + '" style="width:' + (v / tot * 100).toFixed(1) + '%;background:' + tons[i % tons.length] + '"></div>';
+    });
+    h += '</div></div>';
+  });
+  h += '</div>';
+
+  // matriz cargo x turno com barra proporcional
+  chaves.forEach((k, i) => {
+    const linha = ORG_TURNOS.map(t => fam[k][t] || 0);
+    const mx = Math.max(1, ...linha);
+    const somaL = linha.reduce((a, b) => a + b, 0);
+    h += '<div style="margin-top:9px">';
+    h += '<div style="display:flex;align-items:baseline;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:' + tons[i % tons.length] + ';display:inline-block"></span>' +
+      '<span style="font-size:11.5px;font-weight:800;color:#0f172a">' + escapeHtml(k) + '</span>' +
+      '<span style="font-size:11px;color:#94a3b8;margin-left:auto">' + somaL + '</span></div>';
+    h += '<div style="display:flex;gap:6px;margin-top:4px">';
+    ORG_TURNOS.forEach((t, j) => {
+      const v = linha[j], pct = mx ? Math.max(v ? 8 : 0, v / mx * 100) : 0;
+      const tint = ORG_TINT[t] || { bg: '#f8fafc', br: '#cbd5e1' };
+      h += '<div style="position:relative;flex:1;min-width:0;height:26px;background:' + tint.bg + ';border:1px solid ' + ORG_CORES[t] + '44;border-radius:7px;overflow:hidden">' +
+        '<div style="position:absolute;left:0;top:0;bottom:0;width:' + pct.toFixed(0) + '%;background:' + ORG_CORES[t] + ';opacity:.32"></div>' +
+        '<div style="position:relative;display:flex;align-items:center;height:100%;padding:0 7px;font-size:11.5px;font-weight:800;color:#0f172a">' +
+        '<span style="font-size:8.5px;font-weight:800;letter-spacing:.4px;color:' + tint.br + ';margin-right:5px">' + t.slice(0, 3).toUpperCase() + '</span>' + (v || '—') + '</div></div>';
+    });
+    h += '</div></div>';
+  });
+  return h + '</div>';
+}
+
 function orgCardSobrando() {
   const escalados = new Set(orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula).map(a => a.matricula));
   const fora = orgColabSetor().filter(c => c.ativo !== false && !escalados.has(c.matricula));
@@ -10948,6 +11024,7 @@ async function renderOrgAnalise() {
   }).join('') : '<div class="desc">nenhum posto descoberto hoje ✔</div>';
   h += '</div>';
   h += orgCardAuditoria();
+  h += orgCardCargoTurno();
   h += orgCardSobrando();
   h += orgCardHeadcount();
   h += orgCardCobertura();
