@@ -563,7 +563,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.136.2<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.137.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:#D64545;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1444,7 +1444,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.136.2';
+const APP_VER = '3.137.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9270,16 +9270,10 @@ async function gravar(id, substituir = false) {
     // registro da importação se ele estiver INTEIRO dentro do período novo.
     // Sem período válido (nenhuma data nos registros) pulamos a limpeza para não
     // quebrar — a dedup por hash do arquivo ainda impede reimportar o mesmo PDF.
-    if (r.periodo.de && r.periodo.ate) {
-      const { error: eDel } = await sb.from(mapa.tabela).delete()
-        .gte('dia', r.periodo.de)
-        .lte('dia', r.periodo.ate);
-      if (eDel) throw new Error(`Falha ao limpar o período em ${mapa.tabela}: ` + eDel.message);
-      await sb.from('importacoes').delete()
-        .eq('rotina', r.rotina)
-        .gte('periodo_de', r.periodo.de)
-        .lte('periodo_ate', r.periodo.ate);
-    }
+    // NÃO apagamos nada aqui. Antes o fluxo era: apaga período -> insere.
+    // Se a inserção falhava no meio, o período ficava VAZIO e o dado se perdia
+    // (foi o que aconteceu com o 622 de julho). Agora: insere primeiro, apaga depois.
+
     // 1) registra a importação
     const { data: imp, error: e1 } = await sb.from('importacoes').insert({
       hash, rotina: r.rotina, arquivo: nomeArquivo,
@@ -9299,6 +9293,20 @@ async function gravar(id, substituir = false) {
       }
       if (barra) barra.firstElementChild.style.width = Math.round(Math.min(100, ((i + 400) / linhas.length) * 100)) + '%';
     }
+    // 3) só agora tira o que era do mesmo período e veio de importações anteriores.
+    //    Se algo acima falhou, nada foi apagado e o dado antigo continua de pé.
+    if (r.periodo.de && r.periodo.ate) {
+      const { error: eDel } = await sb.from(mapa.tabela).delete()
+        .gte('dia', r.periodo.de).lte('dia', r.periodo.ate)
+        .neq('importacao_id', imp.id);
+      if (eDel) console.warn('limpeza do período falhou:', eDel.message);
+      await sb.from('importacoes').delete()
+        .eq('rotina', r.rotina)
+        .gte('periodo_de', r.periodo.de)
+        .lte('periodo_ate', r.periodo.ate)
+        .neq('id', imp.id);
+    }
+
     toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}`);
     if (previews[id]) previews[id].dupErro = false;
     descartar(id);
