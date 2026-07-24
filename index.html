@@ -557,7 +557,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="marca">
         <div class="marca-chip"><img src="logo_mark.png" alt="Rioplastic" loading="lazy"></div>
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:#9FB6CC"></small></h1>
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.118.3<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.119.0<small id="verData" style="font-size:8.5px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
@@ -1431,7 +1431,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.118.3';
+const APP_VER = '3.119.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6029,6 +6029,68 @@ function montarCardVelocidade(anSetor) {
       <th style="text-align:left">Quando</th><th>Máq</th><th style="text-align:left">OP · Item</th><th style="text-align:right">Peças/min</th><th style="text-align:right">Cxs/h</th>
     </tr></thead><tbody>${linhas}</tbody></table></div></div>`;
 }
+// Trocas por máquina: último dia e total do período (usa o mesmo cálculo do card acima)
+function montarCardTrocasMaq(anSetor) {
+  const ts = (trocasCache && trocasCache.length) ? trocasCache : calcularTrocas(anSetor).filter(t => t.dia);
+  if (!ts.length) return '';
+  const dias = [...new Set(ts.map(t => t.dia))].sort();
+  const ultimo = dias[dias.length - 1];
+  const nDias = dias.length;
+
+  const acc = {};
+  ts.forEach(t => {
+    const c = String(t.maq);
+    if (!acc[c]) acc[c] = { per: 0, ult: 0 };
+    acc[c].per++;
+    if (t.dia === ultimo) acc[c].ult++;
+  });
+  const cods = Object.keys(acc).sort((a, b) => acc[b].per - acc[a].per);
+  const totPer = ts.length, totUlt = ts.filter(t => t.dia === ultimo).length;
+  const maxPer = Math.max(1, ...cods.map(c => acc[c].per));
+  const nomeDe = c => (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[c]) || '';
+
+  const linhas = cods.map(c => {
+    const d = acc[c], pct = (d.per / maxPer * 100).toFixed(0);
+    const media = d.per / nDias;
+    const acimaMedia = d.ult > media * 1.5;
+    return `<tr onclick="detTrocasMaqDia('${anSetor || ''}','${c}','${ultimo}')" style="cursor:pointer">
+      <td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(nomeDe(c)).slice(0, 12))}</td>
+      <td style="text-align:center"><span class="cel ${acimaMedia ? 'baixo' : 'neutra'}">${d.ult}${d.ult ? ' ›' : ''}</span></td>
+      <td style="min-width:74px"><div style="background:#EEF2F6;border-radius:5px;height:16px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:#C9922E;border-radius:5px"></div></div></td>
+      <td style="text-align:right;font-weight:800">${d.per}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="card"><div class="titulo-sec">Trocas por máquina</div>
+    <p class="desc" style="margin-bottom:10px">último dia (${fmtDataSem(ultimo)}) × total do período · toque numa linha para ver as trocas do dia</p>
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi destaque"><div class="v">${totUlt}</div><div class="l">Trocas em ${fmtDataSem(ultimo)}</div></div>
+      <div class="kpi"><div class="v">${totPer}</div><div class="l">Trocas no período · ${cods.length} máquina(s)</div></div>
+    </div>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+      <th style="text-align:left">Máquina</th><th style="text-align:center">Último dia</th><th></th><th style="text-align:right">Período</th>
+    </tr></thead><tbody>${linhas}</tbody></table></div>
+    <p class="desc" style="margin-top:6px;font-size:11px">Em vermelho, quem trocou no último dia bem acima da própria média diária do período.</p></div>`;
+}
+
+function detTrocasMaqDia(setor, cod, dia) {
+  const ts = calcularTrocas(setor).filter(t => String(t.maq) === String(cod) && t.dia === dia);
+  $('itemDetTitulo').textContent = 'Máq. ' + cod + ' · ' + fmtData(dia);
+  if (!ts.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Nenhuma troca nessa máquina neste dia.</p>'; $('itemDetOverlay').classList.remove('oculto'); return; }
+  ts.sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
+  $('itemDetCorpo').innerHTML = `<p class="idet-desc"><b>${ts.length} troca(s)</b> na máquina ${escapeHtml(String(cod))}</p>
+    <div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+      <th>Trocou às</th><th style="text-align:left">Saiu</th><th style="text-align:left">Entrou</th></tr></thead><tbody>` +
+    ts.map(t => `<tr>
+      <td style="text-align:center;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${t.horaEntrou ? soHora(t.horaEntrou) : '<span style=\'color:#B3BDC7\'>s/ hora</span>'}</td>
+      <td style="font-size:11.5px"><b>${escapeHtml(t.deCod || '—')}</b><br><span style="color:#8395A6">${escapeHtml(t.deDesc || '')}</span></td>
+      <td style="font-size:11.5px"><b style="color:#00964D">${escapeHtml(t.paraCod || '—')}</b><br><span style="color:#5C7186">${escapeHtml(t.paraDesc || '')}</span></td>
+    </tr>`).join('') +
+    '</tbody></table></div>';
+  $('itemDetOverlay').classList.remove('oculto');
+}
+
 // Card de setups por dia/mês — independe da produção (vem das paradas 643).
 function montarCardSetup(anSetor) {
   trocasCache = calcularTrocas(anSetor).filter(t => t.dia);
@@ -6134,7 +6196,7 @@ function renderAnalise() {
   else if (grupo) rows = rows.filter(r => String(r.item_cod).startsWith(grupo));
   if (!rows.length) {
     const anS = $('anSetor') ? $('anSetor').value : '';
-    box.innerHTML = montarCardSetup(anS) + '<div class="card"><p class="vazio-painel">Nenhum item de produção neste setor/período (o gráfico de setups acima usa as paradas).</p></div>';
+    box.innerHTML = montarCardSetup(anS) + montarCardTrocasMaq(anS) + '<div class="card"><p class="vazio-painel">Nenhum item de produção neste setor/período (o gráfico de setups acima usa as paradas).</p></div>';
     return;
   }
 
@@ -6210,7 +6272,7 @@ async function preencherMediaItensMes(ym, setor) {
   }
 
   // ===== SETUPS POR DIA (mês) / POR MÊS (ano) =====
-  const cardSetup = montarCardSetup(anSetor);
+  const cardSetup = montarCardSetup(anSetor) + montarCardTrocasMaq(anSetor);
 
   // agrega por item (com dias por máquina para detectar re-entradas)
   const it = {};
