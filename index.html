@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.190.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.191.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1546,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.190.0';
+const APP_VER = '3.191.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11619,6 +11619,26 @@ function orgImgDesenha(setor, dados, pag, totPag) {
 
   const totGeral = colunas.reduce((a, c) => a + c.total, 0);
 
+  // Bloco de máquinas = a chave da comparação. O mesmo conjunto (1704/1705/1706)
+  // existe nos três turnos com operadores diferentes: é ISSO que se compara.
+  // Ranquear operador contra operador dentro do turno não diz nada, porque cada
+  // um opera máquinas diferentes.
+  const chaveBloco = o => o.maqs.map(m => m.cod).slice().sort((a, b) => (+a) - (+b)).join('|');
+  const blocos = {};
+  colunas.forEach(c => c.ops.forEach(o => {
+    const k = chaveBloco(o);
+    (blocos[k] = blocos[k] || []).push({ turno: c.turno, soma: o.soma, op: o });
+  }));
+  Object.values(blocos).forEach(arr => {
+    arr.sort((a, b) => b.soma - a.soma);
+    arr.forEach((z, i) => { z.op._pos = i + 1; z.op._lider = arr[0].soma; z.op._nBloco = arr.length; });
+  });
+  // ordem das linhas: mesma sequência de blocos nas três colunas, para as
+  // linhas se alinharem e a comparação ser visual
+  const ordemBloco = Object.keys(blocos).sort((a, b) =>
+    (parseInt(a.split('|')[0]) || 0) - (parseInt(b.split('|')[0]) || 0));
+  colunas.forEach(c => c.ops.sort((x, y) => ordemBloco.indexOf(chaveBloco(x)) - ordemBloco.indexOf(chaveBloco(y))));
+
   // quem lidera CADA máquina: a mesma 1706 nos três turnos é a disputa real
   const melhorMaq = {};
   colunas.forEach(c => c.ops.forEach(o => o.maqs.forEach(m => {
@@ -11631,7 +11651,7 @@ function orgImgDesenha(setor, dados, pag, totPag) {
   /* ---- medidas ---- */
   const W = 1400, PAD = 36, GAP = 20;
   const CW = (W - PAD * 2 - GAP * 2) / 3;
-  const LOP = 36, LMQ = 27, GAPOP = 14;              // altura do operador, da máquina, do respiro
+  const LOP = 42, LMQ = 27, GAPOP = 14;              // altura do operador, da máquina, do respiro
   const HDR = 244;
   const altCol = c => c.ops.reduce((a, o) => a + LOP + o.maqs.length * LMQ + GAPOP, 12);
   const H = HDR + Math.max(...colunas.map(altCol)) + 78;
@@ -11705,11 +11725,20 @@ function orgImgDesenha(setor, dados, pag, totPag) {
       x.fillText(iniciais(nm), ccx, ccy + 5);
       x.textAlign = 'left';
       // acumulado do operador e a posição dele dentro do turno
-      const posOp = c.ops.indexOf(o) + 1;
-      x.fillStyle = '#7E93AA'; x.font = F(11, 800);
-      x.fillText(posOp + 'º', ccx + r + 8, ccy + 5);
-      x.fillStyle = '#fff'; x.font = F(14, 800); x.textAlign = 'right';
+      const posOp = o._pos || 0, MEDOP = { 1: '#E8B923', 2: '#B9C4CE', 3: '#C77B4A' };
+      if (posOp && (o._nBloco || 0) > 1) {
+        x.fillStyle = MEDOP[posOp] || '#7E93AA';
+        x.beginPath(); x.arc(ccx + r + 15, ccy - 1, 10, 0, Math.PI * 2); x.fill();
+        x.fillStyle = posOp === 1 ? '#3A2A00' : '#1B2733'; x.font = F(11, 800); x.textAlign = 'center';
+        x.fillText(posOp + 'º', ccx + r + 15, ccy + 3);
+        x.textAlign = 'left';
+      }
+      x.fillStyle = posOp === 1 ? '#E8B923' : '#fff'; x.font = F(14, 800); x.textAlign = 'right';
       x.fillText(fmtV(o.soma), cx0 + CW - 14, ccy + 5);
+      if (posOp > 1 && o._lider) {
+        x.fillStyle = '#7E93AA'; x.font = F(10.5, 600);
+        x.fillText('−' + fmtV(o._lider - o.soma), cx0 + CW - 14, ccy + 18);
+      }
       x.textAlign = 'left';
 
       const topoLinha = ccy + r + 2;
