@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.152.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.153.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.152.0';
+const APP_VER = '3.153.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6184,6 +6184,29 @@ function montarCardVelocidade(anSetor) {
     </tr></thead><tbody>${linhas}</tbody></table></div></div>`;
 }
 // Trocas por máquina: último dia e total do período (usa o mesmo cálculo do card acima)
+let _bocaDet = null;
+function detBocaMaq(cod) {
+  if (!_bocaDet) return;
+  const linhas = [];
+  Object.keys(_bocaDet.md).forEach(k => {
+    const [c, dia] = k.split('|');
+    if (c !== String(cod)) return;
+    const bocas = [..._bocaDet.md[k]].sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
+    if (bocas.length > 1) linhas.push({ dia: dia, bocas: bocas, trocas: bocas.length - 1 });
+  });
+  linhas.sort((a, b) => b.trocas - a.trocas || a.dia.localeCompare(b.dia));
+  const nome = (dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[cod]) || '';
+  const tot = linhas.reduce((a, x) => a + x.trocas, 0);
+  let h = `<p class="desc">${linhas.length} dia(s) com mais de uma boca · <b>${tot}</b> troca(s) no mínimo</p>`;
+  h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
+       '<th style="text-align:left">Dia</th><th>Bocas no dia</th><th>Trocas</th></tr></thead><tbody>' +
+       linhas.map(x => `<tr><td class="nome" style="text-align:left">${fmtDataSem(x.dia)}</td>` +
+         `<td>${x.bocas.map(b => `<span class="cel neutra" style="margin:1px">${escapeHtml(b)}</span>`).join('')}</td>` +
+         `<td><span class="cel ${x.trocas > 1 ? 'baixo' : 'neutra'}">${x.trocas}</span></td></tr>`).join('') +
+       '</tbody></table></div>';
+  abreDet(cod + (nome ? ' · ' + nome : '') + ' · trocas de boca', h);
+}
+
 function montarCardTrocasMaq(anSetor) {
   const ts = (trocasCache && trocasCache.length) ? trocasCache : calcularTrocas(anSetor).filter(t => t.dia);
   if (!ts.length) return '';
@@ -6553,10 +6576,34 @@ async function preencherMediaItensMes(ym, setor) {
         `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Boca</th><th>Itens</th><th>OPs</th><th>Dias</th><th>Máq.</th><th>Volume</th></tr></thead><tbody>${linhasB}</tbody></table></div>`);
 
       if (totTrocas) {
+        // guarda o detalhe para o clique abrir dia a dia
+        _bocaDet = { md: md, setor: anSetor || '' };
+
+        const diasB = [...new Set(rowsB.map(r => r.dia).filter(Boolean))].sort();
+        const perTxt = diasB.length ? `${fmtDataSem(diasB[0])} a ${fmtDataSem(diasB[diasB.length - 1])} · ${diasB.length} dia(s) com produção` : '';
+
         const arrT = Object.entries(trocasMaq).sort((a, b) => b[1] - a[1])
-          .map(([c, n]) => ({ l: c + ' · ' + ((dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[c]) || ''), v: n }));
-        htmlBoca += card('Trocas de boca por máquina', `mínimo de ${totTrocas} troca(s) no período · cada troca = setup extra${setupInfo ? ` · ≈ ${(totTrocas * setupInfo.media).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} h ao total (setup médio do 643)` : ''}`,
-          barrasHorizontal(arrT, 'trocas'));
+          .map(([c, n]) => ({
+            l: c + ' · ' + ((dadosPainel && dadosPainel.nomeMaq && dadosPainel.nomeMaq[c]) || ''),
+            v: n,
+            click: `detBocaMaq('${c}')`
+          }));
+
+        // O tempo NÃO é extra: essas trocas já estão dentro das paradas de SETUP
+        // do 643. O número estima quanto do setup já registrado veio de troca de
+        // boca — que é o custo que dá para atacar mudando o sequenciamento.
+        const horas = setupInfo ? totTrocas * setupInfo.media : 0;
+        const sub = `${perTxt}${perTxt ? ' · ' : ''}${totTrocas} troca(s) no mínimo` +
+          (setupInfo ? ` · ≈ ${horas.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} h de setup já contabilizadas no 643` : '') +
+          ' · toque numa barra para ver os dias';
+
+        htmlBoca += card('Trocas de boca por máquina', sub,
+          barrasHorizontal(arrT, 'trocas') +
+          `<p class="desc" style="font-size:11px;margin-top:9px;line-height:1.5">
+            <b>Como é contado:</b> por máquina e por dia, o número de bocas diferentes menos 1.
+            Se a 706 rodou boca 75 e boca 122 no mesmo dia, houve pelo menos 1 troca.
+            É um <b>piso</b>, não o número exato: troca de um dia para o outro não entra na conta,
+            e duas idas e voltas na mesma boca contam como uma só.</p>`);
       }
     }
   }
