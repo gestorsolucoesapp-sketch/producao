@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.171.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.172.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1525,7 +1525,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.171.1';
+const APP_VER = '3.172.1';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8083,17 +8083,45 @@ function gMaqPeso(rows, valFn, uni, incluirCods, nomes, dia) {
   arr.sort((a, b) => b.v - a.v);
   return barrasHorizontal(arr, uni);
 }
-// Pareto (barras ordenadas + % acumulado) — versão lista horizontal
-function paretoHorizontal(dados, fmtVal, cor) {
+// Pareto (barras ordenadas + % acumulado) — versão lista horizontal.
+// Mostra os 10 maiores; o resto fica recolhido atrás de um botão, porque
+// uma lista de 100 motivos com cauda de 1h não é Pareto, é despejo de dado.
+let _parNum = 0;
+function paretoHorizontal(dados, fmtVal, cor, limite) {
   const arr = [...dados].filter(d => d.v > 0).sort((a, b) => b.v - a.v);
   if (!arr.length) return '<p class="vazio-painel">Sem dados.</p>';
   const tot = arr.reduce((a, d) => a + d.v, 0) || 1, max = arr[0].v || 1; let ac = 0;
-  return arr.map(d => { ac += d.v; const pa = ac / tot * 100;
+  const LIM = (limite === undefined || limite === null) ? 10 : limite;
+
+  const linha = d => { ac += d.v; const pa = ac / tot * 100;
     const clique = d.click ? ` onclick="${d.click}" style="cursor:pointer"` : '';
     return `<div class="bh-row"${clique}><div class="nome" title="${escapeHtml(d.l)}">${escapeHtml(d.l)}</div>
       <div class="bh-bar" style="width:${(d.v / max * 100).toFixed(1)}%;background:${cor || 'var(--alerta)'}"></div>
       <div class="bh-val">${fmtVal(d.v)}<span class="acum">${pa.toFixed(0)}%</span></div></div>`;
-  }).join('');
+  };
+
+  if (LIM <= 0 || arr.length <= LIM) return arr.map(linha).join('');
+
+  const topo = arr.slice(0, LIM).map(linha).join('');
+  const resto = arr.slice(LIM);
+  const restoV = resto.reduce((a, d) => a + d.v, 0);
+  const id = 'par' + (++_parNum);
+  const oculto = resto.map(linha).join('');
+  const pctTopo = (arr.slice(0, LIM).reduce((a, d) => a + d.v, 0) / tot * 100).toFixed(0);
+
+  return topo +
+    `<div id="${id}" style="display:none">${oculto}</div>` +
+    `<button class="btn" id="${id}b" style="width:100%;margin-top:9px;font-size:13px" onclick="parAlterna('${id}')">` +
+      `▾ ver os outros ${resto.length} · ${fmtVal(restoV)}</button>` +
+    `<div class="desc" style="font-size:11px;margin-top:6px;text-align:center">os 10 maiores respondem por <b>${pctTopo}%</b> do total</div>`;
+}
+function parAlterna(id) {
+  const el = document.getElementById(id), bt = document.getElementById(id + 'b');
+  if (!el || !bt) return;
+  if (!bt.dataset.rot) bt.dataset.rot = bt.innerHTML;
+  const abrir = el.style.display === 'none';
+  el.style.display = abrir ? '' : 'none';
+  bt.innerHTML = abrir ? '▴ recolher' : bt.dataset.rot;
 }
 // Pareto CLÁSSICO em SVG: barras verticais + linha de % acumulado (eixo direito 0–100%)
 function paretoSVG(dados, fmtVal, cor) {
@@ -8158,7 +8186,7 @@ function paretoSVG(dados, fmtVal, cor) {
     ${dots}${pcts}${rotulos}
   </svg>`;
   const nota = _resto.length
-    ? `<div style="font-size:11px;color:#8FA0B0;margin-top:6px;padding:0 2px">+ ${_resto.length} motivo(s) menor(es) somando ${fmtVal(_restoH)} — veja a lista completa abaixo</div>`
+    ? `<div style="font-size:11px;color:#8FA0B0;margin-top:6px;padding:0 2px">+ ${_resto.length} motivo(s) menor(es) somando ${fmtVal(_restoH)} — use o botão abaixo da lista para ver todos</div>`
     : '';
   return `<div class="svg-fit">${svg}</div>${nota}`;
 }
