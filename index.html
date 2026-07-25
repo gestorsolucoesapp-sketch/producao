@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.185.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.186.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -672,6 +672,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <select id="fMetrica" onchange="renderPainel()" aria-label="Métrica">
         <option value="peso">Kg</option>
         <option value="quantidade">Cxs</option>
+        <option value="milheiro">Milheiros</option>
       </select></div>
   </div>
   <div id="selResumo"></div>
@@ -1545,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.185.0';
+const APP_VER = '3.186.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5295,18 +5296,22 @@ async function carregarPainel() {
       montarSeletorPeriodo(imps, 'fPeriodo');
       const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
       const ateX = ate ? addDiasISO(ate, 1) : ate;   // +1 dia: madrugada da virada pertence ao 'ate'
-      let [producao, paradas, consumo, perdas] = await Promise.all([
+      let [producao, paradas, consumo, perdas, prod622] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
         fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio', de, ateX),
         fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX),
-        fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso', de, ateX)
+        fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso', de, ateX),
+        // o 622 é o único com item_desc: sem ele não há como converter caixa em peça
+        fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
       ]);
       // dia operacional 06:00→05:59 (regra da fábrica)
       aplicarDiaOperacional(producao, 'turno');
+      aplicarDiaOperacional(prod622, 'turno');
       aplicarDiaOperacional(paradas, 'inicio');
       aplicarDiaOperacional(consumo, 'hora');
       aplicarDiaOperacional(perdas, 'turno');
       producao = filtraPeriodoOperacional(producao, de, ate);
+      prod622 = filtraPeriodoOperacional(prod622, de, ate);
       paradas = filtraPeriodoOperacional(paradas, de, ate);
       consumo = filtraPeriodoOperacional(consumo, de, ate);
       perdas = filtraPeriodoOperacional(perdas, de, ate);
@@ -5327,7 +5332,7 @@ async function carregarPainel() {
         sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20).then(re2 => { evtOS = re2.data || []; }).catch(() => { evtOS = []; })
       ]);
       classificarPerdas(perdas);
-      dadosPainel = { producao, paradas, consumo, perdas, perdasCli, info: imps };
+      dadosPainel = { producao, paradas, consumo, perdas, perdasCli, prod622, info: imps };
       // aplica o padrão de paradas JÁ NA CARGA — antes só rodava ao abrir o filtro,
       // então o painel contava PARADA PROGRAMADA / INTERROMPIDA que o filtro mostrava desmarcadas
       try { aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]); } catch (_) {}
@@ -8729,10 +8734,6 @@ function renderPainel() {
   const box = $('painelConteudo');
   const setor = $('fSetor').value;
   let metrica = $('fMetrica').value;
-  // Milheiro saiu do Painel: ele soma o 621, que não traz item_desc — sem a
-  // descrição não há como converter caixa em peça, e o setor aparecia zerado.
-  // A métrica continua na aba Itens, que lê o 622 e tem o item linha a linha.
-  if (metrica === 'milheiro') { metrica = 'quantidade'; if ($('fMetrica')) $('fMetrica').value = 'quantidade'; }
   // Extrusão só existe em kg (bobina): cxs e milheiro ali seriam o peso repetido
   if (setor === 'Extrusão' && metrica !== 'peso') { metrica = 'peso'; if ($('fMetrica')) $('fMetrica').value = 'peso'; }
   const ehMil = metrica === 'milheiro';
@@ -8765,11 +8766,15 @@ function renderPainel() {
     : (semCaixa(setorDe(r.recurso_cod)) ? 0 : (ehMil ? valMil(r) : (r.quantidade || 0)));
   const fmtBar = metrica === 'peso' ? fmtKg : ehMil ? fmtMil
     : (n => n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(n).toLocaleString('pt-BR'));
-  const D = dadosPainel;
+  // MILHEIRO troca a base: o 621 não tem item_desc, então caixa nunca vira peça.
+  // Só essa métrica usa o 622 — kg e caixa seguem no 621, que é o número que a
+  // fábrica conhece. O 622 fecha ~1,9% abaixo do 621 (diferença do ERP).
+  const D = ehMil ? Object.assign({}, dadosPainel, { producao: dadosPainel.prod622 || [] }) : dadosPainel;
   { const sr = $('selResumo'); if (sr) {
       const rotMet = metrica === 'peso' ? 'Peso (kg)' : ehMil ? 'Milheiros' : 'Quantidade (cxs)';
       // o setor já aparece na pílula acima: aqui só o recorte de datas e a métrica
-      sr.innerHTML = `${periodoSel ? escapeHtml(periodoSel.label) : ''}${rangeReal(D.producao)} · <b>${rotMet}</b>`;
+      sr.innerHTML = `${periodoSel ? escapeHtml(periodoSel.label) : ''}${rangeReal(D.producao)} · <b>${rotMet}</b>` +
+        (ehMil ? ' <span style="opacity:.7">· base 622</span>' : '');
     } }
 
   const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
