@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.165.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.166.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1525,7 +1525,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.165.0';
+const APP_VER = '3.166.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12038,6 +12038,26 @@ async function orgCriarMaquina(turno, mat, maq) {
   await carregarOrganograma();
 }
 
+async function obsNova(mat, tipo) {
+  const ROBS = { positiva: 'positiva', negativa: 'ocorrência', advertencia: 'advertência' };
+  const txt = prompt('Registro ' + (ROBS[tipo] || tipo) + ' para ' + (orgNome(mat) || mat) + ':\n\n(não registre informação de saúde)');
+  if (!txt || !txt.trim()) return;
+  const { error } = await sb.from('org_observacoes').insert({
+    matricula: mat, setor: orgSetorSel, tipo: tipo, texto: txt.trim(),
+    criado_por: ((typeof perfil !== 'undefined' && perfil && perfil.id) || null)
+  });
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Registro salvo ✔');
+  orgHistPessoa(mat);
+}
+
+async function obsApagar(id, mat) {
+  const { error } = await sb.from('org_observacoes').delete().eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Removido');
+  orgHistPessoa(mat);
+}
+
 async function orgHistPessoa(mat) {
   const nome = orgNome(mat) || mat;
   orgModal(nome, '<p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> buscando…</p>');
@@ -12075,6 +12095,32 @@ async function orgHistPessoa(mat) {
     });
     h += '</div>';
   }
+  /* --- observações: elogio, ocorrência, advertência --- */
+  let obs = [];
+  try {
+    const r = await sb.from('org_observacoes').select('*').eq('matricula', mat).order('data', { ascending: false });
+    obs = r.data || [];
+  } catch (_) {}
+  const COBS = { positiva: 'var(--ok-2)', negativa: 'var(--laranja)', advertencia: 'var(--critico)' };
+  const ROBS = { positiva: '👍 positiva', negativa: '⚠️ ocorrência', advertencia: '🛑 advertência' };
+
+  h += '<div class="titulo-sec" style="margin-top:12px">Registros · ' + obs.length + '</div>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+    ['positiva', 'negativa', 'advertencia'].map(t =>
+      '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:5px 11px;border-color:' + COBS[t] + ';color:' + COBS[t] +
+      '" onclick="obsNova(\'' + mat + '\',\'' + t + '\')">+ ' + ROBS[t] + '</button>').join('') + '</div>';
+  if (obs.length) {
+    h += '<div style="max-height:26vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin-bottom:10px">';
+    obs.forEach(o => {
+      h += '<div style="padding:8px 10px;border-bottom:1px solid var(--leve-2s);border-left:4px solid ' + (COBS[o.tipo] || 'var(--fraco)') + '">' +
+        '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--fraco)">' +
+        '<b style="color:' + (COBS[o.tipo] || 'var(--fraco)') + '">' + (ROBS[o.tipo] || o.tipo) + '</b>' +
+        '<span>' + fmtDataSem(o.data) + ' <button class="btn" style="padding:0 6px;font-size:11px" onclick="obsApagar(' + o.id + ',\'' + mat + '\')">✕</button></span></div>' +
+        '<div style="font-size:12.5px;color:var(--tinta);margin-top:3px">' + escapeHtml(o.texto) + '</div></div>';
+    });
+    h += '</div>';
+  }
+
   if (fer.length) {
     h += '<div class="titulo-sec">Férias</div>';
     h += '<div style="max-height:26vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
