@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.153.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.154.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.153.0';
+const APP_VER = '3.154.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1937,6 +1937,7 @@ async function salvarNovaSenha() {
 
 /* ======= PERFIL / ACESSO / TIMEOUT ======= */
 let perfil = null;        // perfil do usuário logado
+let podeEditarEscala = false;
 let souAdmin = false;
 let souDev = false;     // admin por perfil OU por e-mail (fallback)
 const ADMIN_EMAILS = ['joaopaulo@rioplastic.com.br', 'jpferreira1356@icloud.com'];
@@ -2014,6 +2015,7 @@ async function posLogin() {
   // admin: pelo perfil OU pelo e-mail (fallback, funciona mesmo sem SQL 04)
   const email = (user.email || '').toLowerCase();
   souAdmin = (perfil && perfil.papel === 'admin') || ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);
+  podeEditarEscala = souAdmin || !!(perfil && perfil.pode_editar_escala === true);
   souDev = !!(perfil && perfil.desenvolvedor === true);
   if (souDev) souAdmin = true;   // desenvolvedor = tudo do gestor + Organograma
   // Sem etapa de aprovação: entra direto. Só barra se o admin bloquear (ativo=false).
@@ -9040,6 +9042,14 @@ async function carregarUsuarios() {
         ? `<button onclick="usrPapel('${u.id}','operador')">Tornar operador</button>`
         : `<button onclick="usrPapel('${u.id}','admin')">Tornar admin</button>`);
     }
+    // liberação para editar a escala do Organograma (mover/remover/criar máquina)
+    const podeEsc = admin || u.pode_editar_escala === true;
+    acoes.push('<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--txt-2);' +
+      (admin ? 'opacity:.55' : 'cursor:pointer') + '">' +
+      '<input type="checkbox" ' + (podeEsc ? 'checked' : '') + (admin ? ' disabled' : '') +
+      ' onchange="usrPodeEscala(\'' + u.id + '\',this.checked)" style="width:16px;height:16px">' +
+      'editar escala' + (admin ? ' (admin sempre pode)' : '') + '</label>');
+
     const abasU = Array.isArray(u.abas) && u.abas.length ? u.abas : ['painel'];
     const herdadas = (u.setor && Array.isArray(telasSetor[u.setor])) ? telasSetor[u.setor] : [];
     const exc = !!u.abas_excecao;
@@ -9944,7 +9954,9 @@ function orgCardMaq(l, ref, aloc, turno, dup, rep, tint) {
   const dupN = dup[l.maquina_codigo];
   const barra = dupN ? 'var(--critico-s)' : (des ? 'var(--linha-2s)' : tint.br);
 
-  let h = '<div class="org-maq orgv2-card" data-maq="' + l.maquina_codigo + '" data-turno="' + turno + '" ' +
+  const _edit = (typeof podeEditarEscala !== 'undefined') && podeEditarEscala;
+  const _dnd = _edit ? ' draggable="true" ondragstart="orgMaqDragStart(event,\'' + l.maquina_codigo + '\',\'' + turno + '\')" ondragend="orgMaqDragEnd(event)"' : '';
+  let h = '<div class="org-maq orgv2-card"' + _dnd + ' data-maq="' + l.maquina_codigo + '" data-turno="' + turno + '" ' +
     'style="background:' + (dupN ? 'var(--crit-bg)' : '#fff') + ';border:1px solid ' + (dupN ? 'var(--crit-br)' : 'var(--linha-s)') +
     ';border-left:5px solid ' + barra + ';border-radius:14px;padding:10px 11px;box-shadow:0 1px 2px rgba(11,42,74,.05)' + (des ? ';opacity:.55' : '') + '">';
 
@@ -9953,7 +9965,8 @@ function orgCardMaq(l, ref, aloc, turno, dup, rep, tint) {
   h += '<span style="display:inline-flex;align-items:baseline;gap:6px;background:var(--tinta-s);border-radius:10px;padding:4px 10px;flex:0 0 auto">' +
     '<span style="font-size:9px;font-weight:700;letter-spacing:.7px;color:var(--fraco-2s)">MÁQ</span>' +
     '<span style="font-size:17px;font-weight:800;color:#ffffff;letter-spacing:.4px">' + l.maquina_codigo + '</span></span>';
-  h += '<button class="btn" style="display:inline-block;width:auto;font-size:11px;padding:3px 9px;margin-left:auto;flex:0 0 auto" onclick="orgAddAux(\'' + turno + '\',\'' + l.maquina_codigo + '\')">+ aux</button>';
+  if (_edit) h += '<button class="btn" title="mover ou remover esta máquina" style="display:inline-block;width:auto;font-size:12px;padding:3px 8px;margin-left:auto;flex:0 0 auto" onclick="event.stopPropagation();orgMenuMaq(\'' + l.maquina_codigo + '\',\'' + turno + '\')">⋯</button>';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:11px;padding:3px 9px;' + (_edit ? '' : 'margin-left:auto;') + 'flex:0 0 auto" onclick="orgAddAux(\'' + turno + '\',\'' + l.maquina_codigo + '\')">+ aux</button>';
   h += '</div>';
 
   if (dupN || des) {
@@ -10008,7 +10021,9 @@ function orgCardOperador(ref, linhas, aloc, turno, dup, rep) {
   const _bg = _semOp ? 'var(--leve-2s)' : (_prob ? 'var(--crit-bg)' : tint.bg);
   const _bd = _semOp ? 'var(--linha-2s)' : (_prob ? 'var(--crit-br)' : tint.br);
   const _bl = _semOp ? '#475569' : (_prob ? 'var(--critico-s)' : tint.br);
-  let no = '<div' + (wide ? ' class="orgv2-node"' : '') + ' style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:' + _bg +
+  const _drop = ((typeof podeEditarEscala !== 'undefined') && podeEditarEscala && ref.matricula)
+    ? ' ondragover="orgMaqDragOver(event)" ondrop="orgMaqDrop(event,\'' + ref.matricula + '\',\'' + turno + '\')"' : '';
+  let no = '<div' + (wide ? ' class="orgv2-node"' : '') + _drop + ' style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:' + _bg +
     ';border:1px solid ' + _bd + ';border-left:5px solid ' + _bl + ';border-radius:14px;padding:10px 13px;box-shadow:0 1px 2px rgba(11,42,74,.05)' + (_semOp ? ';opacity:.85' : '') + '">';
   no += '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:' + (_semOp ? 'var(--fraco-2s)' : '#5a6b7a') + ';flex:0 0 auto">Operador</span>';
   no += orgAvatar(nome, 28);
@@ -10017,6 +10032,9 @@ function orgCardOperador(ref, linhas, aloc, turno, dup, rep) {
   if (_semOp) no += '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;background:#475569;color:#fff;letter-spacing:.3px">POSTO SEM OPERADOR</span>';
   else if (af) no += '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;background:var(--critico-s);color:#fff">⚠️ ' + escapeHtml(af.tipo).toUpperCase() + '</span>';
   if (cels.length) no += '<span style="font-size:11px;color:var(--fraco-2s);font-weight:600">' + escapeHtml(cels.join(' + ')) + '</span>';
+  if (ref.matricula && (typeof podeEditarEscala !== 'undefined') && podeEditarEscala) {
+    no += '<button class="btn" style="display:inline-block;width:auto;font-size:11px;padding:3px 9px;flex:0 0 auto;margin-left:6px" onclick="orgAddMaquina(\'' + turno + '\',\'' + ref.matricula + '\')">+ máquina</button>';
+  }
   if (ref.matricula) {
     no += '<label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--fraco-s);flex:0 0 auto;margin-left:6px;cursor:pointer">' +
       '<input type="checkbox" ' + (_semOp ? 'checked' : '') + ' onchange="orgToggleSemOperador(\'' + turno + '\',\'' + ref.matricula + '\',this.checked)" style="width:15px;height:15px">sem operador</label>';
@@ -11491,6 +11509,102 @@ async function orgDesfazer() {
 }
 
 /* ---------- edição ---------- */
+/* ===== mover / remover / acrescentar máquina (requer permissão) ===== */
+let _maqDrag = null;
+
+function orgMaqDragStart(ev, maq, turno) {
+  _maqDrag = { maq: maq, turno: turno };
+  try { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', maq); } catch (_) {}
+  document.querySelectorAll('.orgv2-opnode').forEach(n => { n.style.outline = '2px dashed var(--azul-2)'; n.style.outlineOffset = '2px'; });
+}
+function orgMaqDragEnd() {
+  _maqDrag = null;
+  document.querySelectorAll('.orgv2-opnode').forEach(n => { n.style.outline = ''; n.style.outlineOffset = ''; });
+}
+function orgMaqDragOver(ev) { if (_maqDrag) { ev.preventDefault(); try { ev.dataTransfer.dropEffect = 'move'; } catch (_) {} } }
+async function orgMaqDrop(ev, mat, turno) {
+  if (!_maqDrag) return;
+  ev.preventDefault();
+  const d = _maqDrag; orgMaqDragEnd();
+  if (d.turno !== turno) { toast('Só dá para mover dentro do mesmo turno'); return; }
+  await orgMoverMaquina(d.maq, turno, mat);
+}
+
+async function orgMoverMaquina(maq, turno, novaMat) {
+  const linhas = orgDados.aloc.filter(a => a.setor === orgSetorSel && a.turno === turno &&
+    a.maquina_codigo === maq && a.funcao === 'operador' && !a.aprendiz);
+  if (!linhas.length) { toast('Máquina sem operador nesta escala'); return; }
+  if (String(linhas[0].matricula) === String(novaMat)) return;
+  const { error } = await sb.from('org_alocacoes').update({ matricula: novaMat, pendente: false })
+    .in('id', linhas.map(a => a.id));
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Máquina ' + maq + ' → ' + (orgPrimeiro(orgNome(novaMat)) || novaMat));
+  await carregarOrganograma();
+}
+
+async function usrPodeEscala(id, valor) {
+  const { error } = await sb.from('perfis').update({ pode_editar_escala: !!valor }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(valor ? 'Pode editar a escala' : 'Não pode mais editar a escala');
+  carregarUsuarios();
+}
+
+function orgMenuMaq(maq, turno) {
+  const ops = [];
+  const vistos = {};
+  orgDados.aloc.filter(a => a.setor === orgSetorSel && a.turno === turno && a.funcao === 'operador' && !a.aprendiz && a.matricula)
+    .forEach(a => { if (!vistos[a.matricula]) { vistos[a.matricula] = 1; ops.push(a.matricula); } });
+
+  let h = '<p class="desc">Máquina <b>' + escapeHtml(maq) + '</b> · ' + escapeHtml(turno) + '</p>';
+  h += '<div class="titulo-sec" style="margin-top:10px">Mover para</div>';
+  h += '<div style="max-height:40vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
+  ops.forEach(m => {
+    const nm = orgNome(m) || m;
+    h += '<div onclick="orgFechaModal();orgMoverMaquina(\'' + maq + '\',\'' + turno + '\',\'' + m + '\')" ' +
+      'style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s)">' +
+      orgAvatar(nm, 24) + '<b style="font-size:13px">' + escapeHtml(nm) + '</b></div>';
+  });
+  h += '</div>';
+  h += '<button class="btn" style="width:100%;margin-top:10px;background:var(--critico-3);color:#fff" onclick="orgRemoverMaquina(\'' + maq + '\',\'' + turno + '\')">🗑️ Tirar a ' + escapeHtml(maq) + ' deste turno</button>';
+  h += '<div class="desc" style="font-size:11px;margin-top:6px">Tirar remove o operador e os auxiliares desta máquina neste turno. Os dados de produção não são afetados.</div>';
+  orgModal('Máquina ' + maq, h);
+}
+
+async function orgRemoverMaquina(maq, turno) {
+  const linhas = orgDados.aloc.filter(a => a.setor === orgSetorSel && a.turno === turno && a.maquina_codigo === maq);
+  if (!linhas.length) return;
+  const { error } = await sb.from('org_alocacoes').delete().in('id', linhas.map(a => a.id));
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(maq + ' removida do turno ' + turno);
+  orgFechaModal();
+  await carregarOrganograma();
+}
+
+function orgAddMaquina(turno, mat) {
+  const usadas = new Set(orgDados.aloc.filter(a => a.setor === orgSetorSel && a.turno === turno && a.maquina_codigo)
+    .map(a => a.maquina_codigo));
+  const livres = (SETOR_MAQ[orgSetorSel] || []).map(String).filter(c => !usadas.has(c));
+  if (!livres.length) { toast('Todas as máquinas do setor já estão neste turno'); return; }
+  let h = '<p class="desc">Máquinas do setor ainda sem ninguém no turno <b>' + escapeHtml(turno) + '</b></p>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:9px">';
+  livres.forEach(c => {
+    h += '<button class="btn" style="display:inline-block;width:auto;font-size:14px;font-weight:800;padding:8px 14px" ' +
+      'onclick="orgFechaModal();orgCriarMaquina(\'' + turno + '\',\'' + mat + '\',\'' + c + '\')">' + escapeHtml(c) + '</button>';
+  });
+  h += '</div>';
+  orgModal('Acrescentar máquina', h);
+}
+
+async function orgCriarMaquina(turno, mat, maq) {
+  const { error } = await sb.from('org_alocacoes').insert({
+    setor: orgSetorSel, turno: turno, maquina_codigo: maq, funcao: 'operador',
+    matricula: mat, pendente: false, sem_auxiliar: false
+  });
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Máquina ' + maq + ' criada');
+  await carregarOrganograma();
+}
+
 function orgMenuPessoa(id) {
   const a = orgDados.aloc.find(x => x.id === id); if (!a) return;
   const nome = a.pendente ? (a.apelido_origem || '?') : (orgNome(a.matricula) || '?');
