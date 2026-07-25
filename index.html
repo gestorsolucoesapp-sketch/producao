@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.163.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.164.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -885,6 +885,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="analise" onclick="orgVer('analise')">An&aacute;lise</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="rel" onclick="orgVer('rel')">📊 Relat&oacute;rio</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="ferias" onclick="orgVer('ferias')">🏖️ F&eacute;rias</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="semaforo" onclick="orgVer('semaforo')">🚦 Sem&aacute;foro</button>
           <button class="btn" id="orgLayBtn" onclick="orgTrocaLayout()" title="Alternar layout" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px;margin-left:auto">📱 Coluna</button>
           <button class="btn" id="orgApresBtn" onclick="orgApresentar()" title="Modo apresentação" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⛶ Apresentar</button>
         </div>
@@ -1524,7 +1525,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.163.0';
+const APP_VER = '3.164.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2685,6 +2686,18 @@ function calcNotificacoes(incluirLidas) {
   const meuId = perfil && perfil.id, meuSetor = perfil && perfil.setor;
   const hoje = new Date(); hoje.setHours(0,0,0,0);
   const out = [];
+
+  // atestado/falta que eu lancei e ficou sem motivo definido — só quem lançou vê
+  (_afastSemMotivo || []).forEach(a => {
+    if (a.lancado_por !== meuId) return;
+    const nm = (typeof orgNome === 'function' && orgNome(a.matricula)) || a.matricula;
+    out.push({
+      id: 'motivo-' + a.id, tipo: 'novo',
+      titulo: 'Motivo a confirmar',
+      texto: nm + ' · ' + a.tipo + ' de ' + fmtDataSem(a.data) + ((a.dias && a.dias > 1) ? ' (' + a.dias + 'd)' : '') + ' — você lançou sem o motivo',
+      acao: null
+    });
+  });
   tarefasData.forEach(t => {
     if (t.concluida) return;
     const minha = t.responsavel_id === meuId || (t.setor && String(t.setor).split('|').includes(meuSetor));
@@ -2724,6 +2737,18 @@ function calcNotificacoes(incluirLidas) {
   });
   return incluirLidas ? out : out.filter(x => !notifLidas.includes(x.id));
 }
+let _afastSemMotivo = [];
+async function carregarAfastSemMotivo() {
+  if (!perfil || !perfil.id) return;
+  const de = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+  try {
+    const { data } = await sb.from('org_afastamentos').select('id,matricula,data,tipo,dias,motivo,lancado_por')
+      .eq('lancado_por', perfil.id).gte('data', de);
+    _afastSemMotivo = (data || []).filter(a => !a.motivo || /confirmar/i.test(a.motivo));
+  } catch (_) { _afastSemMotivo = []; }
+  try { atualizarSino(); } catch (_) {}
+}
+
 function atualizarSino() {
   const badge = $('sinoBadge'); if (!badge) return;
   const n = calcNotificacoes().length;   // pendências não-lidas
@@ -9679,6 +9704,7 @@ async function carregarOrganograma() {
       sb.rpc('org_kpis_mes', { p_ini: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10), p_fim: hoje })
     ]);
     carregarFerias();
+    carregarAfastSemMotivo();
     orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [], kpis: kp.data || [] };
     orgMontaSetores();
     renderOrgVista();
@@ -9724,6 +9750,7 @@ function renderOrgVista() {
   if (orgVista === 'analise') return renderOrgAnalise();
   if (orgVista === 'rel') return renderOrgRelatorio();
   if (orgVista === 'ferias') return renderOrgFerias();
+  if (orgVista === 'semaforo') return renderOrgSemaforo();
 }
 
 /* ---------- organograma ---------- */
@@ -10946,6 +10973,118 @@ function orgRelTotais() {
   return h + '</div></div>';
 }
 
+/* ===== SEMÁFORO · 12 meses por máquina =====
+   Regra combinada: meta em valor absoluto (é contrato, não comparação);
+   perda e faltas contra a MEDIANA do setor, porque o que importa ali é
+   estar pior que os colegas na mesma condição. */
+let _semCache = null;
+const SEM_COR = { v: 'var(--ok-2)', l: 'var(--laranja)', r: 'var(--critico)', x: 'var(--linha-2s)' };
+const SEM_ROT = { v: 'bom', l: 'atenção', r: 'crítico', x: 'sem dado' };
+
+function semMediana(arr) {
+  const a = arr.filter(x => x != null && !isNaN(x)).sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function semFarolMeta(rel) {
+  if (rel == null) return 'x';
+  return rel >= 105 ? 'v' : rel >= 90 ? 'l' : 'r';
+}
+function semFarolContra(valor, mediana) {   // menor é melhor
+  if (valor == null || mediana == null || !mediana) return 'x';
+  const r = valor / mediana;
+  return r <= 0.9 ? 'v' : r <= 1.1 ? 'l' : 'r';
+}
+
+async function renderOrgSemaforo() {
+  const wrap = $('orgWrap');
+  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:20px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> somando 12 meses…</div>';
+
+  const fim = hojeISO();
+  const d0 = new Date(fim + 'T12:00:00'); d0.setFullYear(d0.getFullYear() - 1);
+  const ini = d0.toISOString().slice(0, 10);
+  const cx = orgEmCaixas(orgSetorSel);
+
+  let K = [];
+  try { const r = await sb.rpc('org_kpis_mes', { p_ini: ini, p_fim: fim }); K = r.data || []; } catch (e) {}
+
+  // faltas de 12 meses, atribuídas à máquina pela escala atual
+  let AF = [];
+  try {
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini);
+    AF = r.data || [];
+  } catch (e) {}
+  const diasFora = {};
+  AF.forEach(a => {
+    if (/feria|folga/i.test(a.tipo || '')) return;
+    diasFora[a.matricula] = (diasFora[a.matricula] || 0) + (a.dias || 1);
+  });
+
+  const maqs = (SETOR_MAQ[orgSetorSel] || []).map(String);
+  const linhas = maqs.map(m => {
+    const ks = K.filter(k => String(k.recurso_cod) === m);
+    if (!ks.length) return null;
+    let prod = 0, esperado = 0, perdaKg = 0, dias = 0;
+    ks.forEach(k => {
+      const p = cx ? (Number(k.quantidade) || 0) : (Number(k.producao) || 0);
+      prod += p; dias += Number(k.dias) || 0;
+      if (k.meta != null && k.dias) esperado += Number(k.meta) * Number(k.dias);
+      perdaKg += Number(k.perda) || 0;
+    });
+    const rel = esperado ? (prod / esperado * 100) : null;
+    const perdaPct = prod ? (perdaKg / (prod + perdaKg) * 100) : null;
+
+    // equipe da máquina, nos três turnos
+    const equipe = [...new Set(orgDados.aloc.filter(a => a.setor === orgSetorSel && a.maquina_codigo === m && a.matricula).map(a => a.matricula))];
+    const fal = equipe.reduce((n, mt) => n + (diasFora[mt] || 0), 0);
+    const falPorPessoa = equipe.length ? fal / equipe.length : null;
+
+    return { maq: m, prod: prod, dias: dias, rel: rel, perda: perdaPct, equipe: equipe.length, falta: falPorPessoa };
+  }).filter(Boolean);
+
+  if (!linhas.length) { wrap.innerHTML = '<div class="card"><p class="vazio-painel">Sem dados de 12 meses para ' + escapeHtml(orgSetorSel) + '.</p></div>'; return; }
+
+  const medPerda = semMediana(linhas.map(l => l.perda));
+  const medFalta = semMediana(linhas.map(l => l.falta));
+
+  linhas.forEach(l => {
+    l.fMeta = semFarolMeta(l.rel);
+    l.fPerda = semFarolContra(l.perda, medPerda);
+    l.fFalta = semFarolContra(l.falta, medFalta);
+    const peso = { v: 0, l: 1, r: 2, x: 0 };
+    l.score = peso[l.fMeta] * 2 + peso[l.fPerda] + peso[l.fFalta];   // meta pesa o dobro
+  });
+  linhas.sort((a, b) => b.score - a.score || (a.rel || 0) - (b.rel || 0));
+
+  const bolinha = f => '<span title="' + SEM_ROT[f] + '" style="display:inline-block;width:13px;height:13px;border-radius:50%;background:' + SEM_COR[f] + '"></span>';
+
+  let h = '<div class="orgv2">';
+  h += '<div class="card"><div class="titulo-sec">🚦 Semáforo · 12 meses · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<p class="desc" style="margin-bottom:9px">' + fmtDataSem(ini) + ' a ' + fmtDataSem(fim) + ' · ' + linhas.length + ' máquina(s) · pior no topo</p>';
+  h += '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--fraco);margin-bottom:10px">' +
+    bolinha('v') + ' bom &nbsp;' + bolinha('l') + ' atenção &nbsp;' + bolinha('r') + ' crítico &nbsp;' + bolinha('x') + ' sem dado</div>';
+
+  h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
+    '<th style="text-align:left">Máq.</th><th>Meta</th><th>Perda</th><th>Faltas</th><th>Produção</th></tr></thead><tbody>';
+  linhas.forEach(l => {
+    h += '<tr onclick="detMaquina(\'' + l.maq + '\')" style="cursor:pointer">' +
+      '<td class="nome" style="text-align:left"><span class="cod">' + escapeHtml(l.maq) + '</span></td>' +
+      '<td>' + bolinha(l.fMeta) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.rel == null ? '—' : Math.round(l.rel) + '%') + '</div></td>' +
+      '<td>' + bolinha(l.fPerda) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.perda == null ? '—' : l.perda.toFixed(1).replace('.', ',') + '%') + '</div></td>' +
+      '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.falta == null ? '—' : l.falta.toFixed(1).replace('.', ',') + 'd') + '</div></td>' +
+      '<td style="text-align:right;font-weight:800">' + orgFmtProd(l.prod, orgSetorSel) + '</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '<p class="desc" style="font-size:11px;margin-top:10px;line-height:1.55"><b>Como o farol é decidido:</b><br>' +
+    '<b>Meta</b> — valor absoluto, porque meta é compromisso: verde a partir de 105%, laranja de 90 a 105, vermelho abaixo de 90.<br>' +
+    '<b>Perda e faltas</b> — comparados com a <b>mediana do setor</b> (perda ' + (medPerda == null ? '—' : medPerda.toFixed(1).replace('.', ',') + '%') +
+    ', faltas ' + (medFalta == null ? '—' : medFalta.toFixed(1).replace('.', ',') + ' dia(s) por pessoa') + '): verde até 10% abaixo da mediana, vermelho a partir de 10% acima.<br>' +
+    '<b>Faltas</b> são dias fora da equipe escalada hoje na máquina, divididos pelo tamanho da equipe — férias e folgas não entram.</p>';
+  h += '</div></div>';
+  wrap.innerHTML = h;
+}
+
 function renderOrgRelatorio() {
   const wrap = $('orgWrap');
   const setores = orgRelTodos
@@ -12113,7 +12252,8 @@ async function orgSalvaFalta() {
   };
   const { error } = await sb.from('org_afastamentos').upsert(reg, { onConflict: 'matricula,data' });
   if (error) { toast('Erro: ' + error.message); return; }
-  toast('Lançado ✔'); renderOrgFaltas();
+  toast('Lançado ✔');
+  carregarAfastSemMotivo(); renderOrgFaltas();
 }
 async function orgDelFalta(id) { await sb.from('org_afastamentos').delete().eq('id', id); renderOrgFaltas(); }
 
