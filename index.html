@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.166.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.167.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1525,7 +1525,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.166.0';
+const APP_VER = '3.167.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9964,13 +9964,12 @@ function orgAvatar(nome, tam) {
    Só o número, sem rótulo — o card do organograma já é cheio. */
 function orgSeloFarol(mat) {
   const l = _semLinhas && _semLinhas[mat];
-  if (!l) return '';
-  const bola = f => '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + (SEM_COR[f] || SEM_COR.x) + '"></span>';
-  return '<span title="ano ' + hojeISO().slice(0, 4) + ' · meta ' + (l.rel == null ? '—' : Math.round(l.rel) + '%') +
-    ' · perda ' + (l.perda == null ? '—' : l.perda.toFixed(1).replace('.', ',') + '%') + ' · ' + (l.falta || 0) + ' dia(s) de falta"' +
-    ' style="display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:2px 7px;border-radius:999px;background:var(--leve-s);border:1px solid var(--linha-s);flex:0 0 auto">' +
-    bola(l.fMeta) + bola(l.fPerda) + bola(l.fFalta) +
-    (l.falta ? '<b style="font-size:10px;color:var(--critico)">' + l.falta + '</b>' : '') + '</span>';
+  if (!l || !l.total) return '';                      // zerado não polui o card
+  const pior = (l.fFalta === 'r' || l.fAtest === 'r') ? 'r' : (l.fFalta === 'l' || l.fAtest === 'l') ? 'l' : 'v';
+  return '<span title="' + hojeISO().slice(0, 4) + ': ' + l.dFalta + ' dia(s) de falta · ' + l.dAtest + ' de atestado"' +
+    ' style="display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:2px 8px;border-radius:999px;background:var(--leve-s);border:1px solid var(--linha-s);flex:0 0 auto">' +
+    '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + SEM_COR[pior] + '"></span>' +
+    '<b style="font-size:10px;color:' + SEM_COR[pior] + '">' + l.total + '</b></span>';
 }
 
 function orgSeloCargo(mat, forte) {
@@ -11015,37 +11014,19 @@ function semFarolContra(valor, mediana) {   // menor é melhor
 async function calcSemaforoSilencioso() {
   try {
     const fim = hojeISO(), ini = fim.slice(0, 4) + '-01-01';
-    const cx = orgEmCaixas(orgSetorSel);
-    const r = await sb.rpc('org_kpis_mes', { p_ini: ini, p_fim: fim });
-    const K = r.data || [];
-    const af = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini);
-    const diasFora = {};
-    (af.data || []).forEach(a => { if (/feria|folga/i.test(a.tipo || '')) return; diasFora[a.matricula] = (diasFora[a.matricula] || 0) + (a.dias || 1); });
-
-    const ops = {};
-    orgDados.aloc.filter(a => a.setor === orgSetorSel && a.funcao === 'operador' && !a.aprendiz && a.matricula && a.maquina_codigo)
-      .forEach(a => { (ops[a.matricula] = ops[a.matricula] || new Set()).add(String(a.maquina_codigo)); });
-
-    const L = Object.keys(ops).map(mat => {
-      const m = [...ops[mat]];
-      const ks = K.filter(k => m.includes(String(k.recurso_cod)));
-      if (!ks.length) return null;
-      let prod = 0, esperado = 0, perdaKg = 0;
-      ks.forEach(k => {
-        prod += cx ? (Number(k.quantidade) || 0) : (Number(k.producao) || 0);
-        if (k.meta != null && k.dias) esperado += Number(k.meta) * Number(k.dias);
-        perdaKg += Number(k.perda) || 0;
-      });
-      return { mat: mat, rel: esperado ? prod / esperado * 100 : null,
-               perda: prod ? perdaKg / (prod + perdaKg) * 100 : null, falta: diasFora[mat] || 0 };
-    }).filter(Boolean);
-
-    const mp = semMediana(L.map(x => x.perda)), mf = semMediana(L.map(x => x.falta));
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini).lte('data', fim);
+    const AF = r.data || [];
+    const mats = [...new Set(orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula).map(a => a.matricula))];
+    const L = mats.map(m => {
+      const meus = AF.filter(a => a.matricula === m);
+      const dias = t => meus.filter(a => (a.tipo || '') === t).reduce((n, a) => n + (a.dias || 1), 0);
+      return { mat: m, dFalta: dias('falta'), dAtest: dias('atestado'), total: dias('falta') + dias('atestado') };
+    });
+    const mF = semMediana(L.map(x => x.dFalta)), mA = semMediana(L.map(x => x.dAtest));
     _semLinhas = {};
     L.forEach(l => {
-      l.fMeta = semFarolMeta(l.rel);
-      l.fPerda = semFarolContra(l.perda, mp);
-      l.fFalta = semFarolContra(l.falta, mf);
+      l.fFalta = l.dFalta ? semFarolContra(l.dFalta, mF) : 'v';
+      l.fAtest = l.dAtest ? semFarolContra(l.dAtest, mA) : 'v';
       _semLinhas[l.mat] = l;
     });
     if (orgVista === 'org') renderOrgVista();
@@ -11054,99 +11035,84 @@ async function calcSemaforoSilencioso() {
 
 async function renderOrgSemaforo() {
   const wrap = $('orgWrap');
-  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:20px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> somando 12 meses…</div>';
+  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:20px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> somando o ano…</div>';
 
-  const fim = hojeISO();
-  const ini = fim.slice(0, 4) + '-01-01';   // ano corrente, não 12 meses móveis
-  const cx = orgEmCaixas(orgSetorSel);
-
-  let K = [];
-  try { const r = await sb.rpc('org_kpis_mes', { p_ini: ini, p_fim: fim }); K = r.data || []; } catch (e) {}
-
-  // faltas de 12 meses, atribuídas à máquina pela escala atual
+  const fim = hojeISO(), ini = fim.slice(0, 4) + '-01-01';
   let AF = [];
   try {
-    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini);
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini).lte('data', fim);
     AF = r.data || [];
-  } catch (e) {}
-  const diasFora = {};
-  AF.forEach(a => {
-    if (/feria|folga/i.test(a.tipo || '')) return;
-    diasFora[a.matricula] = (diasFora[a.matricula] || 0) + (a.dias || 1);
+  } catch (e) {
+    wrap.innerHTML = '<div class="card"><p class="vazio-painel">Erro: ' + escapeHtml(String(e.message || e)) + '</p></div>'; return;
+  }
+
+  /* todo mundo escalado no setor — operador e auxiliar */
+  const pessoas = {};
+  orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula).forEach(a => {
+    if (!pessoas[a.matricula]) pessoas[a.matricula] = { mat: a.matricula, funcoes: new Set(), turnos: new Set(), maqs: new Set() };
+    pessoas[a.matricula].funcoes.add(a.funcao);
+    pessoas[a.matricula].turnos.add(a.turno);
+    if (a.maquina_codigo) pessoas[a.matricula].maqs.add(String(a.maquina_codigo));
   });
 
-  // um operador por linha: as máquinas que ele opera HOJE, somadas no ano
-  const ops = {};
-  orgDados.aloc.filter(a => a.setor === orgSetorSel && a.funcao === 'operador' && !a.aprendiz && a.matricula && a.maquina_codigo)
-    .forEach(a => {
-      if (!ops[a.matricula]) ops[a.matricula] = { mat: a.matricula, turnos: new Set(), maqs: new Set() };
-      ops[a.matricula].turnos.add(a.turno);
-      ops[a.matricula].maqs.add(String(a.maquina_codigo));
-    });
-
-  const linhas = Object.values(ops).map(o => {
-    const m = [...o.maqs];
-    const ks = K.filter(k => m.includes(String(k.recurso_cod)));
-    if (!ks.length) return null;
-    let prod = 0, esperado = 0, perdaKg = 0, dias = 0;
-    ks.forEach(k => {
-      const p = cx ? (Number(k.quantidade) || 0) : (Number(k.producao) || 0);
-      prod += p; dias += Number(k.dias) || 0;
-      if (k.meta != null && k.dias) esperado += Number(k.meta) * Number(k.dias);
-      perdaKg += Number(k.perda) || 0;
-    });
-    const rel = esperado ? (prod / esperado * 100) : null;
-    const perdaPct = prod ? (perdaKg / (prod + perdaKg) * 100) : null;
-
+  const linhas = Object.values(pessoas).map(p => {
+    const meus = AF.filter(a => a.matricula === p.mat);
+    const dias = t => meus.filter(a => (a.tipo || '') === t).reduce((n, a) => n + (a.dias || 1), 0);
+    const vezes = t => meus.filter(a => (a.tipo || '') === t).length;
     return {
-      mat: o.mat, nome: orgNome(o.mat) || o.mat,
-      maqs: m, turnos: [...o.turnos].join('/'),
-      prod: prod, dias: dias, rel: rel, perda: perdaPct,
-      falta: diasFora[o.mat] || 0
+      mat: p.mat, nome: orgNome(p.mat) || p.mat,
+      oper: p.funcoes.has('operador'),
+      turnos: [...p.turnos].join('/'), maqs: [...p.maqs].sort(),
+      dFalta: dias('falta'), nFalta: vezes('falta'),
+      dAtest: dias('atestado'), nAtest: vezes('atestado'),
+      total: dias('falta') + dias('atestado')
     };
-  }).filter(Boolean);
-
-  if (!linhas.length) { wrap.innerHTML = '<div class="card"><p class="vazio-painel">Sem dados de 12 meses para ' + escapeHtml(orgSetorSel) + '.</p></div>'; return; }
-
-  const medPerda = semMediana(linhas.map(l => l.perda));
-  const medFalta = semMediana(linhas.map(l => l.falta));
-
-  linhas.forEach(l => {
-    l.fMeta = semFarolMeta(l.rel);
-    l.fPerda = semFarolContra(l.perda, medPerda);
-    l.fFalta = semFarolContra(l.falta, medFalta);
-    const peso = { v: 0, l: 1, r: 2, x: 0 };
-    l.score = peso[l.fMeta] * 2 + peso[l.fPerda] + peso[l.fFalta];   // meta pesa o dobro
   });
-  linhas.sort((a, b) => b.score - a.score || (a.rel || 0) - (b.rel || 0));
+
+  if (!linhas.length) { wrap.innerHTML = '<div class="card"><p class="vazio-painel">Ninguém escalado em ' + escapeHtml(orgSetorSel) + '.</p></div>'; return; }
+
+  const medF = semMediana(linhas.map(l => l.dFalta));
+  const medA = semMediana(linhas.map(l => l.dAtest));
+  linhas.forEach(l => {
+    l.fFalta = semFarolContra(l.dFalta, medF);
+    l.fAtest = semFarolContra(l.dAtest, medA);
+    // ninguém com zero deve ficar laranja por mediana zero
+    if (!l.dFalta) l.fFalta = 'v';
+    if (!l.dAtest) l.fAtest = 'v';
+    const peso = { v: 0, l: 1, r: 2, x: 0 };
+    l.score = peso[l.fFalta] + peso[l.fAtest];
+  });
+  linhas.sort((a, b) => b.total - a.total || b.score - a.score);
 
   const bolinha = f => '<span title="' + SEM_ROT[f] + '" style="display:inline-block;width:13px;height:13px;border-radius:50%;background:' + SEM_COR[f] + '"></span>';
+  const comAlgo = linhas.filter(l => l.total > 0);
 
   let h = '<div class="orgv2">';
-  h += '<div class="card"><div class="titulo-sec">🚦 Semáforo do operador · ' + fim.slice(0, 4) + ' · ' + escapeHtml(orgSetorSel) + '</div>';
-  h += '<p class="desc" style="margin-bottom:9px">' + fmtDataSem(ini) + ' a ' + fmtDataSem(fim) + ' · ' + linhas.length + ' operador(es) · desempenho das máquinas que ele opera hoje · pior no topo</p>';
+  h += '<div class="card"><div class="titulo-sec">🚦 Faltas e atestados · ' + fim.slice(0, 4) + ' · ' + escapeHtml(orgSetorSel) + '</div>';
+  h += '<p class="desc" style="margin-bottom:9px">' + fmtDataSem(ini) + ' a ' + fmtDataSem(fim) + ' · ' + linhas.length +
+       ' pessoa(s) escalada(s) · ' + comAlgo.length + ' com ocorrência · quem mais faltou no topo</p>';
   h += '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--fraco);margin-bottom:10px">' +
-    bolinha('v') + ' bom &nbsp;' + bolinha('l') + ' atenção &nbsp;' + bolinha('r') + ' crítico &nbsp;' + bolinha('x') + ' sem dado</div>';
+    bolinha('v') + ' bom &nbsp;' + bolinha('l') + ' atenção &nbsp;' + bolinha('r') + ' crítico</div>';
 
   h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
-    '<th style="text-align:left">Operador</th><th>Meta</th><th>Perda</th><th>Faltas</th><th>Produção</th></tr></thead><tbody>';
+    '<th style="text-align:left">Pessoa</th><th>Faltas</th><th>Atestados</th><th>Dias fora</th></tr></thead><tbody>';
   linhas.forEach(l => {
     h += '<tr onclick="orgHistPessoa(\'' + l.mat + '\')" style="cursor:pointer">' +
       '<td class="nome" style="text-align:left"><b>' + escapeHtml(orgPrimeiro(l.nome) || l.nome) + '</b>' +
-      '<div style="font-size:10px;color:var(--fraco)">' + escapeHtml(l.turnos) + ' · ' + l.maqs.join(', ') + '</div></td>' +
-      '<td>' + bolinha(l.fMeta) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.rel == null ? '—' : Math.round(l.rel) + '%') + '</div></td>' +
-      '<td>' + bolinha(l.fPerda) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.perda == null ? '—' : l.perda.toFixed(1).replace('.', ',') + '%') + '</div></td>' +
-      '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + (l.falta ? l.falta + 'd' : '0d') + '</div></td>' +
-      '<td style="text-align:right;font-weight:800">' + orgFmtProd(l.prod, orgSetorSel) + '</td></tr>';
+      '<div style="font-size:10px;color:var(--fraco)">' + (l.oper ? 'operador · ' : '') + escapeHtml(l.turnos) +
+      (l.maqs.length ? ' · ' + l.maqs.slice(0, 3).join(', ') : '') + '</div></td>' +
+      '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + l.dFalta + 'd' + (l.nFalta > 1 ? ' · ' + l.nFalta + '×' : '') + '</div></td>' +
+      '<td>' + bolinha(l.fAtest) + '<div style="font-size:10.5px;color:var(--fraco)">' + l.dAtest + 'd' + (l.nAtest > 1 ? ' · ' + l.nAtest + '×' : '') + '</div></td>' +
+      '<td style="text-align:right;font-weight:800;color:' + (l.total ? 'var(--critico)' : 'var(--fraco-2)') + '">' + l.total + '</td></tr>';
   });
   h += '</tbody></table></div>';
-  h += '<p class="desc" style="font-size:11px;margin-top:10px;line-height:1.55"><b>Como o farol é decidido:</b><br>' +
-    '<b>Meta</b> — valor absoluto, porque meta é compromisso: verde a partir de 105%, laranja de 90 a 105, vermelho abaixo de 90.<br>' +
-    '<b>Perda e faltas</b> — comparados com a <b>mediana do setor</b> (perda ' + (medPerda == null ? '—' : medPerda.toFixed(1).replace('.', ',') + '%') +
-    ', faltas ' + (medFalta == null ? '—' : medFalta.toFixed(1).replace('.', ',') + ' dia(s) por pessoa') + '): verde até 10% abaixo da mediana, vermelho a partir de 10% acima.<br>' +
-    '<b>Faltas</b> são os dias fora do próprio operador no ano — férias e folgas não entram.<br>' +
-    '<b>Produção, meta e perda</b> são das máquinas que ele opera <b>hoje</b>, somadas no ano inteiro. Se ele mudou de máquina no meio do ano, o número reflete a máquina atual, não o histórico dele.</p>';
+  h += '<p class="desc" style="font-size:11px;margin-top:10px;line-height:1.55"><b>Como o farol é decidido:</b> ' +
+    'cada pessoa é comparada com a <b>mediana do setor</b> — faltas ' + (medF == null ? '—' : medF.toFixed(1).replace('.', ',') + ' dia(s)') +
+    ', atestados ' + (medA == null ? '—' : medA.toFixed(1).replace('.', ',') + ' dia(s)') + '. ' +
+    'Verde até 10% abaixo da mediana, vermelho a partir de 10% acima. Quem está zerado é sempre verde.<br>' +
+    '<b>Só faltas e atestados.</b> Meta e perda saíram de propósito: são da máquina, não da pessoa — o mesmo operador mudando de máquina mudaria de cor sem ter mudado nada no trabalho dele.</p>';
   h += '</div></div>';
+
   _semLinhas = {}; linhas.forEach(l => _semLinhas[l.mat] = l);
   wrap.innerHTML = h;
 }
