@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.159.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.160.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.159.0';
+const APP_VER = '3.160.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11014,11 +11014,36 @@ let orgRelMetrica = 'prod';   // prod | meta | perda — uma por vez, para a ima
 const ORG_IMG_POR_PAG = 999; // 999 = imagem única (sem paginar). Use 8 ou 4 para paginar.
 
 function orgImgDesenha(setor, dados, pag, totPag) {
-  const W = 1080, PAD = 40, COLS = 2, GAPC = 24;
+  const MET = {
+    prod:  { rot: 'PRODUÇÃO', get: k => k.prod,  fmt: v => orgFmtProd(v, setor), maior: true },
+    meta:  { rot: 'META',     get: k => k.rel,   fmt: v => v == null ? '—' : Math.round(v) + '%', maior: true },
+    perda: { rot: 'PERDA',    get: k => k.perda, fmt: v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%', maior: false }
+  };
+  const M = MET[orgRelMetrica] || MET.prod;
+
+  /* ---- só máquinas com dado, ordenadas pelo total ---- */
+  const linhas = dados.map(r => {
+    const v = {}; let soma = 0, n = 0;
+    ORG_TURNOS.forEach(t => {
+      const k = r.t[t]; const val = k ? M.get(k) : null;
+      v[t] = (val == null || isNaN(val)) ? null : Number(val);
+      if (v[t] != null) { soma += v[t]; n++; }
+    });
+    return { maq: r.maq, v: v, soma: soma, n: n };
+  }).filter(r => r.n > 0).sort((a, b) => b.soma - a.soma);
+
+  const totT = {}; ORG_TURNOS.forEach(t => totT[t] = 0);
+  linhas.forEach(r => ORG_TURNOS.forEach(t => { if (r.v[t] != null) totT[t] += r.v[t]; }));
+  const totGeral = ORG_TURNOS.reduce((a, t) => a + totT[t], 0);
+  const maxBar = Math.max(1, ...linhas.map(r => Math.max(...ORG_TURNOS.map(t => r.v[t] || 0))));
+
+  /* ---- medidas ---- */
+  const W = 1080, PAD = 44, COLS = 2, GAPC = 26;
   const CW = (W - PAD * 2 - GAPC * (COLS - 1)) / COLS;
-  const CH = 330, HDR = 250;
-  const linhas = Math.ceil(dados.length / COLS);
-  const H = 130 + HDR + linhas * (CH + 22) + 80;
+  const LINH = 92;                                    // altura de cada máquina
+  const nlin = Math.ceil(linhas.length / COLS);
+  const HDR = 340;
+  const H = HDR + nlin * LINH + 90;
 
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
@@ -11026,83 +11051,79 @@ function orgImgDesenha(setor, dados, pag, totPag) {
   const F = (p, w) => (w || 400) + ' ' + p + 'px -apple-system, "Segoe UI", Roboto, Arial';
   const rr = (a, b, c, d, r) => { x.beginPath(); x.moveTo(a + r, b); x.arcTo(a + c, b, a + c, b + d, r); x.arcTo(a + c, b + d, a, b + d, r); x.arcTo(a, b + d, a, b, r); x.arcTo(a, b, a + c, b, r); x.closePath(); };
 
-  x.fillStyle = 'var(--leve-2s)'; x.fillRect(0, 0, W, H);
-  x.fillStyle = 'var(--tinta-s)'; x.fillRect(0, 0, W, 110);
-  x.fillStyle = '#fff'; x.font = F(42, 800);
-  x.fillText('Comparativo de turnos', PAD, 58);
-  x.fillStyle = 'var(--fraco-2s)'; x.font = F(24);
-  x.fillText('mês até ' + new Date().toLocaleDateString('pt-BR') + (totPag > 1 ? '  ·  ' + pag + '/' + totPag : ''), PAD, 92);
+  /* ---- fundo ---- */
+  x.fillStyle = '#0B2A4A'; x.fillRect(0, 0, W, H);
 
-  let y = 130;
-  const dias = Math.max(0, ...dados.map(r => Math.max(...ORG_TURNOS.map(t => (r.t[t] ? r.t[t].dias : 0)))));
-  x.fillStyle = 'var(--tinta-s)'; rr(PAD, y, W - PAD * 2, HDR - 26, 20); x.fill();
-  x.fillStyle = '#fff'; x.font = F(36, 800); x.fillText(setor, PAD + 26, y + 52);
-  x.fillStyle = 'var(--fraco-2s)'; x.font = F(22); x.fillText(dias + ' dias · em ' + orgUnid(setor), PAD + 26, y + 86);
+  /* ---- cabeçalho ---- */
+  x.fillStyle = '#fff'; x.font = F(38, 800); x.textAlign = 'left';
+  x.fillText(M.rot + ' POR TURNO', PAD, 66);
+  x.fillStyle = '#9FB6CC'; x.font = F(19, 600);
+  x.fillText(setor + ' · mês até ' + fmtDataSem(hojeISO()), PAD, 96);
+  if (totPag > 1) { x.textAlign = 'right'; x.fillText(pag + '/' + totPag, W - PAD, 96); x.textAlign = 'left'; }
 
-  const bw = (W - PAD * 2 - 52) / 3;
+  /* ---- totais dos três turnos ---- */
+  const bx = (W - PAD * 2 - 20 * 2) / 3;
   ORG_TURNOS.forEach((t, i) => {
-    let p = 0, rels = [], pk = 0;
-    dados.forEach(r => { const k = r.t[t]; if (!k) return; p += k.prod; pk += k.perdaKg; if (k.rel != null) rels.push(k.rel); });
-    const rm = rels.length ? Math.round(rels.reduce((a, c) => a + c, 0) / rels.length) : null;
-    const pp = (p + pk) > 0 ? (pk / (p + pk) * 100) : null;
-    const bx = PAD + 26 + i * bw;
-    x.fillStyle = ORG_CORES[t]; x.fillRect(bx, y + 108, 7, 76);
-    x.font = F(24, 800); x.fillText(t, bx + 20, y + 130);
-    x.fillStyle = '#fff'; x.font = F(38, 800); x.fillText(orgFmtProd(p, setor), bx + 20, y + 168);
-    x.fillStyle = 'var(--linha-2s)'; x.font = F(20);
-    x.fillText('meta ' + (rm == null ? '—' : rm + '%') + ' · perda ' + (pp == null ? '—' : pp.toFixed(1).replace('.', ',') + '%'), bx + 20, y + 196);
+    const px = PAD + i * (bx + 20), py = 124;
+    x.fillStyle = '#123B66'; rr(px, py, bx, 150, 18); x.fill();
+    x.fillStyle = ORG_CORES[t]; rr(px, py, 7, 150, 4); x.fill();
+    x.fillStyle = ORG_CORES[t]; x.font = F(18, 800);
+    x.fillText(t.toUpperCase(), px + 22, py + 34);
+    x.fillStyle = '#fff'; x.font = F(42, 800);
+    x.fillText(M.fmt(totT[t]), px + 22, py + 88);
+    x.fillStyle = '#9FB6CC'; x.font = F(16, 600);
+    x.fillText(totGeral ? (totT[t] / totGeral * 100).toFixed(0) + '% do setor' : '—', px + 22, py + 120);
   });
-  y += HDR;
 
-  dados.forEach((r, idx) => {
-    const col = idx % COLS, lin = Math.floor(idx / COLS);
-    const cx0 = PAD + col * (CW + GAPC), cy0 = y + lin * (CH + 22);
-    x.fillStyle = '#fff'; rr(cx0, cy0, CW, CH, 18); x.fill();
-    x.strokeStyle = 'var(--linha-s)'; x.lineWidth = 2; rr(cx0, cy0, CW, CH, 18); x.stroke();
-    x.fillStyle = 'var(--tinta-s)'; rr(cx0 + 18, cy0 + 16, 168, 50, 13); x.fill();
-    x.fillStyle = 'var(--fraco-2s)'; x.font = F(17, 700); x.fillText('MÁQ', cx0 + 34, cy0 + 48);
-    x.fillStyle = '#fff'; x.font = F(30, 800); x.fillText(r.maq, cx0 + 92, cy0 + 50);
+  x.fillStyle = '#5C7186'; x.font = F(15, 600);
+  x.fillText(linhas.length + ' máquina(s) · barra proporcional ao maior valor do setor', PAD, HDR - 22);
 
-    const _TODAS = {
-      prod:  { rot: 'PRODUÇÃO', get: k => k.prod, fmt: v => orgFmtProd(v, setor) },
-      meta:  { rot: 'META', get: k => k.rel, fmt: v => v == null ? '—' : Math.round(v) + '%' },
-      perda: { rot: 'PERDA', get: k => k.perda, fmt: v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%' }
-    };
-    // um indicador por imagem: com os três juntos eram 9 barras por máquina
-    const metricas = [_TODAS[orgRelMetrica] || _TODAS.prod];
-    const mw = (CW - 32) / 3, baseY = cy0 + CH - 38, altura = 130;
+  /* ---- uma máquina por bloco ---- */
+  linhas.forEach((r, idx) => {
+    const col = idx % COLS, row = Math.floor(idx / COLS);
+    const cx0 = PAD + col * (CW + GAPC);
+    const cy0 = HDR + row * LINH;
 
-    metricas.forEach((mt, mi) => {
-      const mx = cx0 + 16 + mi * mw;
-      x.fillStyle = 'var(--fraco-2s)'; x.font = F(17, 700); x.fillText(mt.rot, mx + 4, cy0 + 96);
-      const vals = ORG_TURNOS.map(t => (r.t[t] ? mt.get(r.t[t]) : null));
-      const mx2 = Math.max(1, ...vals.filter(v => v != null));
-      const bwid = (mw - 18) / 3;
-      ORG_TURNOS.forEach((t, ti) => {
-        const v = vals[ti];
-        const hh = (v == null || mx2 <= 0) ? 3 : Math.max(5, v / mx2 * altura);
-        const bx2 = mx + 4 + ti * bwid;
-        const larg = bwid - 5;
-        x.fillStyle = 'var(--leve-2s)'; rr(bx2, baseY - altura, larg, altura, 5); x.fill();
-        x.fillStyle = ORG_CORES[t]; rr(bx2, baseY - hh, larg, hh, 5); x.fill();
-        // valor: alterna a altura para não colidir com o vizinho
-        x.save(); x.textAlign = 'center';
-        x.fillStyle = 'var(--tinta-s)'; x.font = F(17, 800);
-        x.fillText(mt.fmt(v), bx2 + larg / 2, baseY - hh - (ti === 1 ? 26 : 8));
-        x.restore(); x.textAlign = 'left';
-        x.save(); x.textAlign = 'center';
-        x.fillStyle = (ORG_TINT[t] || {}).br || 'var(--fraco-s)'; x.font = F(16, 800);
-        x.fillText(t.slice(0, 3).toUpperCase(), bx2 + larg / 2, baseY + 26);
-        x.restore(); x.textAlign = 'left';
-      });
+    // melhor turno do indicador
+    let melhor = null;
+    ORG_TURNOS.forEach(t => {
+      if (r.v[t] == null) return;
+      if (melhor == null) { melhor = t; return; }
+      melhor = M.maior ? (r.v[t] > r.v[melhor] ? t : melhor) : (r.v[t] < r.v[melhor] ? t : melhor);
+    });
+
+    x.fillStyle = '#0F2B49'; rr(cx0, cy0, CW, LINH - 12, 14); x.fill();
+
+    // código da máquina
+    x.fillStyle = '#fff'; x.font = F(23, 800); x.textAlign = 'left';
+    x.fillText(r.maq, cx0 + 16, cy0 + 32);
+    if (melhor) {
+      x.fillStyle = ORG_CORES[melhor]; x.font = F(13, 800);
+      x.fillText('▲ ' + melhor.toUpperCase(), cx0 + 16, cy0 + 54);
+    }
+
+    // três barras
+    const bx0 = cx0 + 104, bw = CW - 104 - 108, bh = 15, gap = 6;
+    ORG_TURNOS.forEach((t, ti) => {
+      const by = cy0 + 14 + ti * (bh + gap);
+      x.fillStyle = '#16375C'; rr(bx0, by, bw, bh, 7); x.fill();
+      if (r.v[t] != null) {
+        const w = Math.max(6, (r.v[t] / maxBar) * bw);
+        x.fillStyle = ORG_CORES[t]; rr(bx0, by, w, bh, 7); x.fill();
+      }
+      x.fillStyle = r.v[t] == null ? '#5C7186' : '#fff';
+      x.font = F(14, r.v[t] != null && t === melhor ? 800 : 600);
+      x.textAlign = 'left';
+      x.fillText(r.v[t] == null ? '—' : M.fmt(r.v[t]), bx0 + bw + 10, by + bh - 2);
     });
   });
 
-  x.fillStyle = 'var(--fraco-2s)'; x.font = F(20);
-  x.fillText('Controle de Produção · Rioplastic', PAD, H - 30);
+  /* ---- rodapé ---- */
+  x.fillStyle = '#5C7186'; x.font = F(15, 600); x.textAlign = 'center';
+  x.fillText('Rioplastic · Controle de Produção · gerado em ' + fmtDataSem(hojeISO()), W / 2, H - 34);
+
   return cv;
 }
-
 async function orgRelImagem() {
   const setores = orgRelTodos
     ? [...new Set(orgDados.maquinas.map(m => m.setor).filter(Boolean))].sort()
