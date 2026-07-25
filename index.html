@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.180.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.181.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1546,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.180.0';
+const APP_VER = '3.181.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8549,6 +8549,32 @@ async function preencherSetupsReais(setor, dia) {
     }
   } catch (_) {}
 }
+let _milSemRegra = {};
+/* Relatório do que não deu para converter em milheiros.
+   Preferimos deixar de fora e avisar a estimar por conta própria: um número
+   inventado no total de peças é pior que um total declaradamente parcial. */
+function cardMilSemRegra(ehMil) {
+  if (!ehMil) return '';
+  const arr = Object.values(_milSemRegra).sort((a, b) => b.qtd - a.qtd);
+  if (!arr.length) return '';
+  const totFora = arr.reduce((a, x) => a + x.qtd, 0);
+  let h = '<div class="card" style="border-left:5px solid var(--laranja)">';
+  h += '<div class="titulo-sec">Fora da conta de milheiros</div>';
+  h += '<p class="desc" style="margin-bottom:8px"><b>' + arr.length + ' item(ns)</b> somando <b>' +
+    fmtNum(totFora) + ' cx</b> não entraram no total: a descrição não diz quantas peças cabem na caixa.</p>';
+  h += '<div style="max-height:34vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
+  arr.slice(0, 40).forEach(x => {
+    h += '<div style="display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+      '<span class="cod" style="flex:0 0 auto">' + escapeHtml(x.cod) + '</span>' +
+      '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(x.desc) + '</span>' +
+      '<b style="white-space:nowrap">' + fmtNum(x.qtd) + ' ' + escapeHtml(x.un.toLowerCase()) + '</b></div>';
+  });
+  h += '</div>';
+  if (arr.length > 40) h += '<div class="desc" style="font-size:11px;margin-top:6px">e mais ' + (arr.length - 40) + ' item(ns)</div>';
+  h += '<p class="desc" style="font-size:11px;margin-top:8px;line-height:1.5">Para entrarem na conta, a descrição precisa terminar com a embalagem — <b>“… - 1260 UNID”</b>. Hoje só os itens apontados em MIL e parte dos em CX têm essa informação.</p>';
+  return h + '</div>';
+}
+
 // atalho para abrir a análise completa de uma máquina
 function cardEscolherMaquina(D, setor) {
   const cods = [...new Set(D.producao
@@ -8660,11 +8686,32 @@ function renderPainel() {
   if (setor === 'Extrusão' && metrica !== 'peso') { metrica = 'peso'; if ($('fMetrica')) $('fMetrica').value = 'peso'; }
   const ehMil = metrica === 'milheiro';
   const uni = metrica === 'peso' ? 'kg' : ehMil ? 'mil' : 'cxs';
-  // milheiro = mil peças. A base é a mesma da caixa; muda só a escala e o rótulo.
-  const fmtMil = n => (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil';
+  const fmtMil = n => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil';
   const fmtV = metrica === 'peso' ? fmtKg : ehMil ? fmtMil : fmtNum;
+
+  // MILHEIRO = mil PEÇAS. Não é a quantidade dividida por mil:
+  //   item em MIL  -> a quantidade já é o milheiro
+  //   item em CX   -> peças = caixas x unidades por caixa (lidas da descrição)
+  //   sem a embalagem na descrição -> NÃO converte. Entra no relatório abaixo.
+  _milSemRegra = {};
+  const valMil = r => {
+    const q = Number(r.quantidade) || 0;
+    if (!q) return 0;
+    const u = String(r.unidade || '').toUpperCase();
+    if (u === 'MIL') return q;
+    if (u === 'KG') return 0;                       // bobina não tem peça
+    const un = unidadesPorCaixa(r.item_desc);
+    if (!un) {                                      // sem como saber: registra e ignora
+      const k = String(r.item_cod || '?');
+      if (!_milSemRegra[k]) _milSemRegra[k] = { cod: k, desc: r.item_desc || k, un: u, qtd: 0 };
+      _milSemRegra[k].qtd += q;
+      return 0;
+    }
+    return q * un / 1000;
+  };
   // em modo cxs/milheiro a Extrusão não entra: bobina não tem caixa (o ERP repete o peso em quantidade)
-  const val = r => metrica === 'peso' ? (r.peso || 0) : (semCaixa(setorDe(r.recurso_cod)) ? 0 : (r.quantidade || 0));
+  const val = r => metrica === 'peso' ? (r.peso || 0)
+    : (semCaixa(setorDe(r.recurso_cod)) ? 0 : (ehMil ? valMil(r) : (r.quantidade || 0)));
   const fmtBar = metrica === 'peso' ? fmtKg : ehMil ? fmtMil
     : (n => n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(n).toLocaleString('pt-BR'));
   const D = dadosPainel;
@@ -8677,7 +8724,7 @@ function renderPainel() {
   const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
   $('faixaAtualiz').innerHTML = faixaFeriado() + cabecalhoInfo();
   try { const _at = dadosPainel && dadosPainel.info && dadosPainel.info.atualizado; const _vd = $('verData'); if (_vd && _at) { const _atD = new Date(_at).toLocaleDateString('pt-BR'); const _hjD = new Date().toLocaleDateString('pt-BR'); const _hoje = (_atD === _hjD); _vd.textContent = 'atualizado ' + (_hoje ? 'hoje' : _atD.slice(0, 5)); _vd.style.background = _hoje ? 'var(--laranja-4)' : 'rgba(255,255,255,.12)'; _vd.style.color = _hoje ? '#fff' : 'var(--fraco-3)'; } } catch (_) {}
-  let html = cardEscolherMaquina(D, setor) + cardAbaixoMeta(D, setor);
+  let html = cardEscolherMaquina(D, setor) + cardMilSemRegra(ehMil) + cardAbaixoMeta(D, setor);
   // ===== BRIEFING DO DIA: aparece quando o último dia produtivo é novo (uma vez por dia, por aparelho) =====
   try {
     const udB = (D.info && D.info.ultimoDiaProd) || null;
