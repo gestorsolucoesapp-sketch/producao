@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.162.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.163.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.162.0';
+const APP_VER = '3.163.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9622,7 +9622,9 @@ function orgNome(mat) { const c = orgDados.colab.find(x => x.matricula === mat);
 function orgPrimeiro(n) { return (n || '').split(' ').slice(0, 2).join(' '); }
 function orgAfastadoHoje(mat) {
   // registro pontual do dia (falta, atestado, folga) tem prioridade
-  const a = orgDados.afast.find(x => x.matricula === mat);
+  const hj = hojeISO();
+  // o lançamento pode cobrir vários dias: vale enquanto hoje estiver dentro do período
+  const a = orgDados.afast.find(x => x.matricula === mat && (!x.fim || x.fim >= hj));
   if (a) return a;
   // férias programadas: a tabela org_afastamentos só guarda o dia lançado,
   // mas quem está no meio de um período de férias está fora igual.
@@ -9672,7 +9674,7 @@ async function carregarOrganograma() {
       sb.from('org_celulas').select('*'),
       sb.from('org_maquina_celula').select('*'),
       sb.from('maquinas').select('codigo,setor,modelo'),
-      sb.from('org_afastamentos').select('*').eq('data', hoje),
+      sb.from('org_afastamentos').select('*').lte('data', hoje).or('fim.is.null,fim.gte.' + hoje),
       sb.from('app_config').select('chave,valor').like('chave', 'org_supervisor_%'),
       sb.rpc('org_kpis_mes', { p_ini: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10), p_fim: hoje })
     ]);
@@ -11062,7 +11064,11 @@ function orgImgDesenha(setor, dados, pag, totPag) {
   x.fillStyle = '#fff'; x.font = F(38, 800); x.textAlign = 'left';
   x.fillText('PRODUÇÃO POR OPERADOR', PAD, 62);
   x.fillStyle = '#9FB6CC'; x.font = F(19, 600);
-  x.fillText(setor + ' · mês até ' + fmtDataSem(hojeISO()) + ' · valores em ' + (cx ? 'caixas' : 'kg'), PAD, 92);
+  const _mats = new Set(orgColabSetor().map(c => c.matricula));
+  const _nFal = (orgDados.afast || []).filter(a => _mats.has(a.matricula) && !/feria/i.test(a.tipo || '')).length;
+  const _nFer = (orgFerias || []).filter(f => _mats.has(f.matricula) && f.inicio && f.fim && f.inicio <= hojeISO() && f.fim >= hojeISO()).length;
+  x.fillText(setor + ' · mês até ' + fmtDataSem(hojeISO()) + ' · valores em ' + (cx ? 'caixas' : 'kg') +
+    ' · hoje: ' + _nFal + ' falta(s) · ' + _nFer + ' de férias', PAD, 92);
   x.textAlign = 'right'; x.fillStyle = '#fff'; x.font = F(26, 800);
   x.fillText('TOTAL  ' + fmtV(totGeral), W - PAD, 62);
   x.textAlign = 'left';
@@ -11827,11 +11833,61 @@ async function orgCriarMaquina(turno, mat, maq) {
   await carregarOrganograma();
 }
 
+async function orgHistPessoa(mat) {
+  const nome = orgNome(mat) || mat;
+  orgModal(nome, '<p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> buscando…</p>');
+  const de = new Date(); de.setFullYear(de.getFullYear() - 1);
+  const iniISO = de.toISOString().slice(0, 10);
+  let af = [];
+  try {
+    const { data } = await sb.from('org_afastamentos').select('*').eq('matricula', mat).gte('data', iniISO).order('data', { ascending: false });
+    af = data || [];
+  } catch (_) {}
+  const fer = (orgFerias || []).filter(f => f.matricula === mat && f.inicio).sort((a, b) => b.inicio.localeCompare(a.inicio));
+
+  const CORT = { falta: 'var(--critico)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
+  const cont = {}; af.forEach(a => cont[a.tipo] = (cont[a.tipo] || 0) + 1);
+  const diasTot = af.reduce((n, a) => n + (a.dias || 1), 0);
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+  Object.keys(cont).forEach(t => {
+    h += '<div style="flex:1 1 88px;background:var(--leve-s);border:1px solid var(--linha-s);border-left:5px solid ' + (CORT[t] || 'var(--fraco)') + ';border-radius:12px;padding:8px 10px">' +
+      '<div style="font-size:21px;font-weight:800;color:var(--tinta)">' + cont[t] + '</div>' +
+      '<div style="font-size:11px;color:var(--fraco)">' + escapeHtml(t) + '</div></div>';
+  });
+  if (!Object.keys(cont).length) h += '<div class="desc">nenhum lançamento em 12 meses ✔</div>';
+  h += '</div>';
+  if (diasTot) h += '<div class="desc" style="margin-bottom:9px"><b>' + diasTot + '</b> dia(s) fora em 12 meses</div>';
+
+  if (af.length) {
+    h += '<div class="titulo-sec">Faltas e atestados · 12 meses</div>';
+    h += '<div style="max-height:32vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin-bottom:10px">';
+    af.forEach(a => {
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+        '<span style="font-size:10px;font-weight:800;color:#fff;background:' + (CORT[a.tipo] || 'var(--fraco)') + ';padding:2px 8px;border-radius:999px">' + escapeHtml(a.tipo) + '</span>' +
+        '<span style="flex:1;min-width:0;color:var(--fraco)">' + (a.motivo ? escapeHtml(a.motivo) : '') + '</span>' +
+        '<span style="white-space:nowrap">' + fmtDataSem(a.data) + ((a.dias && a.dias > 1) ? ' · ' + a.dias + 'd' : '') + '</span></div>';
+    });
+    h += '</div>';
+  }
+  if (fer.length) {
+    h += '<div class="titulo-sec">Férias</div>';
+    h += '<div style="max-height:26vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
+    fer.forEach(f => {
+      h += '<div style="display:flex;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+        '<span>' + ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + '</span><span style="color:var(--fraco)">' + (f.dias || '?') + 'd</span></div>';
+    });
+    h += '</div>';
+  }
+  orgModal(nome, h);
+}
+
 function orgMenuPessoa(id) {
   const a = orgDados.aloc.find(x => x.id === id); if (!a) return;
   const nome = a.pendente ? (a.apelido_origem || '?') : (orgNome(a.matricula) || '?');
   let h = '<div style="font-weight:800;margin-bottom:8px">' + escapeHtml(nome) + ' · ' + (a.maquina_codigo || 'sem máquina') + '</div>';
   h += '<button class="btn" style="width:100%;margin-bottom:6px" onclick="orgEscolhePessoa(' + id + ')">👤 ' + (a.pendente ? 'Identificar pessoa' : 'Trocar pessoa') + '</button>';
+  if (a.matricula) h += '<button class="btn" style="width:100%;margin-bottom:6px" onclick="orgHistPessoa(\'' + a.matricula + '\')">📋 Faltas, atestados e férias</button>';
   h += '<button class="btn" style="width:100%;margin-bottom:6px" onclick="orgMoverMenu(' + id + ')">↔️ Mover para outra máquina</button>';
   if (a.funcao === 'auxiliar') h += '<button class="btn" style="width:100%;margin-bottom:6px" onclick="orgMarcarSemAux(' + id + ')">🚫 Marcar “sem auxiliar”</button>';
   h += '<button class="btn" style="width:100%;background:var(--critico-3);color:#fff" onclick="orgRemover(' + id + ')">🗑️ Remover deste posto</button>';
@@ -11993,19 +12049,49 @@ async function renderOrgFaltas() {
   h += '<div style="display:flex;flex-direction:column;gap:8px">';
   h += '<input id="faBusca" list="faLista" placeholder="colaborador (nome ou matrícula)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">';
   h += '<datalist id="faLista">' + orgColabSetor().map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
-  h += '<input id="faData" type="date" value="' + new Date().toISOString().slice(0, 10) + '" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">';
-  h += '<select id="faTipo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' + ORG_TIPOS.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select>';
-  h += '<div class="desc" style="font-size:11px;color:#c0392b">⚠️ Não registre informação de saúde. Só o tipo.</div>';
+  h += '<input id="faData" type="date" onchange="faAtualizaFim()" value="' + new Date().toISOString().slice(0, 10) + '" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">';
+  h += '<select id="faTipo" onchange="faAtualizaFim()" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' + ORG_TIPOS.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select>';
+  h += '<div style="display:flex;gap:8px;align-items:center">' +
+    '<label style="font-size:12px;color:var(--fraco);flex:0 0 auto">quantos dias</label>' +
+    '<input id="faDias" type="number" min="1" max="180" value="1" oninput="faAtualizaFim()" style="width:88px;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
+    '<span id="faAte" style="font-size:12.5px;color:var(--txt-2);font-weight:700"></span></div>';
+  h += '<input id="faMotivo" list="faMotLista" placeholder="motivo (opcional)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
+    '<datalist id="faMotLista"><option value="a confirmar"><option value="consulta médica"><option value="assunto pessoal"><option value="transporte"><option value="convocação">' +
+    '</datalist>';
+  h += '<div class="desc" style="font-size:11px;color:#c0392b">⚠️ Não registre informação de saúde. Só o tipo e, se precisar, um motivo genérico.</div>';
   h += '<button class="btn btn-verde" onclick="orgSalvaFalta()">Salvar</button></div></div>';
   h += orgImpCard('faltas');
   h += '<div class="card"><div class="titulo-sec">Últimos 30 dias · ' + regs.length + '</div>';
-  h += regs.map(r => '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;font-size:13px">' +
-    '<span>' + escapeHtml(orgPrimeiro(orgNome(r.matricula)) || r.matricula) + '</span>' +
-    '<span>' + r.data.split('-').reverse().join('/') + ' · <b>' + escapeHtml(r.tipo) + '</b> ' +
-    '<button class="btn" style="padding:0 6px;font-size:11px" onclick="orgDelFalta(' + r.id + ')">✕</button></span></div>').join('') || '<div class="desc">sem lançamentos</div>';
+  const hj = hojeISO();
+  h += regs.map(r => {
+    const ate = r.fim || r.data;
+    const aindaFora = ate >= hj;
+    const faltam = aindaFora ? Math.round((new Date(ate + 'T12:00:00') - new Date(hj + 'T12:00:00')) / 864e5) + 1 : 0;
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+      '<span style="flex:1;min-width:0"><b>' + escapeHtml(orgPrimeiro(orgNome(r.matricula)) || r.matricula) + '</b>' +
+      (r.motivo ? '<span style="font-size:11px;color:' + (/confirmar/i.test(r.motivo) ? 'var(--laranja)' : 'var(--fraco)') + '"> · ' + escapeHtml(r.motivo) + '</span>' : '') + '</span>' +
+      '<span style="white-space:nowrap;text-align:right">' +
+      r.data.split('-').reverse().slice(0, 2).join('/') +
+      ((r.dias && r.dias > 1) ? ' → ' + ate.split('-').reverse().slice(0, 2).join('/') + ' <span style="color:var(--fraco);font-size:11px">' + r.dias + 'd</span>' : '') +
+      ' · <b>' + escapeHtml(r.tipo) + '</b>' +
+      (aindaFora ? ' <span style="font-size:10px;font-weight:800;color:#fff;background:var(--critico);padding:2px 7px;border-radius:999px">volta em ' + faltam + 'd</span>' : '') +
+      ' <button class="btn" style="padding:0 6px;font-size:11px" onclick="orgDelFalta(' + r.id + ')">✕</button></span></div>';
+  }).join('') || '<div class="desc">sem lançamentos</div>';
   h += '</div>';
   wrap.innerHTML = h;
 }
+function faAtualizaFim() {
+  const el = $('faAte'); if (!el) return;
+  const d0 = ($('faData') || {}).value, n = parseInt(($('faDias') || {}).value, 10) || 1;
+  if (!d0) { el.textContent = ''; return; }
+  const d = new Date(d0 + 'T12:00:00'); d.setDate(d.getDate() + n - 1);
+  const iso = d.toISOString().slice(0, 10);
+  const volta = new Date(d); volta.setDate(volta.getDate() + 1);
+  el.innerHTML = n > 1
+    ? 'fora até <b>' + fmtDataSem(iso) + '</b> · volta ' + fmtDataSem(volta.toISOString().slice(0, 10))
+    : 'só neste dia';
+}
+
 function orgMatDoCampo(idCampo) {
   const v = ($(idCampo).value || '').trim();
   const m = v.match(/(\d{3,6})\s*$/);
@@ -12016,7 +12102,16 @@ function orgMatDoCampo(idCampo) {
 async function orgSalvaFalta() {
   const mat = orgMatDoCampo('faBusca');
   if (!mat) { toast('Escolha o colaborador na lista'); return; }
-  const { error } = await sb.from('org_afastamentos').upsert({ matricula: mat, data: $('faData').value, tipo: $('faTipo').value }, { onConflict: 'matricula,data' });
+  const dias = Math.max(1, parseInt(($('faDias') || {}).value, 10) || 1);
+  const d0 = $('faData').value;
+  const dF = new Date(d0 + 'T12:00:00'); dF.setDate(dF.getDate() + dias - 1);
+  const reg = {
+    matricula: mat, data: d0, tipo: $('faTipo').value,
+    dias: dias, fim: dF.toISOString().slice(0, 10),
+    motivo: (($('faMotivo') || {}).value || '').trim() || null,
+    lancado_por: ((typeof perfil !== 'undefined' && perfil && perfil.id) || null)
+  };
+  const { error } = await sb.from('org_afastamentos').upsert(reg, { onConflict: 'matricula,data' });
   if (error) { toast('Erro: ' + error.message); return; }
   toast('Lançado ✔'); renderOrgFaltas();
 }
