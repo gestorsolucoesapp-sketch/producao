@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.177.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.178.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1546,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.177.1';
+const APP_VER = '3.178.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10599,6 +10599,86 @@ function orgCardSituacao() {
   return h + '</div>';
 }
 
+function detEfetivoTurno(turno) {
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && a.turno === turno);
+  const CORT = { falta: 'var(--critico)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
+
+  // quem está fora hoje, e o que a ausência dele descobre
+  const vistos = {}, fora = [];
+  al.filter(a => a.matricula).forEach(a => {
+    if (vistos[a.matricula]) return;
+    const af = orgAfastadoHoje(a.matricula); if (!af) return;
+    vistos[a.matricula] = 1;
+    const linhas = al.filter(x => x.matricula === a.matricula);
+    const op = linhas.filter(x => x.funcao === 'operador' && !x.aprendiz && x.maquina_codigo);
+    const aux = linhas.filter(x => x.funcao === 'auxiliar' && x.maquina_codigo);
+    fora.push({ mat: a.matricula, tipo: af.tipo, dias: af.dias, fim: af.fim,
+                maqs: [...new Set((op.length ? op : aux).map(x => x.maquina_codigo))],
+                ehOp: op.length > 0 });
+  });
+
+  // máquinas do turno sem ninguém no posto de operador
+  const semOp = [];
+  const porMaq = {};
+  al.forEach(a => { if (a.maquina_codigo) (porMaq[a.maquina_codigo] = porMaq[a.maquina_codigo] || []).push(a); });
+  Object.keys(porMaq).sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0)).forEach(m => {
+    const ops = porMaq[m].filter(a => a.funcao === 'operador' && !a.aprendiz);
+    if (!ops.length) { semOp.push({ maq: m, motivo: 'sem operador na escala' }); return; }
+    const ativos = ops.filter(a => a.matricula && !orgAfastadoHoje(a.matricula) && !a.sem_operador);
+    if (!ativos.length) {
+      const q = ops.find(a => a.matricula);
+      semOp.push({ maq: m, motivo: ops.some(a => a.sem_operador) ? 'posto declarado sem operador'
+        : (q ? (orgPrimeiro(orgNome(q.matricula)) || q.matricula) + ' fora hoje' : 'pendente de identificação') });
+    }
+  });
+
+  // escalados sem máquina fixa
+  const semMaq = al.filter(a => !a.maquina_codigo && a.matricula && !a.sem_auxiliar && !a.sem_operador);
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+  const kpi = (n, r, c) => '<div style="flex:1 1 96px;background:var(--leve-s);border:1px solid var(--linha-s);border-left:5px solid ' + c +
+    ';border-radius:12px;padding:8px 10px"><div style="font-size:21px;font-weight:800;color:' + (n ? c : 'var(--fraco-2)') + '">' + n + '</div>' +
+    '<div style="font-size:11px;color:var(--fraco)">' + r + '</div></div>';
+  h += kpi(fora.length, 'fora hoje', 'var(--critico)');
+  h += kpi(semOp.length, 'máq. sem operador', 'var(--laranja)');
+  h += kpi(semMaq.length, 'sem máquina fixa', 'var(--fraco)');
+  h += '</div>';
+
+  if (fora.length) {
+    h += '<div class="titulo-sec">Quem está fora</div><div style="border:1px solid var(--linha-s);border-radius:10px;margin-bottom:10px">';
+    fora.sort((a, b) => (b.ehOp ? 1 : 0) - (a.ehOp ? 1 : 0)).forEach(f => {
+      const nm = orgNome(f.mat) || f.mat;
+      h += '<div onclick="orgFechaModal();orgHistPessoa(\'' + f.mat + '\')" style="cursor:pointer;display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--leve-2s)">' +
+        orgAvatar(nm, 26) +
+        '<span style="flex:1;min-width:0"><b style="font-size:13px">' + escapeHtml(nm) + '</b>' +
+        '<div style="font-size:11px;color:' + (f.ehOp ? 'var(--critico)' : 'var(--fraco)') + '">' +
+        (f.maqs.length ? 'máq. ' + f.maqs.join(', ') + (f.ehOp ? ' · posto descoberto' : ' · auxiliar a menos') : 'sem máquina fixa') + '</div></span>' +
+        '<span style="font-size:10px;font-weight:800;color:#fff;background:' + (CORT[f.tipo] || 'var(--fraco)') + ';padding:2px 8px;border-radius:999px;white-space:nowrap">' +
+        escapeHtml(f.tipo) + ((f.dias && f.dias > 1) ? ' ' + f.dias + 'd' : '') + '</span></div>';
+    });
+    h += '</div>';
+  }
+
+  if (semOp.length) {
+    h += '<div class="titulo-sec">Máquinas sem operador</div><div style="border:1px solid var(--linha-s);border-radius:10px;margin-bottom:10px">';
+    semOp.forEach(x => {
+      h += '<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+        '<b><span class="cod">' + escapeHtml(x.maq) + '</span></b><span style="color:var(--fraco)">' + escapeHtml(x.motivo) + '</span></div>';
+    });
+    h += '</div>';
+  }
+
+  if (semMaq.length) {
+    h += '<div class="titulo-sec">Escalados sem máquina fixa</div><div style="display:flex;flex-wrap:wrap;gap:6px">' +
+      semMaq.map(a => '<span style="font-size:12.5px;background:var(--leve-s);border:1px solid var(--linha-s);border-radius:14px;padding:4px 10px">' +
+        escapeHtml(orgPrimeiro(orgNome(a.matricula)) || a.matricula) + ' <span style="color:var(--fraco);font-size:10px">' + escapeHtml(a.funcao) + '</span></span>').join('') + '</div>';
+  }
+
+  if (!fora.length && !semOp.length && !semMaq.length) h = '<p class="vazio-painel">Turno completo, todas as máquinas com operador. ✔</p>';
+
+  orgModal(turno + ' · ' + escapeHtml(orgSetorSel), h);
+}
+
 function orgCardHeadcount() {
   const hc = orgHeadcount();
   let h = '<div class="card"><div class="titulo-sec">👥 Efetivo por turno · ' + escapeHtml(orgSetorSel) + '</div>';
@@ -10635,9 +10715,9 @@ function orgCardHeadcount() {
   h += '</div>';
   h += '</div>';
   h += '<div style="margin-top:12px">' + barrasVertical(
-    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].presentes, rot: String(hc.turnos[t].presentes) + (hc.turnos[t].fora ? ' /' + hc.turnos[t].tot : '') })),
+    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].presentes, rot: String(hc.turnos[t].presentes) + (hc.turnos[t].fora ? ' /' + hc.turnos[t].tot : ''), click: `detEfetivoTurno('${t}')` })),
     d => ORG_CORES[d.l] || 'var(--fraco-2s)') + '</div>';
-  h += '<div class="desc" style="font-size:11px;text-align:center;margin-top:-4px">barras = presentes hoje' + (hc.fora ? ' (rótulo: presentes / escalados)' : '') + '</div>';
+  h += '<div class="desc" style="font-size:11px;text-align:center;margin-top:-4px">toque numa barra para ver quem falta · barras = presentes hoje' + (hc.fora ? ' (rótulo: presentes / escalados)' : '') + '</div>';
   h += '</div>';
   return h;
 }
