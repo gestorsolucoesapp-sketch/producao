@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.157.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.158.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.157.0';
+const APP_VER = '3.158.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10455,6 +10455,7 @@ function orgCardHeadcount() {
 /* ---------- gráficos de faltas ---------- */
 function orgGraficoFaltas(af) {
   let h = '';
+  _faltasBuf = af;
   const porTipo = {};
   af.forEach(a => porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1);
   const tipos = ORG_TIPOS.filter(t => porTipo[t]);
@@ -10465,7 +10466,7 @@ function orgGraficoFaltas(af) {
     h += '<div class="desc">sem registros no período</div></div>';
     return h;
   }
-  h += barrasVertical(tipos.map(t => ({ l: t, v: porTipo[t], rot: String(porTipo[t]) })), d => CORT[d.l] || 'var(--fraco-2s)');
+  h += barrasVertical(tipos.map(t => ({ l: t, v: porTipo[t], rot: String(porTipo[t]), click: `detFaltas('tipo','${t}')` })), d => CORT[d.l] || 'var(--fraco-2s)');
 
   /* por dia — últimos 14 */
   const dias = [];
@@ -10476,7 +10477,8 @@ function orgGraficoFaltas(af) {
   if (dias.some(x => x.n)) {
     h += '<div class="titulo-sec" style="margin-top:14px">Por dia · últimos 14</div>';
     h += barrasVerticalScroll(dias.map(x => ({
-      l: x.d.slice(8, 10) + '/' + x.d.slice(5, 7), v: x.n, rot: x.n ? String(x.n) : ''
+      l: x.d.slice(8, 10) + '/' + x.d.slice(5, 7), v: x.n, rot: x.n ? String(x.n) : '',
+      click: x.n ? `detFaltas('dia','${x.d}')` : ''
     })), d => d.v ? 'var(--critico-s)' : 'var(--linha-s)', { trend: true });
   }
 
@@ -10488,7 +10490,7 @@ function orgGraficoFaltas(af) {
   });
   if (Object.keys(porTurno).length) {
     h += '<div class="titulo-sec" style="margin-top:14px">Por turno</div>';
-    h += barrasVertical(ORG_TURNOS.map(t => ({ l: t, v: porTurno[t] || 0, rot: String(porTurno[t] || 0) })), d => ORG_CORES[d.l]);
+    h += barrasVertical(ORG_TURNOS.map(t => ({ l: t, v: porTurno[t] || 0, rot: String(porTurno[t] || 0), click: (porTurno[t] ? `detFaltas('turno','${t}')` : '') })), d => ORG_CORES[d.l]);
   }
   h += '</div>';
   return h;
@@ -11860,7 +11862,44 @@ async function orgAddOperador(turno, maq) {
 
 /* ---------- faltas ---------- */
 const ORG_TIPOS = ['falta', 'atestado', 'ferias', 'folga', 'afastamento'];
-async function renderOrgFaltas() {
+async let _faltasBuf = [];
+function detFaltas(modo, chave) {
+  const CORT = { falta: 'var(--critico-s)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
+  let arr = _faltasBuf || [], titulo = '';
+  if (modo === 'tipo') { arr = arr.filter(a => a.tipo === chave); titulo = chave + ' · últimos 30 dias'; }
+  else if (modo === 'dia') { arr = arr.filter(a => a.data === chave); titulo = fmtDataSem(chave); }
+  else if (modo === 'turno') {
+    arr = arr.filter(a => { const al = orgDados.aloc.find(x => x.matricula === a.matricula && x.setor === orgSetorSel); return al && al.turno === chave; });
+    titulo = 'Turno ' + chave + ' · últimos 30 dias';
+  }
+  if (!arr.length) { abreDet(titulo, '<p class="vazio-painel">Nada neste recorte.</p>'); return; }
+
+  arr = arr.slice().sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+  const porPessoa = {};
+  arr.forEach(a => { porPessoa[a.matricula] = (porPessoa[a.matricula] || 0) + 1; });
+  const reincid = Object.entries(porPessoa).filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1]);
+
+  let h = '<p class="desc"><b>' + arr.length + '</b> registro(s) · ' + Object.keys(porPessoa).length + ' pessoa(s)</p>';
+  if (reincid.length) {
+    h += '<div style="margin-top:8px;padding:9px 11px;background:var(--crit-bg);border:1px solid var(--crit-br);border-radius:12px;font-size:12px;color:var(--critico-2s)">' +
+      '<b>Repetiram no período:</b> ' + reincid.slice(0, 8).map(([m, n]) => escapeHtml(orgPrimeiro(orgNome(m)) || m) + ' <b>' + n + '×</b>').join(' · ') + '</div>';
+  }
+  h += '<div style="max-height:52vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin-top:9px">';
+  arr.forEach(a => {
+    const al = orgDados.aloc.find(x => x.matricula === a.matricula && x.setor === orgSetorSel);
+    const cor = CORT[a.tipo] || 'var(--fraco-2s)';
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+      orgAvatar(orgNome(a.matricula) || a.matricula, 24) +
+      '<b style="flex:1;min-width:0">' + escapeHtml(orgNome(a.matricula) || a.matricula) + '</b>' +
+      (al ? '<span style="font-size:10px;color:var(--fraco);white-space:nowrap">' + escapeHtml(al.turno) + (al.maquina_codigo ? ' ' + al.maquina_codigo : '') + '</span>' : '') +
+      '<span style="font-size:10px;font-weight:800;color:#fff;background:' + cor + ';padding:2px 8px;border-radius:999px">' + escapeHtml(a.tipo) + '</span>' +
+      '<span style="font-size:11px;color:var(--fraco-2);white-space:nowrap">' + fmtDataSem(a.data) + '</span></div>';
+  });
+  h += '</div>';
+  abreDet(titulo + ' · ' + orgSetorSel, h);
+}
+
+function renderOrgFaltas() {
   const wrap = $('orgWrap');
   wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
   const ini = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
