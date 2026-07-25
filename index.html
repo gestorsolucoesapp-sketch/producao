@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.161.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.162.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1524,7 +1524,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.161.0';
+const APP_VER = '3.162.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2015,9 +2015,10 @@ async function posLogin() {
   // admin: pelo perfil OU pelo e-mail (fallback, funciona mesmo sem SQL 04)
   const email = (user.email || '').toLowerCase();
   souAdmin = (perfil && perfil.papel === 'admin') || ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);
-  podeEditarEscala = souAdmin || !!(perfil && perfil.pode_editar_escala === true);
   souDev = !!(perfil && perfil.desenvolvedor === true);
   if (souDev) souAdmin = true;   // desenvolvedor = tudo do gestor + Organograma
+  // depois do souDev: quem é dev mas não admin também precisa poder editar a escala
+  podeEditarEscala = souAdmin || !!(perfil && perfil.pode_editar_escala === true);
   // Sem etapa de aprovação: entra direto. Só barra se o admin bloquear (ativo=false).
   if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
   await registrarAcesso();
@@ -9991,10 +9992,10 @@ function orgCardMaq(l, ref, aloc, turno, dup, rep, tint) {
   const barra = dupN ? 'var(--critico-s)' : (des ? 'var(--linha-2s)' : tint.br);
 
   const _edit = (typeof podeEditarEscala !== 'undefined') && podeEditarEscala;
-  const _dnd = _edit ? ' data-arrastavel="1"' : '';
+  const _dnd = _edit ? ' data-arrastavel="1" title="segure para arrastar para outro operador"' : '';
   let h = '<div class="org-maq orgv2-card"' + _dnd + ' data-maq="' + l.maquina_codigo + '" data-turno="' + turno + '" ' +
     'style="background:' + (dupN ? 'var(--crit-bg)' : '#fff') + ';border:1px solid ' + (dupN ? 'var(--crit-br)' : 'var(--linha-s)') +
-    ';border-left:5px solid ' + barra + ';border-radius:14px;padding:10px 11px;box-shadow:0 1px 2px rgba(11,42,74,.05)' + (des ? ';opacity:.55' : '') + '">';
+    ';border-left:5px solid ' + barra + ';border-radius:14px;padding:10px 11px;box-shadow:0 1px 2px rgba(11,42,74,.05)' + (_edit ? ';touch-action:none;cursor:grab' : '') + (des ? ';opacity:.55' : '') + '">';
 
   /* cabeçalho: badge MÁQ + código */
   h += '<div style="display:flex;align-items:center;gap:8px">';
@@ -11638,9 +11639,12 @@ function orgLigaArrasto() {
     document.querySelectorAll('#orgWrap .org-maq[data-arrastavel]').forEach(mc => {
       let timer = null, ghost = null, ativo = false;
       const limpa = () => document.querySelectorAll('#orgWrap .orgv2-opnode[data-op]').forEach(n => n.style.outline = '');
+      let px0 = 0, py0 = 0;
       mc.addEventListener('pointerdown', ev => {
         // toque em chip de auxiliar ou em botão não arrasta a máquina
         if (ev.target.closest && (ev.target.closest('.org-chip') || ev.target.closest('button'))) return;
+        px0 = ev.clientX; py0 = ev.clientY;
+        try { mc.setPointerCapture(ev.pointerId); } catch (_) {}
         timer = setTimeout(() => {
           ativo = true;
           ghost = document.createElement('div');
@@ -11657,7 +11661,11 @@ function orgLigaArrasto() {
         }, 380);
       });
       mc.addEventListener('pointermove', ev => {
-        if (!ativo) { clearTimeout(timer); return; }
+        if (!ativo) {
+          // tolerância: no mouse é impossível segurar 380ms sem tremer 1px
+          if (Math.abs(ev.clientX - px0) > 10 || Math.abs(ev.clientY - py0) > 10) clearTimeout(timer);
+          return;
+        }
         ev.preventDefault();
         ghost.style.left = (ev.clientX - 40) + 'px'; ghost.style.top = (ev.clientY - 38) + 'px';
         const alvo = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -11684,8 +11692,9 @@ function orgLigaArrasto() {
   }
 
   document.querySelectorAll('#orgWrap .org-chip').forEach(ch => {
-    let timer = null, ghost = null, ativo = false;
+    let timer = null, ghost = null, ativo = false, cx0 = 0, cy0 = 0;
     ch.addEventListener('pointerdown', ev => {
+      cx0 = ev.clientX; cy0 = ev.clientY;
       timer = setTimeout(() => {
         ativo = true; orgArrasto = parseInt(ch.dataset.id, 10);
         ghost = document.createElement('div');
@@ -11698,7 +11707,10 @@ function orgLigaArrasto() {
       }, 380);
     });
     ch.addEventListener('pointermove', ev => {
-      if (!ativo) { clearTimeout(timer); return; }
+      if (!ativo) {
+        if (Math.abs(ev.clientX - cx0) > 10 || Math.abs(ev.clientY - cy0) > 10) clearTimeout(timer);
+        return;
+      }
       ev.preventDefault();
       ghost.style.left = (ev.clientX - 30) + 'px'; ghost.style.top = (ev.clientY - 34) + 'px';
       document.querySelectorAll('#orgWrap .org-maq').forEach(m => m.style.outline = '');
