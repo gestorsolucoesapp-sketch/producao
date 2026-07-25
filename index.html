@@ -642,7 +642,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.169.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.170.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1525,7 +1525,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.169.1';
+const APP_VER = '3.170.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10423,12 +10423,60 @@ function orgHeadcount() {
   return { turnos: r, total: todos, fora: foraTodos, presentes: todos - foraTodos, pend: pendTodos, semMaq: semMaqTodos };
 }
 
+function detSituacao(modo) {
+  const S = orgSituacaoHoje();
+  const CORT = { falta: 'var(--critico)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
+  const escal = m => orgDados.aloc.filter(a => a.setor === orgSetorSel && a.matricula === m);
+
+  const linha = (mat, dir, selo, corSelo) => {
+    const nm = orgNome(mat) || mat;
+    const es = escal(mat);
+    const op = es.filter(a => a.funcao === 'operador' && !a.aprendiz && a.maquina_codigo);
+    const onde = op.length ? op[0].turno + ' · ' + [...new Set(op.map(a => a.maquina_codigo))].join(', ')
+               : (es.length ? es[0].turno + ' · ' + es[0].funcao : 'fora da escala');
+    return '<div onclick="orgFechaModal();orgHistPessoa(\'' + mat + '\')" style="cursor:pointer;display:flex;align-items:center;gap:9px;padding:9px 10px;border-bottom:1px solid var(--leve-2s)">' +
+      orgAvatar(nm, 28) +
+      '<span style="flex:1;min-width:0"><b style="font-size:13px">' + escapeHtml(nm) + '</b>' +
+      '<div style="font-size:11px;color:' + (op.length ? 'var(--critico)' : 'var(--fraco)') + '">' + escapeHtml(onde) + (op.length ? ' · posto descoberto' : '') + '</div></span>' +
+      '<span style="text-align:right;white-space:nowrap">' +
+      (selo ? '<span style="font-size:10px;font-weight:800;color:#fff;background:' + corSelo + ';padding:2px 8px;border-radius:999px">' + escapeHtml(selo) + '</span>' : '') +
+      '<div style="font-size:11px;color:var(--fraco);margin-top:2px">' + dir + '</div></span></div>';
+  };
+
+  let tit = '', corpo = '';
+  if (modo === 'ferias') {
+    tit = S.ferias.length + ' de férias hoje';
+    corpo = S.ferias.sort((a, b) => (a.fim || '').localeCompare(b.fim || '')).map(f => {
+      const faltam = f.fim ? Math.round((new Date(f.fim + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5) + 1 : null;
+      return linha(f.matricula, ferFmt(f.inicio) + ' → ' + ferFmt(f.fim), faltam != null ? 'volta em ' + faltam + 'd' : 'férias', '#2563eb');
+    }).join('');
+  } else if (modo === 'faltas') {
+    tit = S.faltas.length + ' com falta ou atestado hoje';
+    corpo = S.faltas.slice().sort((a, b) => (a.tipo || '').localeCompare(b.tipo || '')).map(a => {
+      const ate = a.fim || a.data;
+      const dur = (a.dias && a.dias > 1) ? fmtDataSem(a.data) + ' → ' + fmtDataSem(ate) + ' · ' + a.dias + 'd' : fmtDataSem(a.data);
+      return linha(a.matricula, dur + (a.motivo ? ' · ' + escapeHtml(a.motivo) : ''), a.tipo, CORT[a.tipo] || 'var(--fraco)');
+    }).join('');
+  } else {
+    tit = S.saem.length + ' saem de férias em 7 dias';
+    corpo = S.saem.sort((a, b) => a.inicio.localeCompare(b.inicio)).map(f => {
+      const em = Math.round((new Date(f.inicio + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
+      return linha(f.matricula, ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd', 'em ' + em + 'd', 'var(--laranja)');
+    }).join('');
+  }
+
+  orgModal(tit,
+    '<p class="desc" style="margin-bottom:8px">' + escapeHtml(orgSetorSel) + ' · toque num nome para o histórico</p>' +
+    '<div style="max-height:56vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">' + (corpo || '<div class="desc" style="padding:12px">nada aqui</div>') + '</div>');
+}
+
 function orgCardSituacao() {
   const S = orgSituacaoHoje();
   const nome = m => orgPrimeiro(orgNome(m)) || m;
 
-  const bloco = (n, rot, cor, det, extra) =>
-    '<div style="flex:1 1 150px;background:' + (n ? '#fff' : 'var(--leve-s)') + ';border:1px solid var(--linha-s);border-left:5px solid ' + cor +
+  const bloco = (n, rot, cor, det, extra, modo) =>
+    '<div' + (n && modo ? ' onclick="detSituacao(\'' + modo + '\')" title="ver a lista"' : '') +
+    ' style="' + (n && modo ? 'cursor:pointer;' : '') + 'flex:1 1 150px;background:' + (n ? '#fff' : 'var(--leve-s)') + ';border:1px solid var(--linha-s);border-left:5px solid ' + cor +
     ';border-radius:14px;padding:11px 13px">' +
     '<div style="display:flex;align-items:baseline;gap:7px"><div style="font-size:27px;font-weight:800;line-height:1.05;color:' + (n ? cor : 'var(--fraco-2)') + '">' + n + '</div>' +
     (extra || '') + '</div>' +
@@ -10446,12 +10494,12 @@ function orgCardSituacao() {
   let h = '<div class="card"><div class="titulo-sec">📅 Hoje · ' + fmtDataSem(S.hoje) + ' · ' + escapeHtml(orgSetorSel) + '</div>';
   h += '<div style="display:flex;gap:10px;flex-wrap:wrap">';
   h += bloco(S.ferias.length, 'de férias hoje', 'var(--azul-2)', lista(S.ferias, 4),
-             seloOp(S.feriasEscalados.filter(f => orgDados.aloc.some(a => a.matricula === f.matricula && a.funcao === 'operador' && !a.aprendiz)).length));
-  h += bloco(S.faltas.length, 'falta / atestado hoje', 'var(--critico)', lista(S.faltas, 4), '');
+             seloOp(S.feriasEscalados.filter(f => orgDados.aloc.some(a => a.matricula === f.matricula && a.funcao === 'operador' && !a.aprendiz)).length), 'ferias');
+  h += bloco(S.faltas.length, 'falta / atestado hoje', 'var(--critico)', lista(S.faltas, 4), '', 'faltas');
   h += bloco(S.saem.length, 'saem de férias em 7 dias', 'var(--laranja)',
              S.saem.length ? S.saem.sort((a, b) => a.inicio.localeCompare(b.inicio)).slice(0, 4)
                .map(f => escapeHtml(nome(f.matricula)) + ' <b style="color:var(--txt-2)">' + fmtDataSem(f.inicio) + '</b>').join('<br>') : '',
-             seloOp(S.saemOperadores.length));
+             seloOp(S.saemOperadores.length), 'saem');
   h += '</div>';
   if (S.feriasEscalados.length) {
     h += '<div style="margin-top:10px;padding:9px 12px;background:var(--crit-bg);border:1px solid var(--crit-br);border-radius:12px;font-size:12px;color:var(--critico-2s)">' +
