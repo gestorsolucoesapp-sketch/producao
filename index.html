@@ -1546,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.195.2';
+const APP_VER = '3.196.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3193,10 +3193,24 @@ function _amKeep(cod) { return _amMaq ? (String(cod) === _amMaq) : _amKeepSetor(
    que expõe só código/célula/bloco — sem matrícula). Máquina fora do
    organograma cai no próprio setor. Respeita o seletor de setor da Análise+
    e o toggle Diária/Mensal (Diária = última importação). */
-let _mtBloco = null;
+let _mtBloco = null, _mtEquipe = null;
+let _mtNomes = true;
+try { _mtNomes = localStorage.getItem('mtNomes') !== '0'; } catch (_) {}
+function mtTogNomes() {
+  _mtNomes = !_mtNomes;
+  try { localStorage.setItem('mtNomes', _mtNomes ? '1' : '0'); } catch (_) {}
+  renderAnaliseMais();
+}
+const _mtCurto = n => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1] : (p[0] || ''); };
 async function getMtBlocos() {
   if (_mtBloco) return _mtBloco;
-  _mtBloco = {};
+  _mtBloco = {}; _mtEquipe = {};
+  try {
+    const { data, error } = await sb.from('v_org_maquina_equipe')
+      .select('maquina_codigo,turno,operador,operador_pendente,auxiliares,n_aux');
+    if (error) throw error;
+    (data || []).forEach(r => { _mtEquipe[String(r.maquina_codigo) + '|' + r.turno] = r; });
+  } catch (e) { console.warn('equipe do organograma indisponível:', e.message || e); }
   try {
     const { data, error } = await sb.from('v_org_maquina_bloco')
       .select('maquina_codigo,setor,celula,bloco,desativada');
@@ -3222,6 +3236,18 @@ function _mtBarra(f, val, esc, meta, rot) {
     '<span style="position:absolute;left:0;top:0;bottom:0;border-radius:6px;width:' + w.toFixed(1) + '%;background:' + MT_BAR[f] + '"></span>' +
     '<span style="position:absolute;top:-1px;bottom:-1px;width:2px;opacity:.7;background:var(--texto,#0B2A4A);left:' + mk.toFixed(1) + '%"></span></div>' +
     '<span style="position:absolute;top:13px;font-size:9px;color:var(--fraco-2,#8FA6C0);white-space:nowrap;transform:translateX(-50%);left:' + mk.toFixed(1) + '%">' + rot + '</span></div>';
+}
+
+function _mtLinhaEquipe(cod, bl) {
+  if (!_mtNomes) return '';
+  const e = _mtEquipe && _mtEquipe[String(cod) + '|' + bl];
+  if (!e) return '';
+  const op = e.operador_pendente ? '<span style="color:var(--laranja-2)">a identificar</span>'
+           : (e.operador ? escapeHtml(_mtCurto(e.operador)) : '<span style="color:var(--laranja-2)">sem operador</span>');
+  const aux = (e.auxiliares || '').split(' | ').filter(Boolean).map(_mtCurto).map(escapeHtml).join(' · ');
+  return '<div style="font-size:10px;line-height:1.45;color:var(--fraco);margin-bottom:7px">' +
+    '<b style="font-weight:700;color:var(--txt-2)">' + op + '</b>' +
+    (aux ? ' <span style="opacity:.85">+ ' + aux + '</span>' : '') + '</div>';
 }
 function cardMaquinaTurno(E) {
   const emCx = c => setorEmCx(setorDe(c));
@@ -3300,8 +3326,9 @@ function cardMaquinaTurno(E) {
           const n = (fP === 0) + (fR === 0) + (fA === 0);
           const dot = n === 3 ? '#3CA96E' : n === 0 ? '#D64545' : '#E8871F';
           html += '<div style="border:2px solid ' + MT_COR_T(bb) + ';border-radius:11px;padding:9px 10px;margin-bottom:8px">' +
-            '<div style="display:flex;align-items:center;margin-bottom:7px"><b style="font-size:12px;color:' + MT_COR_T(bb) + '">' + bb + '</b>' +
+            '<div style="display:flex;align-items:center;margin-bottom:' + (_mtNomes ? '3px' : '7px') + '"><b style="font-size:12px;color:' + MT_COR_T(bb) + '">' + bb + '</b>' +
             '<span style="margin-left:auto;width:12px;height:12px;border-radius:50%;background:' + dot + '"></span></div>' +
+            _mtLinhaEquipe(c, bb) +
             '<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin-bottom:3px"><span style="width:64px;flex:none;font-size:11px;font-weight:600;color:var(--fraco);line-height:1.5">Produção</span>' +
             '<span style="font-size:11px;line-height:1.5;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">atingiu <b style="color:' + MT_TXT[fP] + '">' + Math.round(p) + '%</b> da meta' + (d > 1 ? ' <i style="font-style:normal;font-size:9px" class="desc">em ' + d + ' dias</i>' : '') + '</span>' +
             '<span style="margin-left:auto;font-size:11px;color:var(--fraco);white-space:nowrap;line-height:1.5">' + fV(a.v, c) + '</span></div>' +
@@ -3319,9 +3346,12 @@ function cardMaquinaTurno(E) {
       });
     });
   });
+  const olho = '<div style="display:flex;justify-content:flex-end;margin:-2px 0 8px">' +
+    '<button onclick="mtTogNomes()" style="border:1px solid var(--linha-s);background:#fff;border-radius:999px;padding:5px 12px;font-size:11.5px;font-weight:700;color:var(--txt-2);cursor:pointer">' +
+    (_mtNomes ? '👁️ ocultar nomes' : '🙈 mostrar nomes') + '</button></div>';
   return card('🧩 Máquina × turno · ' + E.rotulo,
     'produção, perdas e paradas por bloco do organograma · verde bateu a meta, laranja perto, vermelho longe',
-    html, 'mt');
+    olho + html, 'mt');
 }
 const MT_COR_T = b => (b === 'Manhã' ? '#E0A82D' : b === 'Tarde' ? '#70AD47' : '#5B9BD5');
 
