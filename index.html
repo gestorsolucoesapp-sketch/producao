@@ -1546,7 +1546,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.194.1';
+const APP_VER = '3.195.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3116,8 +3116,8 @@ async function salvarCustoKg(v) {
 async function carregarDadosAM(de, ate, anoRef) {
   const ano = anoRef || new Date(Date.now() - 3 * 3600 * 1000).getFullYear();
   const [prod, perd, par] = await Promise.all([
-    fetchTudo('producao_resumo', 'dia,recurso_cod,recurso_nome,peso,quantidade,unidade', de, ate),
-    fetchTudo('perdas', 'dia,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de, ate),
+    fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,peso,quantidade,unidade', de, ate),
+    fetchTudo('perdas', 'dia,turno,recurso_cod,tipo_perda_desc,item_cod,item_desc,peso', de, ate),
     fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,op', de, ate)
   ]);
   let os = [];
@@ -3155,7 +3155,7 @@ async function carregarAnaliseMais() {
   const box = $('anmConteudo'); if (!box) return;
   box.innerHTML = '<p class="vazio-painel"><span class="spin"></span> Carregando análise…</p>';
   try {
-    await getCustoKg(); await getPrecoHist();
+    await getCustoKg(); await getPrecoHist(); await getMtBlocos();
     const c = await getCacheAM();
     renderAnaliseMais(c);
   } catch (e) { box.innerHTML = '<p class="vazio-painel">Não consegui carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
@@ -3187,6 +3187,144 @@ function _amPreencheMaquinas(cache) {
 function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'todos') return true; if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return s !== 'Extrusão'; return s === _amSetor; }
 // máquina tem precedência: escolhida uma, o setor deixa de importar
 function _amKeep(cod) { return _amMaq ? (String(cod) === _amMaq) : _amKeepSetor(cod); }
+
+/* ===== Máquina × turno: produção, perdas e paradas lado a lado =====
+   Agrupa por célula e bloco vindos do organograma (view v_org_maquina_bloco,
+   que expõe só código/célula/bloco — sem matrícula). Máquina fora do
+   organograma cai no próprio setor. Respeita o seletor de setor da Análise+
+   e o toggle Diária/Mensal (Diária = última importação). */
+let _mtBloco = null;
+async function getMtBlocos() {
+  if (_mtBloco) return _mtBloco;
+  _mtBloco = {};
+  try {
+    const { data, error } = await sb.from('v_org_maquina_bloco')
+      .select('maquina_codigo,setor,celula,bloco,desativada');
+    if (error) throw error;
+    (data || []).forEach(r => { _mtBloco[String(r.maquina_codigo)] = r; });
+  } catch (e) { console.warn('blocos do organograma indisponíveis:', e.message || e); }
+  return _mtBloco;
+}
+const MT_JOR = { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 };
+const MT_ORD = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2 };
+const MT_PERDA_META = 2.5, MT_PARADA_META = 20;
+const MT_BAR = ['#2FD07A', '#F59E1B', '#D64545'];
+const MT_TXT = ['#3CA96E', '#E8871F', '#D64545'];
+const _mtFx = {
+  prod: v => (Math.round(v) >= 100 ? 0 : Math.round(v) >= 90 ? 1 : 2),
+  perda: v => (Math.round(v * 10) / 10 <= MT_PERDA_META ? 0 : Math.round(v * 10) / 10 <= 5 ? 1 : 2),
+  parada: v => (Math.round(v) <= MT_PARADA_META ? 0 : Math.round(v) <= 35 ? 1 : 2)
+};
+function _mtBarra(f, val, esc, meta, rot) {
+  const w = Math.min(val / esc * 100, 100), mk = Math.min(meta / esc * 100, 100);
+  return '<div style="position:relative;padding-bottom:13px;margin-bottom:5px">' +
+    '<div style="height:11px;border-radius:6px;background:rgba(0,0,0,.18);position:relative;overflow:hidden">' +
+    '<span style="position:absolute;left:0;top:0;bottom:0;border-radius:6px;width:' + w.toFixed(1) + '%;background:' + MT_BAR[f] + '"></span>' +
+    '<span style="position:absolute;top:-1px;bottom:-1px;width:2px;opacity:.7;background:var(--texto,#0B2A4A);left:' + mk.toFixed(1) + '%"></span></div>' +
+    '<span style="position:absolute;top:13px;font-size:9px;color:var(--fraco-2,#8FA6C0);white-space:nowrap;transform:translateX(-50%);left:' + mk.toFixed(1) + '%">' + rot + '</span></div>';
+}
+function cardMaquinaTurno(E) {
+  const emCx = c => setorEmCx(setorDe(c));
+  const val = (r, c) => (emCx(c) ? (r.quantidade || 0) : (r.peso || 0));
+  const fV = (v, c) => (emCx(c) ? (fmtNum(Math.round(v)) + ' cxs') : fmtKg(v));
+  const M = {};                                   // cod -> bloco -> acumuladores
+  const ini = (c, b) => { (M[c] = M[c] || {}); M[c][b] = M[c][b] || { v: 0, pe: 0, pa: 0, dias: new Set() }; return M[c][b]; };
+  (E.prod || []).forEach(r => {
+    const b = blocoTurno(r.turno, r.dia); if (!b) return;
+    const c = String(r.recurso_cod || ''); if (!c) return;
+    const a = ini(c, b); a.v += val(r, c); if (r.dia) a.dias.add(String(r.dia).slice(0, 10));
+  });
+  (E.perd || []).forEach(r => {
+    const b = blocoTurno(r.turno, r.dia); if (!b) return;
+    const c = String(r.recurso_cod || ''); if (!c || !M[c] || !M[c][b]) return;
+    M[c][b].pe += val(r, c);
+  });
+  (E.par || []).forEach(r => {
+    const b = blocoParada(r); if (!b) return;
+    const c = String(r.recurso_cod || ''); if (!c || !M[c] || !M[c][b]) return;
+    M[c][b].pa += (r.tempo_horas || 0);
+  });
+  const cods = Object.keys(M); if (!cods.length) return '';
+  const grupos = {};                              // celula -> bloco -> [cods]
+  cods.forEach(c => {
+    const o = _mtBloco && _mtBloco[c];
+    const cel = o && o.celula ? o.celula : (setorDe(c) + ' · sem célula');
+    const blo = o && o.bloco ? o.bloco : c;
+    ((grupos[cel] = grupos[cel] || {})[blo] = grupos[cel][blo] || []).push(c);
+  });
+  let html = '';
+  Object.keys(grupos).sort().forEach(cel => {
+    const bls = Object.keys(grupos[cel]).map(b => {
+      const cs = grupos[cel][b].sort((x, y) => (+x || 0) - (+y || 0));
+      let tot = 0, nv = 0, nl = 0, nr = 0;
+      cs.forEach(c => Object.keys(M[c]).forEach(bb => {
+        const a = M[c][bb]; tot += a.v;
+        const d = Math.max(a.dias.size, 1), meta = (metasData && metasData[c] && metasData[c][bb]) || 0;
+        const p = meta > 0 ? (a.v / d) / meta * 100 : 0;
+        const rp = (a.v + a.pe) > 0 ? a.pe / (a.v + a.pe) * 100 : 0;
+        const pp = a.pa / (MT_JOR[bb] * d) * 100;
+        const n = (_mtFx.prod(p) === 0) + (_mtFx.perda(rp) === 0) + (_mtFx.parada(pp) === 0);
+        if (n === 3) nv++; else if (n === 0) nr++; else nl++;
+      }));
+      return { b: b, cs: cs, tot: tot, nv: nv, nl: nl, nr: nr };
+    }).sort((a, b) => b.tot - a.tot);
+    const totCel = bls.reduce((s, x) => s + x.tot, 0);
+    html += '<div style="display:flex;align-items:baseline;gap:8px;margin:16px 0 9px;padding:9px 12px;background:var(--leve-4,#eef2f7);border-radius:10px;flex-wrap:wrap">' +
+      '<b style="font-size:15px">' + escapeHtml(cel) + '</b>' +
+      '<span class="desc" style="font-size:11px">' + bls.length + ' bloco(s)</span>' +
+      '<b style="margin-left:auto;font-size:13px">' + fV(totCel, bls[0] && bls[0].cs[0]) + '</b></div>';
+    bls.forEach(g => {
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:0 4px 7px;flex-wrap:wrap">' +
+        '<b style="font-size:13px">' + escapeHtml(g.cs.join(' · ')) + '</b>' +
+        '<span style="margin-left:auto;font-size:12px" class="desc">' + fV(g.tot, g.cs[0]) + '</span>' +
+        '<span style="width:100%;font-size:11px" class="desc">' +
+        '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3CA96E;margin-right:4px"></i>' + g.nv +
+        '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#E8871F;margin:0 4px 0 10px"></i>' + g.nl +
+        '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#D64545;margin:0 4px 0 10px"></i>' + g.nr +
+        '</span></div>';
+      g.cs.forEach(c => {
+        const o = _mtBloco && _mtBloco[c];
+        const un = emCx(c) ? 'cx' : 'kg';
+        let totM = 0; Object.keys(M[c]).forEach(bb => totM += M[c][bb].v);
+        html += '<div style="background:var(--leve-4,#eef2f7);border-radius:12px;padding:11px;margin-bottom:9px">' +
+          '<div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:18px">' + escapeHtml(c) + '</b>' +
+          (o && o.desativada ? '<span style="font-size:9px;font-weight:800;background:rgba(214,69,69,.16);color:#B23B3B;padding:2px 6px;border-radius:5px;margin-left:7px">desativada</span>' : '') +
+          '<span class="desc" style="margin-left:auto;font-size:12px">' + fV(totM, c) + '</span></div>';
+        Object.keys(M[c]).sort((x, y) => MT_ORD[x] - MT_ORD[y]).forEach(bb => {
+          const a = M[c][bb], d = Math.max(a.dias.size, 1);
+          const meta = (metasData && metasData[c] && metasData[c][bb]) || 0;
+          const p = meta > 0 ? (a.v / d) / meta * 100 : 0;
+          const rp = (a.v + a.pe) > 0 ? a.pe / (a.v + a.pe) * 100 : 0;
+          const pp = a.pa / (MT_JOR[bb] * d) * 100;
+          const fP = _mtFx.prod(p), fR = _mtFx.perda(rp), fA = _mtFx.parada(pp);
+          const n = (fP === 0) + (fR === 0) + (fA === 0);
+          const dot = n === 3 ? '#3CA96E' : n === 0 ? '#D64545' : '#E8871F';
+          html += '<div style="border:2px solid ' + MT_COR_T(bb) + ';border-radius:11px;padding:9px 10px;margin-bottom:8px">' +
+            '<div style="display:flex;align-items:center;margin-bottom:7px"><b style="font-size:12px;color:' + MT_COR_T(bb) + '">' + bb + '</b>' +
+            '<span style="margin-left:auto;width:12px;height:12px;border-radius:50%;background:' + dot + '"></span></div>' +
+            '<div style="display:flex;font-size:11px;margin-bottom:2px"><span class="desc" style="width:58px">Produção</span>' +
+            '<span>atingiu <b style="color:' + MT_TXT[fP] + '">' + Math.round(p) + '%</b> da meta' + (d > 1 ? ' <i style="font-style:normal;font-size:9px" class="desc">em ' + d + ' dias</i>' : '') + '</span>' +
+            '<span class="desc" style="margin-left:auto">' + fV(a.v, c) + '</span></div>' +
+            _mtBarra(fP, p, 150, 100, 'meta ' + (meta ? fV(meta, c) : '—') + (d > 1 ? '/dia' : '')) +
+            '<div style="display:flex;font-size:11px;margin-bottom:2px"><span class="desc" style="width:58px">Perdas</span>' +
+            '<b style="color:' + MT_TXT[fR] + '">' + rp.toFixed(1).replace('.', ',') + '%</b>' +
+            '<span class="desc" style="margin-left:auto">' + fV(a.pe, c) + '</span></div>' +
+            _mtBarra(fR, rp, 10, MT_PERDA_META, 'meta 2,5%') +
+            '<div style="display:flex;font-size:11px;margin-bottom:2px"><span class="desc" style="width:58px">Paradas</span>' +
+            '<b style="color:' + MT_TXT[fA] + '">' + a.pa.toFixed(1).replace('.', ',') + ' h</b>' +
+            '<span class="desc" style="margin-left:auto">' + Math.round(pp) + '% do turno</span></div>' +
+            _mtBarra(fA, pp, 100, MT_PARADA_META, 'meta 20%') + '</div>';
+        });
+        html += '</div>';
+      });
+    });
+  });
+  return card('🧩 Máquina × turno · ' + E.rotulo,
+    'produção, perdas e paradas por bloco do organograma · verde bateu a meta, laranja perto, vermelho longe',
+    html, 'mt');
+}
+const MT_COR_T = b => (b === 'Manhã' ? '#E0A82D' : b === 'Tarde' ? '#70AD47' : '#5B9BD5');
+
 function renderAnaliseMais(cache) {
   cache = cache || _amCacheAtual();
   const box = $('anmConteudo'); if (!box || !cache) return;
@@ -3290,6 +3428,7 @@ function renderAnaliseMais(cache) {
   html += card('🎯 Onde atacar primeiro', 'maiores ofensores de refugo por impacto (R$) · vira plano de ação',
     topTipos.length ? tabSimples(['Ofensor', 'Impacto', 'Prioridade', ''], linMat) : '<p class="desc">Sem dados suficientes.</p>');
 
+  try { html += cardMaquinaTurno(E); } catch (e) { console.warn('máquina×turno:', e); }
   box.innerHTML = html;
   const ck = $('amCustoKg'); // mantém foco não é necessário
 }
