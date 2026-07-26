@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.207.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.208.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1582,7 +1582,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.207.0';
+const APP_VER = '3.208.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3606,6 +3606,7 @@ function mudarSetorGlobal(v) {
 let _abaAtual = 'painel';
 
 /* ===================== Diagnóstico RH (105 entrevistas) ===================== */
+let _rhRem = null, _rhFaixa = null;
 let _rhDados = null, _rhFiltros = { trava:false, mult:false, carr:false, sens:false, deslig:false, sement:false }, _rhAberto = null;
 
 const RH_COR_TURNO = { 'Manhã':'#E0A82D', 'Tarde':'#70AD47', 'Noite':'#5B9BD5' };
@@ -3626,6 +3627,16 @@ async function carregarRH() {
   if (error) { box.innerHTML = '<div class="card">Erro ao carregar: ' + rhEsc(error.message) + '</div>'; return; }
   if (!data || !data.length) { box.innerHTML = '<div class="card">Nenhuma ficha visível para este login.</div>'; return; }
   _rhDados = data;
+  try {
+    const rem = await sb.from('rh_remuneracao').select('matricula,cargo,salario,situacao,admissao');
+    if (rem.data && rem.data.length) {
+      _rhRem = {}; rem.data.forEach(r => { _rhRem[r.matricula] = r; });
+      _rhFaixa = {};
+      rem.data.forEach(r => { (_rhFaixa[r.cargo] = _rhFaixa[r.cargo] || []).push(Number(r.salario)); });
+      Object.keys(_rhFaixa).forEach(k => _rhFaixa[k].sort((x, y) => x - y));
+      _rhDados.forEach(p => { const r = p.matricula && _rhRem[p.matricula]; if (r) { p._sal = Number(r.salario); p._cargoRem = r.cargo; p._sit = r.situacao; } });
+    }
+  } catch (e) { console.warn('remuneracao indisponivel', e); }
   rhKpis();
   rhRender();
 }
@@ -3639,6 +3650,7 @@ function rhKpis() {
     ['Querem crescer', d.filter(x => x.interesse_carreira).length, '#2471A3'],
     ['Confidencial', d.filter(x => x.sensivel).length, '#7D3C98'],
     ['Sem entrevista', d.filter(x => x.entrevistado === false).length, '#85929E'],
+    ['Folha (visível)', 'R$ ' + Math.round(d.reduce((t, x) => t + (x._sal || 0), 0) / 1000) + 'k', '#1A5276'],
     ['Desligados', d.filter(x => x.desligado).length, '#7B7D7D']
   ];
   $('rhKpis').innerHTML = k.map(([lab, v, c]) =>
@@ -3700,7 +3712,8 @@ function rhRender() {
       '<div style="font-size:12px;color:#5A6B7B;margin:2px 0 6px">' +
         (p.matricula ? 'mat. ' + rhEsc(p.matricula) + ' · ' : '') + rhEsc(p.cargo || '') +
         (p.tempo_casa ? ' · ' + rhEsc(p.tempo_casa) : '') + '</div>' +
-      '<div style="display:flex;gap:4px;flex-wrap:wrap">' + badges + '</div>' +
+      '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' + badges +
+        (p._sal ? '<span style="margin-left:auto;font-size:12px;font-weight:800;color:#1A5276">' + rhMoeda(p._sal) + '</span>' : '') + '</div>' +
       (_rhAberto === p.num ? rhFicha(p) : '') +
     '</div>';
   }).join('');
@@ -3715,6 +3728,38 @@ function rhBloco(titulo, txt) {
   if (!txt) return '';
   return '<div style="margin-top:9px"><div style="font-size:11px;font-weight:800;color:#2C3E50;text-transform:uppercase;letter-spacing:.4px">' +
     titulo + '</div><div style="font-size:13px;line-height:1.55;margin-top:2px">' + rhEsc(txt) + '</div></div>';
+}
+
+function rhMoeda(v) {
+  return 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function rhAnos(iso) {
+  if (!iso) return null;
+  const d = new Date(iso + 'T00:00:00');
+  return ((Date.now() - d.getTime()) / 31557600000).toFixed(1);
+}
+
+function rhRemBloco(p) {
+  if (!p._sal) return '';
+  const faixa = (_rhFaixa && _rhFaixa[p._cargoRem]) || [];
+  const iguais = faixa.filter(v => Math.abs(v - p._sal) < 0.01).length;
+  const anos = rhAnos(p.admissao);
+  let comp = '';
+  if (iguais > 1) {
+    comp = '<div style="font-size:11.5px;color:#7E5109;background:#FEF9E7;border-radius:8px;padding:6px 8px;margin-top:6px;line-height:1.45">' +
+      'Mesmo salário de outras ' + (iguais - 1) + ' pessoas no cargo <b>' + rhEsc(p._cargoRem) + '</b>' +
+      (anos ? ' — nesse cargo o salário não varia com o tempo de casa.' : '.') + '</div>';
+  }
+  return '<div style="margin-top:10px;background:#F4F7FA;border-radius:10px;padding:9px 10px">' +
+    '<div style="font-size:11px;font-weight:800;color:#2C3E50;text-transform:uppercase;letter-spacing:.4px">Remuneração</div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px">' +
+      '<div style="font-size:18px;font-weight:800;color:#1A5276">' + rhMoeda(p._sal) + '</div>' +
+      '<div style="font-size:11px;color:#5A6B7B;text-align:right">' + rhEsc(p._cargoRem || '') +
+        (anos ? '<br>' + anos + ' anos de casa' : '') + '</div>' +
+    '</div>' +
+    (p._sit && p._sit.indexOf('1-Ativo') < 0 ? '<div style="font-size:11px;color:#7D3C98;margin-top:4px;font-weight:700">Situação: ' + rhEsc(p._sit) + '</div>' : '') +
+    comp + '</div>';
 }
 
 function rhFicha(p) {
@@ -3755,6 +3800,7 @@ function rhFicha(p) {
   h += rhBloco('Pontos fortes', p.pontos_fortes);
   h += rhBloco('Necessidades', p.necessidades);
   h += rhBloco('Ação sugerida', p.acao_sugerida);
+  h += rhRemBloco(p);
 
   if (p.apontamentos) {
     const linhas = String(p.apontamentos).split('\n').map(l => {
