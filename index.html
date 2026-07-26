@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.209.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.210.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.209.0';
+const APP_VER = '3.210.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3796,6 +3796,33 @@ function rhBloco(titulo, txt) {
 
 /* ===== coleta de entrevista ===== */
 let _rhTemas = [], _rhTemaSel = new Set(), _rhLinhas = [], _rhRec = null;
+let _rhEditNum = null;
+
+async function rhEditar(num) {
+  const p = (_rhDados || []).find(x => x.num === num);
+  if (!p) return;
+  await rhNovaAbrir();
+  _rhEditNum = num;
+  $('rhNovaTit').textContent = 'Editar ficha #' + num;
+  $('rhNvBusca').value = p.nome || '';
+  if (p.setor) $('rhNvSetor').value = p.setor;
+  if (p.turno) $('rhNvTurno').value = p.turno;
+  $('rhNvMaq').value = p.maquinas || '';
+  $('rhNvMora').value = p.mora || '';
+  $('rhNvEsc').value = p.escolaridade || '';
+  $('rhNvSens').checked = !!p.sensivel;
+  $('rhNvTrava').checked = !!p.requer_apuracao_previa;
+  _rhTemaSel = new Set(p.temas || []);
+  const linhas = String(p.apontamentos || '').split('\n').map(x => x.trim()).filter(Boolean);
+  _rhLinhas = linhas.map(l => {
+    const at = l.charAt(0) === '\u25B2';
+    const txt = (at || l.charAt(0) === '\u2022') ? l.slice(1).trim() : l;
+    return { txt: txt, at: at };
+  });
+  $('rhNvApont').value = _rhLinhas.map(l => l.txt).join('\n');
+  rhNvLinhas2(); rhNvChips();
+  $('rhNvCad').innerHTML = p.matricula ? 'mat. <b>' + rhEsc(p.matricula) + '</b> · ' + rhEsc(p.cargo || '') : '';
+}
 
 async function rhNovaAbrir() {
   $('rhNovaWrap').classList.remove('oculto');
@@ -3803,7 +3830,8 @@ async function rhNovaAbrir() {
   ['rhNvBusca','rhNvMaq','rhNvMora','rhNvEsc','rhNvApont','rhNvTemaNovo'].forEach(i => { if ($(i)) $(i).value = ''; });
   $('rhNvSens').checked = false; $('rhNvTrava').checked = false;
   $('rhNvCad').innerHTML = ''; $('rhNvPrev').innerHTML = '';
-  _rhTemaSel = new Set(); _rhLinhas = [];
+  _rhTemaSel = new Set(); _rhLinhas = []; _rhEditNum = null;
+  $('rhNovaTit').textContent = 'Nova entrevista';
 
   // setores conhecidos
   const setores = [...new Set((_rhDados || []).map(p => p.setor).filter(Boolean))];
@@ -3897,8 +3925,8 @@ async function rhNovaSalvar() {
   const texto = _rhLinhas.map(l => (l.at ? '▲ ' : '• ') + l.txt).join('\n');
   const qtd = _rhLinhas.filter(l => l.at).length;
 
-  let num = 0;
-  try { const { data } = await sb.rpc('rh_proximo_num'); num = data; } catch (e) {}
+  let num = _rhEditNum;
+  if (!num) { try { const { data } = await sb.rpc('rh_proximo_num'); num = data; } catch (e) {} }
   if (!num) { $('rhNvMsg').innerHTML = '<span style="color:#C0392B">Não consegui gerar o número. Tente de novo.</span>'; return; }
 
   const reg = {
@@ -3916,7 +3944,13 @@ async function rhNovaSalvar() {
     fonte: 'Coletado no app'
   };
 
-  const { error } = await sb.from('rh_analise_individual').insert(reg);
+  let error;
+  if (_rhEditNum) {
+    delete reg.num; delete reg.fonte;
+    ({ error } = await sb.from('rh_analise_individual').update(reg).eq('num', _rhEditNum));
+  } else {
+    ({ error } = await sb.from('rh_analise_individual').insert(reg));
+  }
   if (error) { $('rhNvMsg').innerHTML = '<span style="color:#C0392B">Erro ao salvar: ' + rhEsc(error.message) + '</span>'; return; }
 
   // grava temas novos no catalogo
@@ -4046,6 +4080,7 @@ function rhFicha(p) {
       p.temas.map(t => '<span class="chip" style="font-size:10px">' + rhEsc(t) + '</span>').join('') + '</div>';
   }
 
+  h += '<button class="btn" onclick="rhEditar(' + p.num + ')" style="margin-top:10px;width:auto;padding:7px 14px;font-size:13px">✏️ Editar ficha</button>';
   h += '</div>';
   return h;
 }
