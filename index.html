@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.243.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.244.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1684,7 +1684,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.243.0';
+const APP_VER = '3.244.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10876,7 +10876,7 @@ async function carregarConf(forcar) {
     x.style.background = on ? 'var(--navy)' : ''; x.style.color = on ? '#fff' : '';
   });
   try {
-    const { data, error } = await sb.rpc('conferencia_periodo', { p_ini: a.value, p_fim: b.value, p_janela: 45 });
+    const { data, error } = await sb.rpc('conferencia_periodo', { p_ini: a.value, p_fim: b.value, p_janela: 45 }).limit(5000);
     if (error) throw error;
     _cfDados = data || []; _cfDiaAtual = chave;
     cfRender();
@@ -10919,8 +10919,8 @@ function cfRender() {
     const on = Number(x.dataset.s) === _cfSigma;
     x.style.background = on ? 'var(--navy)' : ''; x.style.color = on ? '#fff' : '';
   });
-  const dias = [...new Set(D.map(r => r.dia))].length;
-  const forte = D.filter(r =>
+  const dias = [...new Set(D.filter(r => r.dia).map(r => r.dia))].length;
+  const forte = D.filter(r => r.tipo === 'alerta').filter(r =>
       (r.z != null && Math.abs(Number(r.z)) >= _cfSigma && Number(r.n_hist) >= 5) || r.alerta != null)
     .sort((a, b) => {
       const pa = a.alerta === 'perda_maior' ? 2 : (a.alerta === 'span' ? 1 : 0);
@@ -10967,21 +10967,19 @@ function cfRender() {
 
   let g = '';
   [['producao', 'Produção', ' kg'], ['perdas', 'Perdas', ' kg'], ['paradas', 'Paradas', ' h']].forEach(([met, rot, un]) => {
-    const linhas = D.filter(r => r.metrica === met);
+    const linhas = D.filter(r => r.metrica === met && r.tipo === 'resumo');
     if (!linhas.length) return;
     const porMaq = {};
     linhas.forEach(r => {
-      const m = (porMaq[r.recurso_cod] = porMaq[r.recurso_cod] || { tot: 0, med: 0, t: {}, z: 0, dias: new Set() });
+      const m = (porMaq[r.recurso_cod] = porMaq[r.recurso_cod] || { tot: 0, med: 0, t: {}, z: 0 });
       m.tot += Number(r.valor) || 0;
-      m.dias.add(r.dia);
+      m.med += Number(r.media) || 0;
       if (r.turno != null) m.t[r.turno] = (m.t[r.turno] || 0) + Number(r.valor);
-      if (r.z != null && Number(r.n_hist) >= 5 && Math.abs(Number(r.z)) > Math.abs(m.z)) m.z = Number(r.z);
     });
-    Object.keys(porMaq).forEach(c => {
-      const ms = linhas.filter(r => r.recurso_cod === c);
-      const porDia = {};
-      ms.forEach(r => { porDia[r.dia] = (porDia[r.dia] || 0) + Number(r.media || 0); });
-      porMaq[c].med = Object.values(porDia).reduce((t, v) => t + v, 0);
+    // o maior desvio da máquina vem dos alertas, não do resumo
+    D.filter(x => x.tipo === 'alerta' && x.metrica === met).forEach(x => {
+      const m = porMaq[x.recurso_cod];
+      if (m && x.z != null && Number(x.n_hist) >= 5 && Math.abs(Number(x.z)) > Math.abs(m.z)) m.z = Number(x.z);
     });
     const cods = Object.keys(porMaq).sort((a, b) => porMaq[b].tot - porMaq[a].tot);
     const mx = Math.max(...cods.map(c => Math.max(porMaq[c].tot, porMaq[c].med)), 1);
@@ -11015,7 +11013,7 @@ function cfRender() {
 }
 
 function cfDetalhe(cod, metrica, turno, dia) {
-  const r = (_cfDados || []).find(x => x.recurso_cod === cod && x.metrica === metrica &&
+  const r = (_cfDados || []).find(x => x.tipo === 'alerta' && x.recurso_cod === cod && x.metrica === metrica &&
     (turno === null ? x.turno == null : Number(x.turno) === Number(turno)) && (!dia || x.dia === dia));
   if (!r) return;
   const un = metrica === 'paradas' ? ' h' : ' kg';
