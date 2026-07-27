@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.253.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.254.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.253.0';
+const APP_VER = '3.254.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11472,14 +11472,23 @@ async function carregarOrganograma() {
   }
 }
 
+// o setor escolhido vira o padrão daquele usuário (por conta, não por aparelho compartilhado)
+const orgSetorChave = () => 'rp_org_setor:' + ((typeof perfil !== 'undefined' && perfil && perfil.id) ? perfil.id : 'anon');
+function orgSetorSalvo() { try { return localStorage.getItem(orgSetorChave()) || ''; } catch (_) { return ''; } }
 function orgMontaSetores() {
   const sel = $('orgSetor'); if (!sel) return;
   const setores = [...new Set(orgDados.maquinas.map(m => m.setor).filter(Boolean))].sort();
+  const salvo = orgSetorSalvo();
+  if (salvo && setores.includes(salvo)) orgSetorSel = salvo;
   if (!setores.includes(orgSetorSel)) orgSetorSel = setores[0] || 'Termoformagem';
   sel.innerHTML = setores.map(s => '<option' + (s === orgSetorSel ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('');
 }
 
-function orgTrocaSetor() { orgSetorSel = $('orgSetor').value; renderOrgVista(); }
+function orgTrocaSetor() {
+  orgSetorSel = $('orgSetor').value;
+  try { localStorage.setItem(orgSetorChave(), orgSetorSel); } catch (_) {}
+  renderOrgVista();
+}
 function orgTrocaTurno() { orgTurnoSel = $('orgTurno').value; renderOrgVista(); window.scrollTo(0, 0); }
 function orgVer(v) { orgVista = v; renderOrgVista(); window.scrollTo(0, 0); }
 
@@ -11579,7 +11588,7 @@ function orgCelulaDaMaq(m) {
 function renderOrg() {
   const wrap = $('orgWrap');
   const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
-  const alocSetor = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const alocSetor = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel));
   const pend = alocSetor.filter(a => a.pendente).length;
 
   orgCalcDoisTurnos();
@@ -12183,9 +12192,9 @@ async function orgImpGravar(tipo) {
 
 /* ---------- headcount por turno ---------- */
 function orgHeadcount() {
-  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel));
   const r = {};
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const dt = al.filter(a => a.turno === t);
     const pes = m => [...new Set(dt.filter(m).map(a => a.matricula || ('?' + (a.apelido_origem || ''))).filter(Boolean))].length;
     r[t] = {
@@ -12452,7 +12461,7 @@ function orgCardHeadcount() {
   const hc = orgHeadcount();
   let h = '<div class="card"><div class="titulo-sec">👥 Efetivo por turno · ' + escapeHtml(orgSetorSel) + '</div>';
   h += '<div style="display:flex;gap:9px;flex-wrap:wrap">';
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const d = hc.turnos[t], cor = ORG_CORES[t], tint = ORG_TINT[t] || { bg: 'var(--leve-s)', br: 'var(--linha-2s)' };
     h += '<div style="flex:1 1 150px;background:' + tint.bg + ';border:1px solid ' + tint.br + '66;border-left:5px solid ' + cor + ';border-radius:10px;padding:10px 12px">';
     h += '<div style="font-size:12px;font-weight:800;color:var(--tinta-s)">' + t + '</div>';
@@ -12484,7 +12493,7 @@ function orgCardHeadcount() {
   h += '</div>';
   h += '</div>';
   h += '<div style="margin-top:12px">' + barrasVertical(
-    ORG_TURNOS.map(t => ({ l: t, v: hc.turnos[t].presentes, rot: String(hc.turnos[t].presentes) + (hc.turnos[t].fora ? ' /' + hc.turnos[t].tot : ''), click: `detEfetivoTurno('${t}')` })),
+    orgTurnosVis().map(t => ({ l: t, v: hc.turnos[t].presentes, rot: String(hc.turnos[t].presentes) + (hc.turnos[t].fora ? ' /' + hc.turnos[t].tot : ''), click: `detEfetivoTurno('${t}')` })),
     d => ORG_CORES[d.l] || 'var(--fraco-2s)') + '</div>';
   h += '<div class="desc" style="font-size:11px;text-align:center;margin-top:-4px">toque numa barra para ver quem falta · barras = presentes hoje' + (hc.fora ? ' (rótulo: presentes / escalados)' : '') + '</div>';
   h += '</div>';
@@ -12529,7 +12538,7 @@ function orgGraficoFaltas(af) {
   });
   if (Object.keys(porTurno).length) {
     h += '<div class="titulo-sec" style="margin-top:14px">Por turno</div>';
-    h += barrasVertical(ORG_TURNOS.map(t => ({ l: t, v: porTurno[t] || 0, rot: String(porTurno[t] || 0), click: (porTurno[t] ? `detFaltas('turno','${t}')` : '') })), d => ORG_CORES[d.l]);
+    h += barrasVertical(orgTurnosVis().map(t => ({ l: t, v: porTurno[t] || 0, rot: String(porTurno[t] || 0), click: (porTurno[t] ? `detFaltas('turno','${t}')` : '') })), d => ORG_CORES[d.l]);
   }
   h += '</div>';
   return h;
@@ -12537,11 +12546,11 @@ function orgGraficoFaltas(af) {
 
 /* ---------- análises extras ---------- */
 function orgCardCobertura() {
-  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel));
   const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
   let h = '<div class="card"><div class="titulo-sec">🧩 Cobertura das máquinas</div>';
   h += '<div style="display:flex;gap:9px;flex-wrap:wrap">';
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const dt = al.filter(a => a.turno === t);
     const comOp = [...new Set(dt.filter(a => a.funcao === 'operador' && a.maquina_codigo).map(a => a.maquina_codigo))];
     const semAux = dt.filter(a => a.funcao === 'auxiliar' && a.sem_auxiliar).length;
@@ -12560,7 +12569,7 @@ function orgCardCobertura() {
 
 /* ---------- auditoria da escala ---------- */
 function orgAuditoria() {
-  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel);
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel));
   const colab = orgColabSetor();
   const maqSetor = orgDados.maquinas.filter(m => m.setor === orgSetorSel).map(m => m.codigo);
   const av = [];
@@ -12577,7 +12586,7 @@ function orgAuditoria() {
   });
 
   /* 2. mesma máquina com dois operadores no turno */
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const donos = {};
     al.filter(a => a.turno === t && a.funcao === 'operador' && a.maquina_codigo).forEach(a => {
       const k = a.maquina_codigo, d = a.matricula || ('?' + a.apelido_origem);
@@ -12647,7 +12656,7 @@ function orgAuditoria() {
   });
 
   /* 7. máquina sem operador no turno */
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const com = al.filter(a => a.turno === t && a.funcao === 'operador').map(a => a.maquina_codigo);
     maqSetor.filter(m => com.indexOf(m) < 0).forEach(m => {
       const des = (orgDados.maqCel.find(x => x.maquina_codigo === m) || {}).desativada_org;
@@ -12739,7 +12748,7 @@ function orgCardCargoTurno() {
   // composição de cada turno (barra empilhada)
   const tons = ['var(--tinta-s)', 'var(--txt-2s)', 'var(--fraco-s)', '#8e44ad', '#0e7490', '#0891b2', 'var(--fraco-2s)', 'var(--linha-2s)', 'var(--linha-s)'];
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
-  ORG_TURNOS.forEach(t => {
+  orgTurnosVis().forEach(t => {
     const tot = totT[t] || 0;
     h += '<div style="flex:1 1 100px">';
     h += '<div style="font-size:12px;font-weight:800;color:' + ORG_CORES[t] + '">' + t + ' <span style="color:var(--fraco-2s)">' + tot + '</span></div>';
@@ -12754,7 +12763,7 @@ function orgCardCargoTurno() {
 
   // matriz cargo x turno com barra proporcional
   chaves.forEach((k, i) => {
-    const linha = ORG_TURNOS.map(t => fam[k][t] || 0);
+    const linha = orgTurnosVis().map(t => fam[k][t] || 0);
     const mx = Math.max(1, ...linha);
     const somaL = linha.reduce((a, b) => a + b, 0);
     h += '<div style="margin-top:9px">';
@@ -12762,7 +12771,7 @@ function orgCardCargoTurno() {
       '<span style="font-size:12px;font-weight:800;color:var(--tinta-s)">' + escapeHtml(k) + '</span>' +
       '<span style="font-size:11px;color:var(--fraco-2s);margin-left:auto">' + somaL + '</span></div>';
     h += '<div style="display:flex;gap:6px;margin-top:4px">';
-    ORG_TURNOS.forEach((t, j) => {
+    orgTurnosVis().forEach((t, j) => {
       const v = linha[j], pct = mx ? Math.max(v ? 8 : 0, v / mx * 100) : 0;
       const tint = ORG_TINT[t] || { bg: 'var(--leve-s)', br: 'var(--linha-2s)' };
       h += '<div style="position:relative;flex:1;min-width:0;height:26px;background:' + tint.bg + ';border:1px solid ' + ORG_CORES[t] + '44;border-radius:6px;overflow:hidden">' +
