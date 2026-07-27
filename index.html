@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.215.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.216.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.215.0';
+const APP_VER = '3.216.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12722,12 +12722,17 @@ async function carregarFerias() {
     orgFerias = data || [];
   } catch (_) { orgFerias = []; }
   try {
-    const { data: al } = await sb.from('org_alocacoes').select('matricula,turno').not('turno', 'is', null);
-    _ferTurnoMap = {};
-    (al || []).forEach(a => { if (a.matricula && !_ferTurnoMap[a.matricula]) _ferTurnoMap[a.matricula] = a.turno; });
+    const { data: al } = await sb.from('org_alocacoes').select('matricula,turno,maquina_codigo,funcao').not('turno', 'is', null);
+    _ferTurnoMap = {}; _ferInfoMap = {};
+    (al || []).forEach(a => {
+      if (!a.matricula) return;
+      if (!_ferTurnoMap[a.matricula]) _ferTurnoMap[a.matricula] = a.turno;
+      if (!_ferInfoMap[a.matricula]) _ferInfoMap[a.matricula] = { maq: a.maquina_codigo || null, funcao: a.funcao || null };
+      else if (a.maquina_codigo && !_ferInfoMap[a.matricula].maq) _ferInfoMap[a.matricula].maq = a.maquina_codigo;
+    });
   } catch (_) { _ferTurnoMap = _ferTurnoMap || {}; }
 }
-let _ferTurnoMap = {};
+let _ferTurnoMap = {}, _ferInfoMap = {}, _ferSel = null;
 const FER_TUR = ['Manhã', 'Tarde', 'Noite'];
 const FER_COR_T = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
 
@@ -12736,21 +12741,31 @@ function ferTurnoDe(f) {
 }
 
 function ferPorTurno(lista) {
-  const val = (lista || []).filter(f => f.inicio && f.fim);
+  const hojeISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const val = (lista || []).filter(f => f.inicio && f.fim && f.fim >= hojeISO);
   const semTurno = val.filter(f => !ferTurnoDe(f)).length;
   const com = val.filter(f => ferTurnoDe(f));
   if (!com.length) {
-    return '<p class="desc">Sem turno identificado nas férias deste filtro. Preencha o turno na programação ou cadastre a alocação da pessoa.</p>';
+    return '<p class="desc">Nenhuma férias de hoje em diante com turno identificado neste filtro.</p>';
   }
 
-  const ini = new Date(ferAno, 0, 1), fim = new Date(ferAno, 11, 31);
-  const porMes = {}, pico = {}, picoDia = {}, dias3 = {};
-  FER_TUR.forEach(t => { porMes[t] = new Array(12).fill(0); pico[t] = 0; picoDia[t] = null; dias3[t] = 0; });
+  const hoje = new Date(hojeISO + 'T12:00:00');
+  const mesIni = (hoje.getFullYear() === ferAno) ? hoje.getMonth() : 0;
+  const porMes = {}, pico = {}, picoDia = {}, dias3 = {}, quem = {};
+  FER_TUR.forEach(t => { porMes[t] = new Array(12).fill(0); pico[t] = 0; picoDia[t] = null; dias3[t] = 0; quem[t] = {}; });
 
-  for (let d = new Date(ini); d <= fim; d.setDate(d.getDate() + 1)) {
+  const fim = new Date(ferAno, 11, 31);
+  for (let d = new Date(Math.max(hoje.getTime(), new Date(ferAno, 0, 1).getTime())); d <= fim; d.setDate(d.getDate() + 1)) {
     const iso = d.toISOString().slice(0, 10), mes = d.getMonth();
     const cont = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
-    com.forEach(f => { if (iso >= f.inicio && iso <= f.fim) { const t = ferTurnoDe(f); if (cont[t] != null) cont[t]++; } });
+    com.forEach(f => {
+      if (iso >= f.inicio && iso <= f.fim) {
+        const t = ferTurnoDe(f);
+        if (cont[t] == null) return;
+        cont[t]++;
+        (quem[t][mes] = quem[t][mes] || {})[f.id] = f;
+      }
+    });
     FER_TUR.forEach(t => {
       if (cont[t] > porMes[t][mes]) porMes[t][mes] = cont[t];
       if (cont[t] > pico[t]) { pico[t] = cont[t]; picoDia[t] = iso; }
@@ -12759,9 +12774,8 @@ function ferPorTurno(lista) {
   }
 
   const MZ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-  const maxG = Math.max(1, ...FER_TUR.map(t => pico[t]));
-  const tint = (n) => n === 0 ? 'var(--leve)' : n === 1 ? '#EAF3DE' : n === 2 ? '#FAEEDA' : n === 3 ? '#FAC775' : '#F09595';
-  const tintTxt = (n) => n >= 4 ? '#791F1F' : n === 3 ? '#633806' : 'var(--txt-2)';
+  const tint = n => n === 0 ? 'var(--leve)' : n === 1 ? '#EAF3DE' : n === 2 ? '#FAEEDA' : n === 3 ? '#FAC775' : '#F09595';
+  const tintTxt = n => n >= 4 ? '#791F1F' : n === 3 ? '#633806' : 'var(--txt-2)';
 
   let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
   FER_TUR.forEach(t => {
@@ -12776,164 +12790,69 @@ function ferPorTurno(lista) {
   h += '</div>';
 
   h += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="border-collapse:separate;border-spacing:2px;font-size:11px;min-width:340px">';
-  h += '<tr><td></td>' + MZ.map(m => '<td style="text-align:center;color:var(--fraco);font-size:10px;padding-bottom:2px">' + m + '</td>').join('') + '</tr>';
+  h += '<tr><td></td>' + MZ.map((m, i) => '<td style="text-align:center;color:' + (i < mesIni ? 'var(--leve-2s)' : 'var(--fraco)') + ';font-size:10px;padding-bottom:2px">' + m + '</td>').join('') + '</tr>';
   FER_TUR.forEach(t => {
     h += '<tr><td style="font-size:10px;font-weight:700;color:' + FER_COR_T[t] + ';padding-right:4px;white-space:nowrap">' + t + '</td>';
-    porMes[t].forEach(n => {
-      h += '<td style="text-align:center;background:' + tint(n) + ';color:' + tintTxt(n) + ';border-radius:5px;padding:5px 0;min-width:24px;font-weight:' + (n >= 3 ? '800' : '600') + '">' + (n || '') + '</td>';
+    porMes[t].forEach((n, mi) => {
+      const passou = mi < mesIni;
+      const sel = _ferSel && _ferSel.t === t && _ferSel.m === mi;
+      const clic = (!passou && n > 0) ? ' onclick="ferAbreDet(\'' + t + '\',' + mi + ')" style="cursor:pointer;' : ' style="';
+      h += '<td' + clic + 'text-align:center;background:' + (passou ? 'transparent' : tint(n)) + ';color:' + tintTxt(n) +
+        ';border-radius:5px;padding:5px 0;min-width:24px;font-weight:' + (n >= 3 ? '800' : '600') +
+        (sel ? ';outline:2px solid var(--navy)' : '') + '">' + (passou ? '' : (n || '')) + '</td>';
     });
     h += '</tr>';
   });
   h += '</table></div>';
+  h += '<p class="desc" style="margin-top:4px">toque num mês para ver quem sai e o que fica descoberto</p>';
+
+  if (_ferSel && quem[_ferSel.t] && quem[_ferSel.t][_ferSel.m]) {
+    const arr = Object.values(quem[_ferSel.t][_ferSel.m]);
+    h += '<div style="border:1px solid var(--linha-s);border-radius:10px;margin-top:8px;overflow:hidden">';
+    h += '<div style="background:' + FER_COR_T[_ferSel.t] + ';color:#fff;padding:6px 10px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center">' +
+      '<span>' + _ferSel.t + ' · ' + MZ[_ferSel.m] + '/' + ferAno + ' · ' + arr.length + ' fora</span>' +
+      '<span onclick="ferAbreDet(null)" style="cursor:pointer;font-size:14px">✕</span></div>';
+    const ordem = { 'OP': 0, 'AP': 1, 'AUX': 2 };
+    arr.sort((a, b) => (ordem[a.nivel] ?? 9) - (ordem[b.nivel] ?? 9)).forEach(f => {
+      const inf = _ferInfoMap[f.matricula] || {};
+      const nv = f.nivel || (inf.funcao ? String(inf.funcao).slice(0, 3).toUpperCase() : '?');
+      const ehOp = nv === 'OP';
+      const nome = orgNome(f.matricula) || f.matricula;
+      h += '<div onclick="ferEditar(' + f.id + ')" style="cursor:pointer;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+        '<div style="display:flex;gap:6px;align-items:baseline">' +
+        '<span style="font-size:9px;font-weight:800;background:' + (ehOp ? '#FADBD8' : '#E7EEF5') + ';color:' + (ehOp ? '#943126' : '#2C3E50') +
+        ';border-radius:4px;padding:1px 5px">' + nv + '</span>' +
+        '<b style="flex:1">' + escapeHtml(nome) + '</b>' +
+        '<span style="font-size:10px;color:var(--fraco)">' + ferFmt(f.inicio) + '→' + ferFmt(f.fim) + '</span></div>' +
+        (inf.maq ? '<div style="font-size:11px;color:' + (ehOp ? '#C0392B' : 'var(--fraco)') + ';margin-top:2px">' +
+          (ehOp ? 'máquina ' + escapeHtml(inf.maq) + ' fica sem operador' : 'apoia a ' + escapeHtml(inf.maq)) + '</div>' : '') +
+        '</div>';
+    });
+    const maqs = arr.filter(f => (f.nivel === 'OP') && (_ferInfoMap[f.matricula] || {}).maq)
+                    .map(f => _ferInfoMap[f.matricula].maq);
+    if (maqs.length) {
+      h += '<div style="background:#FADBD8;color:#943126;padding:7px 10px;font-size:11.5px;line-height:1.5">' +
+        '<b>Descoberto:</b> ' + maqs.map(escapeHtml).join(' · ') + '</div>';
+    }
+    h += '</div>';
+  }
 
   const critico = FER_TUR.filter(t => pico[t] >= 3);
   if (critico.length) {
     h += '<div style="background:#FADBD8;border-left:3px solid #C0392B;border-radius:8px;padding:8px 10px;margin-top:9px;font-size:11.5px;line-height:1.5;color:#943126">' +
-      '<b>Turno descoberto:</b> ' + critico.map(t => t + ' chega a ' + pico[t] + ' pessoas fora (pico em ' +
+      '<b>Turno descoberto:</b> ' + critico.map(t => t + ' chega a ' + pico[t] + ' fora (pico em ' +
       (picoDia[t] ? picoDia[t].split('-').reverse().slice(0, 2).join('/') : '—') + ')').join(' · ') +
       '. Sem operador reserva, remanejar para meses com menos carga.</div>';
   }
-  if (semTurno) {
-    h += '<p class="desc" style="margin-top:6px">' + semTurno + ' período(s) sem turno identificado — não entram na conta.</p>';
-  }
+  if (semTurno) h += '<p class="desc" style="margin-top:6px">' + semTurno + ' período(s) sem turno identificado — não entram na conta.</p>';
   return h;
 }
 
-async function garantirXlsx() {
-  if (window.XLSX) return;
-  await carregarLib('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+function ferAbreDet(t, m) {
+  _ferSel = (t === null || (_ferSel && _ferSel.t === t && _ferSel.m === m)) ? null : { t: t, m: m };
+  renderOrgFerias();
 }
 
-function ferDiasNoMes(ano, mes) { return new Date(ano, mes, 0).getDate(); }
-function ferData(d) { return d ? new Date(d + 'T12:00:00') : null; }
-function ferFmt(d) { return d ? d.split('-').reverse().slice(0, 2).join('/') : '—'; }
-
-/* quanto falta para o limite legal (data_limite) */
-function ferUrgencia(f) {
-  if (!f.data_limite) return null;
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  const lim = ferData(f.data_limite);
-  return Math.round((lim - hoje) / 86400000);
-}
-
-function ferLinhas() {
-  const mats = new Set(orgColabSetor().map(c => c.matricula));
-  return orgFerias.filter(f => f.setor === orgSetorSel || mats.has(f.matricula));
-}
-
-/* ---------- timeline ---------- */
-function ferDetMes(mes) {
-  const lista = ferLinhas().filter(f => {
-    if (!f.inicio || !f.fim) return false;
-    const a = ferData(f.inicio), b = ferData(f.fim);
-    const mi = new Date(ferAno, mes - 1, 1), mf = new Date(ferAno, mes, 0);
-    return a <= mf && b >= mi;
-  }).sort((x, y) => x.inicio.localeCompare(y.inicio));
-  const MESN = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
-  if (!lista.length) { orgModal(MESN[mes - 1] + ' ' + ferAno, '<p class="vazio-painel">Ninguém de férias neste mês.</p>'); return; }
-  const ops = lista.filter(f => (f.nivel || '').toUpperCase() === 'OP');
-  let h = '<p class="desc"><b>' + lista.length + '</b> pessoa(s) de férias em ' + MESN[mes - 1] +
-    (ops.length ? ' · <b style="color:' + (ops.length >= 3 ? 'var(--critico-s)' : 'var(--txt-2)') + '">' + ops.length + ' operador(es)</b>' : '') + '</p>';
-  h += '<div style="max-height:52vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin-top:8px">';
-  lista.forEach(f => {
-    const nv = (f.nivel || '').toUpperCase();
-    const corNv = nv === 'OP' ? '#8b5cf6' : nv === 'AP' ? '#0891b2' : 'var(--fraco)';
-    h += '<div onclick="orgFechaModal();ferEditar(' + f.id + ')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s)">' +
-      (nv ? '<span style="font-size:9px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:6px;padding:1px 5px;flex:none">' + nv + '</span>' : '') +
-      '<b style="flex:1;min-width:0;font-size:13px">' + escapeHtml(orgNome(f.matricula) || f.matricula) + '</b>' +
-      '<span style="font-size:11.5px;color:var(--fraco)">' + ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd</span></div>';
-  });
-  h += '</div>';
-  orgModal(MESN[mes - 1] + ' ' + ferAno + ' · ' + escapeHtml(orgSetorSel), h);
-}
-
-function ferTimeline(lista) {
-  const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-  const porMes = (ferModo === 'mes');
-  const ini = porMes ? new Date(ferAno, ferMes - 1, 1) : new Date(ferAno, 0, 1);
-  const fimA = porMes ? new Date(ferAno, ferMes, 0) : new Date(ferAno, 11, 31);
-  const totalDias = Math.round((fimA - ini) / 86400000) + 1;
-
-  const comData = lista.filter(f => f.inicio && f.fim &&
-    ferData(f.fim) >= ini && ferData(f.inicio) <= fimA)
-    .sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
-
-  if (!comData.length) return '<p class="vazio-painel">Ninguém de férias em ' + (porMes ? MES[ferMes - 1] + '/' + ferAno : ferAno) + '.</p>';
-
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  const pctHoje = (hoje >= ini && hoje <= fimA) ? ((hoje - ini) / 86400000 / totalDias * 100) : null;
-
-  let h = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
-  h += '<div style="min-width:' + (porMes ? 1000 : 860) + 'px">';
-
-  // régua de meses
-  h += '<div style="display:flex;position:sticky;top:0;background:#fff;z-index:2;border-bottom:1px solid var(--linha-s);padding-bottom:3px">';
-  h += '<div style="width:196px;flex:none;position:sticky;left:0;background:#fff;z-index:3"></div><div style="flex:1;display:flex">';
-  if (porMes) {
-    for (let d = 1; d <= totalDias; d++) {
-      const dt = new Date(ferAno, ferMes - 1, d);
-      const fds = dt.getDay() === 0 || dt.getDay() === 6;
-      h += '<div style="width:' + (100 / totalDias).toFixed(4) + '%;font-size:9px;font-weight:800;color:' + (fds ? 'var(--linha-2s)' : 'var(--fraco-s)') +
-        ';text-align:center;border-left:1px solid var(--leve-2)">' + d + '</div>';
-    }
-  } else {
-    for (let m = 1; m <= 12; m++) {
-      const w = ferDiasNoMes(ferAno, m) / totalDias * 100;
-      h += '<div style="width:' + w.toFixed(3) + '%;font-size:10px;font-weight:800;color:var(--fraco-s);text-align:center;border-left:1px solid var(--leve-2)">' + MES[m - 1] + '</div>';
-    }
-  }
-  h += '</div></div>';
-
-  if (pctHoje != null) {
-    h += '<div style="display:flex"><div style="width:196px;flex:none"></div><div style="flex:1;position:relative;height:14px">' +
-      '<div style="position:absolute;left:' + pctHoje.toFixed(2) + '%;transform:translateX(-50%);font-size:9px;font-weight:800;color:var(--critico-s);white-space:nowrap">▼ hoje</div></div></div>';
-  }
-
-  // uma faixa por período
-  comData.forEach(f => {
-    const a = ferData(f.inicio), b = ferData(f.fim);
-    const off = Math.max(0, (a - ini) / 86400000 / totalDias * 100);
-    const larg = Math.max(0.6, ((Math.min(b, fimA) - Math.max(a, ini)) / 86400000 + 1) / totalDias * 100);
-    const nome = orgNome(f.matricula) || f.matricula;
-    const emCurso = hoje >= a && hoje <= b;
-    const passou = b < hoje;
-    const cor = emCurso ? 'var(--critico-s)' : passou ? 'var(--fraco-2s)' : '#2563eb';
-    const nv = (f.nivel || '').toUpperCase();
-    const corNv = nv === 'OP' ? '#8b5cf6' : nv === 'AP' ? '#0891b2' : 'var(--fraco-s)';
-
-    h += '<div style="display:flex;align-items:center;height:34px;border-bottom:1px solid #f5f7fa">';
-    h += '<div style="width:196px;flex:none;position:sticky;left:0;background:#fff;z-index:2;box-shadow:1px 0 0 var(--linha-s);padding-right:8px;overflow:hidden" onclick="ferEditar(' + f.id + ')">' +
-      '<div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--tinta-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
-      (nv ? '<span style="font-size:9px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:6px;padding:0 4px;flex:none">' + nv + '</span>' : '') +
-      '<span style="overflow:hidden;text-overflow:ellipsis">' + escapeHtml(orgPrimeiro(nome) || nome) + '</span></div>' +
-      '<div style="font-size:10px;color:' + (emCurso ? 'var(--critico-s)' : 'var(--fraco-2s)') + ';font-weight:' + (emCurso ? '800' : '600') + ';white-space:nowrap">' +
-      ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd' +
-      (emCurso ? ' · <b>faltam ' + Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd</b>' : '') + '</div></div>';
-    h += '<div style="flex:1;position:relative;height:100%">';
-    if (porMes) {
-      for (let d = 0; d < totalDias; d++) {
-        const dt = new Date(ferAno, ferMes - 1, d + 1);
-        const fds = dt.getDay() === 0 || dt.getDay() === 6;
-        h += '<div style="position:absolute;left:' + (d / totalDias * 100).toFixed(4) + '%;width:' + (100 / totalDias).toFixed(4) +
-          '%;top:0;bottom:0;border-left:1px solid var(--leve-2s)' + (fds ? ';background:var(--leve-s)' : '') + '"></div>';
-      }
-    } else {
-      for (let m = 1; m < 12; m++) {
-        let acc = 0; for (let k = 1; k <= m; k++) acc += ferDiasNoMes(ferAno, k);
-        h += '<div style="position:absolute;left:' + (acc / totalDias * 100).toFixed(3) + '%;top:0;bottom:0;border-left:1px solid var(--leve-2s)"></div>';
-      }
-    }
-    if (pctHoje != null) h += '<div title="hoje" style="position:absolute;left:' + pctHoje.toFixed(2) + '%;top:0;bottom:0;border-left:2px solid var(--critico-s);opacity:.9;z-index:1"></div>';
-    h += '<div onclick="ferEditar(' + f.id + ')" title="' + escapeHtml(nome + ' · ' + ferFmt(f.inicio) + ' a ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + ' dias') +
-      '" style="position:absolute;left:' + off.toFixed(3) + '%;width:' + larg.toFixed(3) + '%;top:4px;bottom:4px;background:' + cor +
-      ';border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:800;overflow:hidden">' +
-      (larg > 3.4 ? (emCurso ? (Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd') : (f.dias || '')) : '') + '</div>';
-    h += '</div></div>';
-  });
-  return h + '</div></div>';
-}
-
-/* ---------- carga por mês: quantos de férias ao mesmo tempo ---------- */
 function ferCargaMes(lista) {
   const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const cont = Array(12).fill(0), op = Array(12).fill(0);
@@ -12967,7 +12886,7 @@ function renderOrgFerias() {
   const lista = ferLinhas();
   const marcadas = lista.filter(f => f.inicio);
   const semData = lista.filter(f => !f.inicio);
-  const vencendo = lista.filter(f => { const d = ferUrgencia(f); return !f.inicio && d != null && d <= 180; });
+  const vencendo = lista.filter(f => { const d = ferUrgencia(f); return !f.inicio && d != null && d <= 40; });
 
   let h = '<div class="orgv2">';
 
@@ -12997,7 +12916,7 @@ function renderOrgFerias() {
     '<div style="font-size:22px;font-weight:800;color:' + cor + ';line-height:1.15">' + v + '</div><div style="font-size:11px;color:var(--fraco-s)">' + l + '</div></div>';
   h += kpi(marcadas.length, 'programadas', '#2563eb');
   h += kpi(semData.length, 'sem data', 'var(--fraco-2s)');
-  h += kpi(vencendo.length, 'limite em 6 meses', vencendo.length ? 'var(--critico-s)' : 'var(--ok-5)');
+  h += kpi(vencendo.length, 'limite em 40 dias', vencendo.length ? 'var(--critico-s)' : 'var(--ok-5)');
   h += '</div>';
   h += '<div class="titulo-sec" style="margin-top:14px">Quantos de férias por mês</div>';
   h += ferCargaMes(lista);
@@ -13012,7 +12931,7 @@ function renderOrgFerias() {
   h += '</div>';
 
   h += '<div class="card"><div class="titulo-sec">Remonte de férias por turno · ' + ferAno + '</div>';
-  h += '<p class="desc" style="margin-bottom:8px">quantas pessoas do mesmo turno ficam fora ao mesmo tempo · vermelho = 3 ou mais</p>';
+  h += '<p class="desc" style="margin-bottom:8px">de hoje em diante · quantas pessoas do mesmo turno ficam fora juntas · vermelho = 3 ou mais</p>';
   h += ferPorTurno(lista);
   h += '</div>';
 
