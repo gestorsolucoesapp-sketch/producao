@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.218.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.219.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.218.0';
+const APP_VER = '3.219.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12745,46 +12745,50 @@ function ferPorTurno(lista) {
   const val = (lista || []).filter(f => f.inicio && f.fim && f.fim >= hojeISO);
   const semTurno = val.filter(f => !ferTurnoDe(f)).length;
   const com = val.filter(f => ferTurnoDe(f));
-  if (!com.length) {
-    return '<p class="desc">Nenhuma férias de hoje em diante com turno identificado neste filtro.</p>';
-  }
+  if (!com.length) return '<p class="desc">Nenhuma férias de hoje em diante com turno identificado neste filtro.</p>';
 
   const hoje = new Date(hojeISO + 'T12:00:00');
   const mesIni = (hoje.getFullYear() === ferAno) ? hoje.getMonth() : 0;
-  const porMes = {}, pico = {}, picoDia = {}, dias3 = {}, quem = {};
-  FER_TUR.forEach(t => { porMes[t] = new Array(12).fill(0); pico[t] = 0; picoDia[t] = null; dias3[t] = 0; quem[t] = {}; });
+  const porMes = {}, pico = {}, picoDia = {}, dias3 = {}, quem = {}, dias3Mes = {};
+  FER_TUR.forEach(t => {
+    porMes[t] = new Array(12).fill(0); pico[t] = 0; picoDia[t] = null; dias3[t] = 0;
+    quem[t] = {}; dias3Mes[t] = new Array(12).fill(0);
+  });
 
+  const ini = new Date(Math.max(hoje.getTime(), new Date(ferAno, 0, 1).getTime()));
   const fim = new Date(ferAno, 11, 31);
-  for (let d = new Date(Math.max(hoje.getTime(), new Date(ferAno, 0, 1).getTime())); d <= fim; d.setDate(d.getDate() + 1)) {
+  const diasPorPessoa = {};
+  for (let d = new Date(ini); d <= fim; d.setDate(d.getDate() + 1)) {
     const iso = d.toISOString().slice(0, 10), mes = d.getMonth();
-    const cont = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+    const cont = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }, ativos = { 'Manhã': [], 'Tarde': [], 'Noite': [] };
     com.forEach(f => {
       if (iso >= f.inicio && iso <= f.fim) {
-        const t = ferTurnoDe(f);
-        if (cont[t] == null) return;
-        cont[t]++;
+        const t = ferTurnoDe(f); if (cont[t] == null) return;
+        cont[t]++; ativos[t].push(f);
         (quem[t][mes] = quem[t][mes] || {})[f.id] = f;
+        diasPorPessoa[f.id] = (diasPorPessoa[f.id] || 0) + 1;
       }
     });
     FER_TUR.forEach(t => {
       if (cont[t] > porMes[t][mes]) porMes[t][mes] = cont[t];
       if (cont[t] > pico[t]) { pico[t] = cont[t]; picoDia[t] = iso; }
-      if (cont[t] >= 3) dias3[t]++;
+      if (cont[t] >= 3) { dias3[t]++; dias3Mes[t][mes]++; ativos[t].forEach(f => { f._critico = (f._critico || 0) + 1; }); }
     });
   }
 
   const MZ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
   const tint = n => n === 0 ? 'var(--leve)' : n === 1 ? '#EAF3DE' : n === 2 ? '#FAEEDA' : n === 3 ? '#FAC775' : '#F09595';
   const tintTxt = n => n >= 4 ? '#791F1F' : n === 3 ? '#633806' : 'var(--txt-2)';
+  const dm = d => d ? d.split('-').reverse().slice(0, 2).join('/') : '—';
 
   let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
   FER_TUR.forEach(t => {
-    const alerta = pico[t] >= 3;
+    const al = pico[t] >= 3;
     h += '<div style="flex:1;min-width:96px;background:var(--leve);border-radius:10px;padding:8px;text-align:center;border-left:3px solid ' + FER_COR_T[t] + '">' +
       '<div style="font-size:11px;font-weight:700;color:' + FER_COR_T[t] + '">' + t + '</div>' +
-      '<div style="font-size:20px;font-weight:800;color:' + (alerta ? '#C0392B' : 'var(--navy)') + '">' + pico[t] + '</div>' +
+      '<div style="font-size:20px;font-weight:800;color:' + (al ? '#C0392B' : 'var(--navy)') + '">' + pico[t] + '</div>' +
       '<div style="font-size:10px;color:var(--fraco)">pico simultâneo</div>' +
-      '<div style="font-size:10px;color:' + (dias3[t] > 0 ? '#C0392B' : 'var(--fraco)') + ';font-weight:' + (dias3[t] > 0 ? '700' : '400') + '">' +
+      '<div style="font-size:10px;color:' + (dias3[t] ? '#C0392B' : 'var(--fraco)') + ';font-weight:' + (dias3[t] ? '700' : '400') + '">' +
       dias3[t] + ' dias com 3+</div></div>';
   });
   h += '</div>';
@@ -12794,54 +12798,85 @@ function ferPorTurno(lista) {
   FER_TUR.forEach(t => {
     h += '<tr><td style="font-size:10px;font-weight:700;color:' + FER_COR_T[t] + ';padding-right:4px;white-space:nowrap">' + t + '</td>';
     porMes[t].forEach((n, mi) => {
-      const passou = mi < mesIni;
-      const sel = _ferSel && _ferSel.t === t && _ferSel.m === mi;
-      const clic = (!passou && n > 0) ? ' onclick="ferAbreDet(\'' + t + '\',' + mi + ')" style="cursor:pointer;' : ' style="';
-      h += '<td' + clic + 'text-align:center;background:' + (passou ? 'transparent' : tint(n)) + ';color:' + tintTxt(n) +
+      const pas = mi < mesIni, sel = _ferSel && _ferSel.t === t && _ferSel.m === mi;
+      const clic = (!pas && n > 0) ? ' onclick="ferAbreDet(\'' + t + '\',' + mi + ')" style="cursor:pointer;' : ' style="';
+      h += '<td' + clic + 'text-align:center;background:' + (pas ? 'transparent' : tint(n)) + ';color:' + tintTxt(n) +
         ';border-radius:5px;padding:5px 0;min-width:24px;font-weight:' + (n >= 3 ? '800' : '600') +
-        (sel ? ';outline:2px solid var(--navy)' : '') + '">' + (passou ? '' : (n || '')) + '</td>';
+        (sel ? ';outline:2px solid var(--navy)' : '') + '">' + (pas ? '' : (n || '')) + '</td>';
     });
     h += '</tr>';
   });
   h += '</table></div>';
-  h += '<p class="desc" style="margin-top:4px">toque num mês para ver quem sai e o que fica descoberto</p>';
+  h += '<p class="desc" style="margin-top:4px">toque num mês para ver quem sai, quem volta e o que fica descoberto</p>';
 
   if (_ferSel && quem[_ferSel.t] && quem[_ferSel.t][_ferSel.m]) {
-    const arr = Object.values(quem[_ferSel.t][_ferSel.m]);
+    const T = _ferSel.t, M = _ferSel.m;
+    const arr = Object.values(quem[T][M]);
+    const mIni = new Date(ferAno, M, 1).toISOString().slice(0, 10);
+    const mFim = new Date(ferAno, M + 1, 0).toISOString().slice(0, 10);
+    const critMes = dias3Mes[T][M];
+
     h += '<div style="border:1px solid var(--linha-s);border-radius:10px;margin-top:8px;overflow:hidden">';
-    h += '<div style="background:' + FER_COR_T[_ferSel.t] + ';color:#fff;padding:6px 10px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center">' +
-      '<span>' + _ferSel.t + ' · ' + MZ[_ferSel.m] + '/' + ferAno + ' · ' + arr.length + ' fora</span>' +
+    h += '<div style="background:' + FER_COR_T[T] + ';color:#fff;padding:6px 10px;font-size:12px;font-weight:700;display:flex;justify-content:space-between;align-items:center">' +
+      '<span>' + T + ' · ' + MZ[M] + '/' + ferAno + ' · pico ' + porMes[T][M] + ' · ' + arr.length + ' no mês</span>' +
       '<span onclick="ferAbreDet(null)" style="cursor:pointer;font-size:14px">✕</span></div>';
+
     const ordem = { 'OP': 0, 'AP': 1, 'AUX': 2 };
-    arr.sort((a, b) => (ordem[a.nivel] ?? 9) - (ordem[b.nivel] ?? 9)).forEach(f => {
+    const linha = (f, tipo) => {
       const inf = _ferInfoMap[f.matricula] || {};
       const nv = f.nivel || (inf.funcao ? String(inf.funcao).slice(0, 3).toUpperCase() : '?');
       const ehOp = nv === 'OP';
       const nome = orgNome(f.matricula) || f.matricula;
-      h += '<div onclick="ferEditar(' + f.id + ')" style="cursor:pointer;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+      const marca = tipo === 'volta'
+        ? '<span style="font-size:10px;color:#186A3B;font-weight:700">volta ' + dm(f.fim) + '</span>'
+        : '<span style="font-size:10px;color:var(--fraco)">' + dm(f.inicio) + '→' + dm(f.fim) + '</span>';
+      return '<div onclick="ferEditar(' + f.id + ')" style="cursor:pointer;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
         '<div style="display:flex;gap:6px;align-items:baseline">' +
-        '<span style="font-size:9px;font-weight:800;background:' + (ehOp ? '#FADBD8' : '#E7EEF5') + ';color:' + (ehOp ? '#943126' : '#2C3E50') +
-        ';border-radius:4px;padding:1px 5px">' + nv + '</span>' +
-        '<b style="flex:1">' + escapeHtml(nome) + '</b>' +
-        '<span style="font-size:10px;color:var(--fraco)">' + ferFmt(f.inicio) + '→' + ferFmt(f.fim) + '</span></div>' +
-        (inf.maq ? '<div style="font-size:11px;color:' + (ehOp ? '#C0392B' : 'var(--fraco)') + ';margin-top:2px">' +
-          (ehOp ? 'máquina ' + escapeHtml(inf.maq) + ' fica sem operador' : 'apoia a ' + escapeHtml(inf.maq)) + '</div>' : '') +
+        '<span style="font-size:9px;font-weight:800;background:' + (ehOp ? '#FADBD8' : '#E7EEF5') + ';color:' + (ehOp ? '#943126' : '#2C3E50') + ';border-radius:4px;padding:1px 5px">' + nv + '</span>' +
+        '<b style="flex:1">' + escapeHtml(nome) + '</b>' + marca + '</div>' +
+        (inf.maq ? '<div style="font-size:11px;color:' + (tipo === 'volta' ? '#186A3B' : (ehOp ? '#C0392B' : 'var(--fraco)')) + ';margin-top:2px">' +
+          (tipo === 'volta' ? (ehOp ? 'reassume a ' + escapeHtml(inf.maq) : 'volta a apoiar a ' + escapeHtml(inf.maq))
+            : (ehOp ? 'máquina ' + escapeHtml(inf.maq) + ' fica sem operador' : 'apoia a ' + escapeHtml(inf.maq))) + '</div>' : '') +
         '</div>';
-    });
-    const maqs = arr.filter(f => (f.nivel === 'OP') && (_ferInfoMap[f.matricula] || {}).maq)
-                    .map(f => _ferInfoMap[f.matricula].maq);
-    if (maqs.length) {
-      h += '<div style="background:#FADBD8;color:#943126;padding:7px 10px;font-size:11.5px;line-height:1.5">' +
-        '<b>Descoberto:</b> ' + maqs.map(escapeHtml).join(' · ') + '</div>';
+    };
+
+    const voltam = arr.filter(f => f.fim >= mIni && f.fim <= mFim);
+    const saem = arr.filter(f => !(f.fim >= mIni && f.fim <= mFim));
+    if (saem.length) {
+      h += '<div style="background:var(--leve);padding:4px 10px;font-size:10px;font-weight:800;color:var(--txt-2)">FORA NO MÊS (' + saem.length + ')</div>';
+      saem.sort((x, y) => (ordem[x.nivel] ?? 9) - (ordem[y.nivel] ?? 9)).forEach(f => { h += linha(f, 'sai'); });
     }
-    h += '</div>';
+    if (voltam.length) {
+      h += '<div style="background:#EAF7EF;padding:4px 10px;font-size:10px;font-weight:800;color:#186A3B">VOLTAM NESTE MÊS (' + voltam.length + ') — retomam o posto</div>';
+      voltam.sort((x, y) => (x.fim || '').localeCompare(y.fim || '')).forEach(f => { h += linha(f, 'volta'); });
+    }
+
+    const maqs = arr.filter(f => f.nivel === 'OP' && (_ferInfoMap[f.matricula] || {}).maq).map(f => _ferInfoMap[f.matricula].maq);
+    if (maqs.length) {
+      h += '<div style="background:#FADBD8;color:#943126;padding:7px 10px;font-size:11.5px;line-height:1.5"><b>Descoberto:</b> ' +
+        [...new Set(maqs)].map(escapeHtml).join(' · ') + '</div>';
+    }
+
+    h += '<div style="background:var(--leve);padding:8px 10px;font-size:11.5px;line-height:1.6;border-top:1px solid var(--linha-s)">';
+    if (critMes > 0) {
+      h += '<b>Remonte:</b> ' + critMes + ' dia(s) com 3 ou mais fora neste mês.<br>';
+      const cand = arr.map(f => ({ f: f, ganho: f._critico || 0 })).filter(x => x.ganho > 0).sort((x, y) => y.ganho - x.ganho);
+      if (cand.length) {
+        h += cand.slice(0, 3).map(x => {
+          const nm = orgPrimeiro(orgNome(x.f.matricula) || x.f.matricula);
+          return 'mover <b>' + escapeHtml(nm) + '</b> tira ' + x.ganho + ' dia(s) de sobreposição';
+        }).join('<br>');
+      }
+    } else {
+      h += '<b>Remonte:</b> sem dias críticos neste mês — os períodos não se cruzam a ponto de deixar 3 fora juntos.';
+    }
+    h += '</div></div>';
   }
 
   const critico = FER_TUR.filter(t => pico[t] >= 3);
   if (critico.length) {
     h += '<div style="background:#FADBD8;border-left:3px solid #C0392B;border-radius:8px;padding:8px 10px;margin-top:9px;font-size:11.5px;line-height:1.5;color:#943126">' +
-      '<b>Turno descoberto:</b> ' + critico.map(t => t + ' chega a ' + pico[t] + ' fora (pico em ' +
-      (picoDia[t] ? picoDia[t].split('-').reverse().slice(0, 2).join('/') : '—') + ')').join(' · ') +
+      '<b>Turno descoberto:</b> ' + critico.map(t => t + ' chega a ' + pico[t] + ' fora (pico em ' + dm(picoDia[t]) + ')').join(' · ') +
       '. Sem operador reserva, remanejar para meses com menos carga.</div>';
   }
   if (semTurno) h += '<p class="desc" style="margin-top:6px">' + semTurno + ' período(s) sem turno identificado — não entram na conta.</p>';
