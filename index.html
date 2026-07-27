@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.262.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.263.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.262.0';
+const APP_VER = '3.263.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11443,6 +11443,7 @@ async function carregarOrganograma() {
   try {
     if (!infoImports) infoImports = await carregarInfoImports();
     montarSeletorPeriodo(infoImports, 'orgPeriodo');
+    apoioCarregaCats();
     setTimeout(sincSetorGlobal, 0);
   } catch (_) {}
   try {
@@ -11659,14 +11660,52 @@ function renderOrg() {
 }
 
 const ORG_APOIO_FUNCOES = ['apoio', 'lider'];
+const APOIO_CATS_PADRAO = ['Movimentação', 'Empilhadeira', 'Limpeza', 'Qualidade', 'Treinamento', 'Cobertura de férias', 'Manutenção'];
+const APOIO_CHAVE_CATS = 'org_apoio_categorias';
+let _apoioCats = null;        // categorias criadas pelo usuário
+let orgApoioCat = '';         // filtro do card ('' = todas)
+
+async function apoioCarregaCats() {
+  if (_apoioCats) return _apoioCats;
+  let salvas = [];
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', APOIO_CHAVE_CATS).maybeSingle();
+    if (data && data.valor) salvas = JSON.parse(data.valor);
+  } catch (_) {}
+  _apoioCats = Array.isArray(salvas) ? salvas : [];
+  return _apoioCats;
+}
+// padrão + criadas + as que já estão em uso, para nada sumir da lista
+function apoioListaCats() {
+  const usadas = (orgDados.aloc || []).filter(a => ORG_APOIO_FUNCOES.includes(a.funcao)).map(a => a.categoria);
+  return [...new Set([...APOIO_CATS_PADRAO, ...(_apoioCats || []), ...usadas].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+function orgApoioFiltrar(c) { orgApoioCat = c; renderOrgVista(); }
 
 // Apoio e liderança ficam FORA da árvore de máquinas: são pessoas do turno
 // que não ocupam posto. Turno vazio = ainda a definir.
 function orgCardApoio(alocSetor) {
-  const L = (alocSetor || []).filter(a => ORG_APOIO_FUNCOES.includes(a.funcao));
+  const Ltodos = (alocSetor || []).filter(a => ORG_APOIO_FUNCOES.includes(a.funcao));
+  const L = !orgApoioCat ? Ltodos
+    : orgApoioCat === '__sem__' ? Ltodos.filter(a => !a.categoria)
+    : Ltodos.filter(a => a.categoria === orgApoioCat);
   let h = '<div class="card"><div class="titulo-sec">🧩 Apoio e liderança · ' + escapeHtml(orgSetorSel) + '</div>';
-  if (!L.length) return h + '<p class="desc">Ninguém marcado como apoio ou liderança neste setor.</p></div>';
-  h += '<p class="desc" style="margin-bottom:8px">Fora da árvore de máquinas · toque num nome para mudar o turno, a função ou remover</p>';
+  if (!Ltodos.length) return h + '<p class="desc">Ninguém marcado como apoio ou liderança neste setor.</p></div>';
+  h += '<p class="desc" style="margin-bottom:8px">Fora da árvore de máquinas · toque num nome para editar turno, função, máquina, categoria e descrição</p>';
+  { const cats = [...new Set(L.map(a => a.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const semCat = L.filter(a => !a.categoria).length;
+    if (cats.length || semCat) {
+      h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">';
+      h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:4px 11px' + (orgApoioCat === '' ? ';background:var(--navy);color:#fff' : '') + '" onclick="orgApoioFiltrar(\'\')">Todas · ' + L.length + '</button>';
+      cats.forEach(c => {
+        h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:4px 11px' + (orgApoioCat === c ? ';background:var(--navy);color:#fff' : '') +
+          '" onclick="orgApoioFiltrar(\'' + escapeHtml(c).replace(/'/g, '&#39;') + '\')">' + escapeHtml(c) + ' · ' + L.filter(a => a.categoria === c).length + '</button>';
+      });
+      if (semCat) h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:4px 11px' + (orgApoioCat === '__sem__' ? ';background:var(--navy);color:#fff' : '') +
+        '" onclick="orgApoioFiltrar(\'__sem__\')">sem categoria · ' + semCat + '</button>';
+      h += '</div>';
+    } }
   [...ORG_TURNOS, null].forEach(t => {
     if (orgTurnoSel && t !== orgTurnoSel) return;
     const g = L.filter(a => (a.turno || null) === t);
@@ -11680,7 +11719,10 @@ function orgCardApoio(alocSetor) {
       h += '<span onclick="orgApoioMenu(' + a.id + ')" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:5px 11px;border-radius:14px;background:' +
         (lider ? '#f5f3ff;border:1px solid #c4b5fd' : 'var(--leve-s);border:1px solid var(--linha-s)') + '">' +
         '<span style="font-size:9px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:' + (lider ? '#5b21b6' : 'var(--fraco-2s)') + '">' + escapeHtml(a.funcao) + '</span>' +
-        orgAvatar(nm, 20) + '<span>' + escapeHtml(orgPrimeiro(nm) || nm) + '</span>' + orgSeloCargo(a.matricula) + '</span>';
+        orgAvatar(nm, 20) + '<span>' + escapeHtml(orgPrimeiro(nm) || nm) + '</span>' + orgSeloCargo(a.matricula) +
+        (a.maquina_codigo ? '<span style="font-size:9px;font-weight:800;background:var(--tinta-s);color:#fff;padding:1px 6px;border-radius:6px">MÁQ ' + escapeHtml(a.maquina_codigo) + '</span>' : '') +
+        (a.categoria ? '<span style="font-size:9px;font-weight:700;background:#ecfeff;border:1px solid #a5f3fc;color:#0e7490;padding:1px 6px;border-radius:6px">' + escapeHtml(a.categoria) + '</span>' : '') +
+        (a.descricao ? '<span title="' + escapeHtml(a.descricao) + '" style="font-size:11px;color:var(--fraco-2s)">📝</span>' : '') + '</span>';
     });
     h += '</div></div>';
   });
@@ -11700,8 +11742,61 @@ function orgApoioMenu(id) {
     h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:6px 11px' + ((a.funcao === f) ? ';opacity:.4' : '') +
       '" onclick="orgApoioSetFuncao(' + a.id + ',\'' + f + '\')">' + f + '</button>';
   });
-  h += '</div><button class="btn" style="margin-top:13px" onclick="orgApoioRemover(' + a.id + ')">Remover do apoio</button>';
+  h += '</div>';
+
+  h += '<p class="desc" style="margin:11px 0 5px">Máquina (opcional)</p><div style="display:flex;gap:6px;flex-wrap:wrap;max-height:132px;overflow:auto">';
+  h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:5px 10px' + (!a.maquina_codigo ? ';opacity:.4' : '') +
+    '" onclick="orgApoioSetMaquina(' + a.id + ',\'\')">sem máquina</button>';
+  orgDados.maquinas.filter(m => m.setor === a.setor).map(m => m.codigo).sort().forEach(m => {
+    h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:5px 10px' + ((a.maquina_codigo === m) ? ';opacity:.4' : '') +
+      '" onclick="orgApoioSetMaquina(' + a.id + ',\'' + m + '\')">' + m + '</button>';
+  });
+  h += '</div>';
+
+  h += '<p class="desc" style="margin:11px 0 5px">Categoria</p>';
+  h += '<select id="apoioCat" onchange="apoioTrocaCat(' + a.id + ')" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;width:100%">';
+  h += '<option value="">— sem categoria —</option>';
+  apoioListaCats().forEach(c => { h += '<option value="' + escapeHtml(c) + '"' + (a.categoria === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>'; });
+  h += '<option value="__nova__">➕ nova categoria…</option></select>';
+
+  h += '<p class="desc" style="margin:11px 0 5px">Descrição — o que essa pessoa faz</p>';
+  h += '<textarea id="apoioDesc" rows="3" placeholder="ex.: abastece bobina nas 3 células da manhã" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;width:100%;box-sizing:border-box">' + escapeHtml(a.descricao || '') + '</textarea>';
+  h += '<button class="btn btn-verde" style="margin-top:7px" onclick="orgApoioSalvaDesc(' + a.id + ')">Salvar descrição</button>';
+
+  h += '<button class="btn" style="margin-top:13px" onclick="orgApoioRemover(' + a.id + ')">Remover do apoio</button>';
   orgModal(nm, h);
+}
+async function orgApoioSetMaquina(id, maq) {
+  const { error } = await sb.from('org_alocacoes').update({ maquina_codigo: maq || null }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  orgFechaModal(); await carregarOrganograma();
+}
+async function apoioTrocaCat(id) {
+  const sel = $('apoioCat'); if (!sel) return;
+  let v = sel.value;
+  if (v === '__nova__') {
+    const nome = (prompt('Nome da nova categoria de apoio:') || '').trim();
+    if (!nome || /^__/.test(nome)) { sel.value = ''; return; }
+    await apoioCarregaCats();
+    if (!_apoioCats.includes(nome) && !APOIO_CATS_PADRAO.includes(nome)) {
+      _apoioCats.push(nome);
+      try { await sb.from('app_config').upsert({ chave: APOIO_CHAVE_CATS, valor: JSON.stringify(_apoioCats) }, { onConflict: 'chave' }); }
+      catch (e) { toast('Categoria não salvou: ' + (e.message || e)); }
+    }
+    v = nome;
+  }
+  const { error } = await sb.from('org_alocacoes').update({ categoria: v || null }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Categoria atualizada ✔');
+  orgFechaModal(); await carregarOrganograma();
+}
+async function orgApoioSalvaDesc(id) {
+  const el = $('apoioDesc'); if (!el) return;
+  const txt = (el.value || '').trim();
+  const { error } = await sb.from('org_alocacoes').update({ descricao: txt || null }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast('Descrição salva ✔');
+  orgFechaModal(); await carregarOrganograma();
 }
 async function orgApoioSetTurno(id, t) {
   const { error } = await sb.from('org_alocacoes').update({ turno: t || null }).eq('id', id);
