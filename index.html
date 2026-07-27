@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.238.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.239.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1673,7 +1673,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.238.0';
+const APP_VER = '3.239.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9594,6 +9594,86 @@ function _mediaCor(h) {
   if (h >= 8) return '#B9770E';
   return 'var(--txt-2)';
 }
+let _perdaModo = 'acima';
+
+/* Espelha o card de meta, mas para refugo: quais máquinas passaram de 2,5% de perda,
+   com o tipo de perda que mais pesa e o custo estimado. */
+function cardPerdaMeta(D, setor) {
+  try {
+    const META_PERDA = 2.5;
+    const emCx = c => setorDe(c) === 'Embaladeiras';
+    const val = r => { const c = String(r.recurso_cod); return emCx(c) ? (r.quantidade || 0) : (r.peso || 0); };
+
+    const prod = {}, perd = {}, tipo = {}, dias = {};
+    D.producao.forEach(r => {
+      const c = String(r.recurso_cod); if (setor && setorDe(c) !== setor) return;
+      prod[c] = (prod[c] || 0) + val(r);
+      (dias[c] = dias[c] || new Set()).add(String(r.dia).slice(0, 10));
+    });
+    (D.perdas || []).forEach(r => {
+      if (typeof perdaVisivel === 'function' && !perdaVisivel(r)) return;
+      const c = String(r.recurso_cod); if (!c || (setor && setorDe(c) !== setor)) return;
+      const q = val(r);
+      perd[c] = (perd[c] || 0) + q;
+      const t = String(r.tipo_perda_desc || '').trim() || '\u2014';
+      const alvo = (tipo[c] = tipo[c] || {});
+      const reg = (alvo[t] = alvo[t] || { kg: 0, n: 0 });
+      reg.kg += q; reg.n += 1;
+    });
+
+    const linhas = [];
+    Object.keys(prod).forEach(c => {
+      const p = prod[c] || 0, pe = perd[c] || 0;
+      if ((p + pe) <= 0) return;
+      if (!dias[c] || dias[c].size < 3) return;
+      const pct = pe / (p + pe) * 100;
+      const top = Object.entries(tipo[c] || {}).sort((a, b) => b[1].kg - a[1].kg)[0];
+      linhas.push({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, pct: pct, kg: pe,
+        tipo: top ? top[0] : '\u2014', tipoKg: top ? top[1].kg : 0, tipoN: top ? top[1].n : 0, cx: emCx(c) });
+    });
+    if (!linhas.length) return '';
+
+    const acima = linhas.filter(x => x.pct > META_PERDA).sort((a, b) => b.pct - a.pct);
+    const dentro = linhas.filter(x => x.pct <= META_PERDA).sort((a, b) => a.pct - b.pct);
+    const modo = (_perdaModo === 'ok') ? 'ok' : 'acima';
+    const lista = (modo === 'ok') ? dentro : acima;
+
+    const tot = acima.length + dentro.length;
+    const pctA = tot ? Math.round(acima.length / tot * 100) : 0;
+    const pctD = 100 - pctA;
+    const kgAcima = acima.reduce((t, x) => t + (x.cx ? 0 : x.kg), 0);
+    const custo = (typeof _amCustoKg === 'number' && _amCustoKg > 0) ? kgAcima * _amCustoKg : 0;
+
+    const bt = (m, txt, n, pc, cor) =>
+      `<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:6px 12px;` +
+      (modo === m ? `background:${cor};color:#fff;border-color:${cor}` : 'background:var(--leve-2);color:var(--txt-2s)') +
+      `" onclick="_perdaModo='${m}';renderPainel()">${txt} <b>${n}</b> <span style="opacity:.75">${pc}%</span></button>`;
+
+    const barra = `<div style="margin-bottom:9px">` +
+      `<div style="display:flex;height:14px;border-radius:6px;overflow:hidden;background:var(--leve-2)">` +
+      `<div style="width:${pctA}%;background:var(--critico)"></div><div style="width:${pctD}%;background:var(--ok-2)"></div></div>` +
+      `<div style="font-size:12px;color:var(--fraco);margin-top:5px"><b style="color:var(--critico)">${pctA}% das máquinas acima de ${String(META_PERDA).replace('.', ',')}%</b> · ${acima.length} de ${tot} avaliadas` +
+      (custo > 0 ? ` · <b style="color:var(--critico)">R$ ${Math.round(custo).toLocaleString('pt-BR')}</b> em refugo acima da meta` : '') +
+      `</div></div>` +
+      `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px">` +
+      bt('acima', '\u26a0\ufe0f Acima', acima.length, pctA, 'var(--critico)') +
+      bt('ok', '\u2705 Na meta', dentro.length, pctD, 'var(--ok-2)') + `</div>`;
+
+    const corpo = lista.length
+      ? tabSimples(['M\u00e1quina', 'Perda', 'Principal tipo'], lista.slice(0, 20).map(x =>
+          `<tr onclick="detPerdaMaq('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td>` +
+          `<td><span class="cel ${x.pct > META_PERDA ? 'baixo' : 'ok'}">${x.pct.toFixed(1).replace('.', ',')}%</span></td>` +
+          `<td style="font-size:12px;line-height:1.35">${escapeHtml((x.tipo || '\u2014').slice(0, 22))}` +
+          `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${Math.round(x.tipoKg).toLocaleString('pt-BR')}</b> ${x.cx ? 'cx' : 'kg'}` +
+          `${x.tipoN > 0 ? ` \u00b7 ${x.tipoN} lan\u00e7amento${x.tipoN > 1 ? 's' : ''}` : ''}` +
+          ` \u00b7 de ${Math.round(x.kg).toLocaleString('pt-BR')} total</div></td></tr>`).join(''))
+      : '<p class="vazio-painel">Nenhuma m\u00e1quina nessa faixa.</p>';
+
+    return card('\u267b\ufe0f Perdas x meta', (setor ? setor + ' \u00b7 ' : '') + tot + ' m\u00e1quina(s) \u00b7 meta 2,5% \u00b7 toque numa linha pra ver o detalhe',
+      barra + corpo, 'Perdas acima da meta');
+  } catch (_) { return ''; }
+}
+
 function cardAbaixoMeta(D, setor) {
   try {
     const parMaqMot = {};
@@ -9735,7 +9815,7 @@ function renderPainel() {
   const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
   $('faixaAtualiz').innerHTML = faixaFeriado() + cabecalhoInfo();
   try { const _at = dadosPainel && dadosPainel.info && dadosPainel.info.atualizado; const _vd = $('verData'); if (_vd && _at) { const _atD = new Date(_at).toLocaleDateString('pt-BR'); const _hjD = new Date().toLocaleDateString('pt-BR'); const _hoje = (_atD === _hjD); _vd.textContent = 'atualizado ' + (_hoje ? 'hoje' : _atD.slice(0, 5)); _vd.style.background = _hoje ? 'var(--laranja-4)' : 'rgba(255,255,255,.12)'; _vd.style.color = _hoje ? '#fff' : 'var(--fraco-3)'; } } catch (_) {}
-  let html = cardEscolherMaquina(D, setor) + cardMilSemRegra(ehMil) + cardAbaixoMeta(D, setor);
+  let html = cardEscolherMaquina(D, setor) + cardMilSemRegra(ehMil) + cardAbaixoMeta(D, setor) + cardPerdaMeta(D, setor);
   // ===== BRIEFING DO DIA: aparece quando o último dia produtivo é novo (uma vez por dia, por aparelho) =====
   try {
     const udB = (D.info && D.info.ultimoDiaProd) || null;
