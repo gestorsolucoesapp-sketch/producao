@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.214.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.215.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.214.0';
+const APP_VER = '3.215.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12721,6 +12721,82 @@ async function carregarFerias() {
     const { data } = await sb.from('org_ferias').select('*').order('inicio', { ascending: true, nullsFirst: false });
     orgFerias = data || [];
   } catch (_) { orgFerias = []; }
+  try {
+    const { data: al } = await sb.from('org_alocacoes').select('matricula,turno').not('turno', 'is', null);
+    _ferTurnoMap = {};
+    (al || []).forEach(a => { if (a.matricula && !_ferTurnoMap[a.matricula]) _ferTurnoMap[a.matricula] = a.turno; });
+  } catch (_) { _ferTurnoMap = _ferTurnoMap || {}; }
+}
+let _ferTurnoMap = {};
+const FER_TUR = ['Manhã', 'Tarde', 'Noite'];
+const FER_COR_T = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
+
+function ferTurnoDe(f) {
+  return (f.turno_planilha && String(f.turno_planilha).trim()) || _ferTurnoMap[f.matricula] || null;
+}
+
+function ferPorTurno(lista) {
+  const val = (lista || []).filter(f => f.inicio && f.fim);
+  const semTurno = val.filter(f => !ferTurnoDe(f)).length;
+  const com = val.filter(f => ferTurnoDe(f));
+  if (!com.length) {
+    return '<p class="desc">Sem turno identificado nas férias deste filtro. Preencha o turno na programação ou cadastre a alocação da pessoa.</p>';
+  }
+
+  const ini = new Date(ferAno, 0, 1), fim = new Date(ferAno, 11, 31);
+  const porMes = {}, pico = {}, picoDia = {}, dias3 = {};
+  FER_TUR.forEach(t => { porMes[t] = new Array(12).fill(0); pico[t] = 0; picoDia[t] = null; dias3[t] = 0; });
+
+  for (let d = new Date(ini); d <= fim; d.setDate(d.getDate() + 1)) {
+    const iso = d.toISOString().slice(0, 10), mes = d.getMonth();
+    const cont = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+    com.forEach(f => { if (iso >= f.inicio && iso <= f.fim) { const t = ferTurnoDe(f); if (cont[t] != null) cont[t]++; } });
+    FER_TUR.forEach(t => {
+      if (cont[t] > porMes[t][mes]) porMes[t][mes] = cont[t];
+      if (cont[t] > pico[t]) { pico[t] = cont[t]; picoDia[t] = iso; }
+      if (cont[t] >= 3) dias3[t]++;
+    });
+  }
+
+  const MZ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  const maxG = Math.max(1, ...FER_TUR.map(t => pico[t]));
+  const tint = (n) => n === 0 ? 'var(--leve)' : n === 1 ? '#EAF3DE' : n === 2 ? '#FAEEDA' : n === 3 ? '#FAC775' : '#F09595';
+  const tintTxt = (n) => n >= 4 ? '#791F1F' : n === 3 ? '#633806' : 'var(--txt-2)';
+
+  let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+  FER_TUR.forEach(t => {
+    const alerta = pico[t] >= 3;
+    h += '<div style="flex:1;min-width:96px;background:var(--leve);border-radius:10px;padding:8px;text-align:center;border-left:3px solid ' + FER_COR_T[t] + '">' +
+      '<div style="font-size:11px;font-weight:700;color:' + FER_COR_T[t] + '">' + t + '</div>' +
+      '<div style="font-size:20px;font-weight:800;color:' + (alerta ? '#C0392B' : 'var(--navy)') + '">' + pico[t] + '</div>' +
+      '<div style="font-size:10px;color:var(--fraco)">pico simultâneo</div>' +
+      '<div style="font-size:10px;color:' + (dias3[t] > 0 ? '#C0392B' : 'var(--fraco)') + ';font-weight:' + (dias3[t] > 0 ? '700' : '400') + '">' +
+      dias3[t] + ' dias com 3+</div></div>';
+  });
+  h += '</div>';
+
+  h += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table style="border-collapse:separate;border-spacing:2px;font-size:11px;min-width:340px">';
+  h += '<tr><td></td>' + MZ.map(m => '<td style="text-align:center;color:var(--fraco);font-size:10px;padding-bottom:2px">' + m + '</td>').join('') + '</tr>';
+  FER_TUR.forEach(t => {
+    h += '<tr><td style="font-size:10px;font-weight:700;color:' + FER_COR_T[t] + ';padding-right:4px;white-space:nowrap">' + t + '</td>';
+    porMes[t].forEach(n => {
+      h += '<td style="text-align:center;background:' + tint(n) + ';color:' + tintTxt(n) + ';border-radius:5px;padding:5px 0;min-width:24px;font-weight:' + (n >= 3 ? '800' : '600') + '">' + (n || '') + '</td>';
+    });
+    h += '</tr>';
+  });
+  h += '</table></div>';
+
+  const critico = FER_TUR.filter(t => pico[t] >= 3);
+  if (critico.length) {
+    h += '<div style="background:#FADBD8;border-left:3px solid #C0392B;border-radius:8px;padding:8px 10px;margin-top:9px;font-size:11.5px;line-height:1.5;color:#943126">' +
+      '<b>Turno descoberto:</b> ' + critico.map(t => t + ' chega a ' + pico[t] + ' pessoas fora (pico em ' +
+      (picoDia[t] ? picoDia[t].split('-').reverse().slice(0, 2).join('/') : '—') + ')').join(' · ') +
+      '. Sem operador reserva, remanejar para meses com menos carga.</div>';
+  }
+  if (semTurno) {
+    h += '<p class="desc" style="margin-top:6px">' + semTurno + ' período(s) sem turno identificado — não entram na conta.</p>';
+  }
+  return h;
 }
 
 async function garantirXlsx() {
@@ -12933,6 +13009,11 @@ function renderOrgFerias() {
   h += '</div>';
   h += '<p class="desc" style="margin-bottom:8px">azul = programado · vermelho = em curso hoje · cinza = já voltou · toque para editar</p>';
   h += ferTimeline(lista);
+  h += '</div>';
+
+  h += '<div class="card"><div class="titulo-sec">Remonte de férias por turno · ' + ferAno + '</div>';
+  h += '<p class="desc" style="margin-bottom:8px">quantas pessoas do mesmo turno ficam fora ao mesmo tempo · vermelho = 3 ou mais</p>';
+  h += ferPorTurno(lista);
   h += '</div>';
 
   if (vencendo.length) {
