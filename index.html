@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.233.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.234.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.233.0';
+const APP_VER = '3.234.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10767,48 +10767,26 @@ async function mtWhatsGerar(turno) {
   const M = _mtSnap.M;
   const alvo = (turno === 'Todos') ? ['Manhã', 'Tarde', 'Noite'] : [turno];
 
-  // agrupa como a tela: um operador cuida do bloco inteiro, então a imagem vai por bloco
-  const pacotes = [];
-  const G = _mtSnap.grupos;
-  if (G) {
-    Object.keys(G).sort().forEach(cel => {
-      Object.keys(G[cel]).forEach(bl => {
-        const cs = (G[cel][bl] || []).filter(c => M[c]);
-        if (cs.length) pacotes.push({ titulo: cs.join(' · '), cods: cs, celula: cel });
-      });
-    });
-  }
-  if (!pacotes.length) Object.keys(M).sort().forEach(c => pacotes.push({ titulo: c, cods: [c], celula: '' }));
+  // uma imagem por máquina, em qualquer setor — sem agrupar por bloco
+  const cods = Object.keys(M).sort((a, b) => (+a || 0) - (+b || 0) || String(a).localeCompare(String(b)));
 
   const files = [], urls = [];
   toast('Gerando imagens…');
   await new Promise(r => setTimeout(r, 30));
 
-  for (const pac of pacotes) {
-    // uma página por máquina: imagem alta demais é recomprimida pelo WhatsApp e fica ilegível
-    const paginas = [];
-    pac.cods.forEach(cod => {
-      const bs = [];
-      alvo.forEach(bl => {
-        if (M[cod] && M[cod][bl] && M[cod][bl].v > 0) {
-          bs.push({ bl: bl, cod: cod, a: M[cod][bl], meta: (metasData && metasData[cod] && metasData[cod][bl]) || 0 });
-        }
-      });
-      if (bs.length) paginas.push({ cod: cod, blocos: bs });
-    });
-    if (!paginas.length) continue;
-
-    for (let i = 0; i < paginas.length; i++) {
-      const pg = paginas[i];
-      const ctx = (paginas.length > 1)
-        ? { conjunto: pac.titulo, pos: (i + 1) + '/' + paginas.length }
-        : null;
-      const cv = _mtImgMaquina(pg.cod, pg.blocos, turno === 'Todos' ? '3 turnos' : turno, ctx);
-      const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.93));
-      if (blob) {
-        files.push(new File([blob], pg.cod + '-' + turno.toLowerCase() + '.jpg', { type: 'image/jpeg' }));
-        urls.push({ cod: pg.cod, url: cv.toDataURL('image/jpeg', 0.93) });
+  for (const cod of cods) {
+    const bs = [];
+    alvo.forEach(bl => {
+      if (M[cod] && M[cod][bl] && M[cod][bl].v > 0) {
+        bs.push({ bl: bl, cod: cod, a: M[cod][bl], meta: (metasData && metasData[cod] && metasData[cod][bl]) || 0 });
       }
+    });
+    if (!bs.length) continue;
+    const cv = _mtImgMaquina(cod, bs, turno === 'Todos' ? '3 turnos' : turno, null);
+    const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.93));
+    if (blob) {
+      files.push(new File([blob], cod + '-' + turno.toLowerCase() + '.jpg', { type: 'image/jpeg' }));
+      urls.push({ cod: cod, url: cv.toDataURL('image/jpeg', 0.93) });
     }
   }
   if (!files.length) { toast('Nenhuma máquina com produção neste turno'); return; }
@@ -10836,19 +10814,35 @@ function _mtAbrirGaleria(urls, turno) {
     '.top{position:sticky;top:0;background:#0B2A4A;color:#fff;padding:12px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:9}' +
     '.top b{font-size:15px}.top span{font-size:12px;opacity:.85}' +
     '.top button{cursor:pointer;border:none;border-radius:8px;background:#00964D;color:#fff;font-weight:700;padding:8px 14px;font-size:13px}' +
+    '.cp{cursor:pointer;border:none;border-radius:6px;background:#0B2A4A;color:#fff;font-weight:700;padding:4px 10px;font-size:11px;margin-left:8px}' +
     '.g{padding:16px;display:flex;flex-direction:column;gap:16px;align-items:center}' +
     'figure{margin:0;background:#fff;border-radius:12px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.12)}' +
     'figcaption{font-size:12px;color:#5C7186;padding:4px 2px 8px;font-weight:700}' +
     'img{display:block;max-width:900px;width:100%;height:auto;border-radius:8px}' +
     '@media print{.top{display:none}body{background:#fff}figure{box-shadow:none;page-break-after:always;padding:0}}';
-  const corpo = urls.map(u =>
-    '<figure><figcaption>Máquina ' + u.cod + '</figcaption><img src="' + u.url + '" alt="Máquina ' + u.cod + '"></figure>').join('');
+  const corpo = urls.map((u, i) =>
+    '<figure><figcaption>Máquina ' + u.cod +
+    ' <button class="cp" data-i="' + i + '">📋 copiar</button></figcaption>' +
+    '<img id="im' + i + '" src="' + u.url + '" alt="Máquina ' + u.cod + '"></figure>').join('');
   win.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
     '<title>Produção por máquina · ' + turno + '</title><style>' + est + '</style></head><body>' +
     '<div class="top"><b>' + urls.length + ' máquina(s) · ' + turno + '</b>' +
-    '<span>botão direito na imagem para copiar, ou gere um PDF com todas</span>' +
+    '<span>toque em copiar e cole no WhatsApp Web com Ctrl+V — sem salvar arquivo</span>' +
     '<button onclick="window.print()">🖨️ Salvar tudo em PDF</button></div>' +
-    '<div class="g">' + corpo + '</div></body></html>');
+    '<div class="g">' + corpo + '</div>' +
+    '<script>document.addEventListener("click", async function (ev) {' +
+    ' var b = ev.target.closest(".cp"); if (!b) return;' +
+    ' var im = document.getElementById("im" + b.dataset.i);' +
+    ' try {' +
+    '   var r = await fetch(im.src); var bl = await r.blob();' +
+    '   await navigator.clipboard.write([new ClipboardItem({ "image/png": await criarPng(im) })]);' +
+    '   b.textContent = "✅ copiado"; setTimeout(function(){ b.textContent = "📋 copiar"; }, 2000);' +
+    ' } catch (e) { b.textContent = "❌ use botão direito"; setTimeout(function(){ b.textContent = "📋 copiar"; }, 2500); }' +
+    '});' +
+    'function criarPng(img) { return new Promise(function (res) {' +
+    ' var c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;' +
+    ' c.getContext("2d").drawImage(img, 0, 0); c.toBlob(res, "image/png"); }); }' +
+    '<\/script></body></html>');
   win.document.close();
   toast(urls.length + ' imagem(ns) abertas em nova aba');
 }
