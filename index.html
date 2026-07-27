@@ -3525,12 +3525,22 @@ function mtDetPerdas(cod, bl) {
   const custo = (typeof _amCustoKg === 'number' && _amCustoKg > 0 && !S.emCx(cod))
     ? '<div style="font-size:12px;color:var(--critico);margin-top:3px">custo estimado <b>R$ ' +
       (a.pe * _amCustoKg).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '</b> pelo preço do PP atual</div>' : '';
+  const fora = (a.peOut || 0) + (a.peInf || 0);
+  const blocoFora = fora > 0
+    ? '<div style="background:#EAF2FA;border-left:3px solid #2471A3;border-radius:8px;padding:9px;margin-top:9px;font-size:12px;line-height:1.5;color:#1A5276">' +
+      '<b>' + un(fora) + ' não entram no refugo desta máquina.</b> ' +
+      (a.peOut > 0 ? un(a.peOut) + ' foram gerados por outro setor (material que chegou ruim). ' : '') +
+      (a.peInf > 0 ? un(a.peInf) + ' são de tipos que a regra não conta como refugo. ' : '') +
+      'Apontado aqui, mas a causa é de fora.</div>' +
+      _mtLista('Reatribuído / não contado', a.peOutT, fora, un)
+    : '';
   abreDet('Perdas · ' + cod + ' · ' + bl,
-    '<div style="font-size:12px;color:var(--fraco)">total <b style="color:var(--txt-2)">' + un(a.pe) + '</b> · ' +
+    '<div style="font-size:12px;color:var(--fraco)">refugo da máquina <b style="color:var(--txt-2)">' + un(a.pe) + '</b> · ' +
     pct.toFixed(1).replace('.', ',') + '% da produção · meta 2,5%</div>' + custo +
     _mtLista('Por tipo de perda', a.peT, a.pe, un) +
     _mtLista('Por item', a.peI, a.pe, un) +
-    _mtLista('Por OP / pedido', a.peOp, a.pe, un));
+    _mtLista('Por OP / pedido', a.peOp, a.pe, un) +
+    blocoFora);
 }
 
 function _mtTopMotivo(a) {
@@ -3558,7 +3568,7 @@ function cardMaquinaTurno(E) {
   const val = (r, c) => (emCx(c) ? (r.quantidade || 0) : (r.peso || 0));
   const fV = (v, c) => (emCx(c) ? (fmtNum(Math.round(v)) + ' cxs') : fmtKg(v));
   const M = {};                                   // cod -> bloco -> acumuladores
-  const ini = (c, b) => { (M[c] = M[c] || {}); M[c][b] = M[c][b] || { v: 0, pe: 0, pa: 0, dias: new Set(), mot: {}, motN: {}, motOp: {}, peT: {}, peI: {}, peOp: {} }; return M[c][b]; };
+  const ini = (c, b) => { (M[c] = M[c] || {}); M[c][b] = M[c][b] || { v: 0, pe: 0, peOut: 0, peInf: 0, pa: 0, dias: new Set(), mot: {}, motN: {}, motOp: {}, peT: {}, peI: {}, peOp: {}, peOutT: {} }; return M[c][b]; };
   (E.prod || []).forEach(r => {
     const b = blocoTurno(r.turno, r.dia); if (!b) return;
     const c = String(r.recurso_cod || ''); if (!c) return;
@@ -3568,8 +3578,17 @@ function cardMaquinaTurno(E) {
     const b = blocoTurno(r.turno, r.dia); if (!b) return;
     const c = String(r.recurso_cod || ''); if (!c || !M[c] || !M[c][b]) return;
     const q = val(r, c), A = M[c][b];
-    A.pe += q;
     const tp = String(r.tipo_perda_desc || '').trim() || '(sem tipo)';
+
+    // a regra de tipo_perda_regra já marcou cada perda: _conta (entra no refugo?)
+    // e _sp (setor culpado). Material que chega ruim de outro setor é apontado aqui
+    // mas a culpa não é da máquina — some do refugo dela e vai para "gerado por outro setor".
+    const culpado = r._sp || setorDe(c);
+    const meu = setorDe(c);
+    if (r._conta === false) { A.peInf += q; A.peOutT[tp] = (A.peOutT[tp] || 0) + q; return; }
+    if (culpado && culpado !== meu) { A.peOut += q; A.peOutT[tp] = (A.peOutT[tp] || 0) + q; return; }
+
+    A.pe += q;
     A.peT[tp] = (A.peT[tp] || 0) + q;
     const it = String(r.item_desc || r.item_cod || '').trim() || '(sem item)';
     A.peI[it] = (A.peI[it] || 0) + q;
