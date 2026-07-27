@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.241.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.242.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -913,6 +913,17 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <input type="date" id="cfFim" onchange="carregarConf(true)" style="font-size:16px;padding:8px;border:1px solid var(--borda);border-radius:10px">
           <button class="btn" onclick="cfMove(-1)" style="width:auto;padding:8px 11px;font-size:13px">‹</button>
           <button class="btn" onclick="cfMove(1)" style="width:auto;padding:8px 11px;font-size:13px">›</button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
+          <select id="cfSetor" onchange="cfRender()" style="font-size:16px;padding:8px;border:1px solid var(--borda);border-radius:10px">
+            <option value="">Todos os setores</option>
+          </select>
+          <select id="cfMetrica" onchange="cfRender()" style="font-size:16px;padding:8px;border:1px solid var(--borda);border-radius:10px">
+            <option value="">Produção, perdas e paradas</option>
+            <option value="producao">Só produção</option>
+            <option value="perdas">Só perdas</option>
+            <option value="paradas">Só paradas</option>
+          </select>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
           <span style="font-size:11px;font-weight:700;color:var(--fraco)">SENSIBILIDADE</span>
@@ -1673,7 +1684,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.241.0';
+const APP_VER = '3.242.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10875,10 +10886,20 @@ async function carregarConf(forcar) {
   }
 }
 
+function cfSetores() {
+  const sel = $('cfSetor'); if (!sel || sel.options.length > 1) return;
+  const S = [...new Set((_cfDados || []).map(r => setorDe(r.recurso_cod)).filter(Boolean))].sort();
+  S.forEach(x => { const o = document.createElement('option'); o.value = x; o.textContent = x; sel.appendChild(o); });
+}
+
 function cfRender() {
-  const D = _cfDados || [];
+  cfSetores();
+  const setorSel = ($('cfSetor') && $('cfSetor').value) || '';
+  const metSel = ($('cfMetrica') && $('cfMetrica').value) || '';
+  const D = (_cfDados || []).filter(r =>
+    (!setorSel || setorDe(r.recurso_cod) === setorSel) && (!metSel || r.metrica === metSel));
   if (!D.length) {
-    $('cfAlertas').innerHTML = '<div class="card"><p class="desc">Nenhum apontamento neste dia.</p></div>';
+    $('cfAlertas').innerHTML = '<div class="card"><p class="desc">Nenhum apontamento com esses filtros.</p></div>';
     $('cfGraficos').innerHTML = ''; return;
   }
   document.querySelectorAll('.cf-sig').forEach(x => {
@@ -10896,8 +10917,15 @@ function cfRender() {
     });
   let h = '<div class="card" style="border-left:4px solid ' + (forte.length ? '#C0392B' : '#1E8449') + '">';
   h += '<div class="titulo-sec">' + (forte.length ? forte.length + ' apontamento(s) fora da média' : 'Nenhum apontamento fora da média') + '</div>';
-  h += '<p class="desc" style="margin-bottom:' + (forte.length ? '8px' : '0') + '">' + dias + ' dia(s) analisado(s) · limite ' + _cfSigma +
-    'σ · compara com os 45 dias anteriores da mesma máquina e turno</p>';
+  const porMet = { producao: 0, perdas: 0, paradas: 0 };
+  forte.forEach(r => { porMet[r.metrica] = (porMet[r.metrica] || 0) + 1; });
+  h += '<p class="desc" style="margin-bottom:6px">' + dias + ' dia(s) · limite ' + _cfSigma +
+    'σ · compara com os 45 dias anteriores da mesma máquina e turno' + (setorSel ? ' · ' + escapeHtml(setorSel) : '') + '</p>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:' + (forte.length ? '8px' : '0') + '">' +
+    [['producao', 'produção'], ['perdas', 'perdas'], ['paradas', 'paradas']].map(([k, rot]) =>
+      '<span style="font-size:11px;font-weight:700;border-radius:999px;padding:4px 10px;background:' +
+      (porMet[k] ? '#FADBD8' : 'var(--leve)') + ';color:' + (porMet[k] ? '#943126' : 'var(--fraco)') + '">' +
+      porMet[k] + ' ' + rot + '</span>').join('') + '</div>';
   forte.slice(0, 12).forEach(r => {
     const z = Number(r.z || 0), acima = z > 0;
     const un = r.metrica === 'paradas' ? ' h' : ' kg';
