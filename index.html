@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.217.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.218.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.217.0';
+const APP_VER = '3.218.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12853,6 +12853,136 @@ function ferAbreDet(t, m) {
   renderOrgFerias();
 }
 
+function ferDiasNoMes(ano, mes) { return new Date(ano, mes, 0).getDate(); }
+function ferData(d) { return d ? new Date(d + 'T12:00:00') : null; }
+function ferFmt(d) { return d ? d.split('-').reverse().slice(0, 2).join('/') : '—'; }
+
+/* quanto falta para o limite legal (data_limite) */
+function ferUrgencia(f) {
+  if (!f.data_limite) return null;
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const lim = ferData(f.data_limite);
+  return Math.round((lim - hoje) / 86400000);
+}
+
+function ferLinhas() {
+  const mats = new Set(orgColabSetor().map(c => c.matricula));
+  return orgFerias.filter(f => f.setor === orgSetorSel || mats.has(f.matricula));
+}
+
+/* ---------- timeline ---------- */
+function ferDetMes(mes) {
+  const lista = ferLinhas().filter(f => {
+    if (!f.inicio || !f.fim) return false;
+    const a = ferData(f.inicio), b = ferData(f.fim);
+    const mi = new Date(ferAno, mes - 1, 1), mf = new Date(ferAno, mes, 0);
+    return a <= mf && b >= mi;
+  }).sort((x, y) => x.inicio.localeCompare(y.inicio));
+  const MESN = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  if (!lista.length) { orgModal(MESN[mes - 1] + ' ' + ferAno, '<p class="vazio-painel">Ninguém de férias neste mês.</p>'); return; }
+  const ops = lista.filter(f => (f.nivel || '').toUpperCase() === 'OP');
+  let h = '<p class="desc"><b>' + lista.length + '</b> pessoa(s) de férias em ' + MESN[mes - 1] +
+    (ops.length ? ' · <b style="color:' + (ops.length >= 3 ? 'var(--critico-s)' : 'var(--txt-2)') + '">' + ops.length + ' operador(es)</b>' : '') + '</p>';
+  h += '<div style="max-height:52vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin-top:8px">';
+  lista.forEach(f => {
+    const nv = (f.nivel || '').toUpperCase();
+    const corNv = nv === 'OP' ? '#8b5cf6' : nv === 'AP' ? '#0891b2' : 'var(--fraco)';
+    h += '<div onclick="orgFechaModal();ferEditar(' + f.id + ')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s)">' +
+      (nv ? '<span style="font-size:9px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:6px;padding:1px 5px;flex:none">' + nv + '</span>' : '') +
+      '<b style="flex:1;min-width:0;font-size:13px">' + escapeHtml(orgNome(f.matricula) || f.matricula) + '</b>' +
+      '<span style="font-size:11.5px;color:var(--fraco)">' + ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd</span></div>';
+  });
+  h += '</div>';
+  orgModal(MESN[mes - 1] + ' ' + ferAno + ' · ' + escapeHtml(orgSetorSel), h);
+}
+
+function ferTimeline(lista) {
+  const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const porMes = (ferModo === 'mes');
+  const ini = porMes ? new Date(ferAno, ferMes - 1, 1) : new Date(ferAno, 0, 1);
+  const fimA = porMes ? new Date(ferAno, ferMes, 0) : new Date(ferAno, 11, 31);
+  const totalDias = Math.round((fimA - ini) / 86400000) + 1;
+
+  const comData = lista.filter(f => f.inicio && f.fim &&
+    ferData(f.fim) >= ini && ferData(f.inicio) <= fimA)
+    .sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
+
+  if (!comData.length) return '<p class="vazio-painel">Ninguém de férias em ' + (porMes ? MES[ferMes - 1] + '/' + ferAno : ferAno) + '.</p>';
+
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const pctHoje = (hoje >= ini && hoje <= fimA) ? ((hoje - ini) / 86400000 / totalDias * 100) : null;
+
+  let h = '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+  h += '<div style="min-width:' + (porMes ? 1000 : 860) + 'px">';
+
+  // régua de meses
+  h += '<div style="display:flex;position:sticky;top:0;background:#fff;z-index:2;border-bottom:1px solid var(--linha-s);padding-bottom:3px">';
+  h += '<div style="width:196px;flex:none;position:sticky;left:0;background:#fff;z-index:3"></div><div style="flex:1;display:flex">';
+  if (porMes) {
+    for (let d = 1; d <= totalDias; d++) {
+      const dt = new Date(ferAno, ferMes - 1, d);
+      const fds = dt.getDay() === 0 || dt.getDay() === 6;
+      h += '<div style="width:' + (100 / totalDias).toFixed(4) + '%;font-size:9px;font-weight:800;color:' + (fds ? 'var(--linha-2s)' : 'var(--fraco-s)') +
+        ';text-align:center;border-left:1px solid var(--leve-2)">' + d + '</div>';
+    }
+  } else {
+    for (let m = 1; m <= 12; m++) {
+      const w = ferDiasNoMes(ferAno, m) / totalDias * 100;
+      h += '<div style="width:' + w.toFixed(3) + '%;font-size:10px;font-weight:800;color:var(--fraco-s);text-align:center;border-left:1px solid var(--leve-2)">' + MES[m - 1] + '</div>';
+    }
+  }
+  h += '</div></div>';
+
+  if (pctHoje != null) {
+    h += '<div style="display:flex"><div style="width:196px;flex:none"></div><div style="flex:1;position:relative;height:14px">' +
+      '<div style="position:absolute;left:' + pctHoje.toFixed(2) + '%;transform:translateX(-50%);font-size:9px;font-weight:800;color:var(--critico-s);white-space:nowrap">▼ hoje</div></div></div>';
+  }
+
+  // uma faixa por período
+  comData.forEach(f => {
+    const a = ferData(f.inicio), b = ferData(f.fim);
+    const off = Math.max(0, (a - ini) / 86400000 / totalDias * 100);
+    const larg = Math.max(0.6, ((Math.min(b, fimA) - Math.max(a, ini)) / 86400000 + 1) / totalDias * 100);
+    const nome = orgNome(f.matricula) || f.matricula;
+    const emCurso = hoje >= a && hoje <= b;
+    const passou = b < hoje;
+    const cor = emCurso ? 'var(--critico-s)' : passou ? 'var(--fraco-2s)' : '#2563eb';
+    const nv = (f.nivel || '').toUpperCase();
+    const corNv = nv === 'OP' ? '#8b5cf6' : nv === 'AP' ? '#0891b2' : 'var(--fraco-s)';
+
+    h += '<div style="display:flex;align-items:center;height:34px;border-bottom:1px solid #f5f7fa">';
+    h += '<div style="width:196px;flex:none;position:sticky;left:0;background:#fff;z-index:2;box-shadow:1px 0 0 var(--linha-s);padding-right:8px;overflow:hidden" onclick="ferEditar(' + f.id + ')">' +
+      '<div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--tinta-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+      (nv ? '<span style="font-size:9px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:6px;padding:0 4px;flex:none">' + nv + '</span>' : '') +
+      '<span style="overflow:hidden;text-overflow:ellipsis">' + escapeHtml(orgPrimeiro(nome) || nome) + '</span></div>' +
+      '<div style="font-size:10px;color:' + (emCurso ? 'var(--critico-s)' : 'var(--fraco-2s)') + ';font-weight:' + (emCurso ? '800' : '600') + ';white-space:nowrap">' +
+      ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd' +
+      (emCurso ? ' · <b>faltam ' + Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd</b>' : '') + '</div></div>';
+    h += '<div style="flex:1;position:relative;height:100%">';
+    if (porMes) {
+      for (let d = 0; d < totalDias; d++) {
+        const dt = new Date(ferAno, ferMes - 1, d + 1);
+        const fds = dt.getDay() === 0 || dt.getDay() === 6;
+        h += '<div style="position:absolute;left:' + (d / totalDias * 100).toFixed(4) + '%;width:' + (100 / totalDias).toFixed(4) +
+          '%;top:0;bottom:0;border-left:1px solid var(--leve-2s)' + (fds ? ';background:var(--leve-s)' : '') + '"></div>';
+      }
+    } else {
+      for (let m = 1; m < 12; m++) {
+        let acc = 0; for (let k = 1; k <= m; k++) acc += ferDiasNoMes(ferAno, k);
+        h += '<div style="position:absolute;left:' + (acc / totalDias * 100).toFixed(3) + '%;top:0;bottom:0;border-left:1px solid var(--leve-2s)"></div>';
+      }
+    }
+    if (pctHoje != null) h += '<div title="hoje" style="position:absolute;left:' + pctHoje.toFixed(2) + '%;top:0;bottom:0;border-left:2px solid var(--critico-s);opacity:.9;z-index:1"></div>';
+    h += '<div onclick="ferEditar(' + f.id + ')" title="' + escapeHtml(nome + ' · ' + ferFmt(f.inicio) + ' a ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + ' dias') +
+      '" style="position:absolute;left:' + off.toFixed(3) + '%;width:' + larg.toFixed(3) + '%;top:4px;bottom:4px;background:' + cor +
+      ';border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:800;overflow:hidden">' +
+      (larg > 3.4 ? (emCurso ? (Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd') : (f.dias || '')) : '') + '</div>';
+    h += '</div></div>';
+  });
+  return h + '</div></div>';
+}
+
+/* ---------- carga por mês: quantos de férias ao mesmo tempo ---------- */
 function ferCargaMes(lista) {
   const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const cont = Array(12).fill(0), op = Array(12).fill(0);
