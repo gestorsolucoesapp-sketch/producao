@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.263.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.264.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.263.0';
+const APP_VER = '3.264.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11602,6 +11602,7 @@ function renderOrg() {
   h += orgFaixaSupervisor();
   h += orgFaixaCelulas();
   h += orgCardApoio(alocSetor);   // apoio e liderança abrem a árvore
+  h += orgCardDesligados(alocSetor);
 
   orgTurnosVis().forEach(t => {
     const cor = ORG_CORES[t];
@@ -11660,6 +11661,9 @@ function renderOrg() {
 }
 
 const ORG_APOIO_FUNCOES = ['apoio', 'lider'];
+const ORG_FUNC_ESCALA = ['operador', 'auxiliar'];   // contam no turno e entram na árvore
+const ORG_FUNC_FORA = ['desligado'];                // saem de tudo: célula própria
+const orgAtivo = a => !ORG_FUNC_FORA.includes(a.funcao);
 const APOIO_CATS_PADRAO = ['Movimentação', 'Empilhadeira', 'Limpeza', 'Qualidade', 'Treinamento', 'Cobertura de férias', 'Manutenção'];
 const APOIO_CHAVE_CATS = 'org_apoio_categorias';
 let _apoioCats = null;        // categorias criadas pelo usuário
@@ -11686,7 +11690,7 @@ function orgApoioFiltrar(c) { orgApoioCat = c; renderOrgVista(); }
 // Apoio e liderança ficam FORA da árvore de máquinas: são pessoas do turno
 // que não ocupam posto. Turno vazio = ainda a definir.
 function orgCardApoio(alocSetor) {
-  const Ltodos = (alocSetor || []).filter(a => ORG_APOIO_FUNCOES.includes(a.funcao));
+  const Ltodos = (alocSetor || []).filter(a => ORG_APOIO_FUNCOES.includes(a.funcao) && orgAtivo(a));
   const L = !orgApoioCat ? Ltodos
     : orgApoioCat === '__sem__' ? Ltodos.filter(a => !a.categoria)
     : Ltodos.filter(a => a.categoria === orgApoioCat);
@@ -11728,6 +11732,20 @@ function orgCardApoio(alocSetor) {
   });
   return h + '</div>';
 }
+function orgCardDesligados(alocSetor) {
+  const L = (alocSetor || []).filter(a => ORG_FUNC_FORA.includes(a.funcao));
+  if (!L.length) return '';
+  let h = '<div class="card" style="border-left:5px solid var(--linha-2s)"><div class="titulo-sec">🚪 Desligados · ' + escapeHtml(orgSetorSel) + ' · ' + L.length + '</div>';
+  h += '<p class="desc" style="margin-bottom:8px">Não contam em nenhum turno nem no efetivo · toque para reativar ou remover</p>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+  L.forEach(a => {
+    const nm = a.matricula ? (orgNome(a.matricula) || a.matricula) : (a.apelido_origem || '?');
+    h += '<span onclick="orgApoioMenu(' + a.id + ')" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:5px 11px;border-radius:14px;background:var(--leve-2s);border:1px solid var(--linha-s);color:var(--fraco-s);text-decoration:line-through">' +
+      orgAvatar(nm, 20) + '<span>' + escapeHtml(orgPrimeiro(nm) || nm) + '</span>' + orgSeloCargo(a.matricula) + '</span>';
+  });
+  return h + '</div></div>';
+}
+
 function orgApoioMenu(id) {
   const a = (orgDados.aloc || []).find(x => String(x.id) === String(id));
   if (!a) { toast('Registro não encontrado'); return; }
@@ -11738,11 +11756,11 @@ function orgApoioMenu(id) {
       '" onclick="orgApoioSetTurno(' + a.id + ',\'' + t + '\')">' + (t || 'sem turno') + '</button>';
   });
   h += '</div><p class="desc" style="margin:11px 0 5px">Função</p><div style="display:flex;gap:7px;flex-wrap:wrap">';
-  ORG_APOIO_FUNCOES.forEach(f => {
+  [...ORG_APOIO_FUNCOES, ...ORG_FUNC_ESCALA, ...ORG_FUNC_FORA].forEach(f => {
     h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:6px 11px' + ((a.funcao === f) ? ';opacity:.4' : '') +
       '" onclick="orgApoioSetFuncao(' + a.id + ',\'' + f + '\')">' + f + '</button>';
   });
-  h += '</div>';
+  h += '</div><div class="desc" style="font-size:11px;margin-top:5px">Operador e auxiliar saem desta lista, entram na árvore do turno e passam a contar no efetivo. Desligado sai de tudo e vai para a célula de desligados.</div>';
 
   h += '<p class="desc" style="margin:11px 0 5px">Máquina (opcional)</p><div style="display:flex;gap:6px;flex-wrap:wrap;max-height:132px;overflow:auto">';
   h += '<button class="btn" style="display:inline-block;width:auto;font-size:12px;padding:5px 10px' + (!a.maquina_codigo ? ';opacity:.4' : '') +
@@ -11804,8 +11822,17 @@ async function orgApoioSetTurno(id, t) {
   orgFechaModal(); await carregarOrganograma();
 }
 async function orgApoioSetFuncao(id, f) {
-  const { error } = await sb.from('org_alocacoes').update({ funcao: f }).eq('id', id);
+  const a = (orgDados.aloc || []).find(x => String(x.id) === String(id));
+  // operador/auxiliar vivem no turno: sem turno a pessoa sumiria da tela
+  if (a && ORG_FUNC_ESCALA.includes(f) && !a.turno) {
+    toast('Defina o turno antes de mover para ' + f + '.');
+    return;
+  }
+  const patch = { funcao: f };
+  if (ORG_FUNC_FORA.includes(f)) { patch.turno = null; patch.maquina_codigo = null; }
+  const { error } = await sb.from('org_alocacoes').update(patch).eq('id', id);
   if (error) { toast('Erro: ' + error.message); return; }
+  toast(ORG_FUNC_ESCALA.includes(f) ? 'Movido para a escala do turno ✔' : ORG_FUNC_FORA.includes(f) ? 'Marcado como desligado ✔' : 'Função atualizada ✔');
   orgFechaModal(); await carregarOrganograma();
 }
 async function orgApoioRemover(id) {
@@ -11817,7 +11844,7 @@ async function orgApoioRemover(id) {
 function orgBlocoSemMaquina(aloc, turno, tint) {
   // pessoas alocadas no turno mas sem máquina fixa (apoio, volante, aprendiz em formação)
   // apoio e liderança têm card próprio, fora da árvore — não repetem aqui
-  const livres = aloc.filter(a => !a.maquina_codigo && !(a.aprendiz && a.instrutor_matricula) && !ORG_APOIO_FUNCOES.includes(a.funcao));
+  const livres = aloc.filter(a => !a.maquina_codigo && !(a.aprendiz && a.instrutor_matricula) && !ORG_APOIO_FUNCOES.includes(a.funcao) && orgAtivo(a));
   let h = '<div style="margin:14px 0 2px">';
   h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px">';
   h += '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--fraco-2s)">Sem máquina fixa</span>';
@@ -12350,7 +12377,7 @@ async function orgImpGravar(tipo) {
 
 /* ---------- headcount por turno ---------- */
 function orgHeadcount() {
-  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel));
+  const al = orgDados.aloc.filter(a => a.setor === orgSetorSel && (!orgTurnoSel || a.turno === orgTurnoSel) && orgAtivo(a));
   const r = {};
   orgTurnosVis().forEach(t => {
     const dt = al.filter(a => a.turno === t);
