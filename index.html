@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.240.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.241.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1673,7 +1673,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.240.0';
+const APP_VER = '3.241.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10886,20 +10886,29 @@ function cfRender() {
     x.style.background = on ? 'var(--navy)' : ''; x.style.color = on ? '#fff' : '';
   });
   const dias = [...new Set(D.map(r => r.dia))].length;
-  const forte = D.filter(r => r.z != null && Math.abs(Number(r.z)) >= _cfSigma && Number(r.n_hist) >= 5)
-                 .sort((a, b) => Math.abs(Number(b.z)) - Math.abs(Number(a.z)));
+  const forte = D.filter(r =>
+      (r.z != null && Math.abs(Number(r.z)) >= _cfSigma && Number(r.n_hist) >= 5) || r.alerta != null)
+    .sort((a, b) => {
+      const pa = a.alerta === 'perda_maior' ? 2 : (a.alerta === 'span' ? 1 : 0);
+      const pb = b.alerta === 'perda_maior' ? 2 : (b.alerta === 'span' ? 1 : 0);
+      if (pa !== pb) return pb - pa;
+      return Math.abs(Number(b.z || 0)) - Math.abs(Number(a.z || 0));
+    });
   let h = '<div class="card" style="border-left:4px solid ' + (forte.length ? '#C0392B' : '#1E8449') + '">';
   h += '<div class="titulo-sec">' + (forte.length ? forte.length + ' apontamento(s) fora da média' : 'Nenhum apontamento fora da média') + '</div>';
   h += '<p class="desc" style="margin-bottom:' + (forte.length ? '8px' : '0') + '">' + dias + ' dia(s) analisado(s) · limite ' + _cfSigma +
     'σ · compara com os 45 dias anteriores da mesma máquina e turno</p>';
   forte.slice(0, 12).forEach(r => {
-    const z = Number(r.z), acima = z > 0;
+    const z = Number(r.z || 0), acima = z > 0;
     const un = r.metrica === 'paradas' ? ' h' : ' kg';
-    const grave = Math.abs(z) >= 5;
+    const grave = Math.abs(z) >= 5 || r.alerta === 'perda_maior';
+    const selo = r.alerta === 'perda_maior' ? '⚠ perda > produção'
+               : r.alerta === 'span' ? '⏱ acumulada'
+               : (acima ? '▲' : '▼') + ' ' + Math.abs(z).toFixed(0) + 'σ';
     h += '<div onclick="cfDetalhe(\'' + r.recurso_cod + '\',\'' + r.metrica + '\',' + (r.turno == null ? 'null' : r.turno) + ',\'' + r.dia + '\')" ' +
       'style="cursor:pointer;display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--leve-2s)">' +
       '<span style="font-size:10px;font-weight:800;background:' + (grave ? '#FADBD8' : '#FEF5E7') + ';color:' + (grave ? '#943126' : '#7E5109') +
-      ';border-radius:5px;padding:3px 7px;white-space:nowrap">' + (acima ? '▲' : '▼') + ' ' + Math.abs(z).toFixed(0) + 'σ</span>' +
+      ';border-radius:5px;padding:3px 7px;white-space:nowrap">' + selo + '</span>' +
       '<div style="flex:1;min-width:0">' +
       '<div style="font-size:13px;font-weight:700">' + escapeHtml(r.recurso_cod) +
       (r.turno != null ? ' · ' + cfTurLbl(r.turno, r.metrica) : '') +
@@ -10907,7 +10916,7 @@ function cfRender() {
       (dias > 1 ? ' <span style="font-weight:600;color:var(--navy);font-size:11px">' + String(r.dia).split('-').reverse().slice(0, 2).join('/') + '</span>' : '') +
       '</div>' +
       '<div style="font-size:11px;color:var(--fraco)">' + Number(r.valor).toLocaleString('pt-BR') + un +
-      ' · média ' + Number(r.media).toLocaleString('pt-BR') + un + ' em ' + r.n_hist + ' dias' +
+      (r.n_hist >= 5 ? ' · média ' + Number(r.media).toLocaleString('pt-BR') + un + ' em ' + r.n_hist + ' dias' : '') +
       (r.ops ? ' · <b style="color:var(--txt-2)">OP ' + escapeHtml(r.ops) + '</b>' : '') + '</div>' +
       (r.detalhe ? '<div style="font-size:11px;color:#943126;font-weight:600;margin-top:2px">⏱ ' + escapeHtml(r.detalhe) + '</div>' : '') +
       '</div></div>';
@@ -10982,7 +10991,9 @@ function cfDetalhe(cod, metrica, turno, dia) {
     (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + un + '</b> · ' +
     Math.abs(z).toFixed(1) + ' desvios</div>' +
     '<div style="background:' + (Math.abs(z) >= 5 ? '#FADBD8' : '#FEF5E7') + ';border-radius:8px;padding:9px;margin-top:10px;font-size:12px;line-height:1.5">' +
-    (r.detalhe
+    (r.alerta === 'perda_maior'
+      ? '<b>Perda maior que a produção.</b> ' + escapeHtml(r.detalhe) + '. Ou é refugo acumulado de outros dias lançado de uma vez, ou material que veio de outro setor e foi descartado aqui, ou unidade trocada no apontamento. Confirmar com o operador — é o tipo de lançamento que sozinho desloca o indicador do mês.'
+      : r.detalhe
       ? '<b>Parada acumulada.</b> ' + escapeHtml(r.detalhe) + '. O ERP lança a parada inteira no dia em que ela termina, então esse dia recebe horas que na verdade se espalham por vários. Não é erro de digitação, mas distorce o indicador do dia e do turno.'
       : Math.abs(z) >= 5
       ? '<b>Muito fora do padrão.</b> Valor desse tamanho normalmente é erro de apontamento — unidade trocada, vírgula no lugar errado ou lançamento duplicado. Confirmar com o operador antes de fechar o dia.'
