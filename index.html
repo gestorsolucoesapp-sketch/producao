@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.230.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.231.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1645,7 +1645,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.230.0';
+const APP_VER = '3.231.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1795,15 +1795,29 @@ function tipoDia(dia) {
 }
 const _diaReduzido = d => { const t = tipoDia(d); return t === 'sabado' || t === 'reduzido' || t === 'folga' || t === 'domingo'; };
 // ===== Previsão mensal (dias-equivalentes: útil=1 · sábado/reduzido≈0,46 · domingo/folga=0) =====
-// dias-equivalentes de um conjunto de datas: útil=1 · sábado/reduzido≈0,46 · domingo/folga=0
-// domingo produz (hora extra) mas não é capacidade prevista, então não entra no divisor
-function _diasEq(setDias) {
+/* dias-equivalentes POR MÁQUINA.
+   Regra do chão de fábrica: sábado é reduzido (06:00–17:00) e vale ~0,46 de um dia.
+   Mas se a máquina rodou o turno da NOITE no sábado, é porque emendou o fim de semana
+   inteiro — aí conta dia cheio. Domingo só aparece quando é hora extra: para a máquina
+   que efetivamente produziu, conta cheio; para as demais o dia nem existe.
+   Como a checagem é feita máquina a máquina, setores que não trabalham fim de semana
+   não são afetados. */
+function _rodouNoite(mq, dia) {
+  return !!(mq && mq['Noite'] && mq['Noite'].dias && mq['Noite'].dias.has(dia));
+}
+function _equivDiaMaq(dia, mq) {
+  const t = tipoDia(dia);
+  if (t === 'domingo' || t === 'folga') return 1;          // produziu no domingo = hora extra, dia cheio
+  if (t === 'sabado' || t === 'reduzido') return _rodouNoite(mq, dia) ? 1 : (10.98 / 23.92);
+  return 1;
+}
+function _diasEq(setDias, mq) {
   let e = 0;
-  (setDias || new Set()).forEach(d => { e += equivDia(d); });
+  (setDias || new Set()).forEach(d => { e += _equivDiaMaq(d, mq); });
   return e;
 }
-function _fmtDias(setDias) {
-  const n = (setDias || new Set()).size, e = _diasEq(setDias);
+function _fmtDias(setDias, mq) {
+  const n = (setDias || new Set()).size, e = _diasEq(setDias, mq);
   if (Math.abs(e - n) < 0.05) return n + ' dias';
   return e.toFixed(1).replace('.', ',') + ' dias equiv.';
 }
@@ -3497,7 +3511,7 @@ function cardMaquinaTurno(E) {
       let tot = 0, nv = 0, nl = 0, nr = 0;
       cs.forEach(c => Object.keys(M[c]).forEach(bb => {
         const a = M[c][bb]; tot += a.v;
-        const d = Math.max(_diasEq(a.dias), 0.5), meta = (metasData && metasData[c] && metasData[c][bb]) || 0;
+        const d = Math.max(_diasEq(a.dias, M[c]), 0.5), meta = (metasData && metasData[c] && metasData[c][bb]) || 0;
         const p = meta > 0 ? (a.v / d) / meta * 100 : 0;
         const rp = (a.v + a.pe) > 0 ? a.pe / (a.v + a.pe) * 100 : 0;
         const pp = a.pa / (MT_JOR[bb] * d) * 100;
@@ -3537,7 +3551,7 @@ function cardMaquinaTurno(E) {
           (o && o.desativada ? '<span style="font-size:9px;font-weight:800;background:rgba(214,69,69,.16);color:#B23B3B;padding:2px 6px;border-radius:5px;margin-left:7px">desativada</span>' : '') +
           '<span style="margin-left:auto;font-size:12px;color:var(--fraco);white-space:nowrap">' + fV(totM, c) + selo(totM, c) + '</span></div>';
         Object.keys(M[c]).sort((x, y) => MT_ORD[x] - MT_ORD[y]).forEach(bb => {
-          const a = M[c][bb], d = Math.max(_diasEq(a.dias), 0.5);
+          const a = M[c][bb], d = Math.max(_diasEq(a.dias, M[c]), 0.5);
           const meta = (metasData && metasData[c] && metasData[c][bb]) || 0;
           const p = meta > 0 ? (a.v / d) / meta * 100 : 0;
           const rp = (a.v + a.pe) > 0 ? a.pe / (a.v + a.pe) * 100 : 0;
@@ -3550,7 +3564,7 @@ function cardMaquinaTurno(E) {
             '<span style="margin-left:auto;width:12px;height:12px;border-radius:50%;background:' + dot + '"></span></div>' +
             _mtLinhaEquipe(c, bb) +
             '<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin-bottom:3px"><span style="width:64px;flex:none;font-size:11px;font-weight:600;color:var(--fraco);line-height:1.5">Produção</span>' +
-            '<span style="font-size:11px;line-height:1.5;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">atingiu <b style="color:' + MT_TXT[fP] + '">' + Math.round(p) + '%</b> da meta' + (d > 1 ? ' <i style="font-style:normal;font-size:9px" class="desc">em ' + _fmtDias(a.dias) + '</i>' : '') + '</span>' +
+            '<span style="font-size:11px;line-height:1.5;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">atingiu <b style="color:' + MT_TXT[fP] + '">' + Math.round(p) + '%</b> da meta' + (d > 1 ? ' <i style="font-style:normal;font-size:9px" class="desc">em ' + _fmtDias(a.dias, M[c]) + '</i>' : '') + '</span>' +
             '<span style="margin-left:auto;font-size:11px;color:var(--fraco);white-space:nowrap;line-height:1.5">' + fV(a.v, c) + '</span></div>' +
             _mtBarra(fP, p, 150, 100, 'meta ' + (meta ? fV(meta, c) : '—') + (d > 1 ? '/dia' : '')) +
             '<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin-bottom:3px"><span style="width:64px;flex:none;font-size:11px;font-weight:600;color:var(--fraco);line-height:1.5">Perdas</span>' +
@@ -10687,7 +10701,7 @@ function _mtImgMaquina(cod, blocos, turnoLbl, agrupado) {
 
   let y = HDR + 26;
   blocos.forEach(b => {
-    const a = b.a, meta = b.meta, d = Math.max(_diasEq(a.dias), 0.5);
+    const a = b.a, meta = b.meta, _mq = S.M[b.cod || cod], d = Math.max(_diasEq(a.dias, _mq), 0.5);
     const pct = meta > 0 ? (a.v / d) / meta * 100 : 0;
     const rp = (a.v + a.pe) > 0 ? a.pe / (a.v + a.pe) * 100 : 0;
     const pp = a.pa / (MT_JOR[b.bl] * d) * 100;
@@ -10722,7 +10736,7 @@ function _mtImgMaquina(cod, blocos, turnoLbl, agrupado) {
     const _c = b.cod || cod;
     const corP = pct >= 100 ? '#3CA96E' : pct >= 90 ? '#E8871F' : '#D64545';
     linha('Produção', Math.round(pct) + '% da meta', S.fV(a.v, _c), pct, 150, 100, corP,
-      meta ? 'meta ' + S.fV(meta, _c) + '/dia · ' + _fmtDias(a.dias) : '', y + 104);
+      meta ? 'meta ' + S.fV(meta, _c) + '/dia · ' + _fmtDias(a.dias, _mq) : '', y + 104);
     const corR = rp <= 2.5 ? '#3CA96E' : rp <= 4 ? '#E8871F' : '#D64545';
     linha('Perdas', rp.toFixed(1).replace('.', ',') + '%', S.fV(a.pe, _c), rp, 5, 2.5, corR, 'meta 2,5%', y + 212);
     const corA = pp <= 20 ? '#3CA96E' : pp <= 30 ? '#E8871F' : '#D64545';
