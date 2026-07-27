@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.252.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.253.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.252.0';
+const APP_VER = '3.253.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14645,6 +14645,10 @@ async function renderOrgFaltas() {
 
   const nPor = t => doSetor.filter(r => t === 'ferias' ? ehFerias(r.tipo) : (r.tipo || '') === t).length;
 
+  _faRegs = brutos;                                   // o botão ✎ lê daqui
+  await faCarregaCats();
+  const motivosUsados = [...new Set(brutos.map(r => r.motivo).filter(Boolean))];
+
   let h = '';
 
   /* ---- lançar ---- */
@@ -14659,10 +14663,11 @@ async function renderOrgFaltas() {
     '<label style="font-size:12px;color:var(--fraco);flex:0 0 auto">quantos dias</label>' +
     '<input id="faDias" type="number" min="1" max="180" value="1" oninput="faAtualizaFim()" style="width:88px;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
     '<span id="faAte" style="font-size:12.5px;color:var(--txt-2);font-weight:700"></span></div>';
-  h += '<input id="faMotivo" list="faMotLista" placeholder="motivo (opcional)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
-    '<datalist id="faMotLista"><option value="a confirmar"><option value="consulta médica"><option value="assunto pessoal"><option value="transporte"><option value="convocação"></datalist>';
+  h += '<select id="faMotivo" onchange="faTrocaMotivo()" aria-label="Motivo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
+    faOpcoesMotivo(motivosUsados, null) + '</select>';
   h += '<div class="desc" style="font-size:11px;color:var(--critico)">⚠️ Não registre informação de saúde. Só o tipo e um motivo genérico.</div>';
-  h += '<button class="btn btn-verde" onclick="orgSalvaFalta()">Salvar</button></div></div>';
+  h += '<div id="faEditAviso" class="oculto" style="font-size:12.5px;background:#fff7ed;border:1px solid #fed7aa;color:#7c3aed;border-radius:10px;padding:7px 10px"></div>';
+  h += '<button id="faSalvar" class="btn btn-verde" onclick="orgSalvaFalta()">Salvar</button></div></div>';
 
   h += orgImpCard('faltas');
 
@@ -14697,6 +14702,87 @@ async function renderOrgFaltas() {
   faAtualizaFim();
 }
 
+let _faEditId = null;      // id do lançamento em edição (null = novo)
+let _faRegs = [];          // registros carregados na vista, para o botão editar
+let _faCats = null;        // categorias de motivo (app_config)
+const FA_CATS_PADRAO = ['a confirmar', 'consulta médica', 'assunto pessoal', 'transporte', 'convocação'];
+const FA_CHAVE_CATS = 'org_motivo_categorias';
+
+async function faCarregaCats() {
+  if (_faCats) return _faCats;
+  let salvas = [];
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', FA_CHAVE_CATS).maybeSingle();
+    if (data && data.valor) salvas = JSON.parse(data.valor);
+  } catch (_) {}
+  _faCats = Array.isArray(salvas) ? salvas : [];
+  return _faCats;
+}
+async function faSalvaCats() {
+  try { await sb.from('app_config').upsert({ chave: FA_CHAVE_CATS, valor: JSON.stringify(_faCats) }, { onConflict: 'chave' }); }
+  catch (e) { toast('Categoria não salvou: ' + (e.message || e)); }
+}
+// lista final = padrão + criadas + as que já foram usadas nos lançamentos
+function faListaCats(usados) {
+  const set = new Set([...FA_CATS_PADRAO, ...(_faCats || []), ...(usados || [])].filter(Boolean));
+  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+function faOpcoesMotivo(usados, sel) {
+  let o = '<option value="">— sem motivo —</option>';
+  faListaCats(usados).forEach(c => {
+    o += '<option value="' + escapeHtml(c) + '"' + (c === sel ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+  });
+  o += '<option value="__nova__">➕ nova categoria…</option>';
+  return o;
+}
+async function faTrocaMotivo() {
+  const sel = $('faMotivo'); if (!sel) return;
+  if (sel.value !== '__nova__') return;
+  const nome = (prompt('Nome da nova categoria de motivo:') || '').trim();
+  if (!nome) { sel.value = ''; return; }
+  if (/^__/.test(nome)) { sel.value = ''; return; }
+  await faCarregaCats();
+  if (!_faCats.includes(nome)) { _faCats.push(nome); await faSalvaCats(); }
+  const opt = document.createElement('option');
+  opt.value = nome; opt.textContent = nome;
+  sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+  sel.value = nome;
+  toast('Categoria criada ✔');
+}
+
+function faEditar(id) {
+  const r = _faRegs.find(x => String(x.id) === String(id));
+  if (!r) { toast('Lançamento não encontrado'); return; }
+  _faEditId = r.id;
+  const c = (orgDados.colab || []).find(x => x.matricula === r.matricula);
+  if ($('faBusca')) $('faBusca').value = (c ? c.nome : r.matricula) + ' — ' + r.matricula;
+  if ($('faData')) $('faData').value = r.data;
+  if ($('faTipo')) $('faTipo').value = r.tipo || 'falta';
+  if ($('faDias')) $('faDias').value = r.dias || 1;
+  const sel = $('faMotivo');
+  if (sel) {
+    if (r.motivo && ![...sel.options].some(o => o.value === r.motivo)) {
+      const opt = document.createElement('option');
+      opt.value = r.motivo; opt.textContent = r.motivo;
+      sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+    }
+    sel.value = r.motivo || '';
+  }
+  faAtualizaFim();
+  const av = $('faEditAviso');
+  if (av) { av.classList.remove('oculto'); av.innerHTML = '✏️ Editando o lançamento de <b>' + escapeHtml(c ? orgPrimeiro(c.nome) : r.matricula) + '</b> de ' + fmtDataSem(r.data) + ' · <a href="javascript:faCancelaEdicao()" style="font-weight:700">cancelar</a>'; }
+  const bt = $('faSalvar'); if (bt) bt.textContent = 'Salvar alteração';
+  try { $('orgWrap').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) { window.scrollTo(0, 0); }
+}
+function faCancelaEdicao() {
+  _faEditId = null;
+  const av = $('faEditAviso'); if (av) { av.classList.add('oculto'); av.innerHTML = ''; }
+  const bt = $('faSalvar'); if (bt) bt.textContent = 'Salvar';
+  ['faBusca', 'faMotivo'].forEach(k => { if ($(k)) $(k).value = ''; });
+  if ($('faDias')) $('faDias').value = 1;
+  faAtualizaFim();
+}
+
 function faLinha(r, idx) {
   const CORT = { falta: 'var(--critico)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
   const hj = hojeISO(), ate = r.fim || r.data;
@@ -14713,7 +14799,8 @@ function faLinha(r, idx) {
     '<span style="color:var(--fraco)">' + fmtDataSem(r.data) +
       ((r.dias && r.dias > 1) ? ' → ' + fmtDataSem(r.fim || r.data) + ' <b style="color:var(--txt-2)">' + r.dias + ' dia(s)</b>' : ' <b style="color:var(--txt-2)">1 dia</b>') + '</span>' +
     (fora ? '<span style="font-size:10px;font-weight:800;color:#fff;background:var(--critico);padding:2px 7px;border-radius:999px">volta em ' + faltam + 'd</span>' : '') +
-    '<button class="btn" style="padding:0 7px;font-size:11px" onclick="orgDelFalta(' + r.id + ')">✕</button></span></div>';
+    '<button class="btn" title="editar" style="padding:0 7px;font-size:11px" onclick="faEditar(' + r.id + ')">✎</button>' +
+    '<button class="btn" title="excluir" style="padding:0 7px;font-size:11px" onclick="orgDelFalta(' + r.id + ')">✕</button></span></div>';
 }
 function faAtualizaFim() {
   const el = $('faAte'); if (!el) return;
@@ -14746,9 +14833,16 @@ async function orgSalvaFalta() {
     motivo: (($('faMotivo') || {}).value || '').trim() || null,
     lancado_por: ((typeof perfil !== 'undefined' && perfil && perfil.id) || null)
   };
-  const { error } = await sb.from('org_afastamentos').upsert(reg, { onConflict: 'matricula,data' });
+  let error;
+  if (_faEditId) {
+    // edição: atualiza a linha pelo id, para poder mudar até a data sem duplicar
+    ({ error } = await sb.from('org_afastamentos').update(reg).eq('id', _faEditId));
+  } else {
+    ({ error } = await sb.from('org_afastamentos').upsert(reg, { onConflict: 'matricula,data' }));
+  }
   if (error) { toast('Erro: ' + error.message); return; }
-  toast('Lançado ✔');
+  toast(_faEditId ? 'Alterado ✔' : 'Lançado ✔');
+  _faEditId = null;
   carregarAfastSemMotivo(); renderOrgFaltas();
 }
 async function orgDelFalta(id) { await sb.from('org_afastamentos').delete().eq('id', id); renderOrgFaltas(); }
