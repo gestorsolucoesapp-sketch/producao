@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.254.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.255.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.254.0';
+const APP_VER = '3.255.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12118,7 +12118,7 @@ function orgImpAnalisa(tipo) {
     if (!data) { reg.msg = 'sem data válida'; out.push(reg); return; }
 
     // nome = tokens que não são matrícula, data, número ou palavra-chave
-    const chaves = (tipo === 'faltas') ? ORG_TIPOS : ORG_MOTIVOS;
+    const chaves = (tipo === 'faltas') ? orgTiposTodos() : ORG_MOTIVOS;
     let achou = null;
     chaves.forEach(k => { if (!achou && new RegExp('\\b' + k.replace(/_/g, '[ _]') + '\\b', 'i').test(bruto)) achou = k; });
     const nome = toks.filter(t => t !== mat && !orgImpData(t) && !/^[-+]?\d+([.,]\d+)?$/.test(t) &&
@@ -12128,7 +12128,7 @@ function orgImpAnalisa(tipo) {
     if (p.st !== 'ok') { reg.msg = p.msg || p.st; reg.st = p.st; reg.mat = mat; reg.nome = nome; out.push(reg); return; }
 
     if (tipo === 'faltas') {
-      if (!achou) { out.push({ n: i + 1, st: 'erro', mat: p.mat, nome: p.nome, msg: 'tipo inválido (use: ' + ORG_TIPOS.join('/') + ')' }); return; }
+      if (!achou) { out.push({ n: i + 1, st: 'erro', mat: p.mat, nome: p.nome, msg: 'tipo inválido (use: ' + orgTiposTodos().join('/') + ')' }); return; }
       out.push({ n: i + 1, st: 'ok', mat: p.mat, nome: p.nome, extra: data + ' · ' + achou, msg: '',
                  dados: { matricula: p.mat, data: data, tipo: achou, observacao: 'importado' } });
     } else {
@@ -12506,7 +12506,7 @@ function orgGraficoFaltas(af) {
   _faltasBuf = af;
   const porTipo = {};
   af.forEach(a => porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1);
-  const tipos = ORG_TIPOS.filter(t => porTipo[t]);
+  const tipos = orgTiposTodos(Object.keys(porTipo)).filter(t => porTipo[t]);
   const CORT = { falta: 'var(--critico-s)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
 
   h += '<div class="card"><div class="titulo-sec">📊 Faltas e atestados · últimos 30 dias</div>';
@@ -14589,6 +14589,42 @@ async function orgAddOperador(turno, maq) {
 
 /* ---------- faltas ---------- */
 const ORG_TIPOS = ['falta', 'atestado', 'ferias', 'folga', 'afastamento'];
+// tipos criados pelo usuário — somam aos fixos, nunca substituem
+let _faTipos = null;
+const FA_CHAVE_TIPOS = 'org_tipos_extra';
+async function faCarregaTipos() {
+  if (_faTipos) return _faTipos;
+  let salvos = [];
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', FA_CHAVE_TIPOS).maybeSingle();
+    if (data && data.valor) salvos = JSON.parse(data.valor);
+  } catch (_) {}
+  _faTipos = Array.isArray(salvos) ? salvos : [];
+  return _faTipos;
+}
+// usados = tipos que já existem em lançamentos, para nada do histórico sumir da lista
+function orgTiposTodos(usados) {
+  return [...new Set([...ORG_TIPOS, ...(_faTipos || []), ...(usados || [])].filter(Boolean))];
+}
+async function faTrocaTipo() {
+  const sel = $('faTipo');
+  if (sel && sel.value === '__novo__') {
+    const nome = (prompt('Nome do novo tipo de lançamento:') || '').trim().toLowerCase();
+    if (!nome || /^__/.test(nome)) { sel.value = 'falta'; faAtualizaFim(); return; }
+    await faCarregaTipos();
+    if (!ORG_TIPOS.includes(nome) && !_faTipos.includes(nome)) {
+      _faTipos.push(nome);
+      try { await sb.from('app_config').upsert({ chave: FA_CHAVE_TIPOS, valor: JSON.stringify(_faTipos) }, { onConflict: 'chave' }); }
+      catch (e) { toast('Tipo não salvou: ' + (e.message || e)); }
+    }
+    const opt = document.createElement('option');
+    opt.value = nome; opt.textContent = nome;
+    sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+    sel.value = nome;
+    toast('Tipo criado ✔');
+  }
+  faAtualizaFim();
+}
 let _faltasBuf = [];
 function detFaltas(modo, chave) {
   const CORT = { falta: 'var(--critico-s)', atestado: 'var(--laranja-3)', ferias: '#2563eb', folga: 'var(--ok-5)', afastamento: '#7c3aed' };
@@ -14656,7 +14692,9 @@ async function renderOrgFaltas() {
 
   _faRegs = brutos;                                   // o botão ✎ lê daqui
   await faCarregaCats();
+  await faCarregaTipos();
   const motivosUsados = [...new Set(brutos.map(r => r.motivo).filter(Boolean))];
+  const tiposUsados = [...new Set(brutos.map(r => r.tipo).filter(Boolean))];
 
   let h = '';
 
@@ -14667,7 +14705,9 @@ async function renderOrgFaltas() {
   h += '<datalist id="faLista">' + orgColabSetor().filter(c => c.ativo !== false)
         .map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
   h += '<input id="faData" type="date" onchange="faAtualizaFim()" value="' + hojeISO() + '" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">';
-  h += '<select id="faTipo" onchange="faAtualizaFim()" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' + ORG_TIPOS.map(t => '<option value="' + t + '">' + t + '</option>').join('') + '</select>';
+  h += '<select id="faTipo" onchange="faTrocaTipo()" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
+    orgTiposTodos(tiposUsados).map(t => '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>').join('') +
+    '<option value="__novo__">➕ novo tipo…</option></select>';
   h += '<div style="display:flex;gap:8px;align-items:center">' +
     '<label style="font-size:12px;color:var(--fraco);flex:0 0 auto">quantos dias</label>' +
     '<input id="faDias" type="number" min="1" max="180" value="1" oninput="faAtualizaFim()" style="width:88px;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">' +
@@ -14691,6 +14731,9 @@ async function renderOrgFaltas() {
   h += '<div class="card"><div class="titulo-sec">Últimos 30 dias · ' + escapeHtml(orgSetorSel) + '</div>';
   h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px">';
   [['todos', 'Todos', doSetor.length], ['falta', 'Faltas', nPor('falta')], ['atestado', 'Atestados', nPor('atestado')], ['ferias', 'Férias', nPor('ferias')]]
+    // tipos criados pelo usuário também ganham chip, senão só apareceriam em "Todos"
+    .concat(orgTiposTodos(tiposUsados).filter(t => !['falta', 'atestado', 'ferias'].includes(t) && nPor(t))
+      .map(t => [t, t.charAt(0).toUpperCase() + t.slice(1), nPor(t)]))
     .forEach(([k, rot, n]) => {
       h += '<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:6px 13px;' +
         (faFiltro === k ? 'background:var(--navy);color:#fff;border-color:var(--navy)' : '') +
