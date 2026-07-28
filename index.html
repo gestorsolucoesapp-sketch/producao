@@ -678,7 +678,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.290.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.291.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1710,7 +1710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.290.0';
+const APP_VER = '3.291.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4992,6 +4992,10 @@ async function salvarOrdens(ordens, stEl) {
     }
   }
   if (atualizadas.length) toast(`🔄 ${atualizadas.length} OS fechadas no ERP foram atualizadas aqui`);
+  /* aviso na hora: sem a Situação do cabeçalho o app volta a ter que adivinhar */
+  const semSit = regs.filter(r => !r.situacao).length;
+  if (semSit) toast(`⚠️ ${semSit} OS sem "Situação OS" no cabeçalho do PDF — o app não vai saber quais estão abertas`);
+  else if (regs.length) toast(`🏷️ ${regs.length} OS marcadas como ${regs[0].situacao}`);
   return { ok, erro, atualizadas };
 }
 // ---------- RSMI005 · Ordens Detalhadas (OS do ERP) ----------
@@ -5024,16 +5028,35 @@ function parseRSMI005(linhas) {
   /* "Situação OS: Aberta|Fechada" vem no CABEÇALHO do relatório, uma vez só —
      o arquivo inteiro é de um status. Não confundir com "Situação Máquina:",
      que é por OS. Se o relatório não trouxer, fica nulo em vez de chutar. */
+  /* ancorado nos valores possiveis: se o ERP mudar o rotulo ou sumir o ":",
+     ainda pega. Nunca deduz — se nao achar, fica nulo. */
+  const RX_SIT = /Situa[çc]?[ãa]?o?\s*(?:d[ao]\s*)?O\.?\s*S\.?\s*:?\s*(Aberta|Fechada|Encerrada|Conclu[ií]da|Cancelada|Pendente)/i;
+  const VAL_SIT = /^\s*(Aberta|Fechada|Encerrada|Conclu[ií]da|Cancelada|Pendente)\s*$/i;
   let situacaoArq = null;
-  for (let i = 0; i < linhas.length; i++) {
-    const mm = /Situa[çc][ãa]o\s+OS:\s*([A-Za-zÀ-ÿ]+)/i.exec(linhas[i].texto || '');
-    if (mm) { situacaoArq = lim(mm[1]); break; }
+  for (let i = 0; i < linhas.length && !situacaoArq; i++) {
+    const mm = RX_SIT.exec(linhas[i].texto || '');
+    if (mm) situacaoArq = lim(mm[1]);
   }
   if (!situacaoArq) {
-    /* alguns PDFs quebram o rótulo e o valor em linhas diferentes */
-    const junto = linhas.slice(0, 120).map(l => l.texto || '').join(' ');
-    const mm2 = /Situa[çc][ãa]o\s+OS:\s*([A-Za-zÀ-ÿ]+)/i.exec(junto);
+    /* rotulo e valor em linhas/fragmentos diferentes: junta o cabecalho e tenta de novo */
+    const junto = linhas.slice(0, 200).map(l => l.texto || '').join(' ');
+    const mm2 = RX_SIT.exec(junto);
     if (mm2) situacaoArq = lim(mm2[1]);
+  }
+  if (!situacaoArq) {
+    /* ultimo recurso: linha isolada com o valor, logo depois de uma que fale de Situacao */
+    for (let i = 0; i < Math.min(linhas.length, 200) - 1; i++) {
+      if (!/Situa[çc]?[ãa]?o/i.test(linhas[i].texto || '')) continue;
+      for (let j = i + 1; j <= Math.min(i + 3, linhas.length - 1); j++) {
+        const mm3 = VAL_SIT.exec(linhas[j].texto || '');
+        if (mm3) { situacaoArq = lim(mm3[1]); break; }
+      }
+      if (situacaoArq) break;
+    }
+  }
+  if (situacaoArq) {
+    const b0 = situacaoArq.toLowerCase();
+    situacaoArq = /fechad|encerrad|conclu/.test(b0) ? 'Fechada' : /abert|pendent/.test(b0) ? 'Aberta' : lim(situacaoArq);
   }
 
   const ordens = [];
