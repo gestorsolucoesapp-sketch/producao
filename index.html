@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.278.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.279.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.278.0';
+const APP_VER = '3.279.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7919,7 +7919,39 @@ async function preencherMediaItensMes(ym, setor) {
       totF += t; porMaq[c] = (porMaq[c] || 0) + t;
       evs.push({ c: c, d: d, t: t, nomes: [...new Set(nomes)] });
     });
-    if (totF > 0) {
+    /* reentradas: o molde saiu da máquina e voltou depois. Entre dias a ordem é
+       confiável (ao contrário de dentro do dia), então isso aqui é exato. */
+    const diasMaq = {};
+    rowsTF.forEach(r => { (diasMaq[r.recurso_cod] = diasMaq[r.recurso_cod] || new Set()).add(r.dia); });
+    const seqMaq = {};
+    Object.keys(diasMaq).forEach(c => { const a = [...diasMaq[c]].sort(); const m = {}; a.forEach((d, i) => { m[d] = i; }); seqMaq[c] = m; });
+    const ocor = {};
+    rowsTF.forEach(r => {
+      const f = ferramentalDe(r.item_desc); if (!f) return;
+      const k = r.recurso_cod + '§' + f.k1;
+      const o = (ocor[k] = ocor[k] || { s: new Set(), nome: f.nome, c: r.recurso_cod, dias: [] });
+      if (f.nome.length < o.nome.length) o.nome = f.nome;
+      o.s.add(seqMaq[r.recurso_cod][r.dia]); o.dias.push(r.dia);
+    });
+    const reent = []; let totRe = 0;
+    Object.keys(ocor).forEach(k => {
+      const a = [...ocor[k].s].sort((x, y) => x - y);
+      let n = 0; for (let i = 1; i < a.length; i++) if (a[i] - a[i - 1] > 1) n++;
+      if (n > 0) { totRe += n; const ds = ocor[k].dias.slice().sort(); reent.push({ c: ocor[k].c, nome: ocor[k].nome, n: n, de: ds[0], ate: ds[ds.length - 1] }); }
+    });
+    reent.sort((a, b) => b.n - a.n);
+    let tabRe = '';
+    if (totRe > 0) {
+      const lr = reent.slice(0, 25).map(e => `<tr>
+        <td class="nome" style="text-align:left"><span class="cod">${escapeHtml(e.c)}</span></td>
+        <td style="text-align:left;font-size:12px">${escapeHtml(e.nome)}</td>
+        <td><span class="cel ${e.n > 1 ? 'ruim' : 'neutra'}">${e.n}×</span></td>
+        <td style="font-size:11px">${fmtDataSem(e.de)} → ${fmtDataSem(e.ate)}</td></tr>`).join('');
+      tabRe = `<p class="desc" style="margin-top:12px"><b>🔁 ${totRe} reentrada(s)</b> — molde que saiu da máquina e voltou depois. Cada uma é um setup que talvez não precisasse existir se a programação juntasse as corridas.</p>
+        <div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Máq.</th><th style="text-align:left">Molde</th><th>Voltou</th><th>Período</th></tr></thead><tbody>${lr}</tbody></table></div>
+        ${reent.length > 25 ? `<p class="desc">mostrando 25 de ${reent.length}</p>` : ''}`;
+    }
+    if (totF > 0 || totRe > 0) {
       evs.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
       const linhas = evs.slice(0, 40).map(e => `<tr>
         <td class="nome" style="text-align:left">${fmtDataSem(e.d)}</td>
@@ -7929,11 +7961,11 @@ async function preencherMediaItensMes(ym, setor) {
       const rank = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).slice(0, 8)
         .map(([c, n]) => c + ' ' + n).join(' · ');
       cardFerr = card('Trocas de ferramental · Termoformagem',
-        `${totF} troca(s) · ${evs.length} dia(s)-máquina · mínimo estimado`,
+        `${totF} troca(s) · ${evs.length} dia(s)-máquina${totRe ? ' · 🔁 ' + totRe + ' reentrada(s)' : ''}`,
         `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Dia</th><th>Máq.</th><th>Trocas</th><th style="text-align:left">Entre quais moldes</th></tr></thead><tbody>${linhas}</tbody></table></div>
          ${evs.length > 40 ? `<p class="desc">mostrando os 40 mais recentes de ${evs.length}</p>` : ''}
          <p class="desc" style="margin-top:8px">Molde muda por classe, boca, volume, altura ou furo. <b>Cor, cliente, "para kit" e "post mix" não contam.</b> Como o ERP grava só a data e não a hora, não dá pra saber quem saiu e quem entrou — por isso o <b>↔</b>. Se a máquina rodou A → B → A no mesmo dia, foram 2 trocas e aqui aparece 1: o número é o <b>mínimo</b>.</p>
-         ${rank ? `<p class="desc">Mais trocas: ${escapeHtml(rank)}</p>` : ''}`);
+         ${rank ? `<p class="desc">Mais trocas: ${escapeHtml(rank)}</p>` : ''}${tabRe}`);
     }
   }
   box.innerHTML = htmlBoca + cardFerr + cardItensDia + cardSetup + html;
