@@ -239,6 +239,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 #letreiroNav:empty{display:none}
 .letreiro-wrap{background:rgba(0,0,0,.18);border-top:1px solid rgba(255,255,255,.09);color:#dCe8f6;border-radius:0;padding:6px 0;margin:0;overflow:hidden;cursor:pointer;font-size:11.5px;line-height:1.45}
 .letreiro-in{display:inline-block;white-space:nowrap;will-change:transform;animation:rpLetreiro var(--dur,34s) linear infinite}
+.letreiro-card{padding:6px 12px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:letFade .45s ease}
+@keyframes letFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .letreiro-wrap:active .letreiro-in{animation-play-state:paused}
 @keyframes g{to{transform:rotate(360deg)}}
 /* ---------- vinheta / splash ---------- */
@@ -678,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.300.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.301.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -907,6 +909,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <div class="titulo-sec">Presen&ccedil;a no app</div>
         <div class="usr-telas"><label><input type="checkbox" id="chkPresenca" onchange="togPresencaOnline(this.checked)"> Registrar quem est&aacute; online (vis&iacute;vel s&oacute; para o gestor)</label></div>
         <p class="desc" style="margin-top:4px">A bolinha e o aviso de quem entrou aparecem <b>s&oacute; para gestores</b>. Desmarcado, ningu&eacute;m v&ecirc; nada e nada &eacute; registrado.</p>
+      </div>
+      <div class="card">
+        <div class="titulo-sec">Letreiro de produ&ccedil;&atilde;o</div>
+        <div class="usr-telas"><label><input type="checkbox" id="chkLetSetores" onchange="togLetSetores(this.checked)"> Mostrar m&eacute;dia e previs&atilde;o de cada setor no letreiro</label></div>
+        <p class="desc" style="margin-top:4px">Quando ligado, o letreiro alterna entre feriado, avisos e um cart&atilde;o por setor com a m&eacute;dia/dia e a previs&atilde;o do m&ecirc;s. Ajuste s&oacute; no seu aparelho.</p>
       </div>
       <div class="card">
         <div class="titulo-sec">Usuários</div>
@@ -1713,7 +1720,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.300.0';
+const APP_VER = '3.301.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1906,46 +1913,79 @@ function previsaoMes(rows, valFn) {
   return { previsao: prodMes / eqDecorr * eqTotal, prodMes, diasFalta, ultimo };
 }
 const COR_FER = { 'Nacional': 'var(--azul-2)', 'Estadual (SP)': 'var(--ok-3)', 'Municipal': 'var(--laranja)', 'Facultativo': 'var(--fraco-4)' };
-function letreiroFeriados() {
+/* monta a lista de CARTÕES do letreiro: próximo feriado, avisos válidos e,
+   se ligado, um cartão por setor com média/dia e previsão do mês. */
+let _letSetores = (() => { try { return localStorage.getItem('rp_let_setores') !== '0'; } catch (_) { return true; } })();
+function setoresCards() {
+  if (!_letSetores) return [];
+  const D = (typeof dadosPainel !== 'undefined') ? dadosPainel : null;
+  if (!D || !D.producao || !D.producao.length) return [];
+  const cards = [];
   try {
-    const h = hojeISO();
-    /* só o PRÓXIMO feriado — os outros ficam na Agenda. Avisos entram todos. */
+    Object.keys(SETOR_MAQ).forEach(st => {
+      const rows = D.producao.filter(r => setorDe(r.recurso_cod) === st);
+      if (!rows.length) return;
+      const emCx = (st === 'Embaladeiras'), soKg = semCaixa(st);
+      const valSt = emCx ? (r => r.quantidade || 0) : soKg ? (r => r.peso || 0) : (r => (metrica === 'peso' ? (r.peso || 0) : (r.quantidade || 0)));
+      const un = emCx ? ' cxs' : soKg ? ' kg' : (metrica === 'peso' ? ' kg' : ' cxs');
+      const fmtU = n => (n >= 1000 ? (n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(n).toLocaleString('pt-BR')) + un;
+      // média/dia = soma ÷ dias equivalentes decorridos (mesma base da previsão)
+      const dias = [...new Set(rows.map(r => String(r.dia || '').slice(0, 10)).filter(Boolean))];
+      let eq = 0; dias.forEach(d => eq += equivDia(d));
+      const tot = rows.reduce((a, r) => a + (valSt(r) || 0), 0);
+      const media = eq > 0 ? tot / eq : 0;
+      const prev = previsaoMes(rows, valSt);
+      const cor = COR_FER['Nacional'];
+      cards.push(`<span style="background:var(--azul-2);border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:7px">${escapeHtml(st.toUpperCase())}</span>📊 média <b>${fmtU(media)}/dia</b>${prev ? ` · 📈 previsão do mês <b>${fmtU(prev.previsao)}</b>` : ''}`);
+    });
+  } catch (_) {}
+  return cards;
+}
+function letreiroCards() {
+  const h = hojeISO();
+  const cards = [];
+  // 1) próximo feriado
+  try {
     const fp = FERIADOS.filter(f => f.d >= h).sort((x, y) => x.d < y.d ? -1 : 1)[0];
-    const itens = fp ? [{ d: fp.d, tipo: 'fer', f: fp }] : [];
+    if (fp) {
+      const n = diasAte(fp.d), q = n <= 0 ? 'é hoje' : n === 1 ? 'é amanhã' : `faltam ${n} dias`;
+      const r = (REGRA_DIA && REGRA_DIA[fp.d]) || '', marca = r === 'folga' ? ' · <b>fábrica para</b>' : r === 'reduzido' ? ' · reduzido' : '';
+      cards.push(`<span style="background:rgba(255,255,255,.16);border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:7px">PRÓXIMO FERIADO</span>📅 <b>${escapeHtml(fp.n)}</b> · ${diaSemana(fp.d)}, ${fmtData(fp.d)} · ${q}${marca}`);
+    }
+  } catch (_) {}
+  // 2) avisos válidos (com hora somem quando a hora passa; sem hora ficam o dia)
+  try {
     const agora = new Date();
     (avisosData || []).forEach(a => {
-      if (!a || a.data < h) return;                      // dia já passou
-      if (a.data === h && a.hora) {                       // é hoje e tem hora → some quando a hora passa
-        const [hh, mm] = String(a.hora).split(':');
-        const quando = new Date(); quando.setHours(+hh || 0, +mm || 0, 0, 0);
-        if (agora > quando) return;
-      }
-      itens.push({ d: a.data, tipo: 'av', a: a });
+      if (!a || a.data < h) return;
+      if (a.data === h && a.hora) { const [hh, mm] = String(a.hora).split(':'); const quando = new Date(); quando.setHours(+hh || 0, +mm || 0, 0, 0); if (agora > quando) return; }
+      const n = diasAte(a.data), q = n <= 0 ? 'é hoje' : n === 1 ? 'é amanhã' : `faltam ${n} dias`;
+      const hora = a.hora ? ' ' + String(a.hora).slice(0, 5) : '';
+      cards.push(`<span style="background:var(--laranja-4);border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:7px">AVISO</span>📢 <b>${escapeHtml(a.titulo || 'Aviso')}</b> · ${fmtData(a.data)}${hora} · ${q}`);
     });
-    itens.sort((x, y) => x.d < y.d ? -1 : x.d > y.d ? 1 : 0);
-    const prox = itens.slice(0, 12);
-    if (!prox.length) return '';
-    const pintar = it => {
-      const n = diasAte(it.d);
-      const q = n <= 0 ? 'é hoje' : n === 1 ? 'é amanhã' : `faltam ${n} dias`;
-      if (it.tipo === 'av') {
-        const a = it.a;
-        const hora = a.hora ? ' ' + String(a.hora).slice(0, 5) : '';
-        return `<span style="margin-right:40px">📢 <b>${escapeHtml(a.titulo || 'Aviso')}</b> · ${fmtData(it.d)}${hora} <span style="background:var(--laranja-4);border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700">AVISO</span> · ${q}</span>`;
-      }
-      const f = it.f;
-      const r = (REGRA_DIA && REGRA_DIA[f.d]) || '';
-      const marca = r === 'folga' ? ' · <b>fábrica para</b>' : r === 'reduzido' ? ' · reduzido' : '';
-      return `<span style="margin-right:40px"><span style="background:rgba(255,255,255,.16);border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800;letter-spacing:.3px;margin-right:7px">PRÓXIMO FERIADO</span>📅 <b>${escapeHtml(f.n)}</b> · ${diaSemana(f.d)}, ${fmtData(f.d)} <span style="background:${COR_FER[f.t] || 'var(--azul-2)'};border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700">${escapeHtml(f.t)}</span> · ${q}${marca}</span>`;
-    };
-    const bloco = prox.map(pintar).join('');
-    /* conteúdo duplicado + translateX(-50%) = volta pro começo sem emenda visível */
-    return `<div class="letreiro-wrap" onclick="abrirAgenda()" title="ver agenda"><div class="letreiro-in" style="--dur:${Math.max(26, prox.length * 7)}s">${bloco}<span class="letreiro-dup" aria-hidden="true">${bloco}</span></div></div>`;
-  } catch (_) { return ''; }
+  } catch (_) {}
+  // 3) setores (se ligado)
+  setoresCards().forEach(c => cards.push(c));
+  return cards;
+}
+/* rotação: mostra um cartão por vez, troca a cada 5s */
+let _letIdx = 0, _letTimer = null, _letLista = [];
+function montarLetreiro() {
+  const el = $('letreiroNav'); if (!el) return;
+  _letLista = letreiroCards();
+  if (_letTimer) { clearInterval(_letTimer); _letTimer = null; }
+  if (!_letLista.length) { el.innerHTML = ''; return; }
+  _letIdx = 0;
+  const pinta = () => {
+    const txt = _letLista[_letIdx % _letLista.length];
+    el.innerHTML = `<div class="letreiro-wrap" onclick="abrirAgenda()" title="ver agenda"><div class="letreiro-card">${txt}</div></div>`;
+  };
+  pinta();
+  if (_letLista.length > 1) _letTimer = setInterval(() => { _letIdx++; pinta(); }, 5000);
 }
 /* pinta a faixa do cabeçalho. Fica no <nav>, então vale para TODAS as abas. */
 function pintarLetreiro() {
-  try { const el = $('letreiroNav'); if (el) el.innerHTML = letreiroFeriados(); } catch (_) {}
+  try { montarLetreiro(); } catch (_) {}
 }
 /* recarrega os avisos e repinta SÓ a faixa — não chama renderPainel (evita ciclo) */
 async function atualizarLetreiro() {
@@ -2343,6 +2383,12 @@ async function getPresencaCfg() {
     presAtiva = (data && data.valor != null) ? (JSON.parse(data.valor) !== false) : true;   // padrão: ligada
   } catch (_) { presAtiva = true; }
   return presAtiva;
+}
+/* liga/desliga os cartões de setor no letreiro — guardado por aparelho */
+function togLetSetores(on) {
+  _letSetores = !!on;
+  try { localStorage.setItem('rp_let_setores', on ? '1' : '0'); } catch (_) {}
+  try { montarLetreiro(); } catch (_) {}
 }
 async function togPresencaOnline(on) {
   presAtiva = !!on;
@@ -10834,7 +10880,7 @@ async function rmSetor(nome) {
 }
 async function carregarUsuarios() {
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
-  try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; } catch (_) {}
+  try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; } catch (_) {}
   if (!souAdmin) return;
   // direcionamento automático (Manutenção) — agora mora nesta aba
   try { await getUsuariosOS(); await getRoteamento(); renderRoteamento(); } catch (_) {}
