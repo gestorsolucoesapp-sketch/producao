@@ -678,7 +678,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.298.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.299.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1713,7 +1713,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.298.0';
+const APP_VER = '3.299.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2306,6 +2306,25 @@ function iniciarPresenca(user) {
     presCanal.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') await presCanal.track({ nome, email: user.email, desde: new Date().toISOString() });
     });
+    ouvirAcessos(user);
+  } catch (_) {}
+}
+/* aviso na hora via realtime na tabela 'acessos' (que o app já preenche a cada entrada).
+   Funciona mesmo que o app tenha sido reaberto, porque escuta o INSERT no banco
+   em vez de depender do 'join' de presença acontecer com a tela aberta. */
+let acessoCanal = null;
+async function ouvirAcessos(user) {
+  if (acessoCanal || typeof souAdmin === 'undefined' || !souAdmin) return;  // só o gestor recebe
+  try {
+    acessoCanal = sb.channel('acessos-rt')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'acessos' }, async ({ new: r }) => {
+        if (!r || r.user_id === user.id || !presAtiva) return;   // não avisa a própria entrada
+        let nome = 'Alguém';
+        try { const { data } = await sb.from('perfis').select('nome,email').eq('id', r.user_id).maybeSingle(); if (data) nome = data.nome || (data.email || '').split('@')[0] || 'Alguém'; } catch (_) {}
+        toast('🟢 ' + nome + ' entrou no app');
+        if (navigator.vibrate) navigator.vibrate(120);
+      })
+      .subscribe();
   } catch (_) {}
 }
 let presAtiva = true;   // config global: mostrar ou não a presença
@@ -2331,12 +2350,41 @@ function atualizarOnline() {
   b.textContent = '🟢 ' + total;
   b.classList.remove('oculto');
 }
-function mostrarOnline() {
+async function mostrarOnline() {
   const lista = Object.entries(presUsuarios || {}).filter(([k]) => k !== presMeuId).map(([, arr]) => arr[0]).filter(Boolean);
-  if (!lista.length) { toast('Só você no app agora.'); return; }
+  // histórico "entraram hoje" — lê da tabela acessos (que o app já preenche) + nome de perfis
+  let histHtml = '';
+  try {
+    const ini = new Date(); ini.setHours(0, 0, 0, 0);
+    const { data } = await sb.from('acessos')
+      .select('user_id,entrou_em')
+      .gte('entrou_em', ini.toISOString())
+      .order('entrou_em', { ascending: false }).limit(120);
+    if (data && data.length) {
+      const ids = [...new Set(data.map(r => r.user_id).filter(Boolean))];
+      let nomes = {};
+      try { const { data: ps } = await sb.from('perfis').select('id,nome,email').in('id', ids); (ps || []).forEach(p => nomes[p.id] = p.nome || (p.email || '').split('@')[0]); } catch (_) {}
+      // uma linha por pessoa (a entrada mais recente do dia)
+      const vistos = {};
+      const linhas = [];
+      for (const r of data) {
+        if (vistos[r.user_id]) continue; vistos[r.user_id] = 1;
+        const h = r.entrou_em ? new Date(r.entrou_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+        linhas.push(`<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--borda);font-size:13px"><b>${escapeHtml(nomes[r.user_id] || '—')}</b><span style="color:var(--fraco)">${h}</span></div>`);
+      }
+      histHtml = '<div style="margin-top:14px"><div class="titulo-sec" style="font-size:12px;margin-bottom:6px">Entraram hoje (' + linhas.length + ')</div>' + linhas.join('') + '</div>';
+    }
+  } catch (_) {}
+  if (!lista.length) {
+    $('itemDetTitulo').textContent = histHtml ? '🟢 Acessos de hoje' : '🟢 Ninguém online agora';
+    $('itemDetCorpo').innerHTML = '<p class="idet-desc">Ninguém online neste momento além de você.</p>' + histHtml;
+    $('itemDetOverlay').classList.remove('oculto');
+    return;
+  }
   $('itemDetTitulo').textContent = '🟢 Online agora (' + lista.length + ')';
   $('itemDetCorpo').innerHTML = '<div class="idet-grid">' + lista.map(u =>
-    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>`).join('') + '</div>';
+    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>`).join('') + '</div>' + histHtml;
+  window.__histOnline = null;
   $('itemDetOverlay').classList.remove('oculto');
 }
 
