@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.268.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.269.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.268.0';
+const APP_VER = '3.269.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9081,13 +9081,23 @@ function metaMediaPeriodo(metaDiaNormal, diasOrd) {
   const soma = diasOrd.reduce((a, d) => a + fatorDoDia(d), 0);
   return metaDiaNormal * (soma / diasOrd.length);
 }
-// REGRA: sábado e domingo só valem dia trabalhado quando rodou o turno da NOITE
-// (emendou o fim de semana). Fim de semana reduzido — só manhã/tarde — não conta.
-const diasComNoite = rows => new Set((rows || [])
-  .filter(r => ((r.peso || 0) > 0 || (r.quantidade || 0) > 0) && blocoTurno(r.turno, r.dia) === 'Noite')
-  .map(r => String(r.dia || '').slice(0, 10)));
+// REGRA DO FIM DE SEMANA
+//  · Sábado conta como dia trabalhado quando a tarde emendou depois das 17:30 —
+//    na base isso é o turno 3. Sábado só com manhã/tarde é horário reduzido: não conta.
+//  · Domingo conta sempre que tiver produção.
+const diasFimDeSemana = rows => {
+  const set = new Set();
+  (rows || []).forEach(r => {
+    if (!((r.peso || 0) > 0 || (r.quantidade || 0) > 0)) return;
+    const d = String(r.dia || '').slice(0, 10); if (!d) return;
+    const dw = new Date(d + 'T12:00:00').getDay();
+    if (dw === 0) set.add(d);
+    else if (dw === 6 && Number(r.turno) === 3) set.add(d);
+  });
+  return set;
+};
 
-function serieProducao(porDia, diasOrd, fmtBar, clickFn, noite) {
+function serieProducao(porDia, diasOrd, fmtBar, clickFn, fdsOk) {
   if (diasOrd.length <= 45) {
     return { titulo: 'Produção por dia', dados: diasOrd.map(d => {
       const dw = new Date(d + 'T12:00:00').getDay();
@@ -9095,8 +9105,9 @@ function serieProducao(porDia, diasOrd, fmtBar, clickFn, noite) {
         click: clickFn ? clickFn(d) : undefined,
         red: (typeof _diaReduzido === 'function' ? _diaReduzido(d) : false),
         fds: (dw === 0 || dw === 6),
-        semNoite: ((dw === 0 || dw === 6) && noite && !noite.has(d)),
-        eq: ((dw === 0 || dw === 6) && noite) ? (noite.has(d) ? 1 : 0)
+        dow: dw,
+        semNoite: ((dw === 0 || dw === 6) && fdsOk && !fdsOk.has(d)),
+        eq: ((dw === 0 || dw === 6) && fdsOk) ? (fdsOk.has(d) ? 1 : 0)
           : (typeof equivDia === 'function' ? equivDia(d) : 1) };
     }), porMes: false };
   }
@@ -9111,11 +9122,13 @@ function resumoDiasSerie(dados) {
   if (!produziu.length) return '';
   const conta = produziu.filter(d => (d.eq || 0) > 0);       // fim de semana sem noite vale 0
   const eq = conta.reduce((a, d) => a + (d.eq || 0), 0);
-  // fim de semana reduzido não contar é o padrão — só vale escrever quando trabalhou
-  const fdsConta = conta.filter(d => d.fds).length;
+  // fim de semana reduzido não contar é o padrão — só se escreve o que foi trabalhado
+  const sab = conta.filter(d => d.dow === 6).length;
+  const dom = conta.filter(d => d.dow === 0).length;
   let t = ' · <b>' + conta.length + ' dias trabalhados</b>';
   if (Math.abs(eq - conta.length) > 0.05) t += ' (' + eq.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' equiv.)';
-  if (fdsConta) t += ' · ' + fdsConta + ' fim de semana com noite';
+  if (sab) t += ' · <b>' + sab + '</b> sáb após 17:30';
+  if (dom) t += ' · <b>' + dom + '</b> dom trabalhado' + (dom > 1 ? 's' : '');
   return t;
 }
 
@@ -10004,7 +10017,7 @@ function renderPainel() {
     const porDia = somaPor(D.producao, r => r.dia, val); // todos os setores, Extrusão incluída
     const diasOrd = Object.keys(porDia).sort();
     const mediaDiaG = diasOrd.length ? diasOrd.reduce((a, d) => a + porDia[d], 0) / diasOrd.length : 0;
-    { const sG = serieProducao(porDia, diasOrd, fmtBar, d => `detDia('','${d}')`, diasComNoite(D.producao));
+    { const sG = serieProducao(porDia, diasOrd, fmtBar, d => `detDia('','${d}')`, diasFimDeSemana(D.producao));
       html += card(sG.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todos os setores · arraste →' + (sG.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(sG.dados),
         barrasVerticalScroll(sG.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sG.porMes && metrica === 'peso') ? metaDiariaSetor(null) : null }), 'Produção por dia'); }
 
@@ -10022,7 +10035,7 @@ function renderPainel() {
       const pd = somaPor(rowsSt, r => r.dia, valSt);
       const dOrd = Object.keys(pd).sort();
       if (!dOrd.length) return;
-      const s = serieProducao(pd, dOrd, fmtBarSt, d => `detDia('${st}','${d}')`, diasComNoite(rowsSt));
+      const s = serieProducao(pd, dOrd, fmtBarSt, d => `detDia('${st}','${d}')`, diasFimDeSemana(rowsSt));
       const totSt = dOrd.reduce((a, d) => a + pd[d], 0);
       const prevSt = previsaoMes(rowsSt, valSt);
       html += card(s.titulo + ' · ' + st,
@@ -10123,7 +10136,7 @@ function renderPainel() {
   html += card('Produção por turno', 'período', gTurnoPeso(prodS, val, fmtBar, setor), 'Produção por turno · período');
   { const porDiaS = somaPor(prodS, r => r.dia, val); const diasOrdS = Object.keys(porDiaS).sort();
     const mediaDiaS = diasOrdS.length ? diasOrdS.reduce((a, d) => a + porDiaS[d], 0) / diasOrdS.length : 0;
-    if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`, diasComNoite(prodS));
+    if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`, diasFimDeSemana(prodS));
       const prevSS = previsaoMes(prodS, val);
       html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(sS.dados) + (prevSS ? ` · 📈 previsão do mês: <b>${fmtV(prevSS.previsao)}</b> (faltam ${prevSS.diasFalta} dias)` : ''),
         barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && (setorEmCx(setor) ? metrica === 'quantidade' : metrica === 'peso')) ? metaDiariaSetor(setor) : null }) + `<button class="btn btn-borda" style="width:100%;margin:8px 0 0" onclick="detSetorTurnos('${(setor || '').replace(/'/g, '')}')">📊 Ver por turno (Manhã / Tarde / Noite)</button>`, 'Produção por dia'); } }
