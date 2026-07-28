@@ -678,7 +678,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.293.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.294.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1710,7 +1710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.293.0';
+const APP_VER = '3.294.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4910,7 +4910,8 @@ function osParaReg(o) {
     atividade: o.atividade, motivo: o.motivo, urgencia: o.urgencia,
     maquina_parada: /parad/i.test(o.situacao_maquina || ''),
     situacao_maquina: o.situacao_maquina,
-    situacao: o.situacao || o.situacao_os || null,   // Aberta/Fechada — vem do cabeçalho do relatório
+    situacao: o.situacao || o.situacao_os || null,   // Aberta/Fechada — RSMI010 (por OS) ou cabeçalho RSMI005
+    data_encerramento: o.data_encerramento || null,
     data_abertura: o.data_abertura, data_parada: o.data_parada, data_reinicio: o.data_reinicio,
     detalhes: o.detalhes, conclusao: o.conclusao, colaboradores: o.colaboradores,
     custo: parseFloat(o.custo || 0) || 0,
@@ -4999,6 +5000,64 @@ async function salvarOrdens(ordens, stEl) {
   else if (regs.length) toast(`🏷️ ${regs.length} OS marcadas como ${regs[0].situacao}`);
   return { ok, erro, atualizadas };
 }
+// ---------- RSMI010 · Ordens Simplificadas (status por OS) ----------
+// Várias OS por página, em blocos. A coluna "Data Encerr." define aberta/fechada
+// POR OS (ao contrário do RSMI005, cujo status vem só no cabeçalho do arquivo).
+function ehRSMI010(linhas) {
+  const topo = linhas.slice(0, 40);
+  const temTitulo = topo.some(l => /Ordens\s+Simplificadas/i.test(l.texto));
+  const temRotina = topo.some(l => /RSM.{0,2}010/i.test(l.texto));
+  const temCol = linhas.slice(0, 60).some(l => /Data\s+Encerr/i.test(l.texto));
+  return temTitulo || (temRotina && temCol);
+}
+function parseRSMI010(linhas) {
+  const lim = s => (s == null ? '' : String(s).replace(/\s+/g, ' ').trim());
+  const dataHora = t => { const m = /(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}))?/.exec(t || ''); if (!m) return null; const [d, mo, a] = m[1].split('/'); return a + '-' + mo + '-' + d + (m[2] ? ' ' + m[2] : ' 00:00'); };
+  const ordens = [];
+  let cur = null;
+  const push = () => { if (cur && cur.os_num) ordens.push(cur); cur = null; };
+  for (let i = 0; i < linhas.length; i++) {
+    const L = linhas[i], t = L.texto || '';
+    // linha-cabeçalho da OS: começa com número de 4+ dígitos seguido de prioridade
+    const mh = /^\s*(\d{4,})\s+(Alta|M[eé]dia|Baixa)\b/i.exec(t);
+    if (mh) {
+      push();
+      cur = { os_num: mh[1].padStart(8, '0'), urgencia: lim(mh[2]) };
+      // datas na mesma linha: 1ª = abertura, 2ª = encerramento (se houver)
+      const datas = [...t.matchAll(/\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?/g)].map(m => m[0]);
+      if (datas[0]) cur.data_abertura = dataHora(datas[0]);
+      if (datas[1]) cur.data_encerramento = dataHora(datas[1]);
+      // máquina: número de 3-4 dígitos isolado, geralmente após as datas / antes da descrição
+      const mm = /(?:^|\s)(\d{3,4})(?=\s+[A-ZÀ-Ý])/.exec(t.replace(/\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?/g, ''));
+      if (mm) cur.recurso_cod = mm[1];
+      // autor = o que sobra entre a última data e a máquina
+      const semData = t.replace(/^\s*\d{4,}\s+(?:Alta|M[eé]dia|Baixa)\s*/i, '').replace(/\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2})?/g, '|');
+      const mp = semData.split('|').map(x => lim(x)).filter(Boolean);
+      if (mp.length) cur.autor = mp[mp.length - 1].replace(/\s*\d{3,4}.*$/, '').trim() || null;
+      continue;
+    }
+    if (!cur) continue;
+    if (/^\s*Detalhes\b/i.test(t)) { cur._modo = 'det'; cur.detalhes = lim(t.replace(/^\s*Detalhes:?\s*/i, '')); continue; }
+    if (/^\s*Conclus[aã]o\b/i.test(t)) { cur._modo = 'conc'; cur.conclusao = lim(t.replace(/^\s*Conclus[aã]o:?\s*/i, '')); continue; }
+    if (/^\s*Ativ\.?\s+Motivo/i.test(t)) { cur._modo = null; continue; }
+    // linha de continuação de texto
+    if (cur._modo === 'det') cur.detalhes = lim((cur.detalhes || '') + ' ' + t);
+    else if (cur._modo === 'conc') cur.conclusao = lim((cur.conclusao || '') + ' ' + t);
+  }
+  push();
+  return ordens.map(o => ({
+    os_num: o.os_num,
+    data_abertura: o.data_abertura || null,
+    data_encerramento: o.data_encerramento || null,
+    situacao: o.data_encerramento ? 'Fechada' : 'Aberta',   // POR OS: tem encerramento => fechada
+    recurso_cod: o.recurso_cod || null,
+    urgencia: o.urgencia || null,
+    autor: o.autor || null,
+    detalhes: o.detalhes || null,
+    conclusao: o.conclusao || null
+  }));
+}
+
 // ---------- RSMI005 · Ordens Detalhadas (OS do ERP) ----------
 // 1 OS por página. Lê por posição (mesmo padrão dos RPCP): sem IA.
 function ehRSMI005(linhas) {
@@ -5154,6 +5213,17 @@ async function lerPdfTexto(file, st) {
     const pdf0 = await pdfjsLib.getDocument({ data: new Uint8Array(buf0) }).promise;
     if (st) st.innerHTML = '<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Lendo o PDF do ERP…';
     const linhas0 = await RioParsers.extrairLinhas(pdf0);
+    if (ehRSMI010(linhas0)) {
+      const lidas = parseRSMI010(linhas0).map(o => ({
+        ...o,
+        setor: setorDe(o.recurso_cod),
+        colaboradores: o.colaboradores || null
+      }));
+      if (lidas.length) {
+        if (st) st.innerHTML = `✅ <b>${lidas.length} OS lida(s)</b> do relatório simplificado <span class="desc">(status por OS · sem IA)</span>`;
+        return lidas;
+      }
+    }
     if (ehRSMI005(linhas0)) {
       const lidas = parseRSMI005(linhas0).map(o => ({
         ...o,
@@ -5655,7 +5725,7 @@ function ligarDropOS() {
   dz.style.cursor = 'pointer';
 }
 // carrega TODAS as OS (o Supabase corta em 1000 por requisição → pagina)
-const OS_COLS = 'situacao,id,os_num,data_abertura,data_parada,data_reinicio,recurso_cod,maquina_desc,setor,atividade,motivo,submotivo,urgencia,situacao_maquina,autor,detalhes,conclusao,colaboradores,custo,horas_parada,criado_por,criado_por_nome,criado_em,escopo,maquina_parada,responsavel_id,responsavel_nome,responsaveis,iniciada_em,iniciada_por,iniciada_por_nome,horas_execucao,foto_url';
+const OS_COLS = 'situacao,data_encerramento,id,os_num,data_abertura,data_parada,data_reinicio,recurso_cod,maquina_desc,setor,atividade,motivo,submotivo,urgencia,situacao_maquina,autor,detalhes,conclusao,colaboradores,custo,horas_parada,criado_por,criado_por_nome,criado_em,escopo,maquina_parada,responsavel_id,responsavel_nome,responsaveis,iniciada_em,iniciada_por,iniciada_por_nome,horas_execucao,foto_url';
 async function buscarTodasOS(cols) {
   const passo = 1000; let ini = 0, tudo = [];
   while (ini < 20000) {
@@ -5687,7 +5757,12 @@ async function carregarManut() {
    Só cai no reinício quando a OS não tem situação (criada no app ou importada
    antes da v3.292). Reinício descreve o SERVIÇO; situação descreve a OS —
    existe OS com serviço pronto e conclusão escrita que segue Aberta no ERP. */
-const osAberta = o => o && o.situacao ? /abert|pendent/i.test(o.situacao) : !(o && o.data_reinicio);
+const osAberta = o => {
+  if (!o) return true;
+  if (o.situacao) return /abert|pendent/i.test(o.situacao);   // status explícito (RSMI010/RSMI005)
+  if (o.data_encerramento !== undefined && o.data_encerramento !== null) return false;  // tem encerramento => fechada
+  return !o.data_reinicio;   // fallback antigo
+};
 const osFechada = o => !osAberta(o);
 const emExecucao = o => !!o.iniciada_em && !o.data_reinicio;
 const podeMexer = o => souAdmin || !o.iniciada_em || (perfil && o.iniciada_por === perfil.id);
