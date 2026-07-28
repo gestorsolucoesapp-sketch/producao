@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.277.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.278.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.277.0';
+const APP_VER = '3.278.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7548,6 +7548,23 @@ function bocaDe(desc) {
             : /PARA\s*KIT/i.test(s) ? 'PARA KIT' : '';
   return _bocaMap[cl + '|' + vm[1] + '|' + sub] || null;
 }
+/* ferramental (molde) do item. Muda o molde quando muda classe, boca, volume,
+   altura (2º número dos parênteses) ou furo. Cor, cliente, "para kit" e
+   "post mix" NÃO mudam o molde. Campo ausente na descrição vale coringa —
+   senão "Pote 120ml" e "Pote 120ml (75x50)" pareceriam moldes diferentes. */
+function ferramentalDe(desc) {
+  const s = String(desc || '');
+  const cl = classeItem(s);
+  if (cl === 'BOBINA' || cl === 'KIT' || cl === 'BANDEJA') return null;
+  const b = bocaDe(s);
+  const vm = /(\d{2,4})\s*ML/i.exec(s);
+  const hm = /\(\s*\d{2,4}\s*[xX×]\s*(\d{2,4}(?:[.,]\d+)?)\s*\)/.exec(s);
+  const fu = /(C\/|COM)\s*FURO/i.test(s) ? 'F' : /(S\/|SEM)\s*FURO/i.test(s) ? 'N' : '-';
+  const nome = (cl === 'TAMPA' ? 'Tampa' : cl === 'COPO' ? 'Copo' : 'Pote')
+    + (vm ? ' ' + vm[1] + 'ml' : '') + (b ? ' boca ' + b : '')
+    + (hm ? ' h' + hm[1] : '') + (fu === 'F' ? ' c/furo' : fu === 'N' ? ' s/furo' : '');
+  return { k1: cl + '|' + (b || '?') + '|' + (vm ? vm[1] : '?') + '|' + fu, h: hm ? hm[1] : null, nome: nome };
+}
 function renderAnalise() {
   { const r = $('anResumo'); if (r) {
       const s = $('anSetor').value, m = $('anMetrica') ? $('anMetrica').value : 'peso';
@@ -7879,7 +7896,47 @@ async function preencherMediaItensMes(ym, setor) {
       barrasHorizontal(arrRep, metrica === 'peso' ? 'kg' : 'cxs'));
   }
 
-  box.innerHTML = htmlBoca + cardItensDia + cardSetup + html;
+  /* ===== TROCAS DE FERRAMENTAL — só Termoformagem (é quem tem molde) ===== */
+  let cardFerr = '';
+  {
+    const rowsTF = rows.filter(r => setorDe(r.recurso_cod) === 'Termoformagem' && r.dia && r.recurso_cod);
+    const md2 = {};
+    rowsTF.forEach(r => {
+      const f = ferramentalDe(r.item_desc); if (!f) return;
+      const k = r.recurso_cod + '§' + r.dia;
+      const o = (md2[k] = md2[k] || {});
+      const g = (o[f.k1] = o[f.k1] || { hs: new Set(), nomes: new Set() });
+      if (f.h) g.hs.add(f.h);
+      g.nomes.add(f.nome);
+    });
+    const evs = []; const porMaq = {}; let totF = 0;
+    Object.keys(md2).forEach(k => {
+      const o = md2[k];
+      let n = 0; const nomes = [];
+      Object.keys(o).forEach(k1 => { n += Math.max(o[k1].hs.size, 1); [...o[k1].nomes].forEach(x => nomes.push(x)); });
+      const t = n - 1; if (t <= 0) return;
+      const [c, d] = k.split('§');
+      totF += t; porMaq[c] = (porMaq[c] || 0) + t;
+      evs.push({ c: c, d: d, t: t, nomes: [...new Set(nomes)] });
+    });
+    if (totF > 0) {
+      evs.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+      const linhas = evs.slice(0, 40).map(e => `<tr>
+        <td class="nome" style="text-align:left">${fmtDataSem(e.d)}</td>
+        <td><span class="cod">${escapeHtml(e.c)}</span></td>
+        <td><span class="cel ${e.t > 1 ? 'ruim' : 'neutra'}">${e.t}</span></td>
+        <td style="text-align:left;font-size:12px">${escapeHtml(e.nomes.join('  ↔  '))}</td></tr>`).join('');
+      const rank = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([c, n]) => c + ' ' + n).join(' · ');
+      cardFerr = card('Trocas de ferramental · Termoformagem',
+        `${totF} troca(s) · ${evs.length} dia(s)-máquina · mínimo estimado`,
+        `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Dia</th><th>Máq.</th><th>Trocas</th><th style="text-align:left">Entre quais moldes</th></tr></thead><tbody>${linhas}</tbody></table></div>
+         ${evs.length > 40 ? `<p class="desc">mostrando os 40 mais recentes de ${evs.length}</p>` : ''}
+         <p class="desc" style="margin-top:8px">Molde muda por classe, boca, volume, altura ou furo. <b>Cor, cliente, "para kit" e "post mix" não contam.</b> Como o ERP grava só a data e não a hora, não dá pra saber quem saiu e quem entrou — por isso o <b>↔</b>. Se a máquina rodou A → B → A no mesmo dia, foram 2 trocas e aqui aparece 1: o número é o <b>mínimo</b>.</p>
+         ${rank ? `<p class="desc">Mais trocas: ${escapeHtml(rank)}</p>` : ''}`);
+    }
+  }
+  box.innerHTML = htmlBoca + cardFerr + cardItensDia + cardSetup + html;
   setTimeout(() => preencherRelItensOps(anSetor), 0);
   setTimeout(() => scrollGraficosFim(box), 60); setTimeout(() => scrollGraficosFim(box), 350);
 }
