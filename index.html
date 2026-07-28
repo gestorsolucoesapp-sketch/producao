@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.274.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.275.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.274.0';
+const APP_VER = '3.275.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2323,7 +2323,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); } catch (_) {} }, 120);
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); } catch (_) {} }, 120);
   // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
   if (souAdmin) { abasPermitidas = ['painel', 'analise', 'analisemais', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
   else {
@@ -7509,15 +7509,44 @@ async function carregarAnalise() {
    2) lista branca das bocas reais. KIT e BANDEJA nunca extraem boca (o número que
    aparece depois de "TAMPA" neles é quantidade de caixa: 288, 480, 960, 384, 180). */
 /* bocas reais: 68 75 79 93 101 120 150 185 (o 180 não existe na base) */
+const _RX_KIT = /^\s*\d*\s*KIT\s/i;
+let _bocaMap = {};
+async function carregarBocaMap() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'boca_por_volume').maybeSingle();
+    _bocaMap = data && data.valor ? JSON.parse(data.valor) : {};
+  } catch (_) { _bocaMap = {}; }
+}
+/* classe do item: BOBINA (matéria-prima, fora da análise) · KIT · BANDEJA · TAMPA · COPO · POTE */
+function classeItem(desc) {
+  const s = String(desc || '');
+  if (/\bBOBINA\b/i.test(s)) return 'BOBINA';
+  if (_RX_KIT.test(s)) return 'KIT';
+  if (/BANDEJA/i.test(s)) return 'BANDEJA';
+  if (/SOBRE\s*TAMPA|SOBRETAMPA|\bSTP\b|^\s*\d*\s*TAMPA|\bTPPM\b|\bTP\b/i.test(s)) return 'TAMPA';
+  if (/COPO|\bCPFR\b|\bCPPM\b|\bCP\b|\bEMB/i.test(s)) return 'COPO';
+  return 'POTE';
+}
 function bocaDe(desc) {
   const s = String(desc || '');
-  if (/^\s*\d*\s*KIT\s/i.test(s) || /BANDEJA/i.test(s)) return null;
-  const m = /\(\s*(\d{2,4})\s*[xX×]\s*\d{2,4}(?:[.,]\d+)?\s*\)/.exec(s);
-  if (m) return m[1];
-  /* o bloqueio de unidade só vale quando G/ML/UN fecha a palavra — senão
-     "TAMPA BRANCO 120 GOIABADA" seria descartado por causa do G de GOIABADA */
-  const w = /(?:^|[^0-9])(68|75|79|93|101|120|150|185)(?![0-9])(?!\s*(?:UNIDADES|UNID|UND|UN|ML|GR|G)\b)/i.exec(s);
-  return w ? w[1] : null;
+  const cl = classeItem(s);
+  if (cl === 'BOBINA' || cl === 'BANDEJA') return null;
+  if (cl !== 'KIT') {
+    const m = /\(\s*(\d{2,4})\s*[xX×]\s*\d{2,4}(?:[.,]\d+)?\s*\)/.exec(s);
+    if (m) return m[1];
+    /* o bloqueio de unidade só vale quando G/ML/UN fecha a palavra — senão
+       "TAMPA BRANCO 120 GOIABADA" seria descartado por causa do G de GOIABADA */
+    const w = /(?:^|[^0-9])(68|75|79|93|101|120|150|185)(?![0-9])(?!\s*(?:UNIDADES|UNID|UND|UN|ML|GR|G)\b)/i.exec(s);
+    if (w) return w[1];
+  }
+  /* nada escrito na descrição: cai no mapa volume→boca (app_config.boca_por_volume) */
+  if (/SAM\s*1\s*KG/i.test(s) && _bocaMap['*SAM1KG']) return _bocaMap['*SAM1KG'];
+  const vm = /(\d{2,4})\s*ML/i.exec(s);
+  if (!vm) return null;
+  const sub = /POST\s*MIX|\bCPPM\b/i.test(s) ? 'POST MIX'
+            : /FAST\s*FOOD/i.test(s) ? 'FAST FOOD'
+            : /PARA\s*KIT/i.test(s) ? 'PARA KIT' : '';
+  return _bocaMap[cl + '|' + vm[1] + '|' + sub] || null;
 }
 function renderAnalise() {
   { const r = $('anResumo'); if (r) {
