@@ -656,7 +656,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.275.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.276.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1687,7 +1687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.275.0';
+const APP_VER = '3.276.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7746,11 +7746,26 @@ async function preencherMediaItensMes(ym, setor) {
     // boca = 1º número dos parênteses. Bobina (Extrusão) não tem boca → sempre fora da conta.
     const rowsB = rows.filter(r => setorDe(r.recurso_cod) !== 'Extrusão');
     const bo = {}; let semBoca = 0;
+    /* separação pedida: pote+copo × tampa × KIT, e o mesmo por setor.
+       Embaladeiras é 100% KIT e mede em CAIXAS (regra emCx do app) — fica
+       numa linha à parte, fora do total em kg, senão duplica o material que
+       já foi pesado na Termoformagem. */
+    const semCls = { POTE: 0, TAMPA: 0, KIT: 0, BANDEJA: 0 };
+    const embBoca = {}; let embSem = 0;
     rowsB.forEach(r => {
+      const cl = classeItem(r.item_desc);
+      const st = setorDe(r.recurso_cod);
       const b = bocaDe(r.item_desc);
-      if (!b) { semBoca += val(r); return; }
-      if (!bo[b]) bo[b] = { v: 0, itens: new Set(), ops: new Set(), dias: new Set(), maqs: new Set() };
+      if (st === 'Embaladeiras') {
+        const q = (typeof caixasDe === 'function') ? caixasDe(r) : (r.quantidade || 0);
+        if (b) embBoca[b] = (embBoca[b] || 0) + q; else embSem += q;
+        return;
+      }
+      if (!b) { semBoca += val(r); semCls[cl === 'COPO' ? 'POTE' : cl] = (semCls[cl === 'COPO' ? 'POTE' : cl] || 0) + val(r); return; }
+      if (!bo[b]) bo[b] = { v: 0, pc: 0, tp: 0, kt: 0, st: {}, itens: new Set(), ops: new Set(), dias: new Set(), maqs: new Set() };
       bo[b].v += val(r);
+      if (cl === 'TAMPA') bo[b].tp += val(r); else if (cl === 'KIT') bo[b].kt += val(r); else bo[b].pc += val(r);
+      if (st) bo[b].st[st] = (bo[b].st[st] || 0) + val(r);
       if (r.item_cod) bo[b].itens.add(String(r.item_cod));
       if (r.op) bo[b].ops.add(r.op);
       if (r.dia) bo[b].dias.add(r.dia);
@@ -7765,7 +7780,7 @@ async function preencherMediaItensMes(ym, setor) {
       Object.keys(md).forEach(k => { const c = k.split('|')[0]; const n = md[k].size - 1; if (n > 0) trocasMaq[c] = (trocasMaq[c] || 0) + n; });
       const totTrocas = Object.values(trocasMaq).reduce((a, n) => a + n, 0);
 
-      htmlBoca += card('Produção por boca · ' + (anSetor || 'todos os setores (sem Extrusão)'), (metrica === 'peso' ? 'peso' : 'cxs') + ' · boca = 1º número dos parênteses, ex.: (75x122) → 75' + (semBoca > 0 ? ` · ${fmtV(semBoca)} sem boca na descrição` : ''),
+      htmlBoca += card('Produção por boca · ' + (anSetor || 'todos os setores (sem Extrusão)'), (metrica === 'peso' ? 'peso' : 'cxs') + ' · boca dos parênteses, da lista branca ou do mapa volume→boca' + (semBoca > 0 ? ` · ${fmtV(semBoca)} sem boca (bandeja e tampa retangular não têm)` : ''),
         barrasHorizontal(bocas.map(b => ({ l: 'Boca ' + b, v: bo[b].v })), metrica === 'peso' ? 'kg' : 'cxs'));
 
       const linhasB = bocas.map(b => `<tr>
@@ -7774,9 +7789,37 @@ async function preencherMediaItensMes(ym, setor) {
         <td><span class="cel neutra">${bo[b].ops.size}</span></td>
         <td><span class="cel neutra">${bo[b].dias.size}</span></td>
         <td><span class="cel neutra">${bo[b].maqs.size}</span></td>
+        <td><span class="cel neutra">${bo[b].pc ? fmtV(bo[b].pc) : '—'}</span></td>
+        <td><span class="cel neutra">${bo[b].tp ? fmtV(bo[b].tp) : '—'}</span></td>
         <td><span class="cel ok">${fmtV(bo[b].v)}</span></td></tr>`).join('');
-      htmlBoca += card('Boca · itens, OPs e volume', 'quantas OPs e dias cada boca rodou',
-        `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Boca</th><th>Itens</th><th>OPs</th><th>Dias</th><th>Máq.</th><th>Volume</th></tr></thead><tbody>${linhasB}</tbody></table></div>`);
+      htmlBoca += card('Boca · itens, OPs e volume', 'pote+copo e tampa separados · quantas OPs e dias cada boca rodou',
+        `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Boca</th><th>Itens</th><th>OPs</th><th>Dias</th><th>Máq.</th><th>Pote+copo</th><th>Tampa</th><th>Total</th></tr></thead><tbody>${linhasB}</tbody></table></div>`);
+
+      /* ===== boca × setor. Embaladeiras sai do total em kg (é 100% KIT e mede
+         em caixas) — o pote e a tampa desses kits já foram pesados na Termoformagem. ===== */
+      {
+        const setsB = [...new Set(bocas.flatMap(b => Object.keys(bo[b].st)))]
+          .filter(s => s && s !== 'Embaladeiras')
+          .sort((a, c) => bocas.reduce((t, b) => t + (bo[b].st[c] || 0), 0) - bocas.reduce((t, b) => t + (bo[b].st[a] || 0), 0));
+        if (setsB.length) {
+          const totSet = {}; setsB.forEach(s => totSet[s] = bocas.reduce((t, b) => t + (bo[b].st[s] || 0), 0));
+          const totGeral = setsB.reduce((t, s) => t + totSet[s], 0);
+          const linhasS = bocas.map(b => `<tr>
+            <td class="nome" style="text-align:left"><span class="cod">${escapeHtml(b)}</span> boca</td>
+            ${setsB.map(s => `<td><span class="cel neutra">${bo[b].st[s] ? fmtV(bo[b].st[s]) : '—'}</span></td>`).join('')}
+            <td><span class="cel ok">${fmtV(setsB.reduce((t, s) => t + (bo[b].st[s] || 0), 0))}</span></td></tr>`).join('')
+            + (semBoca > 0 ? `<tr><td class="nome" style="text-align:left;opacity:.7">sem boca</td>${setsB.map(() => '<td><span class="cel neutra">—</span></td>').join('')}<td><span class="cel neutra">${fmtV(semBoca)}</span></td></tr>` : '')
+            + `<tr style="font-weight:700"><td class="nome" style="text-align:left">TOTAL</td>
+               ${setsB.map(s => `<td><span class="cel ok">${fmtV(totSet[s])}</span></td>`).join('')}
+               <td><span class="cel ok">${fmtV(totGeral + semBoca)}</span></td></tr>`;
+          const embTot = Object.values(embBoca).reduce((a, n) => a + n, 0) + embSem;
+          const embTxt = embTot > 0
+            ? `<p class="desc" style="margin-top:8px">🅔 <b>Embaladeiras · ${fmtNum(Math.round(embTot))} cxs</b> — fora do total acima. É 100% KIT e mede em caixas; o pote e a tampa desses kits já foram pesados na Termoformagem. Por boca: ${Object.keys(embBoca).sort((a, c) => embBoca[c] - embBoca[a]).map(b => b + ' → ' + fmtNum(Math.round(embBoca[b])) + ' cxs').join(' · ') || '—'}</p>`
+            : '';
+          htmlBoca += card('Boca × setor', 'o total fecha com o mês, sem Extrusão e sem Embaladeiras',
+            `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr><th style="text-align:left">Boca</th>${setsB.map(s => `<th>${escapeHtml(s)}</th>`).join('')}<th>Total</th></tr></thead><tbody>${linhasS}</tbody></table></div>${embTxt}`);
+        }
+      }
 
       if (totTrocas) {
         // guarda o detalhe para o clique abrir dia a dia
