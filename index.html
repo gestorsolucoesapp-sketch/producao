@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.323.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.324.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1731,7 +1731,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.323.0';
+const APP_VER = '3.324.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7605,6 +7605,69 @@ function janelaOP(maq, op) {
 }
 // Extrusão é chapa/bobina (processo contínuo) — não entra em velocidade de troca.
 function contaSetup(cod) { return setorDe(cod) !== 'Extrusão'; }
+/* card: nº de setups por máquina no período. Barra = qtd de trocas.
+   Ao clicar numa máquina: tempo total de setup, média por setup e por turno.
+   Meta de referência: 1h30 (90 min) por setup. */
+const META_SETUP_MIN = 90;
+function cardSetupsMaquina(D, setor) {
+  try {
+    const trocas = calcularTrocas(setor || '');
+    if (!trocas.length) return '';
+    // agrupa por máquina: quantidade e tempo total de setup
+    const porMaq = {};
+    trocas.forEach(t => {
+      const c = String(t.maq);
+      if (setor && setorDe(c) !== setor) return;
+      const o = (porMaq[c] = porMaq[c] || { n: 0, min: 0 });
+      o.n++;
+      // tempo do setup: usa hLiq (horas líquidas) se houver, em minutos
+      if (t.hLiq != null && !isNaN(t.hLiq)) o.min += t.hLiq * 60;
+    });
+    const arr = Object.keys(porMaq).map(c => ({
+      l: c, v: porMaq[c].n,
+      click: `detSetupsMaquina('${c}','${setor || ''}')`
+    })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+    if (!arr.length) return '';
+    const totSetups = arr.reduce((a, x) => a + x.v, 0);
+    return card('🔧 Setups por máquina', totSetups + ' troca(s) no período · meta 1h30 por setup · toque numa barra',
+      paretoSVG(arr, v => v + '×', 'var(--azul-2)') + paretoHorizontal(arr, v => v + '×', 'var(--azul-2)'));
+  } catch (_) { return ''; }
+}
+/* detalhe de setups de UMA máquina: total, média, por turno, contra a meta 1h30 */
+function detSetupsMaquina(cod, setor) {
+  try {
+    cod = String(cod);
+    const D = dadosPainel; if (!D) return;
+    const trocas = calcularTrocas(setor || '').filter(t => String(t.maq) === cod);
+    const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
+    if (!trocas.length) { abreDet(cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem setups no período.</p>`); return; }
+    const porTurno = { 'Manhã': { n: 0, min: 0 }, 'Tarde': { n: 0, min: 0 }, 'Noite': { n: 0, min: 0 } };
+    let totMin = 0, totN = trocas.length, comTempo = 0;
+    trocas.forEach(t => {
+      const min = (t.hLiq != null && !isNaN(t.hLiq)) ? t.hLiq * 60 : null;
+      let b = 'Manhã';
+      const h = t.horaEntrou ? new Date(t.horaEntrou).getHours() + new Date(t.horaEntrou).getMinutes() / 60 : null;
+      if (h != null) b = (h >= 6 && h < 13.6) ? 'Manhã' : (h >= 13.6 && h < 20.85) ? 'Tarde' : 'Noite';
+      porTurno[b].n++;
+      if (min != null) { porTurno[b].min += min; totMin += min; comTempo++; }
+    });
+    const mediaMin = comTempo > 0 ? totMin / comTempo : 0;
+    const fmtMin = m => { const hh = Math.floor(m / 60), mm = Math.round(m % 60); return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}` : `${mm}min`; };
+    const corMedia = mediaMin > META_SETUP_MIN ? 'var(--critico)' : 'var(--ok-2)';
+    const corpo = `<p class="idet-desc">${escapeHtml(nome)} · ${totN} setup(s)${comTempo < totN ? ` · ${comTempo} com tempo medido` : ''}</p>
+      <div class="idet-grid">
+        <div><b>${totN}</b><span>setups no período</span></div>
+        <div><b>${fmtMin(totMin)}</b><span>tempo total</span></div>
+        <div><b style="color:${corMedia}">${fmtMin(mediaMin)}</b><span>média por setup · meta 1h30</span></div>
+      </div>
+      <div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Setups por turno</div>
+      ${tabSimples(['Turno', 'Qtd', 'Média'], ['Manhã', 'Tarde', 'Noite'].map(t => {
+        const o = porTurno[t]; const med = o.n > 0 && o.min > 0 ? o.min / o.n : 0;
+        return `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${o.n}×</span></td><td><span class="cel ${med > META_SETUP_MIN ? 'baixo' : 'neutra'}">${med > 0 ? fmtMin(med) : '—'}</span></td></tr>`;
+      }).join(''))}`;
+    abreDet('🔧 Setups · ' + cod, corpo);
+  } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
+}
 
 // média MENSAL de trocas/dia (referência estável, independente do recorte na tela)
 let _trocasMesCache = { ym: null, rows: null };
@@ -10470,7 +10533,11 @@ function cardAbaixoMeta(D, setor) {
       const m = metasData[c]; if (!m) return;
       const slots = Object.entries(prodDT[c]);
       const diasProd = new Set(slots.map(([k]) => k.split('|')[0])).size;
-      if (diasProd < 3) return;                       // baixa atividade — 1-2 dias não é média representativa
+      // mínimo de dias proporcional ao período: períodos curtos (dia/últimos dias)
+      // avaliam com o que têm; no mês inteiro exige 3 dias pra média ser representativa
+      const diasNoPeriodo = new Set(D.producao.map(r => String(r.dia).slice(0, 10))).size;
+      const minDias = diasNoPeriodo <= 3 ? 1 : 3;
+      if (diasProd < minDias) return;
       let exp = 0, real = 0;
       slots.forEach(([key, peso]) => { const b = key.split('|')[1]; exp += (m[b] || 0); real += peso; });
       if (exp <= 0) return;
@@ -10701,6 +10768,7 @@ function renderPainel() {
     const todasMaq = Object.values(SETOR_MAQ).flat();
     html += card('Produção por máquina · todos os setores', (metrica === 'peso' ? 'peso' : 'cxs') + ' — todas as máquinas, Extrusão incluída',
       gMaqPeso(D.producao, val, uni, todasMaq, D.nomeMaq));
+    try { html += cardSetupsMaquina(D, null); } catch (_) {}
 
     // ⏱️ Produção perdida por PARADA (baseado na meta kg/h de cada máquina)
     { const kp = kgPerdidoParadas(D);
@@ -10793,6 +10861,7 @@ function renderPainel() {
         barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && (setorEmCx(setor) ? metrica === 'quantidade' : metrica === 'peso')) ? metaDiariaSetor(setor) : null }) + `<div style="margin:8px 0 0"><button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:13px" onclick="detSetorTurnos('${(setor || '').replace(/'/g, '')}')">📊 Ver turnos</button></div>`, 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq }));
+  try { html += cardSetupsMaquina(D, setor); } catch (_) {}
 
   // paradas por máquina (período)
   if (parS.length) {
