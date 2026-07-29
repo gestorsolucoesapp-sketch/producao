@@ -687,7 +687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.367.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.368.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1747,7 +1747,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.367.0';
+const APP_VER = '3.368.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6154,12 +6154,40 @@ function detProblemasMaq(cod) {
     L.forEach(o => { const k = (o.motivo || '—').toString().trim() || '—'; const g = (porMot[k] = porMot[k] || { n: 0, ab: 0 }); g.n++; if (!o.data_reinicio) g.ab++; });
     const arr = Object.entries(porMot).map(([m, g]) => ({ l: m, v: g.n })).sort((a, b) => b.v - a.v);
     const abertas = L.filter(o => !o.data_reinicio).length;
-    const corpo = `<p class="idet-desc">${escapeHtml(String(nome))} · ${L.length} OS · ${abertas} em aberto</p>` +
+    // mais recente primeiro em toda lista aberta a partir daqui
+    const ordOS = (a, b) => String(b.data_abertura || '').localeCompare(String(a.data_abertura || ''));
+    const motDe = o => (o.motivo || '—').toString().trim() || '—';
+    // registra os grupos de drill-down: todas, por motivo, e por motivo só em aberto.
+    // chave por ÍNDICE (não pelo texto do motivo) para não quebrar com barra, acento ou aspas.
+    const chTodas = 'pm_' + cod + '_todas';
+    _drill[chTodas] = { titulo: cod + ' · todas as OS', lista: L.slice().sort(ordOS) };
+    arr.forEach((x, i) => {
+      _drill['pm_' + cod + '_' + i] = { titulo: cod + ' · ' + x.l, lista: L.filter(o => motDe(o) === x.l).sort(ordOS) };
+      _drill['pma_' + cod + '_' + i] = { titulo: cod + ' · ' + x.l + ' · em aberto', lista: L.filter(o => motDe(o) === x.l && !o.data_reinicio).sort(ordOS) };
+      x.click = `verOSDe('pm_${cod}_${i}','${cod}')`;   // clicar na barra do gráfico também abre
+    });
+    const corpo = `<p class="idet-desc">${escapeHtml(String(nome))}</p>` +
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">
+        <span onclick="verOSDe('${chTodas}','${cod}')" style="cursor:pointer;background:var(--navy);color:#fff;border-radius:999px;padding:5px 14px;font-size:12.5px;font-weight:800">${L.length} OS · ver todas ›</span>
+        <span onclick="verOSDe('${chTodas}','${cod}')" style="cursor:pointer;background:${abertas ? 'var(--critico)' : 'var(--leve)'};color:${abertas ? '#fff' : 'var(--fraco)'};border-radius:999px;padding:5px 14px;font-size:12.5px;font-weight:800">${abertas} em aberto</span>
+      </div>` +
       paretoSVG(arr, v => v + ' OS', 'var(--critico)') + paretoHorizontal(arr, v => v + ' OS', 'var(--critico)') +
-      `<div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Motivos</div>` +
-      tabSimples(['Motivo', 'OS', 'Aberto'], arr.map(x => `<tr><td class="nome">${escapeHtml(x.l)}</td><td><span class="cel cel-tot">${x.v}</span></td><td><span class="cel ${porMot[x.l].ab > 0 ? 'baixo' : 'neutra'}">${porMot[x.l].ab || '—'}</span></td></tr>`).join(''));
+      `<div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Motivos · toque no número para ver as OS</div>` +
+      tabSimples(['Motivo', 'OS', 'Aberto'], arr.map((x, i) => {
+        const ab = porMot[x.l].ab, kt = `verOSDe('pm_${cod}_${i}','${cod}')`, ka = `verOSDe('pma_${cod}_${i}','${cod}')`;
+        return `<tr>` +
+          `<td class="nome" style="cursor:pointer" onclick="${kt}">${escapeHtml(x.l)} <span style="color:var(--fraco)">›</span></td>` +
+          `<td style="cursor:pointer" onclick="${kt}"><span class="cel cel-tot">${x.v}</span></td>` +
+          `<td${ab ? ` style="cursor:pointer" onclick="${ka}"` : ''}><span class="cel ${ab > 0 ? 'baixo' : 'neutra'}">${ab || '—'}</span></td></tr>`;
+      }).join(''));
+    _detVoltar = null;
     abreDet('🔧 Problemas · ' + cod, corpo);
   } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
+}
+// abre um grupo de OS deixando o botão de fechar VOLTAR para o modal de Problemas
+function verOSDe(chave, codVolta) {
+  _detVoltar = codVolta ? (() => detProblemasMaq(codVolta)) : null;
+  verOSGrupo(chave);
 }
 function verOSGrupo(chave) {
   const f = _drill[chave]; if (!f) return;
