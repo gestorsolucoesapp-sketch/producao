@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.343.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.344.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1738,7 +1738,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.343.0';
+const APP_VER = '3.344.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6706,6 +6706,29 @@ function blocoParadaTurno(inicio, dia) {
   if (!hhmm) return null;
   return blocoPorHora(hhmm, dia || (inicio ? String(inicio).slice(0, 10) : null));
 }
+// Fatia uma parada pelos cortes de turno e retorna quanto tempo (em HORAS) ela teve
+// em cada turno. Uma parada de 15:02→15:19 (cruza o corte T3/T4 às 15:10) devolve
+// { Manhã: 8min, Tarde: 9min }. Varre minuto a minuto usando a régua vigente (blocoPorHora),
+// então respeita T3=Manhã e o sábado reduzido automaticamente.
+function tempoParadaPorTurno(inicio, horas, dia) {
+  const out = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+  const hhmm = horaHHMMParada(inicio);
+  if (!hhmm || !horas || horas <= 0) {
+    if (hhmm) { const b = blocoPorHora(hhmm, dia); if (b) out[b] = horas || 0; }
+    return out;
+  }
+  const d = dia || (inicio ? String(inicio).slice(0, 10) : null);
+  const [h0, m0] = hhmm.split(':').map(Number);
+  const iniMin = h0 * 60 + m0;
+  const totMin = Math.round(horas * 60);
+  for (let i = 0; i < totMin; i++) {
+    const abs = iniMin + i;                 // minuto absoluto desde 00:00
+    const hh = Math.floor((abs % 1440) / 60), mm = abs % 60;
+    const b = blocoPorHora(String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'), d) || 'Noite';
+    out[b] += 1 / 60;                       // 1 minuto em horas
+  }
+  return out;
+}
 function blocoPorHora(h, dia) {
   if (!h) return null;  const p = String(h).split(':'); const t = (+p[0]) * 60 + (+(p[1] || 0));
   const m = (a, b) => a * 60 + b;
@@ -10640,7 +10663,11 @@ function analiseTurnoCompleta(bloco, setor) {
     prodT.forEach(r => { const c = String(r.recurso_cod); const o = (maq[c] = maq[c] || { kg: 0, cx: 0 }); o.kg += (r.peso || 0); o.cx += (+r.quantidade || 0); nm[c] = r.recurso_nome || c; });
     // paradas do turno (por hora de início)
     const noBloco = p => blocoParadaTurno(p.inicio) === bloco;
-    const parT = filtraParadas(D.paradas || []).filter(p => noSet(p.recurso_cod) && noBloco(p));
+    // divide paradas que cruzam o corte: usa só a fração de tempo que caiu neste turno
+    const parT = filtraParadas(D.paradas || []).filter(p => noSet(p.recurso_cod)).map(p => {
+      const fatia = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[bloco] || 0;
+      return fatia > 0 ? Object.assign({}, p, { tempo_horas: fatia }) : null;
+    }).filter(Boolean);
     const horas = parT.reduce((a, p) => a + (p.tempo_horas || 0), 0);
     const porMot = {};
     parT.forEach(p => { const k = p.motivo_desc || '—'; const o = (porMot[k] = porMot[k] || { h: 0, n: 0 }); o.h += (p.tempo_horas || 0); o.n++; });
@@ -10923,10 +10950,16 @@ function renderPainel() {
   // filtro de TURNO global: se um turno estiver selecionado, todo o painel passa a ser daquele turno
   const _turnoSel = ($('turnoGlobal') && $('turnoGlobal').value) || '';
   if (_turnoSel) {
-    const _noBlocoHora = p => blocoParadaTurno(p.inicio) === _turnoSel;
+    // paradas que cruzam o corte de turno são DIVIDIDAS: entra só a fração de tempo
+    // que caiu no turno selecionado (ex.: 15:02→15:19 no filtro Manhã entra só até 15:10)
+    const _paradasTurno = [];
+    (D.paradas || []).forEach(p => {
+      const fatia = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[_turnoSel] || 0;
+      if (fatia > 0) _paradasTurno.push(Object.assign({}, p, { tempo_horas: fatia, _fatiado: true }));
+    });
     D = Object.assign({}, D, {
       producao: (D.producao || []).filter(r => blocoTurno(r.turno, r.dia) === _turnoSel),
-      paradas: (D.paradas || []).filter(_noBlocoHora),
+      paradas: _paradasTurno,
       perdas: (D.perdas || []).filter(r => blocoTurno(r.turno, r.dia) === _turnoSel),
       consumo: (D.consumo || []).filter(r => r.turno == null || blocoTurno(r.turno, r.dia) === _turnoSel)
     });
