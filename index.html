@@ -133,8 +133,8 @@ nav{background:var(--navy)}
 .acoes-sutis a svg{width:16px;height:16px;flex:none}
 .acoes-sutis a:hover{color:var(--navy);background:var(--leve)}
 .acoes-sutis a.ativo{color:var(--azul-marca);background:var(--leve)}
-#periodoGlobal{flex:1;min-width:0}#setorGlobal{flex:1;min-width:0}#setorGlobalBox #fMetrica{flex:1;min-width:0}
-#setorGlobal,#periodoGlobal,#setorGlobalBox #fMetrica{width:100%;padding:9px 30px 9px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.30);background-color:rgba(255,255,255,.13);color:#fff;font-size:15px;font-weight:700;letter-spacing:.2px;text-align:center;text-align-last:center;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 13px center;background-size:13px}
+#periodoGlobal{flex:1;min-width:0}#setorGlobal{flex:1;min-width:0}#turnoGlobal{flex:1;min-width:0}#setorGlobalBox #fMetrica{flex:1;min-width:0}
+#setorGlobal,#periodoGlobal,#turnoGlobal,#setorGlobalBox #fMetrica{width:100%;padding:9px 30px 9px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.30);background-color:rgba(255,255,255,.13);color:#fff;font-size:15px;font-weight:700;letter-spacing:.2px;text-align:center;text-align-last:center;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 13px center;background-size:13px}
 #setorGlobal:disabled,#periodoGlobal:disabled,#setorGlobalBox #fMetrica:disabled{opacity:.55}
 #setorGlobal option,#periodoGlobal option,#setorGlobalBox #fMetrica option{color:#0B2A4A;background:#fff;font-weight:600}
 .abas{display:flex;max-width:1100px;margin:0 auto;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;scroll-snap-type:x proximity}
@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.329.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.330.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1738,7 +1738,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.329.0';
+const APP_VER = '3.330.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7634,6 +7634,29 @@ function contaSetup(cod) { return setorDe(cod) !== 'Extrusão'; }
 const META_SETUP_MIN = 90;
 function cardSetupsMaquina(D, setor) {
   try {
+    // conta setups e tempo pelas PARADAS de motivo SETUP (D.paradas já vem filtrado
+    // por período E turno, então isso respeita todos os filtros ativos)
+    const porMaq = {};
+    (D.paradas || []).forEach(p => {
+      const c = String(p.recurso_cod);
+      if (setor && setorDe(c) !== setor) return;
+      if (!/setup/i.test(p.motivo_desc || '')) return;
+      const o = (porMaq[c] = porMaq[c] || { n: 0, min: 0 });
+      o.n++;
+      o.min += (p.tempo_horas || 0) * 60;
+    });
+    const arr = Object.keys(porMaq).map(c => ({
+      l: c, v: porMaq[c].n,
+      click: `detSetupsMaquina('${c}','${setor || ''}')`
+    })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+    if (!arr.length) return '';
+    const totSetups = arr.reduce((a, x) => a + x.v, 0);
+    return card('🔧 Setups por máquina', totSetups + ' setup(s) no período · meta 1h30 por setup · toque numa barra',
+      paretoSVG(arr, v => v + '×', 'var(--azul-2)') + paretoHorizontal(arr, v => v + '×', 'var(--azul-2)'));
+  } catch (_) { return ''; }
+}
+function _cardSetupsMaquinaOLD(D, setor) {
+  try {
     // dias que existem no período atual do painel (D.producao já vem filtrado)
     const diasPeriodo = new Set((D.producao || []).map(r => String(r.dia).slice(0, 10)));
     const trocas = calcularTrocas(setor || '').filter(t => diasPeriodo.has(String(t.dia).slice(0, 10)));
@@ -7668,7 +7691,13 @@ function cardSetupsMaquina(D, setor) {
 function detSetupsMaquina(cod, setor) {
   try {
     cod = String(cod);
-    const D = dadosPainel; if (!D) return;
+    let D = dadosPainel; if (!D) return;
+    // respeita o turno global, se houver
+    const _tur = ($('turnoGlobal') && $('turnoGlobal').value) || '';
+    if (_tur) {
+      const _nb = p => { if (!p.inicio) return false; const d = new Date(p.inicio); const h = d.getHours() + d.getMinutes() / 60; const b = (h >= 6 && h < 13.6) ? 'Manhã' : (h >= 13.6 && h < 20.85) ? 'Tarde' : 'Noite'; return b === _tur; };
+      D = Object.assign({}, D, { producao: (D.producao || []).filter(r => blocoTurno(r.turno, r.dia) === _tur), paradas: (D.paradas || []).filter(_nb) });
+    }
     const diasPeriodo = new Set((D.producao || []).map(r => String(r.dia).slice(0, 10)));
     const trocas = calcularTrocas(setor || '').filter(t => String(t.maq) === cod && diasPeriodo.has(String(t.dia).slice(0, 10)));
     const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
