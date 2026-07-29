@@ -687,7 +687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.368.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.369.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1138,6 +1138,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <div id="manualStatus" class="desc" style="margin-top:8px;text-align:center"></div>
         <div id="manuaisLista" style="margin-top:12px"><p class="desc">Carregando…</p></div>
       </div>
+      <div id="mntAnaliseHost"></div>
       <div class="card">
         <div id="mntResumo" style="text-align:center;margin-bottom:6px"></div>
         <div class="painel-filtros" style="margin-bottom:8px">
@@ -1747,7 +1748,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.368.0';
+const APP_VER = '3.369.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6221,6 +6222,171 @@ let _mbT = null;
 function manutBuscaMuda() { clearTimeout(_mbT); _mbT = setTimeout(renderManut, 220); }
 function manutUsaTermo(t) { const i = $('manutBusca'); if (!i) return; i.value = t; renderManut(); }
 
+// ===== ANÁLISE DA MANUTENÇÃO: números calculados aqui, leitura feita pela IA =====
+// Regra: a IA NÃO inventa número. Tudo abaixo sai do osLista já filtrado pela tela;
+// o texto enviado a ela é só o resumo numérico, e o prompt proíbe estimar.
+let _mntAnaliseCache = null;
+
+function manutAnaliseCalc(L) {
+  const abertas = L.filter(osAberta), fechadas = L.filter(o => !osAberta(o));
+  const norm = s => String(s || '').trim().toUpperCase() || '—';
+  const dia = o => String(o.data_abertura || '').slice(0, 10);
+
+  // horas paradas / MTTR — a coluna horas_parada vem VAZIA do ERP, então a duração
+  // real sai de data_abertura -> data_reinicio. Reinício anterior à abertura = erro de
+  // apontamento: descartado e contado à parte.
+  const durH = o => {
+    if (o.horas_parada != null && !isNaN(+o.horas_parada) && +o.horas_parada > 0) return +o.horas_parada;
+    if (!o.data_abertura || !o.data_reinicio) return null;
+    const h = (new Date(o.data_reinicio) - new Date(o.data_abertura)) / 3600000;
+    return (isNaN(h) || h < 0) ? null : h;
+  };
+  const negativas = L.filter(o => o.data_abertura && o.data_reinicio &&
+    ((new Date(o.data_reinicio) - new Date(o.data_abertura)) < 0)).length;
+  const durs = L.map(durH).filter(v => v != null);
+  const totH = durs.reduce((a, v) => a + v, 0);
+  const mttr = durs.length ? totH / durs.length : null;
+  const _sd = durs.slice().sort((a, b) => a - b);
+  const mediana = _sd.length ? (_sd.length % 2 ? _sd[(_sd.length - 1) / 2] : (_sd[_sd.length / 2 - 1] + _sd[_sd.length / 2]) / 2) : null;
+  const comH = durs;
+
+  // por máquina
+  const pm = {};
+  L.forEach(o => {
+    const k = String(o.recurso_cod || '—');
+    const g = (pm[k] = pm[k] || { cod: k, nome: o.maquina_desc || k, n: 0, ab: 0, h: 0 });
+    g.n++; if (osAberta(o)) g.ab++; { const dh = durH(o); if (dh != null) g.h += dh; }
+  });
+  const maqTop = Object.values(pm).sort((a, b) => b.n - a.n);
+  const maqHora = Object.values(pm).filter(x => x.h > 0).sort((a, b) => b.h - a.h);
+
+  // motivos globais
+  const pmo = {};
+  L.forEach(o => { const k = norm(o.motivo); pmo[k] = (pmo[k] || 0) + 1; });
+  const motTop = Object.entries(pmo).map(([l, n]) => ({ l, n })).sort((a, b) => b.n - a.n);
+
+  // REINCIDÊNCIA: mesmo motivo voltando na mesma máquina = problema crônico
+  const par = {};
+  L.forEach(o => {
+    const k = String(o.recurso_cod || '—') + '||' + norm(o.motivo);
+    const g = (par[k] = par[k] || { cod: String(o.recurso_cod || '—'), nome: o.maquina_desc || '', mot: norm(o.motivo), n: 0, ab: 0, h: 0, datas: [] });
+    g.n++; if (osAberta(o)) g.ab++; { const dh = durH(o); if (dh != null) g.h += dh; }
+    if (dia(o)) g.datas.push(dia(o));
+  });
+  const reinc = Object.values(par).filter(x => x.n >= 2).map(x => {
+    const d = x.datas.slice().sort();
+    let inter = null;
+    if (d.length >= 2) {
+      let soma = 0, c = 0;
+      for (let i = 1; i < d.length; i++) {
+        const dif = (new Date(d[i] + 'T00:00:00') - new Date(d[i - 1] + 'T00:00:00')) / 86400000;
+        if (!isNaN(dif)) { soma += dif; c++; }
+      }
+      if (c) inter = soma / c;
+    }
+    return Object.assign(x, { inter, ini: d[0] || null, fim: d[d.length - 1] || null });
+  }).sort((a, b) => (b.n - a.n) || (b.h - a.h));
+
+  // preventiva x corretiva
+  const ehPrev = o => /PREVENTIV/.test(norm(o.motivo) + ' ' + norm(o.submotivo) + ' ' + norm(o.atividade));
+  const nPrev = L.filter(ehPrev).length;
+
+  // envelhecimento das abertas
+  const idades = abertas.map(o => diasEmAberto(o)).filter(d => d != null && !isNaN(d));
+  const maisAntiga = idades.length ? Math.max.apply(null, idades) : null;
+  const velhas30 = abertas.filter(o => { const d = diasEmAberto(o); return d != null && d >= 30; });
+
+  return { L, abertas, fechadas, totH, mttr, mediana, negativas, comH, maqTop, maqHora, motTop, reinc, nPrev, maisAntiga, velhas30 };
+}
+
+function renderManutAnalise(L) {
+  const host = $('mntAnaliseHost'); if (!host) return;
+  if (!L || !L.length) { host.innerHTML = ''; _mntAnaliseCache = null; return; }
+  const A = manutAnaliseCalc(L);
+  _mntAnaliseCache = A;
+  const fh = v => (v == null) ? '—' : (Math.round(v * 10) / 10).toString().replace('.', ',') + 'h';
+  const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '0%';
+
+  const linhasReinc = A.reinc.slice(0, 8).map(x =>
+    `<tr style="cursor:pointer" onclick="detProblemasMaq('${escapeHtml(x.cod)}')">` +
+    `<td class="nome" style="font-size:12px"><b>${escapeHtml(x.cod)}</b> · ${escapeHtml(x.mot)}` +
+    `<div style="font-size:11px;color:var(--fraco-2);font-weight:600">${x.inter != null ? 'volta a cada ~' + Math.round(x.inter) + ' dia(s)' : 'sem intervalo calculável'}${x.h > 0 ? ' · ' + fh(x.h) + ' paradas' : ''}</div></td>` +
+    `<td><span class="cel cel-tot">${x.n}×</span></td>` +
+    `<td><span class="cel ${x.ab ? 'baixo' : 'neutra'}">${x.ab || '—'}</span></td></tr>`).join('');
+
+  host.innerHTML = `<div class="card" style="border-left:5px solid var(--azul-marca);margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div>
+        <b>🩺 Diagnóstico da manutenção</b>
+        <div class="desc" style="margin-top:2px">${A.L.length} OS · ${A.abertas.length} em aberto · ${fh(A.totH)} de reparo${A.mediana != null ? ' · mediana ' + fh(A.mediana) + ' · média ' + fh(A.mttr) : ''}</div>
+        ${A.negativas ? `<div class="desc" style="color:var(--laranja);font-weight:700;margin-top:2px">⚠️ ${A.negativas} OS com reinício anterior à abertura — fora da conta</div>` : ''}
+      </div>
+      <button class="btn btn-verde" style="width:auto;padding:9px 16px" onclick="manutAnaliseIA()">🤖 Analisar com IA</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px">
+      ${A.reinc.length ? `<span style="background:#FDE7E7;border:1px solid #E7A1A1;color:#8B2E2E;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">${A.reinc.length} problema(s) reincidente(s)</span>` : ''}
+      ${A.velhas30.length ? `<span style="background:#FDF5E6;border:1px solid #EBD3A0;color:#7A5A10;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">${A.velhas30.length} aberta(s) há 30+ dias</span>` : ''}
+      ${A.maisAntiga != null ? `<span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">mais antiga: ${A.maisAntiga}d</span>` : ''}
+      <span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">preventiva ${pct(A.nPrev, A.L.length)}</span>
+    </div>
+    ${linhasReinc ? `<div style="font-size:11px;color:#8A97A6;margin:8px 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Problemas que persistem · toque para abrir</div>` +
+      tabSimples(['Máquina · motivo', 'Vezes', 'Aberto'], linhasReinc)
+      : '<div class="desc">Nenhum motivo repetiu na mesma máquina neste período.</div>'}
+    <div id="mntAnaliseIA" style="margin-top:10px"></div>
+  </div>`;
+}
+
+// monta o resumo numérico que vai para a IA (só números já calculados)
+function manutAnaliseTexto(A) {
+  const fh = v => (v == null) ? '—' : (Math.round(v * 10) / 10).toString().replace('.', ',') + 'h';
+  const per = (typeof periodoSel !== 'undefined' && periodoSel && periodoSel.label) ? periodoSel.label : 'período atual';
+  const setor = ($('manutSetor') && $('manutSetor').value) || 'todos os setores';
+  let t = `DADOS DE MANUTENÇÃO JÁ APURADOS (não recalcule, não estime)\n`;
+  t += `Período: ${per} · Setor: ${setor}\n`;
+  t += `Total de OS: ${A.L.length} · em aberto: ${A.abertas.length} · concluídas: ${A.fechadas.length}\n`;
+  t += `Tempo de reparo somado: ${fh(A.totH)} (em ${A.comH.length} OS com abertura e reinício válidos)\n`;
+  t += `Tempo de reparo: mediana ${fh(A.mediana)}, média ${fh(A.mttr)} (a coluna horas_parada do ERP vem vazia; a duração é calculada da abertura ao reinício)\n`;
+  t += `OS com reinício anterior à abertura (erro de apontamento, descartadas): ${A.negativas}\n`;
+  t += `OS classificadas como preventiva: ${A.nPrev} de ${A.L.length}\n`;
+  t += `OS aberta mais antiga: ${A.maisAntiga != null ? A.maisAntiga + ' dias' : '—'} · abertas há 30+ dias: ${A.velhas30.length}\n\n`;
+  t += `TOP MÁQUINAS POR Nº DE OS:\n` + A.maqTop.slice(0, 10).map(x => `- ${x.cod} (${x.nome}): ${x.n} OS, ${x.ab} em aberto, ${fh(x.h)} paradas`).join('\n') + '\n\n';
+  if (A.maqHora.length) t += `TOP MÁQUINAS POR HORAS PARADAS:\n` + A.maqHora.slice(0, 8).map(x => `- ${x.cod}: ${fh(x.h)} em ${x.n} OS`).join('\n') + '\n\n';
+  t += `MOTIVOS MAIS FREQUENTES:\n` + A.motTop.slice(0, 10).map(x => `- ${x.l}: ${x.n} OS`).join('\n') + '\n\n';
+  t += `REINCIDÊNCIA (mesmo motivo repetindo na mesma máquina):\n` +
+    (A.reinc.length ? A.reinc.slice(0, 15).map(x => `- ${x.cod} · ${x.mot}: ${x.n}x${x.inter != null ? `, intervalo médio ${Math.round(x.inter)} dias` : ''}${x.h > 0 ? `, ${fh(x.h)} paradas` : ''}${x.ab ? `, ${x.ab} ainda aberta(s)` : ''}`).join('\n') : '- nenhuma');
+  return t;
+}
+
+async function manutAnaliseIA() {
+  const box = $('mntAnaliseIA'); if (!box) return;
+  const A = _mntAnaliseCache;
+  if (!A) { box.innerHTML = '<p class="desc">Sem dados para analisar.</p>'; return; }
+  if (!souAdmin) { box.innerHTML = '<p class="desc">A análise com IA é liberada para o gestor.</p>'; return; }
+  box.innerHTML = '<p class="desc">🤖 analisando…</p>';
+  const pergunta = 'Você é engenheiro de manutenção industrial numa fábrica de termoformagem de plásticos. ' +
+    'Com base APENAS nos números acima, escreva uma análise curta e profissional para o coordenador de produção, em português do Brasil, em markdown, seguindo esta estrutura:\n' +
+    '1. **Onde atacar primeiro** — no máximo 3 máquinas, com o porquê ancorado no número (frequência, horas paradas ou reincidência).\n' +
+    '2. **Problemas crônicos** — quais motivos voltam na mesma máquina e o que isso normalmente indica em termoformagem (desgaste, ajuste, falta de preventiva, peça de reposição).\n' +
+    '3. **Risco parado** — OS antigas em aberto e o que isso custa.\n' +
+    '4. **3 ações concretas** para as próximas 2 semanas, cada uma com a máquina e o responsável sugerido (mecânica ou elétrica).\n\n' +
+    'REGRAS: não invente nenhum número que não esteja acima; se um dado faltar, diga que falta. ' +
+    'Não repita a tabela inteira. Seja direto, sem enrolação, no máximo 350 palavras.';
+  try {
+    const r = await fetch(SB_URL + '/functions/v1/ai-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ contexto: manutAnaliseTexto(A), messages: [{ role: 'user', content: pergunta }] })
+    });
+    const d = await r.json();
+    const txt = d.texto || (d.error ? String(d.error) : '');
+    box.innerHTML = txt
+      ? `<div style="background:var(--leve);border:1px solid #D8E2EC;border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.5">${mdIA(txt)}</div>`
+      : '<p class="desc">A IA não respondeu agora. Tente de novo.</p>';
+  } catch (e) {
+    box.innerHTML = '<p class="desc">Erro de conexão com a IA (função ai-chat).</p>';
+  }
+}
+
 function renderManut() {
   const box = $('manutConteudo');
   const st = $('manutSetor').value, sit = ($('manutStatus') && $('manutStatus').value) || '';
@@ -6284,6 +6450,8 @@ function renderManut() {
   { const r = $('mntResumo'); if (r) r.innerHTML =
       `<div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Ordens de Serviço</div>` +
       `<div style="font-size:11px;color:var(--fraco);margin-top:1px">${escapeHtml(st || 'Todos os setores')}${(typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de) ? ' · ' + escapeHtml(periodoSel.label) : ''}${($('manutMaq') && $('manutMaq').value) ? ' · máq. ' + escapeHtml($('manutMaq').value) : ''}${($('manutBusca') && $('manutBusca').value.trim()) ? ' · "' + escapeHtml($('manutBusca').value.trim()) + '"' : ''} · ${sit === 'ab' ? 'em aberto' : sit === 'fe' ? 'concluídas' : 'todas'} · ${L.length} OS</div>`; }
+
+  try { renderManutAnalise(L); } catch (e) { try { console.warn('analise manut', e); } catch (_) {} }
 
   // ===== Minhas OS (direcionadas a mim) =====
   let htmlMinhas = '';
