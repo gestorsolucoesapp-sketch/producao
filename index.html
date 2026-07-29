@@ -687,7 +687,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.370.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.371.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1748,7 +1748,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.370.0';
+const APP_VER = '3.371.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2517,13 +2517,9 @@ async function sair() {
   location.reload();
 }
 
-async function mostrarApp() {
-  $('splash') && $('splash').remove();
-  $('telaEspera').classList.add('oculto');
-  $('telaLogin').classList.add('oculto');
-  $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
-  // define abas permitidas: admin vê tudo; demais, o que o perfil liberar
+// Decide quais abas o usuário vê. Extraído de mostrarApp para poder rodar de novo
+// depois do login — antes disso, mudança de permissão só valia no próximo login.
+async function aplicarPermissoes() {
   if (souAdmin) { abasPermitidas = ['painel', 'analise', 'analisemais', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut']; }
   else {
     await getTelasSetor(); await getSetorRestrito();
@@ -2551,9 +2547,59 @@ async function mostrarApp() {
     const ok = id === 'usuarios' ? souAdmin : (id === 'rh' ? souRH : (id === 'conf' ? (souDev || abasPermitidas.includes('conf')) : (id === 'organograma' ? (souDev || abasPermitidas.includes('organograma')) : abasPermitidas.includes(id))));
     a.classList.toggle('oculto', !ok);
   });
+}
+
+// Relê perfil + telas_setor no banco e reaplica. Sem isso, liberar uma tela para
+// alguém que já está com o app aberto não tem efeito nenhum até ele reinstalar a sessão.
+let _revalPermT = null;
+async function revalidarPermissoes() {
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return;
+    const { data: p } = await sb.from('perfis').select('*').eq('id', user.id).maybeSingle();
+    if (!p) return;
+    if (p.ativo === false) { location.reload(); return; }   // acesso revogado: cai fora na hora
+    perfil = p;
+    const email = (user.email || '').toLowerCase();
+    const eAdminEmail = ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);
+    souAdmin = (p.papel === 'admin') || eAdminEmail;
+    souDev = !!p.desenvolvedor;
+    souRH = eAdminEmail;
+    if (souDev) souAdmin = true;
+    podeEditarEscala = souAdmin || !!p.pode_editar_escala;
+    telasSetor = null;                                      // derruba o cache eterno do getTelasSetor
+    const antes = abasPermitidas.slice().sort().join(',');
+    await aplicarPermissoes();
+    const depois = abasPermitidas.slice().sort().join(',');
+    if (antes !== depois) {
+      try { toast('🔓 Suas telas foram atualizadas.'); } catch (_) {}
+      if (_abaAtual !== 'usuarios' && !abasPermitidas.includes(_abaAtual)) {
+        trocarAba(abasPermitidas.find(x => x !== 'usuarios') || 'painel');
+      }
+    }
+  } catch (_) {}
+}
+function ligarRevalidacaoPermissoes() {
+  if (_revalPermT) return;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') revalidarPermissoes();
+  });
+  _revalPermT = setInterval(() => {
+    if (document.visibilityState === 'visible') revalidarPermissoes();
+  }, 120000);
+}
+
+async function mostrarApp() {
+  $('splash') && $('splash').remove();
+  $('telaEspera').classList.add('oculto');
+  $('telaLogin').classList.add('oculto');
+  $('telaApp').classList.remove('oculto');
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
+  await aplicarPermissoes();
   // abre a primeira aba permitida
   const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
   trocarAba(primeira);
+  ligarRevalidacaoPermissoes();
   $('iaBtn').classList.remove('oculto');   // IA interna serve pra todos; a API paga é travada em gestor no enviarIA
   $('mntBtn').classList.remove('oculto');
   { const h = $('hdrSetor');
