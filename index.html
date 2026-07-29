@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.308.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.309.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnSair" onclick="sair()">Sair</button>
@@ -1720,7 +1720,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 </script>
 <script>
 /* ================= CONFIG ================= */
-const APP_VER = '3.308.0';
+const APP_VER = '3.309.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6497,63 +6497,68 @@ async function salvarMetas() {
 /* máquinas que ficaram um TURNO INTEIRO paradas, por dia e turno.
    Parada longa é fatiada pelos turnos que cobre (mais preciso). Só conta turno
    COM expediente (algum recurso do setor produziu) — evita acusar fim de semana. */
-function cardParadasTotais(D) {
+function cardParadasTotais(D, filtroSetor) {
   if (!D || !D.paradas || !D.producao) return '';
   const BLOCOS = [
     { b: 'Manhã', ini: 6.0, fim: 13.6, jor: 7.55 },
     { b: 'Tarde', ini: 13.6, fim: 20.85, jor: 7.23 },
     { b: 'Noite', ini: 20.85, fim: 30.0, jor: 9.13 }
   ];
-  const horaDec = iso => { if (!iso) return null; const d = new Date(iso); return d.getHours() + d.getMinutes() / 60; };
-  // produção por dia+recurso+bloco e expediente por dia+setor+bloco
-  const prodKey = {}, expediente = {};
-  D.producao.forEach(r => {
+  const JOR = { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 };
+  // ---- índices de produção (uma passada só) ----
+  const prodKey = new Map();       // dia|cod|bloco -> produziu
+  const expediente = new Set();    // dia|setor|bloco (algum recurso do setor produziu)
+  for (const r of D.producao) {
     const c = String(r.recurso_cod), st = setorDe(c), b = blocoTurno(r.turno, r.dia), dia = String(r.dia).slice(0, 10);
     const v = (r.peso || 0) + (r.quantidade || 0);
-    prodKey[dia + '|' + c + '|' + b] = (prodKey[dia + '|' + c + '|' + b] || 0) + v;
-    if (v > 0) expediente[dia + '|' + st + '|' + b] = true;
-  });
-  // horas de parada fatiadas por bloco
-  const parKey = {}, nomes = {};
-  D.paradas.forEach(p => {
-    const c = String(p.recurso_cod), dia = String(p.dia).slice(0, 10);
-    const ini = horaDec(p.inicio); if (ini == null) return;
-    const fim = ini + (p.tempo_horas || 0);
+    const k = dia + '|' + c + '|' + b;
+    prodKey.set(k, (prodKey.get(k) || 0) + v);
+    if (v > 0) expediente.add(dia + '|' + st + '|' + b);
+  }
+  // ---- paradas fatiadas por bloco (uma passada só) ----
+  const parKey = new Map();        // dia|cod|bloco -> horas
+  const nomes = {};
+  for (const p of D.paradas) {
+    const c = String(p.recurso_cod), st = setorDe(c);
+    if (st === 'Outros') continue;
+    if (filtroSetor && st !== filtroSetor) continue;    // filtro por setor economiza trabalho
+    const d = p.inicio ? new Date(p.inicio) : null; if (!d || isNaN(d)) continue;
+    const ini = d.getHours() + d.getMinutes() / 60, fim = ini + (p.tempo_horas || 0);
     nomes[c] = p.recurso_nome || c;
-    BLOCOS.forEach(bl => {
-      const h = Math.max(0, Math.min(fim, bl.fim) - Math.max(ini, bl.ini));
-      if (h > 0) parKey[dia + '|' + c + '|' + bl.b] = (parKey[dia + '|' + c + '|' + bl.b] || 0) + h;
-    });
-  });
-  // um turno-máquina está "totalmente parado" se: parada ≥ 90% da jornada, zero produção, e teve expediente
-  const jorDe = b => (BLOCOS.find(x => x.b === b) || {}).jor || 8;
+    const dia = String(p.dia).slice(0, 10);
+    for (const bl of BLOCOS) {
+      const h = Math.min(fim, bl.fim) - Math.max(ini, bl.ini);
+      if (h > 0) { const k = dia + '|' + c + '|' + bl.b; parKey.set(k, (parKey.get(k) || 0) + h); }
+    }
+  }
+  // ---- casos: parada ≥90% da jornada, zero produção, com expediente ----
   const achados = [];
-  Object.keys(parKey).forEach(k => {
+  for (const [k, horas] of parKey) {
     const [dia, c, b] = k.split('|');
     const st = setorDe(c);
-    if (st === 'Outros') return;
-    if (!expediente[dia + '|' + st + '|' + b]) return;        // sem expediente → ignora
-    if ((prodKey[k] || 0) > 0) return;                        // produziu → não estava parada
-    if (parKey[k] < jorDe(b) * 0.9) return;                   // não cobriu o turno todo
+    if (filtroSetor && st !== filtroSetor) continue;
+    if (!expediente.has(dia + '|' + st + '|' + b)) continue;
+    if ((prodKey.get(k) || 0) > 0) continue;
+    if (horas < JOR[b] * 0.9) continue;
     achados.push({ dia, c, b, nome: nomes[c] || c, st });
-  });
-  if (!achados.length) return card('🛑 Máquinas paradas o turno inteiro', 'nenhuma no período — todas rodaram pelo menos parte de cada turno', '<p class="idet-desc">Nada a destacar 👍</p>');
-  // resumo por turno + lista por dia
+  }
+  const escSetor = filtroSetor ? ' · ' + escapeHtml(filtroSetor) : '';
+  if (!achados.length) return card('🛑 Máquinas paradas o turno inteiro', 'nenhuma no período' + escSetor, '<p class="idet-desc">Todas rodaram ao menos parte de cada turno com expediente 👍</p>');
   const porTurno = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
   achados.forEach(a => porTurno[a.b]++);
-  const chip = (b) => `<span style="background:${MT_COR_T(b)};color:#fff;border-radius:6px;padding:2px 9px;font-size:12px;font-weight:700;margin-right:6px">${b}: ${porTurno[b]}</span>`;
-  // agrupa por dia (mais recente primeiro)
+  const chip = b => `<span style="background:${MT_COR_T(b)};color:#fff;border-radius:7px;padding:3px 11px;font-size:12px;font-weight:800;margin-right:6px">${b} ${porTurno[b]}</span>`;
+  // agrupa por dia, mais recente primeiro; ordena turno M→T→N
+  const ordB = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2 };
   const porDia = {};
   achados.forEach(a => { (porDia[a.dia] = porDia[a.dia] || []).push(a); });
-  const dias = Object.keys(porDia).sort().reverse();
-  const linhas = dias.map(dia => {
-    const its = porDia[dia].sort((x, y) => x.b < y.b ? -1 : 1);
-    const lis = its.map(a => `<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:13px"><span style="background:${MT_COR_T(a.b)};color:#fff;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:700">${a.b}</span><b>${escapeHtml(String(a.c))}</b> <span style="color:var(--fraco)">${escapeHtml(String(a.nome).slice(0, 26))}</span></div>`).join('');
-    return `<div style="padding:8px 0;border-bottom:1px solid var(--borda)"><div style="font-weight:700;color:var(--navy);font-size:13px;margin-bottom:2px">${diaSemana(dia)}, ${fmtData(dia)} · ${its.length} máquina(s)</div>${lis}</div>`;
+  const linhas = Object.keys(porDia).sort().reverse().map(dia => {
+    const its = porDia[dia].sort((x, y) => ordB[x.b] - ordB[y.b] || (x.c < y.c ? -1 : 1));
+    const lis = its.map(a => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:13px"><span style="background:${MT_COR_T(a.b)};color:#fff;border-radius:5px;padding:1px 8px;font-size:10.5px;font-weight:800;min-width:44px;text-align:center">${a.b}</span><b style="min-width:40px">${escapeHtml(String(a.c))}</b><span style="color:var(--fraco)">${escapeHtml(String(a.nome).slice(0, 24))}</span></div>`).join('');
+    return `<div style="padding:9px 0;border-bottom:1px solid var(--borda)"><div style="font-weight:800;color:var(--navy);font-size:12.5px;margin-bottom:3px">${diaSemana(dia)}, ${fmtData(dia)} · ${its.length}</div>${lis}</div>`;
   }).join('');
   const corpo = `<div style="margin-bottom:10px">${chip('Manhã')}${chip('Tarde')}${chip('Noite')}</div>
-    <p class="idet-desc" style="margin:0 0 6px">${achados.length} caso(s) de máquina que ficou o turno inteiro parada, sem produzir. Parada longa conta em todos os turnos que cobre; fim de semana sem expediente não entra.</p>${linhas}`;
-  return card('🛑 Máquinas paradas o turno inteiro', 'por dia e turno · só turnos com expediente', corpo);
+    <p class="idet-desc" style="margin:0 0 8px">${achados.length} turno(s)-máquina sem produzir nada${escSetor}. Parada longa conta em todos os turnos que cobre; fim de semana sem expediente fica de fora.</p>${linhas}`;
+  return card('🛑 Máquinas paradas o turno inteiro', 'por dia e turno · só com expediente' + escSetor, corpo);
 }
 const blocoTurno = (t, dia) => {
   t = Number(t);
@@ -10665,7 +10670,7 @@ function renderPainel() {
     });
 
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5) · todos os setores', gTurnoPeso(D.producao, val, fmtBar, ''));
-    try { html += cardParadasTotais(D); } catch (_) {}
+    try { html += cardParadasTotais(D, setor || null); } catch (_) {}
 
     // produção por máquina — TODAS as máquinas de todos os setores
     const todasMaq = Object.values(SETOR_MAQ).flat();
