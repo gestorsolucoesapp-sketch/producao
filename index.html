@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.352.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.353.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1738,7 +1738,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.352.0';
+const APP_VER = '3.353.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7487,6 +7487,38 @@ function detSetorTurnos(setor) {
   const s = setor || '';
   abreDet('📊 ' + (s || 'Todos os setores') + ' · por turno', `<p class="idet-desc">${escapeHtml(s || 'Todos os setores')}</p>` + htmlSetorTurnos(s));
 }
+// horários de cada apontamento de um motivo de parada de UMA máquina (respeita turno filtrado)
+function detApontMotivoMaq(cod, dia, motivo) {
+  try {
+    cod = String(cod);
+    if (!dadosPainel) return; const D = dadosPainel;
+    const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
+    const _turFiltro = ($('turnoGlobal') && $('turnoGlobal').value) || '';
+    const par = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod && (p.motivo_desc || '—') === motivo && (!dia || _diaDeParada(p) === dia));
+    if (!par.length) { abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(String(nome))}</p><p class="desc">Sem apontamentos.</p>`); return; }
+    _detVoltar = () => detMaquina(cod, dia);
+    const fmtHora = iso => { const h = horaDecParada(iso); if (h == null) return '—'; const hh = Math.floor(h), mm = Math.round((h - hh) * 60); return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); };
+    const fmtFim = (iso, horas) => { const h = horaDecParada(iso); if (h == null) return ''; const fim = h + (horas || 0); const hh = Math.floor(fim) % 24, mm = Math.round((fim - Math.floor(fim)) * 60); return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); };
+    const dur = h => { const m = Math.round((h || 0) * 60); return m >= 60 ? Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') : m + 'min'; };
+    const cores = { 'Manhã': '#E0A93B', 'Tarde': '#5F9B4A', 'Noite': '#4A82C4' };
+    let totMostra = 0;
+    const linhas = par.slice().sort((a, b) => String(a.inicio || '').localeCompare(String(b.inicio || ''))).map(p => {
+      const fatias = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, _diaDeParada(p));
+      const turnos = Object.entries(fatias).filter(([, v]) => v > 0.0005);
+      const turnoTxt = turnos.map(([t, v]) => `<span style="color:${cores[t]};font-weight:700">${t}${turnos.length > 1 ? ' ' + dur(v) : ''}</span>`).join(' <span style="color:var(--fraco)">+</span> ');
+      // com turno filtrado, mostra só a fração daquele turno
+      const durMostra = _turFiltro ? (fatias[_turFiltro] || 0) : (p.tempo_horas || 0);
+      if (_turFiltro && durMostra <= 0.0005) return '';
+      totMostra += durMostra;
+      const cruzou = _turFiltro && durMostra < (p.tempo_horas || 0) - 0.001;
+      const ini = fmtHora(p.inicio), fim = fmtFim(p.inicio, p.tempo_horas);
+      return `<tr><td class="nome">${ini}${fim ? ' <span style="color:var(--fraco)">→</span> ' + fim : ''}${p.op ? ` <span style="color:var(--fraco-2)">· OP ${escapeHtml(String(p.op))}</span>` : ''}<div style="font-size:11px;margin-top:2px">${turnoTxt}</div></td><td><span class="cel cel-tot">${dur(durMostra)}${cruzou ? '<div style="font-size:9px;color:var(--fraco);font-weight:400">de ' + dur(p.tempo_horas) + '</div>' : ''}</span></td></tr>`;
+    }).filter(Boolean).join('');
+    const subTot = _turFiltro ? `${dur(totMostra)} no turno ${_turFiltro}` : `${par.reduce((a, p) => a + (p.tempo_horas || 0), 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h`;
+    abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(String(nome))}${_turFiltro ? ' · <b style="color:var(--azul-2)">Turno ' + _turFiltro + '</b>' : ''} · ${subTot}</p>` +
+      tabSimples(['Horário · turno', _turFiltro ? 'No turno' : 'Duração'], linhas));
+  } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
+}
 function detMaquina(cod, dia) {
   if (!dadosPainel) return; const D = dadosPainel; cod = String(cod);
   const _turFiltro = ($('turnoGlobal') && $('turnoGlobal').value) || '';
@@ -7532,7 +7564,7 @@ function detMaquina(cod, dia) {
     <div style="height:10px"></div>
     ${tabSimples(['Turno', 'Peso'], _turnosMostra.map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}"${dia ? ` style="cursor:pointer" onclick="detItensMaqDia('${cod}','${dia}','${t}')" title="Ver itens e setups deste turno"` : ''}>${fmtKg(bloco[t])}${dia ? ' ›' : ''}</span></td></tr>`).join(''))}
     ${horas > 0 ? '<div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Paradas por turno</div>' + tabSimples(['Turno', 'Horas'], _turnosMostra.map(t => `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}"${dia ? ` style="cursor:pointer" onclick="detParadasMaqDia('${cod}','${dia}','${t}')" title="Ver motivos deste turno"` : ''}>${(parBloco[t] || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h${dia ? ' ›' : ''}</span></td></tr>`).join('') + (parSemHora > 0.05 ? `<tr><td class="nome" style="color:#8A97A6">sem hora registrada</td><td><span class="cel neutra">${parSemHora.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</span></td></tr>` : '')) : ''}
-    ${topMot.length ? '<div style="height:8px"></div>' + tabSimples(['Motivo de parada', 'Horas'], topMot.map(([m, h]) => `<tr><td class="nome">${escapeHtml(m)}</td><td><span class="cel cel-tot">${h.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span></td></tr>`).join('')) : ''}`);
+    ${topMot.length ? '<div style="height:8px"></div>' + tabSimples(['Motivo de parada', 'Horas'], topMot.map(([m, h]) => `<tr onclick="detApontMotivoMaq('${cod}','${dia || ''}','${escapeHtml(String(m)).replace(/'/g, '&#39;')}')" style="cursor:pointer"><td class="nome">${escapeHtml(m)} ›</td><td><span class="cel cel-tot">${h.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span></td></tr>`).join('')) : ''}`);
 }
 // UM motivo de parada: máquinas e horas
 // timeline de setups de UMA máquina num dia: cada troca (saiu→entrou) e as
