@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.335.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.336.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1738,7 +1738,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.335.0';
+const APP_VER = '3.336.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6087,6 +6087,30 @@ async function rmRoteamento(tipo, userId) {
 }
 // abre o detalhe de um grupo do gráfico (lista as OS)
 let _drill = {};   // guarda os filtros dos gráficos
+// Pareto de motivos (problemas) de UMA máquina — respeita o período/setor filtrados
+function detProblemasMaq(cod) {
+  try {
+    cod = String(cod);
+    let L = (osLista || []).filter(o => String(o.recurso_cod) === cod);
+    // respeita o período global (data de abertura)
+    if (typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de && periodoSel.ate) {
+      const de = String(periodoSel.de).slice(0, 10), ate = String(periodoSel.ate).slice(0, 10);
+      L = L.filter(o => { const d = String(o.data_abertura || '').slice(0, 10); return d && d >= de && d <= ate; });
+    }
+    const nome = (L[0] && L[0].maquina_desc) || cod;
+    if (!L.length) { abreDet('🔧 ' + cod, `<p class="idet-desc">${escapeHtml(String(nome))}</p><p class="desc">Nenhuma OS no período.</p>`); return; }
+    // agrupa por motivo
+    const porMot = {};
+    L.forEach(o => { const k = (o.motivo || '—').toString().trim() || '—'; const g = (porMot[k] = porMot[k] || { n: 0, ab: 0 }); g.n++; if (!o.data_reinicio) g.ab++; });
+    const arr = Object.entries(porMot).map(([m, g]) => ({ l: m, v: g.n })).sort((a, b) => b.v - a.v);
+    const abertas = L.filter(o => !o.data_reinicio).length;
+    const corpo = `<p class="idet-desc">${escapeHtml(String(nome))} · ${L.length} OS · ${abertas} em aberto</p>` +
+      paretoSVG(arr, v => v + ' OS', 'var(--critico)') + paretoHorizontal(arr, v => v + ' OS', 'var(--critico)') +
+      `<div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Motivos</div>` +
+      tabSimples(['Motivo', 'OS', 'Aberto'], arr.map(x => `<tr><td class="nome">${escapeHtml(x.l)}</td><td><span class="cel cel-tot">${x.v}</span></td><td><span class="cel ${porMot[x.l].ab > 0 ? 'baixo' : 'neutra'}">${porMot[x.l].ab || '—'}</span></td></tr>`).join(''));
+    abreDet('🔧 Problemas · ' + cod, corpo);
+  } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
+}
 function verOSGrupo(chave) {
   const f = _drill[chave]; if (!f) return;
   const L = f.lista || [];
@@ -6303,6 +6327,9 @@ function renderManut() {
     const pm = {}; Lmaq.forEach(o => { const k = o.recurso_cod + ' · ' + (o.maquina_desc || ''); pm[k] = (pm[k] || 0) + 1; });
     const arrM = Object.entries(pm).map(([l, v]) => { const cod = l.split(' · ')[0]; const ch = 'maq_' + cod; _drill[ch] = { titulo: 'Máquina ' + cod, lista: Lmaq.filter(o => String(o.recurso_cod) === cod) }; return { l, v, click: `verOSGrupo('${ch}')` }; }).sort((a, b) => b.v - a.v).slice(0, 12);
     html += card('OS por máquina', Lmaq.length + ' OS de máquina · quem mais chama manutenção', barrasHorizontal(arrM, 'OS'));
+    // Pareto de problemas por máquina: clicar numa máquina abre o Pareto de motivos dela
+    const arrP = Object.entries(pm).map(([l, v]) => ({ l: l.split(' · ')[0], v, click: `detProblemasMaq('${l.split(' · ')[0]}')` })).sort((a, b) => b.v - a.v);
+    if (arrP.length) html += card('🔧 Problemas por máquina', 'toque numa barra para ver o Pareto de motivos da máquina', paretoSVG(arrP, v => v + ' OS', 'var(--critico)') + paretoHorizontal(arrP, v => v + ' OS', 'var(--critico)'));
   }
   { const ps = {}; L.forEach(o => { const k = o.setor || '—'; ps[k] = (ps[k] || 0) + 1; });
     const arrS = Object.entries(ps).map(([l, v]) => { const ch = 'set_' + l; _drill[ch] = { titulo: l, lista: L.filter(o => (o.setor || '—') === l) }; return { l, v, click: `verOSGrupo('${ch}')` }; }).sort((a, b) => b.v - a.v);
