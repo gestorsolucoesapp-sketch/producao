@@ -680,7 +680,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Controle de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.327.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.328.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1731,7 +1731,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.327.0';
+const APP_VER = '3.328.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10425,8 +10425,65 @@ function cardMilSemRegra(ehMil) {
 }
 
 // atalho para abrir a análise completa de uma máquina
-function cardEscolherMaquina(D, setor) {
-  const cods = [...new Set(D.producao
+// botões Manhã/Tarde/Noite que abrem a análise completa do turno no período atual
+function cardBotoesTurno(D, setor) {
+  try {
+    if (!D || !D.producao || !D.producao.length) return '';
+    const cor = { 'Manhã': 'var(--turno-man,#E0A93B)', 'Tarde': 'var(--turno-tar,#5F9B4A)', 'Noite': 'var(--turno-noi,#4A82C4)' };
+    const btns = ['Manhã', 'Tarde', 'Noite'].map(t =>
+      `<button class="btn" style="flex:1;background:${cor[t]};color:#fff;border:0;font-weight:800;padding:11px 8px;font-size:14px;border-radius:11px;cursor:pointer" onclick="analiseTurnoCompleta('${t}','${setor || ''}')">${t}</button>`
+    ).join('');
+    return card('📊 Análise por turno', 'toque num turno para ver produção, paradas, refugo, setups e máquinas',
+      `<div style="display:flex;gap:8px">${btns}</div>`);
+  } catch (_) { return ''; }
+}
+// análise completa de um turno: KPIs + máquinas + paradas + setups
+function analiseTurnoCompleta(bloco, setor) {
+  try {
+    const D = dadosPainel; if (!D) return;
+    const cods = setor ? (SETOR_MAQ[setor] || []).map(String) : null;
+    const noSet = c => !cods || cods.includes(String(c));
+    // produção do turno
+    const prodT = (D.producao || []).filter(r => blocoTurno(r.turno, r.dia) === bloco && noSet(r.recurso_cod));
+    const kg = prodT.reduce((a, r) => a + (r.peso || 0), 0);
+    const cx = prodT.reduce((a, r) => a + (+r.quantidade || 0), 0);
+    // máquinas do turno
+    const maq = {}, nm = {};
+    prodT.forEach(r => { const c = String(r.recurso_cod); const o = (maq[c] = maq[c] || { kg: 0, cx: 0 }); o.kg += (r.peso || 0); o.cx += (+r.quantidade || 0); nm[c] = r.recurso_nome || c; });
+    // paradas do turno (por hora de início)
+    const noBloco = p => { if (!p.inicio) return false; const d = new Date(p.inicio); const h = d.getHours() + d.getMinutes() / 60; const b = (h >= 6 && h < 13.6) ? 'Manhã' : (h >= 13.6 && h < 20.85) ? 'Tarde' : 'Noite'; return b === bloco; };
+    const parT = filtraParadas(D.paradas || []).filter(p => noSet(p.recurso_cod) && noBloco(p));
+    const horas = parT.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+    const porMot = {};
+    parT.forEach(p => { const k = p.motivo_desc || '—'; const o = (porMot[k] = porMot[k] || { h: 0, n: 0 }); o.h += (p.tempo_horas || 0); o.n++; });
+    const motArr = Object.entries(porMot).sort((a, b) => b[1].h - a[1].h);
+    // refugo do turno
+    const perdaT = (D.perdas || []).filter(r => noSet(r.recurso_cod) && (blocoTurno(r.turno, r.dia) === bloco) && (typeof perdaVisivel === 'function' ? perdaVisivel(r) : true));
+    const perKg = perdaT.reduce((a, r) => a + (r.peso || 0), 0);
+    const perPct = kg > 0 ? (perKg / (kg + perKg) * 100) : 0;
+    // setups do turno (paradas SETUP no bloco)
+    const setups = parT.filter(p => /setup/i.test(p.motivo_desc || ''));
+    const nSetups = setups.length;
+    const setupMin = setups.reduce((a, p) => a + (p.tempo_horas || 0) * 60, 0);
+    const setupMedia = nSetups > 0 ? setupMin / nSetups : 0;
+    const fmtMin = m => { const hh = Math.floor(m / 60), mm = Math.round(m % 60); return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}` : `${mm}min`; };
+    // monta corpo
+    const maqArr = Object.entries(maq).sort((a, b) => b[1].kg - a[1].kg);
+    const corpo = `<p class="idet-desc">${setor || 'Todos os setores'} · turno ${bloco}</p>
+      <div class="idet-grid">
+        <div><b>${fmtKg(kg)}</b><span>produção · ${fmtNum(cx)} cxs</span></div>
+        <div><b>${fmtNum(horas)} h</b><span>paradas</span></div>
+        <div><b>${perPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</b><span>refugo · ${fmtKg(perKg)}</span></div>
+        <div><b>${nSetups}</b><span>setups · média ${nSetups ? fmtMin(setupMedia) : '—'}</span></div>
+      </div>
+      <div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Máquinas (${maqArr.length})</div>
+      ${maqArr.length ? tabSimples(['Máquina', 'Peso', 'Cxs'], maqArr.map(([c, o]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(nm[c]).slice(0, 22))}</td><td><span class="cel cel-tot">${fmtKg(o.kg)}</span></td><td><span class="cel ${o.cx ? 'cel-cx' : 'vazio'}">${o.cx ? fmtNum(o.cx) : '—'}</span></td></tr>`).join('')) : '<p class="desc">Sem produção neste turno.</p>'}
+      <div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Motivos de parada</div>
+      ${motArr.length ? tabSimples(['Motivo', 'Horas', 'Qtd'], motArr.map(([k, v]) => `<tr><td class="nome">${escapeHtml(k)}</td><td><span class="cel cel-tot">${v.h.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</span></td><td><span class="cel neutra">${v.n}</span></td></tr>`).join('')) : '<p class="desc">Sem paradas neste turno. 🎉</p>'}`;
+    abreDet('📊 Turno ' + bloco, corpo);
+  } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
+}
+function cardEscolherMaquina(D, setor) {  const cods = [...new Set(D.producao
     .filter(r => !setor || setorDe(r.recurso_cod) === setor)
     .map(r => String(r.recurso_cod)))].sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
   if (!cods.length) return '';
@@ -10686,7 +10743,7 @@ function renderPainel() {
   $('faixaAtualiz').innerHTML = faixaFeriado() + cabecalhoInfo();
   try { const _at = dadosPainel && dadosPainel.info && dadosPainel.info.atualizado; const _vd = $('verData'); if (_vd && _at) { const _atD = new Date(_at).toLocaleDateString('pt-BR'); const _hjD = new Date().toLocaleDateString('pt-BR'); const _hoje = (_atD === _hjD); _vd.textContent = 'atualizado ' + (_hoje ? 'hoje' : _atD.slice(0, 5)); _vd.style.background = _hoje ? 'var(--laranja-4)' : 'rgba(255,255,255,.12)'; _vd.style.color = _hoje ? '#fff' : 'var(--fraco-3)'; } } catch (_) {}
   let briefHtml = '';   // o briefing do dia abre o painel, acima dos cards de alerta
-  let html = cardEscolherMaquina(D, setor) + cardMilSemRegra(ehMil) + cardAbaixoMeta(D, setor) + cardPerdaMeta(D, setor);
+  let html = cardEscolherMaquina(D, setor) + cardBotoesTurno(D, setor) + cardMilSemRegra(ehMil) + cardAbaixoMeta(D, setor) + cardPerdaMeta(D, setor);
   // ===== BRIEFING DO DIA: aparece quando o último dia produtivo é novo (uma vez por dia, por aparelho) =====
   try {
     const udB = (D.info && D.info.ultimoDiaProd) || null;
