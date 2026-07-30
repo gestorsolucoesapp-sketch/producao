@@ -706,7 +706,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.380.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.381.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1767,7 +1767,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.380.0';
+const APP_VER = '3.381.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2598,6 +2598,33 @@ async function revalidarPermissoes() {
     }
   } catch (_) {}
 }
+// Ultima importacao de dados: le a tabela importacoes e monta o texto do selo.
+// Diferente do badge de versao, que mostra a data do DEPLOY do app.
+let _ultImport = null;
+async function carregarUltimaImportacao() {
+  try {
+    const { data } = await sb.from('importacoes')
+      .select('rotina,tipo,periodo_ate,criado_em').order('criado_em', { ascending: false }).limit(8);
+    if (!data || !data.length) { _ultImport = null; return; }
+    const topo = data[0];
+    const t = new Date(topo.criado_em);
+    if (isNaN(t)) { _ultImport = null; return; }
+    // quantas rotinas entraram na mesma leva (10 min de janela)
+    const lote = data.filter(x => Math.abs(new Date(x.criado_em) - t) < 600000).length;
+    // data mais recente coberta pelos arquivos da leva
+    const ate = data.filter(x => Math.abs(new Date(x.criado_em) - t) < 600000)
+      .map(x => x.periodo_ate).filter(Boolean).sort().pop();
+    const hj = new Date(), ont = new Date(Date.now() - 86400000);
+    const mesmoDia = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const p = n => String(n).padStart(2, '0');
+    const hora = p(t.getHours()) + ':' + p(t.getMinutes());
+    const quando = mesmoDia(t, hj) ? ('hoje ' + hora)
+      : mesmoDia(t, ont) ? ('ontem ' + hora)
+      : (p(t.getDate()) + '/' + p(t.getMonth() + 1) + ' ' + hora);
+    _ultImport = { ate: ate || null, quando, lote, atraso: Math.floor((Date.now() - t.getTime()) / 86400000) };
+  } catch (_) { _ultImport = null; }
+}
+
 // ===== CARIMBO DE DADOS =====
 // O cron das 07:05 (BRT) bate o carimbo dados_carimbo no app_config. Todo app aberto
 // percebe a mudanca e recarrega os dados sozinho — ninguem precisa apertar 🔄.
@@ -2617,6 +2644,7 @@ async function verCarimboDados() {
     _carimboDados = v;
     try { toast('📥 Dados novos — atualizando…'); } catch (_) {}
     dadosPainel = null;                    // derruba o cache para forcar rebusca no banco
+    try { await carregarUltimaImportacao(); } catch (_) {}
     try { await carregarPainel(); } catch (_) {}
   } catch (_) {}
 }
@@ -2630,6 +2658,7 @@ function ligarRevalidacaoPermissoes() {
     if (document.visibilityState === 'visible') { revalidarPermissoes(); verCarimboDados(); }
   }, 120000);
   verCarimboDados();   // memoriza o carimbo atual ja no login
+  carregarUltimaImportacao();
 }
 
 async function mostrarApp() {
@@ -11498,7 +11527,8 @@ function renderPainel() {
   const _pilBd = (_turnoLbl && COR_TURNO_BD[_turnoLbl]) || '#cfe0ee';
   const _pilAc = (_turnoLbl && COR_TURNO[_turnoLbl]) || 'var(--azul-2)';
   const _pilulaPeriodo = `<div style="background:${_pilBg};border:1px solid ${_pilBd};border-left:4px solid ${_pilAc};border-radius:10px;padding:8px 12px;margin:0 0 8px;font-size:13px;font-weight:700;color:var(--navy);box-shadow:0 3px 10px rgba(11,42,74,.14);display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-      <span>📅 ${escapeHtml(perLabel)}${_turnoLbl ? ' · <span style="color:' + _pilAc + '">Turno ' + escapeHtml(_turnoLbl) + '</span>' : ''}</span><span style="font-weight:600;color:#41586f">${escapeHtml(setor || 'Todos os setores')}</span></div>`;
+      <span>📅 ${escapeHtml(perLabel)}${_turnoLbl ? ' · <span style="color:' + _pilAc + '">Turno ' + escapeHtml(_turnoLbl) + '</span>' : ''}</span><span style="font-weight:600;color:#41586f">${escapeHtml(setor || 'Todos os setores')}</span>
+      ${_ultImport ? `<span style="font-weight:600;font-size:11.5px;color:${_ultImport.atraso >= 1 ? '#8B2E2E' : '#41586f'};opacity:.95" title="Quando os relatorios foram importados pela ultima vez">🗂️ dados até ${_ultImport.ate ? escapeHtml(fmtData(_ultImport.ate)) : '—'} · importado ${escapeHtml(_ultImport.quando)}${_ultImport.lote ? ' · ' + _ultImport.lote + ' relatório(s)' : ''}</span>` : ''}</div>`;
   // a pílula vive numa camada FIXED (fora do <main>); o host em fluxo vira só o espaçador
   try {
     medirTopoApp();
