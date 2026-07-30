@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.386.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.387.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.386.0';
+const APP_VER = '3.387.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7919,6 +7919,21 @@ function detMaquina(cod, dia) {
   const nome = (D.nomeMaq && D.nomeMaq[cod]) || (prod[0] && prod[0].recurso_nome) || cod;
   const kg = prod.reduce((a, r) => a + (r.peso || 0), 0), cx = prod.reduce((a, r) => a + (r.quantidade || 0), 0);
   const bloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; prod.forEach(r => bloco[blocoTurno(r.turno, r.dia)] += (r.peso || 0));
+  // ===== dias trabalhados, media e meta desta maquina =====
+  const _emCx = (setorDe(cod) === 'Embaladeiras');
+  const _val = _emCx ? cx : kg;
+  const _fmtV = _emCx ? (v => fmtNum(Math.round(v)) + ' cxs') : fmtKg;
+  const _diasSet = new Set(prod.map(r => String(r.dia).slice(0, 10)).filter(Boolean));
+  // sabado so vale dia cheio se ESTA maquina rodou a noite — mesma regra do resto do app
+  const _mqNoite = { 'Noite': { dias: new Set(prod.filter(r => blocoTurno(r.turno, r.dia) === 'Noite').map(r => String(r.dia).slice(0, 10))) } };
+  let _diasEqv = 0;
+  try { _diasEqv = _diasEq(_diasSet, _mqNoite); } catch (_) { _diasEqv = _diasSet.size; }
+  const _mediaDia = _diasEqv > 0 ? _val / _diasEqv : 0;
+  const _mObj = (typeof metasData !== 'undefined' && metasData && metasData[cod]) || {};
+  const _metaDia = _turFiltro ? (+_mObj[_turFiltro] || 0)
+    : ((+_mObj['Manhã'] || 0) + (+_mObj['Tarde'] || 0) + (+_mObj['Noite'] || 0));
+  const _pctMeta = _metaDia > 0 ? (_mediaDia / _metaDia * 100) : null;
+
   const par = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod && (!dia || _diaDeParada(p) === dia));
   const parBloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; let parSemHora = 0;
   par.forEach(p => { const fatias = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, _diaDeParada(p)); let algum = false; ['Manhã', 'Tarde', 'Noite'].forEach(t => { if (fatias[t] > 0.0005) { parBloco[t] += fatias[t]; algum = true; } }); if (!algum) parSemHora += (p.tempo_horas || 0); });
@@ -7943,6 +7958,9 @@ function detMaquina(cod, dia) {
     ${dia ? seloPeriodo('Resumo do dia', fmtDataSem(dia)) : seloPeriodo('Resumo do período')}
     <div class="idet-grid">
       <div><b>${fmtKg(kg)}</b><span>produção · ${txtCx(prod)}</span></div>
+      ${dia ? '' : `<div><b>${_diasSet.size}</b><span>dias com produção${Math.abs(_diasEqv - _diasSet.size) > 0.05 ? ' · ' + _diasEqv.toFixed(1).replace('.', ',') + ' equiv.' : ''}</span></div>`}
+      ${dia ? '' : `<div><b>${_fmtV(_mediaDia)}</b><span>média por dia${_diasEqv !== _diasSet.size ? ' equivalente' : ''}</span></div>`}
+      ${_metaDia > 0 ? `<div><b style="color:${_pctMeta >= 100 ? 'var(--verde)' : 'var(--critico)'}">${_pctMeta == null ? '—' : Math.round(_pctMeta) + '%'}</b><span>da meta · ${_fmtV(_metaDia)}/dia${_turFiltro ? ' (turno ' + _turFiltro + ')' : ''}</span></div>` : ''}
       <div><b>${fmtNum(horas)} h</b><span>paradas</span></div>
       <div><b>${perdaPct}%</b><span>perda (refugo) · ${fmtKg(perKg)}</span></div>
       ${aprovLinha}
