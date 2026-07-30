@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.403.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.404.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.403.0';
+const APP_VER = '3.404.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2462,6 +2462,10 @@ async function togPresencaOnline(on) {
    3) na hora de contar, entrada com 'visto' velho e ignorada.               */
 const PRES_VALIDADE_MS = 150000;   // 2min30 sem dar sinal = considerado fora
 const AVISO_REENTRADA_MS = 1800000; // 30min: reconexao ou recarga nao e "entrou de novo"
+// rotulo das abas para a lista de quem esta online (so o gestor ve)
+const ABA_NOME = { painel: 'Painel', analise: 'Itens', analisemais: 'Análise+', tarefas: 'Tarefas',
+  manut: 'Manutenção', oee: 'OEE', metas: 'Metas', importar: 'Importar', historico: 'Histórico',
+  usuarios: 'Usuários', organograma: 'Gestão de Pessoas', conf: 'Conferência', rh: 'Diagnóstico RH' };
 let presDados = null, presPulsoT = null, presUltAviso = {};
 
 /* Diz se vale avisar que fulano entrou. O app grava um acesso a CADA carregamento,
@@ -2477,8 +2481,12 @@ function avisarEntrada(uid) {
 
 async function presBater() {
   if (!presCanal || !presDados) return;
-  try { await presCanal.track(Object.assign({}, presDados, { visto: new Date().toISOString() })); } catch (_) {}
+  let aba = '';
+  try { aba = (typeof _abaAtual !== 'undefined' && _abaAtual) ? String(_abaAtual) : ''; } catch (_) {}
+  try { await presCanal.track(Object.assign({}, presDados, { visto: new Date().toISOString(), aba: aba })); } catch (_) {}
 }
+// chamada ao trocar de aba: atualiza a tela em que a pessoa esta sem esperar o pulso
+function presTrocouAba() { try { presBater(); } catch (_) {} }
 function ligarPulsoPresenca() {
   if (presPulsoT) return;
   presPulsoT = setInterval(() => { if (document.visibilityState === 'visible') presBater(); }, 45000);
@@ -2562,7 +2570,7 @@ async function mostrarOnline() {
   }
   $('itemDetTitulo').textContent = '🟢 Online agora (' + lista.length + ')';
   $('itemDetCorpo').innerHTML = '<div class="idet-grid">' + lista.map(u =>
-    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'} · ${_haQuanto(u.visto || u.desde)}</span></div>`).join('') + '</div>' + histHtml;
+    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'} · ${_haQuanto(u.visto || u.desde)}</span>${u.aba ? `<div style="font-size:11.5px;font-weight:700;color:var(--azul-marca);margin-top:2px">📍 ${escapeHtml(ABA_NOME[u.aba] || u.aba)}</div>` : ''}</div>`).join('') + '</div>' + histHtml;
   window.__histOnline = null;
   $('itemDetOverlay').classList.remove('oculto');
 }
@@ -4854,6 +4862,7 @@ function trocarAba(qual) {
   if (qual === 'conf' && !souDev && !abasPermitidas.includes('conf')) return;
   if (qual !== 'usuarios' && qual !== 'organograma' && qual !== 'rh' && qual !== 'conf' && !abasPermitidas.includes(qual)) return;
   _abaAtual = qual;
+  try { if (typeof presTrocouAba === 'function') presTrocouAba(); } catch (_) {}   // presença mostra a tela atual
   document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === qual));
   { const at = document.querySelector('.aba.ativa'); if (at && at.scrollIntoView) at.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); }
   $('abaPainel').classList.toggle('oculto', qual !== 'painel');
