@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.394.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.395.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.394.0';
+const APP_VER = '3.395.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8901,6 +8901,61 @@ function _paradaDaTroca(t) {
 // Raio-x da maquina que ficou abaixo da meta: cada parada com periodo e OP,
 // mais as ordens de servico abertas no mesmo intervalo. E a tela para decidir
 // se o problema e maquina, material ou gente.
+// Plano de acao = tarefa comum, com recurso_cod preenchido. Assim ela aparece
+// na aba Tarefas como qualquer outra e tambem no raio-x da maquina.
+async function salvarPlanoAcao(cod) {
+  const tit = ($('paTit') && $('paTit').value || '').trim();
+  const msg = $('paMsg');
+  if (!tit) { if (msg) msg.textContent = 'Dê um título ao plano.'; return; }
+  const reg = {
+    titulo: tit,
+    descricao: ($('paDesc') && $('paDesc').value || '').trim() || null,
+    criado_por: (perfil && perfil.id) || null,
+    criado_por_nome: (perfil && perfil.nome) || null,
+    responsavel_id: (perfil && perfil.id) || null,
+    responsavel_nome: (perfil && perfil.nome) || null,
+    setor: setorDe(cod) || null,
+    recurso_cod: String(cod),
+    prazo: ($('paPrazo') && $('paPrazo').value) || null,
+    prioridade: ($('paPrior') && $('paPrior').value) || 'media',
+    concluida: false, para_todos: false
+  };
+  if (msg) msg.textContent = 'salvando…';
+  try {
+    const { error } = await sb.from('tarefas').insert(reg);
+    if (error) throw error;
+    if (msg) msg.textContent = '';
+    try { toast('📋 Plano de ação criado'); } catch (_) {}
+    if ($('paTit')) $('paTit').value = '';
+    if ($('paDesc')) $('paDesc').value = '';
+    carregarPlanosMaq(cod);
+    try { tarefasData = null; } catch (_) {}
+  } catch (e) {
+    if (msg) msg.textContent = 'Não consegui salvar: ' + (e.message || e);
+  }
+}
+
+async function carregarPlanosMaq(cod) {
+  const box = document.getElementById('dmPlanos'); if (!box) return;
+  try {
+    const { data } = await sb.from('tarefas').select('id,titulo,descricao,prazo,prioridade,concluida,responsavel_nome,criado_em')
+      .eq('recurso_cod', String(cod)).order('concluida', { ascending: true }).order('criado_em', { ascending: false }).limit(30);
+    const L = data || [];
+    if (!L.length) { box.innerHTML = ''; return; }
+    const hoje = hojeISO();
+    box.innerHTML = `<div style="height:12px"></div>
+      <div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Planos desta máquina · ${L.length}</div>` +
+      tabSimples(['Plano', 'Prazo', ''], L.map(t => {
+        const atrasado = !t.concluida && t.prazo && String(t.prazo) < hoje;
+        return `<tr><td class="nome" style="font-size:12.5px;${t.concluida ? 'opacity:.55;text-decoration:line-through' : ''}">${escapeHtml(t.titulo)}
+            ${t.descricao ? `<div style="font-size:11px;color:var(--fraco-2);font-weight:600">${escapeHtml(String(t.descricao).slice(0, 70))}</div>` : ''}
+            ${t.responsavel_nome ? `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(t.responsavel_nome)}</div>` : ''}</td>
+          <td style="font-size:11.5px;white-space:nowrap;color:${atrasado ? 'var(--critico)' : 'var(--fraco)'};font-weight:${atrasado ? 800 : 600}">${t.prazo ? fmtData(t.prazo) : '—'}${atrasado ? '<div>atrasado</div>' : ''}</td>
+          <td><span class="cel ${t.concluida ? 'ok' : (t.prioridade === 'alta' ? 'baixo' : 'neutra')}">${t.concluida ? '✔' : (t.prioridade || 'media').slice(0, 1).toUpperCase()}</span></td></tr>`;
+      }).join(''));
+  } catch (_) { box.innerHTML = ''; }
+}
+
 async function detDesempenhoMaq(cod) {
   cod = String(cod);
   const D = dadosPainel; if (!D) return;
@@ -8940,8 +8995,27 @@ async function detDesempenhoMaq(cod) {
   }).join(''));
   if (par.length > LIM) h += `<p class="desc">mostrando as ${LIM} mais recentes de ${par.length}</p>`;
 
+  // plano de acao: cria tarefa amarrada a maquina, ja com o motivo no titulo
+  const motTop = mots.length ? mots[0][0] : '';
+  h += `<div style="height:12px"></div>
+    <div style="background:var(--leve);border:1px solid #D8E2EC;border-radius:12px;padding:12px">
+      <div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de ação</div>
+      <div class="desc" style="margin-bottom:8px">Vira tarefa na aba Tarefas, amarrada à máquina ${escapeHtml(cod)}.</div>
+      <input id="paTit" placeholder="o que fazer…" value="${escapeHtml(cod + (motTop ? ' · ' + motTop : ''))}" style="width:100%;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:15px;box-sizing:border-box;margin-bottom:6px">
+      <textarea id="paDesc" rows="2" placeholder="causa provável, o que já foi tentado, o que precisa…" style="width:100%;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px;box-sizing:border-box;margin-bottom:6px"></textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <input id="paPrazo" type="date" style="flex:1;min-width:130px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
+        <select id="paPrior" style="flex:1;min-width:110px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
+          <option value="alta">Alta</option><option value="media" selected>Média</option><option value="baixa">Baixa</option>
+        </select>
+        <button class="btn btn-verde" style="width:auto;padding:9px 16px" onclick="salvarPlanoAcao('${cod}')">Criar</button>
+      </div>
+      <div id="paMsg" class="desc" style="margin-top:6px"></div>
+    </div>`;
+
   _detVoltar = null;
-  abreDet('🎯 ' + cod, h + '<div id="dmOS"><p class="desc" style="margin-top:10px">buscando ordens de serviço…</p></div>');
+  abreDet('🎯 ' + cod, h + '<div id="dmPlanos"></div><div id="dmOS"><p class="desc" style="margin-top:10px">buscando ordens de serviço…</p></div>');
+  carregarPlanosMaq(cod);
 
   // OS num segundo momento: a tela ja abriu, isso so preenche o rodape
   try {
