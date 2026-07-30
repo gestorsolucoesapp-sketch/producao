@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.390.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.391.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.390.0';
+const APP_VER = '3.391.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7180,30 +7180,75 @@ function filtraPeriodoOperacional(rows, de, ate) {
   return rows.filter(r => { const d = String(r.dia || '').slice(0, 10); return (!de || d >= de) && (!ate || d <= ate); });
 }
 async function fetchTudo(tabela, colunas, de, ate) {
-  let passo = 1000; let ini = 0, tudo = [];
-  const TETO = 200000;                    // trava de segurança: nunca busca mais que isso
-  while (ini < TETO) {
+  const TETO = 200000;
+  const passo = 1000;
+  const monta = (desde, ateAqui) => {
     let q = sb.from(tabela).select(colunas);
     if (de) q = q.gte('dia', de);
     if (ate) q = q.lte('dia', ate);
     // ORDEM ESTÁVEL é obrigatória (sem ORDER BY o range() repete/perde linhas).
-    // Ordenar por 'dia,id' em vez de só 'id' faz o Postgres usar o índice (dia,id)
-    // e filtrar por data sem varrer a tabela toda — evita o statement timeout.
-    let data, error;
-    try {
-      const r = await q.order('dia', { ascending: true }).order('id', { ascending: true }).range(ini, ini + passo - 1);
-      data = r.data; error = r.error;
-    } catch (e) { error = e; }
-    if (error) {
-      // timeout ou falha de página: tenta de novo com passo menor antes de desistir
-      if (passo > 250) { passo = Math.floor(passo / 2); continue; }
-      throw error;
+    // Ordenar por 'dia,id' faz o Postgres usar o índice (dia,id) e filtrar por data
+    // sem varrer a tabela toda — evita o statement timeout.
+    return q.order('dia', { ascending: true }).order('id', { ascending: true }).range(desde, ateAqui);
+  };
+
+  // 1ª página serve de amostra: se couber tudo nela, acabou em uma ida só.
+  let r0;
+  try { r0 = await monta(0, passo - 1); } catch (e) { r0 = { error: e }; }
+  if (r0.error) throw r0.error;
+  const p0 = r0.data || [];
+  if (p0.length < passo) return p0;
+
+  // Ainda tem mais. Descobre o total e busca as páginas restantes EM PARALELO.
+  // Antes isso era um while sequencial: 20 mil linhas de paradas viravam 21 idas
+  // em fila, uma esperando a outra. No 4G isso é o que faz a tela ficar "carregando".
+  let total = null;
+  try {
+    let qc = sb.from(tabela).select('id', { count: 'exact', head: true });
+    if (de) qc = qc.gte('dia', de);
+    if (ate) qc = qc.lte('dia', ate);
+    const rc = await qc;
+    if (!rc.error && typeof rc.count === 'number') total = Math.min(rc.count, TETO);
+  } catch (_) {}
+
+  const faixas = [];
+  if (total != null) {
+    for (let ini = passo; ini < total; ini += passo) faixas.push([ini, Math.min(ini + passo, total) - 1]);
+  } else {
+    // sem count: cai no modo seguro, sequencial
+    let tudo = p0.slice(), ini = passo;
+    while (ini < TETO) {
+      const r = await monta(ini, ini + passo - 1);
+      if (r.error) throw r.error;
+      const d = r.data || [];
+      tudo = tudo.concat(d);
+      if (d.length < passo) break;
+      ini += passo;
     }
-    tudo = tudo.concat(data || []);
-    if (!data || data.length < passo) break;
-    ini += passo;
+    return tudo;
   }
-  return tudo;
+  if (!faixas.length) return p0;
+
+  // no máximo 6 requisições ao mesmo tempo — é o teto de conexões do navegador
+  const CONC = 6;
+  const partes = new Array(faixas.length);
+  for (let g = 0; g < faixas.length; g += CONC) {
+    const lote = faixas.slice(g, g + CONC);
+    const res = await Promise.all(lote.map(async ([a, b], k) => {
+      try {
+        const r = await monta(a, b);
+        if (r.error) throw r.error;
+        return r.data || [];
+      } catch (e) {
+        // uma página que falha não derruba a carga inteira: tenta menor
+        const meio = Math.floor((a + b) / 2);
+        const r1 = await monta(a, meio), r2 = await monta(meio + 1, b);
+        return (r1.data || []).concat(r2.data || []);
+      }
+    }));
+    res.forEach((d, k) => { partes[g + k] = d; });
+  }
+  return p0.concat(...partes);
 }
 
 /* ===== recorte de período (mês vigente / ano / tudo) ===== */
