@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.395.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.396.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.395.0';
+const APP_VER = '3.396.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4112,8 +4112,8 @@ function cardMaquinaTurno(E) {
           '<div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:8px"><b style="font-size:18px">' + escapeHtml(c) + '</b>' +
           (function () {
             const bo = _mtBocaTop(c, E.de, E.ate); if (!bo) return '';
-            return '<span title="boca que mais produziu no período" style="font-size:10px;font-weight:700;color:var(--txt-2);background:var(--leve-3,#e8eef7);border-radius:999px;padding:2px 8px;margin-left:7px;white-space:nowrap">boca ' +
-              escapeHtml(bo.boca) + ' · ' + Math.round(bo.pct) + '%' + (bo.n > 1 ? ' <span style="font-weight:600;color:var(--fraco)">de ' + bo.n + '</span>' : '') + '</span>';
+            return '<span onclick="detBocaItens(\'' + c + '\',\'' + bo.boca + '\')" title="toque para ver os itens desta boca" style="cursor:pointer;font-size:10px;font-weight:700;color:var(--txt-2);background:var(--leve-3,#e8eef7);border-radius:999px;padding:2px 8px;margin-left:7px;white-space:nowrap">boca ' +
+              escapeHtml(bo.boca) + ' · ' + Math.round(bo.pct) + '%' + (bo.n > 1 ? ' <span style="font-weight:600;color:var(--fraco)">de ' + bo.n + '</span>' : '') + ' ›</span>';
           })() +
           (o && o.desativada ? '<span style="font-size:9px;font-weight:800;background:rgba(214,69,69,.16);color:#B23B3B;padding:2px 6px;border-radius:5px;margin-left:7px">desativada</span>' : '') +
           '<span style="margin-left:auto;font-size:12px;color:var(--fraco);white-space:nowrap">' + fV(totM, c) + selo(totM, c) + '</span></div>';
@@ -8903,6 +8903,54 @@ function _paradaDaTroca(t) {
 // se o problema e maquina, material ou gente.
 // Plano de acao = tarefa comum, com recurso_cod preenchido. Assim ela aparece
 // na aba Tarefas como qualquer outra e tambem no raio-x da maquina.
+// Itens que rodaram numa boca. Le a view v_boca_item_dia, que aplica exatamente a
+// mesma derivacao de boca da v_boca_maquina_dia — se eu recalculasse aqui em JS,
+// uma hora as duas contas divergiriam.
+async function detBocaItens(cod, boca) {
+  cod = String(cod);
+  let de = null, ate = null;
+  try {
+    const E = (typeof _amEscopo === 'function' && typeof _amCacheAtual === 'function') ? _amEscopo(_amCacheAtual() || {}) : null;
+    if (E) { de = E.de; ate = E.ate; }
+  } catch (_) {}
+  if (!de && typeof periodoSel !== 'undefined' && periodoSel) { de = String(periodoSel.de).slice(0, 10); ate = String(periodoSel.ate).slice(0, 10); }
+  abreDet('🔩 ' + cod + ' · boca ' + boca, '<p class="idet-desc">buscando itens…</p>');
+  let L = [];
+  try {
+    let q = sb.from('v_boca_item_dia').select('item_cod,item_desc,op,peso,quantidade,dia,turno')
+      .eq('recurso_cod', cod).eq('boca', String(boca));
+    if (de) q = q.gte('dia', de);
+    if (ate) q = q.lte('dia', ate);
+    const { data, error } = await q.limit(5000);
+    if (error) throw error;
+    L = data || [];
+  } catch (e) {
+    abreDet('🔩 ' + cod + ' · boca ' + boca, `<p class="desc">Não consegui buscar: ${escapeHtml(e.message || String(e))}</p>`); return;
+  }
+  if (!L.length) { abreDet('🔩 ' + cod + ' · boca ' + boca, '<p class="desc">Nenhum item nesta boca no período.</p>'); return; }
+  const porItem = {};
+  L.forEach(r => {
+    const k = r.item_cod || r.item_desc || '—';
+    const o = (porItem[k] = porItem[k] || { desc: r.item_desc || k, peso: 0, qtd: 0, ops: new Set(), dias: new Set() });
+    o.peso += (+r.peso || 0); o.qtd += (+r.quantidade || 0);
+    if (r.op != null && String(r.op).trim() !== '') o.ops.add(String(r.op).trim());
+    if (r.dia) o.dias.add(String(r.dia).slice(0, 10));
+  });
+  const itens = Object.entries(porItem).sort((a, b) => b[1].peso - a[1].peso);
+  const totP = itens.reduce((a, x) => a + x[1].peso, 0);
+  const totO = new Set(); L.forEach(r => { if (r.op) totO.add(String(r.op)); });
+  _detVoltar = null;
+  abreDet('🔩 ' + cod + ' · boca ' + boca,
+    `<p class="idet-desc">Máquina ${escapeHtml(cod)} · boca <b>${escapeHtml(String(boca))}</b> · ${itens.length} item(ns) · ${totO.size} OP(s) · ${fmtKg(totP)}</p>` +
+    tabSimples(['Item', 'OPs', 'Peso'], itens.map(([k, v]) => {
+      const ops = [...v.ops].sort();
+      return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}
+          <div style="font-size:11px;color:var(--fraco-2);font-weight:600">${v.dias.size} dia(s) · ${fmtNum(Math.round(v.qtd))} cxs</div></td>
+        <td style="text-align:left;font-size:11px;color:#8A97A6;font-weight:600;max-width:120px">${ops.length ? escapeHtml(ops.slice(0, 6).join(', ')) + (ops.length > 6 ? ' +' + (ops.length - 6) : '') : '—'}</td>
+        <td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td></tr>`;
+    }).join('')));
+}
+
 async function salvarPlanoAcao(cod) {
   const tit = ($('paTit') && $('paTit').value || '').trim();
   const msg = $('paMsg');
