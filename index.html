@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.388.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.389.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.388.0';
+const APP_VER = '3.389.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7302,13 +7302,15 @@ async function carregarPainel() {
       montarSeletorPeriodo(imps, 'fPeriodo');
       const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
       const ateX = ate ? addDiasISO(ate, 1) : ate;   // +1 dia: madrugada da virada pertence ao 'ate'
-      let [producao, paradas, consumo, perdas, prod622] = await Promise.all([
+      let [producao, paradas, consumo, perdas, prod622, boca] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
         fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX),
         fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX),
         fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso', de, ateX),
         // o 622 é o único com item_desc: sem ele não há como converter caixa em peça
-        fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
+        fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX),
+        // boca (cavidades) por maquina e dia — usada para mostrar a boca predominante
+        fetchTudo('v_boca_maquina_dia', 'dia,recurso_cod,boca,peso,quantidade', de, ateX)
       ]);
       // dia operacional 06:00→05:59 (regra da fábrica)
       aplicarDiaOperacional(producao, 'turno');
@@ -7338,7 +7340,7 @@ async function carregarPainel() {
         sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20).then(re2 => { evtOS = re2.data || []; }).catch(() => { evtOS = []; })
       ]);
       classificarPerdas(perdas);
-      dadosPainel = { producao, paradas, consumo, perdas, perdasCli, prod622, info: imps };
+      dadosPainel = { producao, paradas, consumo, perdas, perdasCli, prod622, boca, info: imps };
       // aplica o padrão de paradas JÁ NA CARGA — antes só rodava ao abrir o filtro,
       // então o painel contava PARADA PROGRAMADA / INTERROMPIDA que o filtro mostrava desmarcadas
       try { aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]); } catch (_) {}
@@ -10997,6 +10999,29 @@ function paretoSVG(dados, fmtVal, cor) {
     : '';
   return `<div class="svg-fit">${svg}</div>${nota}`;
 }
+// Boca (nº de cavidades) predominante da maquina no periodo carregado.
+// Sai da view v_boca_maquina_dia. Se a maquina alternou muito, mostra a maior
+// com a fatia dela — 150 (78%) le melhor que so 150, porque avisa que teve troca.
+function bocaTopPainel(cod) {
+  const D = dadosPainel; if (!D || !D.boca) return null;
+  const emCx = setorEmCx(setorDe(cod));
+  const acc = {}; let tot = 0;
+  D.boca.forEach(r => {
+    if (String(r.recurso_cod) !== String(cod) || !r.boca) return;
+    const v = emCx ? (+r.quantidade || 0) : (+r.peso || 0);
+    if (!(v > 0)) return;
+    acc[r.boca] = (acc[r.boca] || 0) + v; tot += v;
+  });
+  const ks = Object.keys(acc); if (!ks.length || tot <= 0) return null;
+  ks.sort((x, y) => acc[y] - acc[x]);
+  return { boca: ks[0], pct: acc[ks[0]] / tot * 100, n: ks.length };
+}
+function bocaBadge(cod) {
+  const b = bocaTopPainel(cod); if (!b) return '';
+  const misto = b.n > 1;
+  return `<span title="Boca predominante no período${misto ? ' · ' + b.n + ' bocas diferentes' : ''}" style="display:inline-block;margin-left:6px;background:${misto ? '#FDF5E6' : 'var(--leve)'};border:1px solid ${misto ? '#EBD3A0' : '#D8E2EC'};color:${misto ? '#7A5A10' : 'var(--navy)'};border-radius:999px;padding:1px 8px;font-size:11px;font-weight:800;vertical-align:middle">${escapeHtml(String(b.boca))}${misto ? ' · ' + Math.round(b.pct) + '%' : ''}</span>`;
+}
+
 // tabela máquina × turno (Manhã/Tarde/Noite/Total)
 function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes }) {
   const cel = {}, nome = {};
@@ -11013,7 +11038,7 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     const cls = corTurno ? clsCol[i] : (corCel ? corCel(v) : 'neutra');
     return `<td><span class="cel ${cls}">${fmtCel(v)}</span></td>`;
   };
-  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}</td>${cH(l.m, 0)}${cH(l.ta, 1)}${cH(l.n, 2)}${cH(l.tot, 3)}</tr>`).join('');
+  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}${bocaBadge(l.cod)}</td>${cH(l.m, 0)}${cH(l.ta, 1)}${cH(l.n, 2)}${cH(l.tot, 3)}</tr>`).join('');
   return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
 }
 // tabela de aproveitamento máquina × turno (produção termo ÷ consumo bobina)
