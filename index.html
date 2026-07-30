@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.392.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.393.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.392.0';
+const APP_VER = '3.393.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8884,6 +8884,73 @@ function _paradaDaTroca(t) {
 
 // Todas as trocas de um setor no periodo: hora, maquina, saiu -> entrou (com OP e
 // descricao) e o tempo da parada correspondente.
+// Raio-x da maquina que ficou abaixo da meta: cada parada com periodo e OP,
+// mais as ordens de servico abertas no mesmo intervalo. E a tela para decidir
+// se o problema e maquina, material ou gente.
+async function detDesempenhoMaq(cod) {
+  cod = String(cod);
+  const D = dadosPainel; if (!D) return;
+  const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
+  const fmtH = h => { const m = Math.round((+h || 0) * 60); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
+  const par = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod);
+  par.sort((a, b) => String(b.inicio || '').localeCompare(String(a.inicio || '')));
+  const totH = par.reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+  const porMot = {};
+  par.forEach(p => { const m = p.motivo_desc || '—'; const o = (porMot[m] = porMot[m] || { n: 0, h: 0 }); o.n++; o.h += (+p.tempo_horas || 0); });
+  const mots = Object.entries(porMot).sort((a, b) => b[1].h - a[1].h);
+
+  let h = `<p class="idet-desc">${escapeHtml(nome)} · <b>${par.length} parada(s)</b> · ${fmtH(totH)} no período</p>`;
+  h += `<button class="btn btn-borda" style="width:100%;margin:2px 0 10px" onclick="detMaquinaTurnos('${cod}')">📊 Produção por turno (dia a dia)</button>`;
+
+  if (mots.length) {
+    h += `<div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Motivos</div>`;
+    h += tabSimples(['Motivo', 'Paradas', 'Horas'], mots.map(([m, o]) =>
+      `<tr><td class="nome" style="font-size:12px">${escapeHtml(m)}<div style="font-size:11px;color:var(--fraco-2);font-weight:600">${fmtH(o.h / o.n)} cada</div></td><td><span class="cel cel-tot">${o.n}</span></td><td><span class="cel ${o.h >= 24 ? 'baixo' : 'neutra'}">${fmtH(o.h)}</span></td></tr>`).join(''));
+  }
+
+  // cada parada com inicio, fim e OP — o "período" que voce pediu
+  const LIM = 120;
+  h += `<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Paradas · período e OP</div>`;
+  h += tabSimples(['Início → fim', 'Motivo', 'Duração'], par.slice(0, LIM).map(p => {
+    const dIni = String(p.inicio || '').slice(0, 10), hIni = horaHHMMParada(p.inicio) || '—';
+    const dFim = String(p.fim || '').slice(0, 10), hFim = horaHHMMParada(p.fim) || '';
+    const virou = dFim && dIni && dFim !== dIni;
+    return `<tr>
+      <td class="nome" style="font-size:11.5px;white-space:nowrap">${dIni ? fmtData(dIni) : '—'} ${hIni}
+        <div style="font-size:11px;color:var(--fraco-2);font-weight:600">${p.fim ? ('→ ' + (virou ? fmtData(dFim) + ' ' : '') + hFim) : '→ em aberto'}</div></td>
+      <td style="text-align:left;font-size:12px">${escapeHtml(p.motivo_desc || '—')}
+        ${p.op ? `<div style="font-size:11px;color:#8A97A6;font-weight:600">OP ${escapeHtml(String(p.op))}</div>` : ''}
+        ${p.item_desc ? `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(String(p.item_desc).slice(0, 46))}</div>` : ''}</td>
+      <td><span class="cel ${(+p.tempo_horas || 0) >= 8 ? 'baixo' : 'neutra'}">${fmtH(p.tempo_horas)}</span></td>
+    </tr>`;
+  }).join(''));
+  if (par.length > LIM) h += `<p class="desc">mostrando as ${LIM} mais recentes de ${par.length}</p>`;
+
+  _detVoltar = null;
+  abreDet('🎯 ' + cod, h + '<div id="dmOS"><p class="desc" style="margin-top:10px">buscando ordens de serviço…</p></div>');
+
+  // OS num segundo momento: a tela ja abriu, isso so preenche o rodape
+  try {
+    const de = periodoSel ? String(periodoSel.de).slice(0, 10) : null;
+    const ate = periodoSel ? String(periodoSel.ate).slice(0, 10) : null;
+    let q = sb.from('manutencao_os').select('*').eq('recurso_cod', cod);
+    if (de) q = q.gte('data_abertura', de);
+    if (ate) q = q.lte('data_abertura', ate + 'T23:59:59');
+    const { data } = await q.order('data_abertura', { ascending: false }).limit(100);
+    const L = data || [];
+    const box = document.getElementById('dmOS'); if (!box) return;
+    if (!L.length) { box.innerHTML = `<div style="height:10px"></div><p class="desc">Nenhuma ordem de serviço aberta para esta máquina no período.</p>`; return; }
+    const ch = 'dmos_' + cod;
+    _drill[ch] = { titulo: cod + ' · ordens de serviço', lista: L };
+    box.innerHTML = `<div style="height:10px"></div>
+      <div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Ordens de serviço</div>
+      <div onclick="verOSDe('${ch}','')" style="cursor:pointer;background:var(--leve);border:1px solid #D8E2EC;border-radius:12px;padding:11px 13px;font-size:13px;font-weight:700;color:var(--navy);display:flex;justify-content:space-between;align-items:center">
+        <span>🔧 ${L.length} OS no período · ${L.filter(osAberta).length} em aberto</span><span style="color:var(--azul-marca)">ver ›</span></div>`;
+  } catch (_) {
+    const box = document.getElementById('dmOS'); if (box) box.innerHTML = '';
+  }
+}
+
 function detTrocasSetor(setor) {
   const ts = (trocasCache || []).filter(t => (setorDe(t.maq) || 'Outros') === setor);
   const fmtMin = m => { m = Math.round(m); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
@@ -11705,10 +11772,10 @@ function cardAbaixoMeta(D, setor) {
 
     const corpo = lista.length
       ? tabSimples(['M\u00e1quina', 'Atingiu', 'Principal motivo'], lista.slice(0, 20).map(x =>
-          `<tr onclick="detMaquinaTurnos('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td><td><span class="cel ${x.ating < 95 ? 'baixo' : 'ok'}">${x.ating.toFixed(0)}%</span></td><td style="font-size:12px;line-height:1.35">${escapeHtml((x.motivo || '\u2014').slice(0, 22))}${x.motivoN > 0 ? `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${x.motivoN}</b> parada${x.motivoN > 1 ? 's' : ''} \u00b7 ${x.motivoH.toFixed(0)}h \u00b7 <b style="color:${_mediaCor(x.motivoH / x.motivoN)}">${_fmtDur(x.motivoH / x.motivoN)} cada</b></div>` : ''}</td></tr>`).join(''))
+          `<tr onclick="detDesempenhoMaq('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td><td><span class="cel ${x.ating < 95 ? 'baixo' : 'ok'}">${x.ating.toFixed(0)}%</span></td><td style="font-size:12px;line-height:1.35">${escapeHtml((x.motivo || '\u2014').slice(0, 22))}${x.motivoN > 0 ? `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${x.motivoN}</b> parada${x.motivoN > 1 ? 's' : ''} \u00b7 ${x.motivoH.toFixed(0)}h \u00b7 <b style="color:${_mediaCor(x.motivoH / x.motivoN)}">${_fmtDur(x.motivoH / x.motivoN)} cada</b></div>` : ''}</td></tr>`).join(''))
       : '<p class="vazio-painel">Nenhuma m\u00e1quina nessa faixa.</p>';
 
-    return card('\ud83c\udfaf Desempenho x meta', (setor ? setor + ' \u00b7 ' : '') + totalAval + ' m\u00e1quina(s) com meta \u00b7 toque numa linha pra ver por turno',
+    return card('\ud83c\udfaf Desempenho x meta', (setor ? setor + ' \u00b7 ' : '') + totalAval + ' m\u00e1quina(s) com meta \u00b7 toque numa linha pra ver paradas, OPs e ordens de servi\u00e7o',
       barra + corpo, 'Maquinas abaixo da meta');
   } catch (_) { return ''; }
 }
