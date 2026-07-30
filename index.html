@@ -123,6 +123,8 @@ header{background:var(--topo);color:#fff;padding:calc(env(safe-area-inset-top) +
   .ver-badge{font-size:10px;padding:2px 7px;margin-right:auto}
   #btnSair{font-size:13px;padding:5px 12px}
 }
+.mt-clicavel{padding:7px 10px;border-bottom:1px solid var(--leve-2s)}
+.mt-clicavel:active{background:var(--leve)}
 .marca-chip{background:transparent;border-radius:0;padding:0;display:flex;align-items:center;flex:0 0 auto}
 /* max-width:none e essencial: sem isso alguma regra global corta o wordmark no meio */
 .marca-chip img{height:40px;width:auto;max-width:none;display:block}
@@ -706,7 +708,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.381.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.382.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1767,7 +1769,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.381.0';
+const APP_VER = '3.382.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3858,7 +3860,7 @@ function _mtBarra(f, val, esc, meta, rot) {
 }
 
 const _mtH = v => (v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' h';
-function _mtLista(titulo, obj, total, un, extra) {
+function _mtLista(titulo, obj, total, un, extra, clicks) {
   const ks = Object.keys(obj || {});
   if (!ks.length) return '';
   ks.sort((a, b) => obj[b] - obj[a]);
@@ -3867,7 +3869,9 @@ function _mtLista(titulo, obj, total, un, extra) {
   const mx = obj[ks[0]] || 1;
   ks.slice(0, 15).forEach(k => {
     const v = obj[k], pct = total > 0 ? (v / total * 100) : 0;
-    h += '<div style="padding:7px 10px;border-bottom:1px solid var(--leve-2s)">' +
+    const cl = (clicks && clicks[k]) ? ' style="cursor:pointer" onclick="' + clicks[k] + '"' : '';
+    h += '<div' + (cl || ' style="padding:7px 10px;border-bottom:1px solid var(--leve-2s)"') +
+      (cl ? ' class="mt-clicavel"' : '') + '>' +
       '<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px">' +
       '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(k) + '</span>' +
       '<b style="white-space:nowrap">' + un(v) + '</b>' +
@@ -3881,6 +3885,33 @@ function _mtLista(titulo, obj, total, un, extra) {
   return h + '</div>';
 }
 
+// Abre as ordens de servico da maquina no periodo. Busca no banco na hora porque
+// osLista so e carregada dentro da aba Manutencao — de outra aba viria vazia.
+async function osDoMotivo(cod, motivo) {
+  const de = (_mtSnap && _mtSnap.de) || (periodoSel && periodoSel.de) || null;
+  const ate = (_mtSnap && _mtSnap.ate) || (periodoSel && periodoSel.ate) || null;
+  abreDet('🔧 OS · ' + cod, '<p class="idet-desc">buscando…</p>');
+  let L = [];
+  try {
+    let q = sb.from('manutencao_os').select('*').eq('recurso_cod', String(cod));
+    if (de) q = q.gte('data_abertura', String(de).slice(0, 10));
+    if (ate) q = q.lte('data_abertura', String(ate).slice(0, 10) + 'T23:59:59');
+    const { data } = await q.order('data_abertura', { ascending: false }).limit(200);
+    L = data || [];
+  } catch (e) {
+    abreDet('🔧 OS · ' + cod, '<p class="idet-desc">Não consegui buscar as OS.</p>'); return;
+  }
+  if (!L.length) {
+    _detVoltar = null;
+    abreDet('🔧 OS · ' + cod, `<p class="idet-desc">Nenhuma OS aberta para a máquina ${escapeHtml(String(cod))} neste período.</p>
+      <p class="desc">A parada foi apontada como <b>${escapeHtml(String(motivo))}</b> mas não gerou ordem de serviço. Vale conferir com a manutenção — parada sem OS não entra no histórico da máquina.</p>`);
+    return;
+  }
+  const ch = 'osmot_' + cod;
+  _drill[ch] = { titulo: cod + ' · ' + motivo, lista: L };
+  verOSGrupo(ch);
+}
+
 function mtDetParadas(cod, bl) {
   const M = _mtSnap && _mtSnap.M, a = M && M[cod] && M[cod][bl];
   if (!a) { toast('Sem dados deste turno'); return; }
@@ -3892,9 +3923,17 @@ function mtDetParadas(cod, bl) {
     extra[k] = n + ' parada' + (n > 1 ? 's' : '') + ' · média ' + _fmtDur(a.mot[k] / Math.max(n, 1)) +
       (ops.length ? ' · OP ' + ops.slice(0, 4).map(escapeHtml).join(', ') + (ops.length > 4 ? ' +' + (ops.length - 4) : '') : '');
   });
+  // motivo ligado a manutencao abre as OS da maquina no periodo
+  const clicks = {};
+  Object.keys(a.mot || {}).forEach(k => {
+    if (/MANUTEN|CORRETIV|PREVENTIV|AGUARDANDO/i.test(k)) {
+      clicks[k] = `osDoMotivo('${escapeHtml(String(cod))}','${escapeHtml(k).replace(/'/g, "\\'")}')`;
+      extra[k] = (extra[k] || '') + ' · toque para ver as OS ›';
+    }
+  });
   abreDet('Paradas · ' + cod + ' · ' + bl,
     '<div style="font-size:12px;color:var(--fraco)">total <b style="color:var(--txt-2)">' + hh(a.pa) + '</b> neste turno</div>' +
-    _mtLista('Por motivo', a.mot, a.pa, hh, extra));
+    _mtLista('Por motivo', a.mot, a.pa, hh, extra, clicks));
 }
 
 function mtDetPerdas(cod, bl) {
@@ -3991,7 +4030,7 @@ function cardMaquinaTurno(E) {
     if (_op) { (M[c][b].motOp[_mo] = M[c][b].motOp[_mo] || {})[_op] = (M[c][b].motOp[_mo][_op] || 0) + _h; }
   });
   const cods = Object.keys(M); if (!cods.length) return '';
-  _mtSnap = { M: M, rotulo: E.rotulo, ate: E.ate, emCx: emCx, fV: fV, grupos: null };
+  _mtSnap = { M: M, rotulo: E.rotulo, de: E.de, ate: E.ate, emCx: emCx, fV: fV, grupos: null };
   const totSetor = {}, totMaq = {};
   cods.forEach(c => {
     let t = 0; Object.keys(M[c]).forEach(bb => t += M[c][bb].v);
