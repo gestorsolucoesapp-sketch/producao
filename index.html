@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.402.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.403.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.402.0';
+const APP_VER = '3.403.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2401,6 +2401,7 @@ function iniciarPresenca(user) {
     presCanal.on('presence', { event: 'join' }, ({ key, newPresences }) => {
       if (!presPronto || key === user.id || !presAtiva) return;
       if (typeof souAdmin === 'undefined' || !souAdmin) return;   // quem entra só aparece para o gestor
+      if (!avisarEntrada(key)) return;                            // reconexao, nao entrada nova
       const quem = (newPresences && newPresences[0] && newPresences[0].nome) || 'Alguém';
       toast('🟢 ' + quem + ' entrou no app');
       if (navigator.vibrate) navigator.vibrate(120);
@@ -2423,6 +2424,7 @@ async function ouvirAcessos(user) {
     acessoCanal = sb.channel('acessos-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'acessos' }, async ({ new: r }) => {
         if (!r || r.user_id === user.id || !presAtiva) return;   // não avisa a própria entrada
+        if (!avisarEntrada(r.user_id)) return;                  // recarga do PWA nao e entrada nova
         let nome = 'Alguém';
         try { const { data } = await sb.from('perfis').select('nome,email').eq('id', r.user_id).maybeSingle(); if (data) nome = data.nome || (data.email || '').split('@')[0] || 'Alguém'; } catch (_) {}
         toast('🟢 ' + nome + ' entrou no app');
@@ -2459,7 +2461,19 @@ async function togPresencaOnline(on) {
    2) sai do ar (untrack) assim que a aba fica escondida, e volta quando reaparece;
    3) na hora de contar, entrada com 'visto' velho e ignorada.               */
 const PRES_VALIDADE_MS = 150000;   // 2min30 sem dar sinal = considerado fora
-let presDados = null, presPulsoT = null;
+const AVISO_REENTRADA_MS = 1800000; // 30min: reconexao ou recarga nao e "entrou de novo"
+let presDados = null, presPulsoT = null, presUltAviso = {};
+
+/* Diz se vale avisar que fulano entrou. O app grava um acesso a CADA carregamento,
+   e o iOS recarrega o PWA sozinho ao reabrir — sem esta trava, o gestor recebe
+   "entrou no app" o dia inteiro da mesma pessoa que nunca saiu. */
+function avisarEntrada(uid) {
+  if (!uid) return false;
+  const agora = Date.now();
+  if (presUltAviso[uid] && (agora - presUltAviso[uid]) < AVISO_REENTRADA_MS) return false;
+  presUltAviso[uid] = agora;
+  return true;
+}
 
 async function presBater() {
   if (!presCanal || !presDados) return;
@@ -2470,8 +2484,9 @@ function ligarPulsoPresenca() {
   presPulsoT = setInterval(() => { if (document.visibilityState === 'visible') presBater(); }, 45000);
   document.addEventListener('visibilitychange', () => {
     if (!presCanal) return;
+    // Trocar de app NAO faz untrack de proposito: untrack gera leave+join e o join
+    // dispara o aviso de "entrou". Sem pulso, a pessoa envelhece e sai da conta em 2min30.
     if (document.visibilityState === 'visible') presBater();
-    else { try { presCanal.untrack(); } catch (_) {} }   // saiu da tela: some da lista na hora
   });
   window.addEventListener('pagehide', () => { try { presCanal && presCanal.untrack(); } catch (_) {} });
 }
@@ -2500,6 +2515,20 @@ function atualizarOnline() {
   b.textContent = '🟢 ' + total;
   b.classList.remove('oculto');
 }
+// "visto ha X" — deixa claro quem esta mesmo com a tela aberta e quem so
+// deixou o app aberto num canto. Sinal a cada 45s; acima disso ja e aba parada.
+function _haQuanto(iso) {
+  if (!iso) return 'sem sinal';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return 'sem sinal';
+  const seg = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (seg < 60) return 'visto agora';
+  const min = Math.round(seg / 60);
+  if (min < 60) return 'visto há ' + min + 'min';
+  const h = Math.floor(min / 60);
+  return 'visto há ' + h + 'h' + String(min % 60).padStart(2, '0');
+}
+
 async function mostrarOnline() {
   const lista = Object.entries(presVivos()).filter(([k]) => k !== presMeuId).map(([, arr]) => arr[0]).filter(Boolean);
   // histórico "entraram hoje" — lê da tabela acessos (que o app já preenche) + nome de perfis
@@ -2533,7 +2562,7 @@ async function mostrarOnline() {
   }
   $('itemDetTitulo').textContent = '🟢 Online agora (' + lista.length + ')';
   $('itemDetCorpo').innerHTML = '<div class="idet-grid">' + lista.map(u =>
-    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>`).join('') + '</div>' + histHtml;
+    `<div><b>${escapeHtml(u.nome || '—')}</b><span>${escapeHtml(u.email || '')} · desde ${u.desde ? new Date(u.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'} · ${_haQuanto(u.visto || u.desde)}</span></div>`).join('') + '</div>' + histHtml;
   window.__histOnline = null;
   $('itemDetOverlay').classList.remove('oculto');
 }
