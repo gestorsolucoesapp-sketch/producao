@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.391.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.392.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.391.0';
+const APP_VER = '3.392.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8848,7 +8848,14 @@ function montarCardSetup(anSetor) {
   } else if (ymRef) {
     setTimeout(() => preencherMediaTrocasMes(ymRef, anSetor), 0);
   }
+  // quantas trocas em cada setor — cada chip abre a lista completa
+  const porSetor = {};
+  trocasCache.forEach(t => { const st = setorDe(t.maq) || 'Outros'; porSetor[st] = (porSetor[st] || 0) + 1; });
+  const chipsSetor = Object.entries(porSetor).sort((a, b) => b[1] - a[1]).map(([st, n]) =>
+    `<span onclick="detTrocasSetor('${escapeHtml(st).replace(/'/g, "\\'")}')" style="cursor:pointer;display:inline-block;background:var(--leve);border:1px solid #D8E2EC;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;color:var(--navy);margin:0 6px 6px 0">${escapeHtml(st)} <b style="color:#C9922E">${n}</b> ›</span>`).join('');
+
   return `<div class="card"><div class="titulo-sec">${titulo}</div><p class="desc" style="margin-bottom:10px">${sub}</p>` +
+    (chipsSetor ? `<div style="margin-bottom:10px">${chipsSetor}</div>` : '') +
     `<div class="kpis" style="margin-bottom:10px">
        <div class="kpi destaque"><div class="v">${tot}</div><div class="l">Trocas no período${anSetor ? ' · ' + anSetor : ''}</div></div>
        <div class="kpi"><div class="v" id="mediaTrocasMesV">…</div><div class="l">Média de trocas/dia · mês ${ymRef ? mesLabel(ymRef) : ''}</div></div>
@@ -8858,6 +8865,61 @@ function montarCardSetup(anSetor) {
 }
 // clique numa barra: mostra cada troca (o que saiu -> o que entrou) naquele dia
 function soHora(iso) { if (!iso) return '—'; const h = horaHHMMParada(iso); if (h) return h; const d = new Date(iso); if (isNaN(d)) return '—'; return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
+// Casa a troca com a parada de SETUP mais proxima da mesma maquina (janela de 6h).
+// A troca vem da producao (item mudou de OP para OP); o tempo vem da parada.
+function _paradaDaTroca(t) {
+  try {
+    const D = dadosPainel; if (!D || !D.paradas || !t.horaEntrou) return null;
+    const alvo = new Date(t.horaEntrou).getTime(); if (isNaN(alvo)) return null;
+    let melhor = null, dif = Infinity;
+    D.paradas.forEach(p => {
+      if (String(p.recurso_cod) !== String(t.maq)) return;
+      if (!/setup/i.test(p.motivo_desc || '')) return;
+      const d = Math.abs(new Date(p.inicio).getTime() - alvo);
+      if (d < dif) { dif = d; melhor = p; }
+    });
+    return (melhor && dif < 6 * 3600 * 1000) ? melhor : null;
+  } catch (_) { return null; }
+}
+
+// Todas as trocas de um setor no periodo: hora, maquina, saiu -> entrou (com OP e
+// descricao) e o tempo da parada correspondente.
+function detTrocasSetor(setor) {
+  const ts = (trocasCache || []).filter(t => (setorDe(t.maq) || 'Outros') === setor);
+  const fmtMin = m => { m = Math.round(m); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
+  $('itemDetTitulo').textContent = '🔧 Trocas · ' + setor;
+  if (!ts.length) { $('itemDetCorpo').innerHTML = '<p class="idet-desc">Nenhuma troca neste setor.</p>'; $('itemDetOverlay').classList.remove('oculto'); return; }
+  ts.sort((a, b) => String(b.dia + (b.hora || '')).localeCompare(String(a.dia + (a.hora || ''))));
+  const LIM = 200;
+  const mostra = ts.slice(0, LIM);
+  let comTempo = 0, somaMin = 0;
+  mostra.forEach(t => { const p = _paradaDaTroca(t); if (p) { comTempo++; somaMin += (+p.tempo_horas || 0) * 60; } });
+  const medTxt = comTempo ? fmtMin(somaMin / comTempo) : '—';
+  const bloco = (cod, desc, op, entrou) => {
+    if (!cod) return '<span style="color:var(--fraco)">—</span>';
+    const d = String(desc || '').trim();
+    return `<div style="${entrou ? 'font-weight:800;color:#00964D' : 'font-weight:700;color:#5a6b7d'};font-size:12px;line-height:1.25">${escapeHtml(String(cod))}${op ? ` <span style="font-weight:600;color:#8A97A6">(OP ${escapeHtml(String(op))})</span>` : ''}</div>${d ? `<div style="font-size:11px;color:var(--fraco-2);font-weight:600;line-height:1.2">${escapeHtml(d)}</div>` : ''}`;
+  };
+  $('itemDetCorpo').innerHTML =
+    `<p class="idet-desc"><b>${ts.length} troca(s)</b> em ${setor} · ${comTempo} com parada apontada · média ${medTxt} · meta ${fmtMin(META_SETUP_MIN)}</p>` +
+    (ts.length > LIM ? `<p class="desc">mostrando as ${LIM} mais recentes</p>` : '') +
+    `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr>
+       <th>Dia · hora</th><th style="text-align:left">Máq.</th><th style="text-align:left">Saiu → Entrou</th><th>Tempo</th>
+     </tr></thead><tbody>` +
+    mostra.map(t => {
+      const p = _paradaDaTroca(t);
+      const min = p ? (+p.tempo_horas || 0) * 60 : null;
+      const alto = min != null && min > META_SETUP_MIN;
+      return `<tr>
+        <td style="text-align:center;font-size:11.5px;font-weight:700;color:var(--navy);white-space:nowrap">${fmtData(t.dia)}<div style="font-weight:600;color:var(--fraco-2)">${t.horaEntrou ? soHora(t.horaEntrou) : 's/ hora'}</div></td>
+        <td class="nome" style="font-size:12px"><b>${escapeHtml(String(t.maq))}</b></td>
+        <td>${bloco(t.deCod, t.deDesc, t.deOp, false)}<div style="height:3px"></div>${bloco(t.paraCod, t.paraDesc, t.paraOp, true)}</td>
+        <td><span class="cel ${min == null ? 'vazio' : (alto ? 'baixo' : 'neutra')}">${min == null ? '—' : fmtMin(min)}</span></td>
+      </tr>`;
+    }).join('') + '</tbody></table></div>';
+  $('itemDetOverlay').classList.remove('oculto');
+}
+
 function detTrocasDia(setor, dia) {
   const ts = calcularTrocas(setor).filter(t => t.dia === dia);
   $('itemDetTitulo').textContent = 'Trocas de ' + fmtData(dia);
