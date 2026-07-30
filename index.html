@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.401.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.402.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.401.0';
+const APP_VER = '3.402.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2407,8 +2407,9 @@ function iniciarPresenca(user) {
     });
     presCanal.on('presence', { event: 'leave' }, () => atualizarOnline());
     presCanal.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await presCanal.track({ nome, email: user.email, desde: new Date().toISOString() });
+      if (status === 'SUBSCRIBED') { presDados = { nome, email: user.email, desde: new Date().toISOString() }; await presBater(); }
     });
+    ligarPulsoPresenca();
     ouvirAcessos(user);
   } catch (_) {}
 }
@@ -2450,17 +2451,57 @@ async function togPresencaOnline(on) {
   toast(presAtiva ? '✅ Presença visível para todos.' : '🚫 Presença desligada.');
   atualizarOnline();
 }
+/* ===== PRESENÇA: batida de pulso =====
+   O canal de presença sozinho da falso positivo. Quando o iPhone bloqueia ou o iOS
+   suspende o PWA, o WebSocket nao fecha de forma limpa e o servidor continua contando
+   a pessoa como online por vários minutos. A correcao tem tres partes:
+   1) cada cliente reescreve sua presenca a cada 45s com o campo 'visto';
+   2) sai do ar (untrack) assim que a aba fica escondida, e volta quando reaparece;
+   3) na hora de contar, entrada com 'visto' velho e ignorada.               */
+const PRES_VALIDADE_MS = 150000;   // 2min30 sem dar sinal = considerado fora
+let presDados = null, presPulsoT = null;
+
+async function presBater() {
+  if (!presCanal || !presDados) return;
+  try { await presCanal.track(Object.assign({}, presDados, { visto: new Date().toISOString() })); } catch (_) {}
+}
+function ligarPulsoPresenca() {
+  if (presPulsoT) return;
+  presPulsoT = setInterval(() => { if (document.visibilityState === 'visible') presBater(); }, 45000);
+  document.addEventListener('visibilitychange', () => {
+    if (!presCanal) return;
+    if (document.visibilityState === 'visible') presBater();
+    else { try { presCanal.untrack(); } catch (_) {} }   // saiu da tela: some da lista na hora
+  });
+  window.addEventListener('pagehide', () => { try { presCanal && presCanal.untrack(); } catch (_) {} });
+}
+// só conta quem deu sinal de vida há pouco
+function presVivos() {
+  const est = presUsuarios || {}, agora = Date.now(), vivos = {};
+  Object.keys(est).forEach(k => {
+    const arr = est[k] || [];
+    const ok = arr.some(pz => {
+      const q = pz && (pz.visto || pz.desde);
+      if (!q) return false;
+      const t = new Date(q).getTime();
+      return !isNaN(t) && (agora - t) < PRES_VALIDADE_MS;
+    });
+    if (ok) vivos[k] = arr;
+  });
+  return vivos;
+}
+
 function atualizarOnline() {
   const b = $('onlineBadge'); if (!b) return;
   /* a presença é registrada por todos, mas só o gestor enxerga */
   if (!presAtiva || typeof souAdmin === 'undefined' || !souAdmin) { b.classList.add('oculto'); return; }
-  // conta TODO mundo no app, você inclusive — assim a bolinha nunca some sozinha
-  const total = Object.keys(presUsuarios || {}).length || 1;
+  // conta só quem bateu ponto nos últimos 2min30 — você inclusive
+  const total = Object.keys(presVivos()).length || 1;
   b.textContent = '🟢 ' + total;
   b.classList.remove('oculto');
 }
 async function mostrarOnline() {
-  const lista = Object.entries(presUsuarios || {}).filter(([k]) => k !== presMeuId).map(([, arr]) => arr[0]).filter(Boolean);
+  const lista = Object.entries(presVivos()).filter(([k]) => k !== presMeuId).map(([, arr]) => arr[0]).filter(Boolean);
   // histórico "entraram hoje" — lê da tabela acessos (que o app já preenche) + nome de perfis
   let histHtml = '';
   try {
