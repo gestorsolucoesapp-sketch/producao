@@ -708,7 +708,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.382.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.383.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1769,7 +1769,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.382.0';
+const APP_VER = '3.383.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3901,14 +3901,29 @@ async function osDoMotivo(cod, motivo) {
   } catch (e) {
     abreDet('🔧 OS · ' + cod, '<p class="idet-desc">Não consegui buscar as OS.</p>'); return;
   }
+  // Sem OS pode ser duas coisas MUITO diferentes: ou a parada nao gerou ordem,
+  // ou o periodo pedido e anterior ao inicio do historico de OS. Descobre qual.
+  let cobDe = null, cobAte = null;
+  try {
+    const { data: c1 } = await sb.from('manutencao_os').select('data_abertura').order('data_abertura', { ascending: true }).limit(1);
+    const { data: c2 } = await sb.from('manutencao_os').select('data_abertura').order('data_abertura', { ascending: false }).limit(1);
+    cobDe = c1 && c1[0] ? String(c1[0].data_abertura).slice(0, 10) : null;
+    cobAte = c2 && c2[0] ? String(c2[0].data_abertura).slice(0, 10) : null;
+  } catch (_) {}
+  const avisoCobertura = (cobDe && de && String(de).slice(0, 10) < cobDe)
+    ? `<div style="margin-top:10px;background:#EAF1F8;border:1px solid #cfe0ee;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#1A5276;font-weight:600">
+        O histórico de ordens de serviço começa em <b>${fmtData(cobDe)}</b>${cobAte ? ' e vai até <b>' + fmtData(cobAte) + '</b>' : ''}.
+        O período que você escolheu vai antes disso, então as paradas mais antigas não têm OS para mostrar — elas existiram, só não estão importadas.</div>`
+    : '';
+
   if (!L.length) {
     _detVoltar = null;
-    abreDet('🔧 OS · ' + cod, `<p class="idet-desc">Nenhuma OS aberta para a máquina ${escapeHtml(String(cod))} neste período.</p>
-      <p class="desc">A parada foi apontada como <b>${escapeHtml(String(motivo))}</b> mas não gerou ordem de serviço. Vale conferir com a manutenção — parada sem OS não entra no histórico da máquina.</p>`);
+    abreDet('🔧 OS · ' + cod, `<p class="idet-desc">Nenhuma OS da máquina ${escapeHtml(String(cod))} neste período.</p>` +
+      (avisoCobertura || `<p class="desc">A parada foi apontada como <b>${escapeHtml(String(motivo))}</b> mas não gerou ordem de serviço. Vale conferir com a manutenção — parada sem OS não entra no histórico da máquina.</p>`));
     return;
   }
   const ch = 'osmot_' + cod;
-  _drill[ch] = { titulo: cod + ' · ' + motivo, lista: L };
+  _drill[ch] = { titulo: cod + ' · ' + motivo, lista: L, aviso: avisoCobertura };
   verOSGrupo(ch);
 }
 
@@ -6352,7 +6367,7 @@ function verOSGrupo(chave) {
   const L = f.lista || [];
   $('itemDetTitulo').textContent = f.titulo || 'Detalhe';
   $('itemDetCorpo').innerHTML = L.length
-    ? `<p class="desc" style="margin:10px 0">${L.length} OS · toque para abrir</p>` + L.map(o => {
+    ? (f.aviso || '') + `<p class="desc" style="margin:10px 0">${L.length} OS · toque para abrir</p>` + L.map(o => {
         const ab = osAberta(o), d = diasEmAberto(o);
         const dtAb = o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '—';
         const hrAb = (o.data_abertura && String(o.data_abertura).length > 10) ? String(o.data_abertura).slice(11, 16) : '';
