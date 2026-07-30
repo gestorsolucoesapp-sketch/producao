@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.410.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.411.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.410.0';
+const APP_VER = '3.411.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8538,31 +8538,34 @@ function cardSetupsMaquina(D, setor) {
     // item). O TEMPO de cada setup vem das paradas de motivo SETUP.
     const _turFiltro = ($('turnoGlobal') && $('turnoGlobal').value) || '';
     const diasPeriodo = new Set((D.producao || []).map(r => String(r.dia).slice(0, 10)));
-    const trocas = calcularTrocas(setor || '').filter(t => diasPeriodo.has(String(t.dia).slice(0, 10)));
+    // A CONTAGEM vem das PARADAS de SETUP, nunca de calcularTrocas.
+    // calcularTrocas depende de dadosProducaoFull, que so carrega na aba Analise+.
+    // No Painel ela voltava quase vazia: tempo cheio dividido por contagem furada
+    // dava media de 86h para um setup de meta 1h30 (bug achado em 30/07/2026).
     const porMaq = {};
-    trocas.forEach(t => {
-      const c = String(t.maq);
-      if (setor && setorDe(c) !== setor) return;
-      // com turno filtrado: só conta a troca se o horário da troca (horaEntrou) cair naquele turno
-      if (_turFiltro) {
-        const bloco = t.horaEntrou ? blocoParadaTurno(t.horaEntrou, t.dia) : null;
-        if (bloco !== _turFiltro) return;
-      }
-      const o = (porMaq[c] = porMaq[c] || { n: 0, min: 0 });
-      o.n++;
-    });
-    // tempo real: paradas SETUP; com turno filtrado, recorta a fração daquele turno
     (D.paradas || []).forEach(p => {
       const c = String(p.recurso_cod);
       if (setor && setorDe(c) !== setor) return;
       if (!/setup/i.test(p.motivo_desc || '')) return;
       if (!diasPeriodo.has(String(p.dia).slice(0, 10))) return;
-      if (!porMaq[c]) return;
       const minTot = _turFiltro
         ? (tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[_turFiltro] || 0) * 60
         : (p.tempo_horas || 0) * 60;
-      porMaq[c].min += minTot;
+      if (_turFiltro && minTot <= 0) return;      // parada sem nenhum minuto neste turno
+      const o = (porMaq[c] = porMaq[c] || { n: 0, min: 0, tro: 0 });
+      o.n++; o.min += minTot;
     });
+    // trocas de item entram só como informação extra, quando estiverem carregadas
+    try {
+      calcularTrocas(setor || '')
+        .filter(t => diasPeriodo.has(String(t.dia).slice(0, 10)))
+        .forEach(t => {
+          const c = String(t.maq);
+          if (!porMaq[c]) return;
+          if (_turFiltro && (t.horaEntrou ? blocoParadaTurno(t.horaEntrou, t.dia) : null) !== _turFiltro) return;
+          porMaq[c].tro++;
+        });
+    } catch (_) {}
     // barra = TEMPO MÉDIO por setup (é o que se compara com a meta de 1h30);
     // embaixo da barra: código da máquina + nº de ocorrências e tempo total.
     const fmtMinSet = m => { m = Math.round(m || 0); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
@@ -8573,14 +8576,15 @@ function cardSetupsMaquina(D, setor) {
       return {
         l: c, v: Math.round(med),
         rot: o.min > 0 ? fmtMinSet(med) : '—',
-        sem: o.n + '\u00d7' + (o.min > 0 ? ' \u00b7 ' + fmtMinSet(o.min) : ' \u00b7 s/ apont.'),
+        sem: o.n + '\u00d7' + (o.min > 0 ? ' \u00b7 ' + fmtMinSet(o.min) : ' \u00b7 s/ apont.') + (o.tro ? ' \u00b7 ' + o.tro + ' troca(s)' : ''),
         click: `detSetupsMaquina('${c}','${setor || ''}')`
       };
     }).sort((a, b) => b.v - a.v);
     const totSetups = cods.reduce((a, c) => a + porMaq[c].n, 0);
     const totMin = cods.reduce((a, c) => a + porMaq[c].min, 0);
     const corBarra = corGrafTurno('var(--azul-2)');
-    return card('🔧 Setups por máquina', totSetups + ' troca(s) de item no período · ' + fmtMinSet(totMin) + ' parados · barra = tempo médio por setup · linha azul = meta 1h30 · toque numa barra',
+    const totTro = cods.reduce((a, c) => a + (porMaq[c].tro || 0), 0);
+    return card('🔧 Setups por máquina', totSetups + ' parada(s) de setup no período' + (totTro ? ' · ' + totTro + ' troca(s) de item' : '') + ' · ' + fmtMinSet(totMin) + ' parados · barra = tempo médio por setup · linha azul = meta 1h30 · toque numa barra',
       barrasVerticalScroll(arr, () => corBarra, { meta: META_SETUP_MIN, fmt: fmtMinSet, margemEsq: 48 }) +
       paretoHorizontal(arr.map(x => ({ l: x.l + ' · ' + x.sem, v: x.v, click: x.click })), fmtMinSet, corBarra));
   } catch (_) { return ''; }
