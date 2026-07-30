@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.406.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.407.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.406.0';
+const APP_VER = '3.407.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2376,8 +2376,14 @@ async function posLogin() {
   if (souDev) souAdmin = true;   // desenvolvedor = tudo do gestor + Organograma
   // depois do souDev: quem é dev mas não admin também precisa poder editar a escala
   podeEditarEscala = souAdmin || !!(perfil && perfil.pode_editar_escala === true);
-  // Sem etapa de aprovação: entra direto. Só barra se o admin bloquear (ativo=false).
   if (perfil && perfil.ativo === false) { telaEspera('Acesso bloqueado', 'Seu acesso foi bloqueado pelo administrador.', '🚫'); return; }
+  // Aprovação por um gestor (desde 30/07/2026). Quem cadastra entra pendente e espera.
+  // souAdmin por e-mail é a válvula de escape: o dono do app nunca fica trancado.
+  if (perfil && perfil.aprovado !== true && !ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email)) {
+    telaEspera('Aguardando liberação',
+      'Seu cadastro foi criado e está esperando um gestor liberar o acesso. Assim que liberarem, é só abrir o app de novo.', '⏳');
+    return;
+  }
   await registrarAcesso();
   await carregarTimeout();
   await getPresencaCfg();
@@ -2719,9 +2725,11 @@ async function revalidarPermissoes() {
     const { data: p } = await sb.from('perfis').select('*').eq('id', user.id).maybeSingle();
     if (!p) return;
     if (p.ativo === false) { location.reload(); return; }   // acesso revogado: cai fora na hora
+    if (p.aprovado !== true && !eAdminEmailRev) { location.reload(); return; }   // aprovação retirada
     perfil = p;
     const email = (user.email || '').toLowerCase();
     const eAdminEmail = ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);
+    const eAdminEmailRev = eAdminEmail;
     souAdmin = (p.papel === 'admin') || eAdminEmail;
     souDev = !!p.desenvolvedor;
     souRH = eAdminEmail;
@@ -12656,9 +12664,14 @@ async function carregarUsuarios() {
     const admin = u.papel === 'admin';
     const eu = u.id === meuId;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
+    const pendente = u.aprovado !== true;
     const tagStatus = !u.ativo ? '<span class="tag tag-block">BLOQUEADO</span>'
+      : pendente ? '<span class="tag tag-block" style="background:var(--laranja)">AGUARDANDO LIBERAÇÃO</span>'
       : '<span class="tag tag-ok">ATIVO</span>';
     const acoes = [];
+    if (!eu && pendente) {
+      acoes.push(`<button class="btn-verde" style="background:var(--verde);color:#fff" onclick="usrAprovar('${u.id}')">✅ Liberar acesso</button>`);
+    }
     if (!eu) {
       acoes.push(u.ativo
         ? `<button class="bloquear" onclick="usrBloquear('${u.id}',false)">Bloquear</button>`
