@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.443.4<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.444.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1958,7 +1958,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.443.4';
+const APP_VER = '3.444.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14058,6 +14058,87 @@ function _progAnalise(rows) {
   return lista;
 }
 
+
+/* Leitura da fila: o que os numeros estao dizendo. TUDO calculado do dado —
+   nada escrito na mao — para o texto continuar verdadeiro quando a fila mudar. */
+function _progDiagnostico(maqs, rows, setorFiltro) {
+  const achados = [];
+  const agora = Date.now();
+  const DIA = 24 * _PROG_H;
+  const kgTot = maqs.reduce((a, m) => a + m.kg, 0) || 1;
+
+  // agrupa por setor
+  const porSet = {};
+  maqs.forEach(m => { (porSet[m.setor] = porSet[m.setor] || []).push(m); });
+
+  Object.keys(porSet).forEach(st => {
+    const lista = porSet[st].slice().sort((a, b) => b.kg - a.kg);
+    const kgSet = lista.reduce((a, m) => a + m.kg, 0) || 1;
+
+    // 1) concentracao: uma maquina carregando o setor nas costas
+    const top = lista[0];
+    const share = top.kg / kgSet * 100;
+    if (lista.length > 2 && share >= 30) {
+      achados.push({ n: 3, t: 'A <b>' + escapeHtml(top.cod) + '</b> carrega <b>' + fmt(share, 0) + '%</b> do peso de ' + escapeHtml(st)
+        + ' sozinha (' + _progT(top.kg) + ' de ' + _progT(kgSet) + '). Se ela parar, para o setor.' });
+    }
+
+    // 2) desbalanceamento: quem seca primeiro x quem seca por ultimo
+    const comSeca = lista.filter(m => m.seca != null).sort((a, b) => a.seca - b.seca);
+    if (comSeca.length > 2) {
+      const d = Math.round((comSeca[comSeca.length - 1].seca - comSeca[0].seca) / DIA);
+      if (d >= 21) achados.push({ n: 2, t: 'Em ' + escapeHtml(st) + ' a <b>' + escapeHtml(comSeca[0].cod) + '</b> seca em '
+        + _progDataHora(comSeca[0].seca) + ' e a <b>' + escapeHtml(comSeca[comSeca.length - 1].cod) + '</b> só em '
+        + _progDataHora(comSeca[comSeca.length - 1].seca) + ' — <b>' + d + ' dias</b> de diferença dentro do mesmo setor.' });
+    }
+
+    // 3) entrega em branco: sem ela nao da para medir atraso
+    const ops = lista.reduce((a, m) => a + m.nOps, 0);
+    const sem = lista.reduce((a, m) => a + m.semEntrega, 0);
+    if (ops >= 10 && sem / ops >= 0.5) {
+      achados.push({ n: 1, t: 'Em ' + escapeHtml(st) + ', <b>' + fmt(sem, 0) + ' de ' + fmt(ops, 0) + '</b> OPs vêm sem data de entrega no ERP. '
+        + 'Enquanto for assim, não dá para dizer se esse setor está no prazo.' });
+    }
+
+    // 4) maquinas do cadastro que nao tem fila nenhuma
+    const cad = (typeof SETOR_MAQ === 'object' && SETOR_MAQ[st]) ? SETOR_MAQ[st].map(String) : null;
+    if (cad) {
+      const tem = lista.map(m => String(m.cod));
+      const faltam = cad.filter(c => tem.indexOf(c) < 0);
+      if (faltam.length) achados.push({ n: 2, t: 'Sem fila nenhuma em ' + escapeHtml(st) + ': <b>' + faltam.join(', ') + '</b>. '
+        + 'Ou o PDF não foi importado, ou a máquina está mesmo sem programação.' });
+    }
+  });
+
+  // 5) fila que nasce atrasada
+  maqs.forEach(m => {
+    const comEnt = m.ops.filter(r => r.entrega).length;
+    if (comEnt >= 5 && m.risco.length / comEnt >= 0.4) {
+      achados.push({ n: 3, t: 'Na <b>' + escapeHtml(m.cod) + '</b>, <b>' + m.risco.length + ' das ' + comEnt
+        + '</b> OPs com entrega já estão programadas para terminar depois do prazo. A fila nasce atrasada.' });
+    }
+  });
+
+  // 6) fila congelada no passado
+  const mortas = maqs.filter(m => m.seca != null && m.seca < agora - 30 * DIA);
+  if (mortas.length) achados.push({ n: 2, t: 'Fila parada no passado: ' + mortas.map(m => '<b>' + escapeHtml(m.cod) + '</b> (último término ' + _progDataHora(m.seca) + ')').join(', ')
+    + '. Ou é fila abandonada no ERP, ou a máquina saiu de programação e ninguém limpou.' });
+
+  // 7) fila fantasma: buraco enorme empurrando o horizonte
+  const fantasma = [];
+  maqs.forEach(m => m.buracos.forEach(g => { if (g.h > 30 * 24) fantasma.push({ m: m, g: g }); }));
+  if (fantasma.length) achados.push({ n: 2, t: 'Buraco de mais de 30 dias no meio da fila: '
+    + fantasma.map(o => '<b>' + escapeHtml(o.m.cod) + '</b> (' + fmt(o.g.h / 24, 0) + ' dias)').join(', ')
+    + '. Isso estica o horizonte do setor artificialmente — a máquina não está com fila, está com data solta.' });
+
+  // 8) sobreposicoes
+  const nSob = maqs.reduce((a, m) => a + m.sobre.length, 0);
+  if (nSob) achados.push({ n: 2, t: '<b>' + nSob + '</b> sobreposição(ões) de horário: duas OPs ocupando a mesma máquina ao mesmo tempo. O ERP aceitou, a máquina não vai aceitar.' });
+
+  achados.sort((a, b) => b.n - a.n);
+  return achados;
+}
+
 function renderProgramacao() {
   const alvo = $('progConteudo'); if (!alvo) return;
   const todas = _progDados || [];
@@ -14085,6 +14166,18 @@ function renderProgramacao() {
   { const c = $('progFiltros'); if (c) c.classList.remove('oculto'); }
   const maqs = _progAnalise(rows);
   const partes = [];
+
+  /* ---------- leitura da fila (diagnóstico automático) ---------- */
+  const diag = _progDiagnostico(maqs, rows, _progSetorSel);
+  if (diag.length) {
+    const cor = (n) => n >= 3 ? '#c62828' : (n === 2 ? '#ef6c00' : '#546e7a');
+    partes.push('<div class="card"><h3 style="margin:0 0 4px">Leitura da fila</h3>'
+      + '<p class="desc" style="margin:0 0 10px">Calculado da foto atual. Some sozinho quando o problema sai da fila.</p>'
+      + diag.map(a => '<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid #eceff1">'
+        + '<div style="width:4px;border-radius:2px;background:' + cor(a.n) + ';flex:none"></div>'
+        + '<div style="font-size:13px;line-height:1.45">' + a.t + '</div></div>').join('')
+      + '</div>');
+  }
 
   /* ---------- carga por setor (só faz sentido sem filtro de setor) ---------- */
   if (!_progSetorSel) {
