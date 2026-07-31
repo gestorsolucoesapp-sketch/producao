@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.441.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.442.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1701,8 +1701,150 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     '624': 'Perdas (Turno × OP × Item)',
     '054': 'Perdas por Tipo/Item/Cliente (rotulagem)',
     '643': 'Paradas (Motivo × OP × Dia × Item)',
-    '646': 'Consumo de componentes (Dia × Recurso)'
+    '646': 'Consumo de componentes (Dia × Recurso)',
+    '264': 'Fila de produção por recurso (carga programada)'
   };
+
+
+  // ---------- RPCP264: fila de producao por recurso ----------
+  // Um PDF por maquina. Cabecalho "Recurso: 501 - EXTRUSORA RULLI 01".
+  // Armadilhas cobertas (todas vistas nos PDFs de 31/07/2026):
+  //  1) DUAS mascaras de data no mesmo relatorio: Inicio/Termino vem dd/mm/aa e
+  //     Entrega vem dd/mm/aaaa — e a Entrega cai numa LINHA ABAIXO do bloco do
+  //     cliente, nao na linha da OP. Por isso a entrega e achada pelo ANO DE 4
+  //     DIGITOS dentro do bloco da OP, e nao por posicao de linha.
+  //  2) Produto e Cliente quebram em ate 3 linhas (Cliente termina em (CIDADE - UF)).
+  //  3) Versao varia muito ("1-", "1-288", "1-CX 1596 UNID") e o ERP escreve
+  //     "UNUID" no lugar de "UNID": o campo e gravado CRU, sem regex de unidade.
+  //  4) Entrega e Cliente vem vazios em 100% das Embaladeiras: nulo e valido,
+  //     nao e erro de parse — a linha NAO e descartada.
+  //  5) Nome do recurso nao bate com o codigo (1711 e 1712 sao "HECE TILT 5"):
+  //     quem manda e sempre o CODIGO.
+  //  6) Existem OPs com Quantidade 0,00 e Peso > 0: gravadas como estao.
+  //  7) Existem sobreposicoes de horario na mesma maquina: o parser registra,
+  //     nao conserta. Quem expoe e a aba Fila.
+  //  A ultima pagina ("Totalizacao por Grupo e Subgrupo") e ignorada.
+  const _264semAc = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const COLS264 = [
+    ['OP', 'op'], ['Produto', 'produto'], ['Versao', 'versao'], ['Cliente', 'cliente'],
+    ['Entrega', 'entrega'], ['Quantidade', 'quantidade'], ['Peso', 'peso'],
+    ['Inicio', 'inicio'], ['Termino', 'termino']
+  ];
+
+  function _fecha264(bloco, rec, diaFoto, horaFoto, ordem) {
+    if (!bloco || !rec) return null;
+    const txt = bloco.txt;
+    const mOp = /\b(\d{5,8})\b/.exec(bloco.cols.op || '');
+    if (!mOp) return null;
+
+    // Inicio / Termino: dd/mm/aa hh:mm (as duas primeiras do bloco, em ordem de leitura)
+    const dts = [];
+    const reDt = /(\d{2})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/g;
+    let m;
+    while ((m = reDt.exec(txt))) dts.push('20' + m[3] + '-' + m[2] + '-' + m[1] + 'T' + m[4] + ':' + m[5] + ':00-03:00');
+
+    // Entrega: a UNICA data com ano de 4 digitos do bloco
+    const mE = /\b(\d{2})\/(\d{2})\/(\d{4})\b/.exec(txt);
+
+    // Quantidade e Peso: primeiro pela coluna; se a coluna vier vazia, pelo par
+    // de numeros que antecede o primeiro "dd/mm/aa hh:mm".
+    const soNum = (v) => numBR(String(v || '').replace(/[^\d.,]/g, ''));
+    let quantidade = soNum(bloco.cols.quantidade);
+    let peso = soNum(bloco.cols.peso);
+    if (quantidade == null || peso == null) {
+      const mQP = /([\d.]*\d,\d{2})\s+([\d.]*\d,\d{2})\s+\d{2}\/\d{2}\/\d{2}\s+\d{2}:\d{2}/.exec(txt);
+      if (mQP) {
+        if (quantidade == null) quantidade = numBR(mQP[1]);
+        if (peso == null) peso = numBR(mQP[2]);
+      }
+    }
+
+    const limpa = (v) => String(v || '').replace(/\s+/g, ' ').trim() || null;
+    const prod = limpa(bloco.cols.produto) || '';
+    const mP = /^(\d{4,10})\s*-\s*([\s\S]*)$/.exec(prod);
+
+    return {
+      dia_foto: diaFoto,
+      hora_foto: horaFoto,
+      recurso_cod: rec.cod,
+      recurso_nome: rec.nome,
+      op: mOp[1],
+      item_cod: mP ? mP[1] : null,
+      item_desc: mP ? (limpa(mP[2]) || null) : (prod || null),
+      versao: limpa(bloco.cols.versao),
+      cliente: limpa(bloco.cols.cliente),
+      entrega: mE ? (mE[3] + '-' + mE[2] + '-' + mE[1]) : null,
+      quantidade: quantidade,
+      peso: peso,
+      inicio: dts[0] || null,
+      termino: dts[1] || null,
+      ordem: ordem
+    };
+  }
+
+  function parse264(linhas, periodo) {
+    const out = [];
+    const diaFoto = (periodo && periodo.gerado) || null;
+    let horaFoto = null;
+    for (const l of linhas.slice(0, 40)) {
+      const h = /\bHORA:\s*(\d{2}:\d{2}(?::\d{2})?)/.exec(l.texto);
+      if (h) { horaFoto = h[1]; break; }
+    }
+
+    let rec = null, colX = null, bloco = null, ordem = 0, parou = false;
+    const fecha = () => {
+      if (!bloco) return;
+      const r = _fecha264(bloco, rec, diaFoto, horaFoto, ordem + 1);
+      if (r) { ordem++; out.push(r); }
+      bloco = null;
+    };
+
+    for (const linha of linhas) {
+      if (parou) break;
+      const t = linha.texto;
+      const tSem = _264semAc(t);
+
+      // fim do relatorio: a totalizacao por grupo/subgrupo nao entra
+      if (/^Totaliza/i.test(tSem)) { fecha(); parou = true; break; }
+      if (/^(Total\s*:|Total Geral:|ROTINA:|Fila de Produ)/i.test(tSem)) { fecha(); continue; }
+
+      // troca de recurso (o cabecalho pode vir grudado na mesma linha)
+      const mR = /Recurso:\s*(\d+)\s*[-\u2013]\s*(.+?)(?=\s+OP\s+Produto|$)/.exec(t);
+      if (mR) { fecha(); rec = { cod: mR[1].trim(), nome: mR[2].trim() }; }
+
+      // cabecalho de colunas: guarda o X de cada coluna (repete a cada pagina)
+      if (/\bOP\b/.test(tSem) && /Produto/.test(tSem) && /Quantidade/.test(tSem) && /Peso/.test(tSem)) {
+        const novo = [];
+        for (const c of COLS264) {
+          const it = linha.itens.find(i => _264semAc(i.s).startsWith(c[0]));
+          if (it) novo.push({ chave: c[1], x: it.x });
+        }
+        if (novo.length >= 5) { fecha(); colX = novo.sort((a, b) => a.x - b.x); }
+        continue;
+      }
+      if (!colX || !rec) continue;
+
+      // inicio de registro: numero de 5-8 digitos na coluna OP
+      const xOp = (colX.find(c => c.chave === 'op') || { x: -999 }).x;
+      const abre = linha.itens.some(i => /^\d{5,8}$/.test(i.s) && Math.abs(i.x - xOp) <= 14);
+      if (abre) { fecha(); bloco = { cols: {}, txt: '' }; }
+      if (!bloco) continue;
+
+      // distribui os tokens da linha nas colunas pelo centro X (mesma regra dos outros RPCP)
+      for (const it of linha.itens) {
+        const cx = it.x + (it.w || 0) / 2;
+        let col = colX[0];
+        for (const c of colX) { if (cx >= c.x - 6) col = c; else break; }
+        bloco.cols[col.chave] = ((bloco.cols[col.chave] || '') + ' ' + it.s).trim();
+      }
+      bloco.txt = (bloco.txt + ' ' + t).trim();
+    }
+    fecha();
+
+    // o 264 e uma FOTO do dia, nao um periodo: carimba o dia de geracao
+    if (periodo && diaFoto) { periodo.de = periodo.de || diaFoto; periodo.ate = periodo.ate || diaFoto; }
+    return out;
+  }
 
   // ---------- leitura dos TOTAIS declarados no rodapé do PDF (p/ conferência) ----------
   // Números do rodapé podem vir com "." também como decimal (ex.: 3.849.139.366 = 3.849.139,366).
@@ -1749,7 +1891,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   async function parseDocumento(pdf) {
     const linhas = await extrairLinhas(pdf);
     const rotina = detectarRotina(linhas);
-    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646.');
+    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264.');
     const periodo = acharPeriodo(linhas);
     let registros;
     switch (rotina) {
@@ -1759,6 +1901,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       case '054': registros = parse054(linhas, periodo); break;
       case '643': registros = parse643(linhas, periodo); break;
       case '646': registros = parse646(linhas, periodo); break;
+      case '264': registros = parse264(linhas, periodo); break;
     }
     const soma = (k) => registros.reduce((a, r) => a + (r[k] || 0), 0);
     return {
@@ -1773,7 +1916,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     };
   }
 
-  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES };
+  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES, __parse264: parse264 };
 });
 
 </script>
@@ -1789,7 +1932,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.441.0';
+const APP_VER = '3.442.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5068,7 +5211,7 @@ const SETOR_MAQ = {
   'Rotulagem': [1302, 1303, 1304],
   'Sleeve': [1901, 1902, 1903, 1904],
   'Extrusão': [501, 502, 503, 504, 505, 506, 507],
-  'Embaladeiras': [1801, 1802, 1803, 1805],
+  'Embaladeiras': [1801, 1802, 1803, 1804, 1805],
   // Injeção aparece SÓ no relatório de paradas (643): nunca na produção (621/622)
   // nem nas perdas (624). Sem cadastro, caía em "Outros" e se misturava aos
   // demais setores no detalhe das paradas.
@@ -13267,6 +13410,7 @@ const MAPA = {
   '624': { tabela: 'perdas', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, data: r.data, ordem: r.ordem, acessorio: r.acessorio, tipo_perda_cod: r.tipo_perda_cod, tipo_perda_desc: r.tipo_perda_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '054': { tabela: 'perdas_cliente', linha: r => ({ dia: r.dia, op: r.op, data: r.data, tipo_perda_desc: r.tipo_perda_desc, etapa: r.etapa, cliente: r.cliente, acessorio: r.acessorio, quantidade: r.quantidade, peso: r.peso, item_desc: r.item_desc }) },
   '643': { tabela: 'paradas', linha: r => ({ dia: r.dia, motivo_cod: r.motivo_cod, motivo_desc: r.motivo_desc, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, data: r.data, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, inicio: r.inicio, fim: r.fim, tempo_horas: r.tempo_horas, tempo_exato: r.tempo_exato }) },
+  '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
 
@@ -13654,7 +13798,9 @@ async function gravar(id, substituir = false) {
          turnos 1-4 → dia que ainda não terminou → SAI
        Sem isso, o dia de hoje entra incompleto e derruba média, meta e previsão.
        Só filtra registro que TEM turno; 643 e 646 não têm e ficam de fora disto. */
-    if (r.periodo.gerado && Array.isArray(r.registros)) {
+    // o 264 e FOTO da fila (nao tem turno e nao e producao apontada): o corte
+    // do dia aberto nao se aplica — aplicar apagaria a fila inteira.
+    if (r.rotina !== '264' && r.periodo.gerado && Array.isArray(r.registros)) {
       const g = String(r.periodo.gerado);
       const antes = r.registros.length;
       // hora do registro SEM new Date(): campo do ERP com fuso aplicado mente.
@@ -13712,6 +13858,10 @@ async function gravar(id, substituir = false) {
       const lote = linhas.slice(i, i + 400);
       const { error: e2 } = (mapa.tabela === 'producao_resumo')
         ? await sb.from(mapa.tabela).upsert(lote, { onConflict: 'dia,turno,recurso_cod,unidade' })
+        : (mapa.tabela === 'fila_producao')
+        // uma foto por dia/maquina/OP: reimportar o mesmo PDF corrige a foto do dia
+        // em vez de duplicar. As fotos dos dias anteriores NAO sao tocadas.
+        ? await sb.from(mapa.tabela).upsert(lote, { onConflict: 'dia_foto,recurso_cod,op' })
         : await sb.from(mapa.tabela).insert(lote);
       if (e2) {
         await sb.from('importacoes').delete().eq('id', imp.id); // desfaz (cascade)
@@ -13721,7 +13871,10 @@ async function gravar(id, substituir = false) {
     }
     // 3) só agora tira o que era do mesmo período e veio de importações anteriores.
     //    Se algo acima falhou, nada foi apagado e o dado antigo continua de pé.
-    if (r.periodo.de && r.periodo.ate) {
+    // fila_producao e HISTORICO (uma foto por dia) e nao tem coluna 'dia':
+    // a limpeza por periodo NAO roda aqui. Se rodasse, o delete em importacoes
+    // levaria junto (ON DELETE CASCADE) a fila das outras maquinas do mesmo dia.
+    if (mapa.tabela !== 'fila_producao' && r.periodo.de && r.periodo.ate) {
       const { error: eDel } = await sb.from(mapa.tabela).delete()
         .gte('dia', r.periodo.de).lte('dia', r.periodo.ate)
         .neq('importacao_id', imp.id);
