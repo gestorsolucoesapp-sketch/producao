@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.429.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.430.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1776,7 +1776,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.429.0';
+const APP_VER = '3.430.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13193,7 +13193,7 @@ async function renderFila() {
     </div></div>`;
 }
 
-/** baixa os pendentes, passa pelos parsers, grava e carimba a fila */
+/** baixa os pendentes, manda cada um pro importador certo e carimba a fila */
 async function puxarDaFila(auto) {
   if (_filaOcupada) return;
   const pend = await filaPendentes();
@@ -13202,32 +13202,47 @@ async function puxarDaFila(auto) {
   const b = $('btnFila');
   if (b) { b.disabled = true; b.innerHTML = '<span class="spin"></span>Baixando…'; }
 
-  const arquivos = [], ids = [], falhas = [];
+  // Dois importadores diferentes: os seis rpcp passam pelo RioParsers da aba
+  // Importar; o rsmi005 e o rsmi010 têm parser próprio e viram OS na aba
+  // Manutenção. Mandar um pro caminho do outro dá "não foi possível ler".
+  const prod = [], os = [], ids = [], falhas = [];
   for (const r of pend) {
     try {
       const { data: blob, error } = await sb.storage.from('relatorios-dia').download(r.caminho);
       if (error || !blob) { falhas.push(r.arquivo); continue; }
-      arquivos.push(new File([blob], r.arquivo, { type: 'application/pdf' }));
+      const f = new File([blob], r.arquivo, { type: 'application/pdf' });
+      (/^rsmi/i.test(String(r.codigo || '')) ? os : prod).push(f);
       ids.push(r.id);
     } catch (_) { falhas.push(r.arquivo); }
   }
 
-  if (!arquivos.length) {
+  if (!prod.length && !os.length) {
     _filaOcupada = false; renderFila();
     toast('❌ Não consegui baixar os PDFs da fila.');
     return;
   }
 
+  let nOS = 0;
   try {
-    if (_abaAtual !== 'importar') trocarAba('importar');
-    await processarArquivos(arquivos);
-    await gravarTodos();
-    // só carimba o que realmente passou: se a gravação falhar, a fila continua
-    // cheia e o card volta a aparecer — o silêncio é o que a gente quer evitar
+    if (prod.length) {
+      if (_abaAtual !== 'importar') trocarAba('importar');
+      await processarArquivos(prod);
+      await gravarTodos();
+    }
+    for (const f of os) {
+      try {
+        const ordens = await lerPdfTexto(f, document.createElement('div'));
+        if (ordens && ordens.length) { await salvarOrdens(ordens, document.createElement('div')); nOS += ordens.length; }
+      } catch (e) { falhas.push(f.name); }
+    }
+    // só carimba depois que gravou. Se falhar, a fila continua cheia e o card
+    // volta na próxima abertura — falha silenciosa é o que a gente não quer.
     await sb.from('relatorios_email')
       .update({ status: 'processado', processado_em: new Date().toISOString() })
       .in('id', ids);
-    toast(`✅ ${arquivos.length} relatório(s) importado(s) da fila` + (falhas.length ? ` · ${falhas.length} falhou` : ''));
+    toast(`✅ ${prod.length} relatório(s)` + (nOS ? ` · ${nOS} OS` : '') +
+      ' importado(s) da fila' + (falhas.length ? ` · ${falhas.length} falhou` : ''));
+    if (nOS) { try { carregarManut(); } catch (_) {} }
   } catch (e) {
     toast('❌ Falhou ao importar da fila: ' + (e.message || e));
   }
