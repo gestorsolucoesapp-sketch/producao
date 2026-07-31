@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.430.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.431.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1776,7 +1776,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.430.0';
+const APP_VER = '3.431.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13170,9 +13170,13 @@ async function filaPendentes() {
   try {
     const { data, error } = await sb.from('relatorios_email')
       .select('id,codigo,arquivo,caminho,data_geracao')
-      .eq('status', 'novo').order('data_geracao', { ascending: true }).limit(30);
-    if (error) return [];
-    return data || [];
+      .eq('status', 'novo').order('data_geracao', { ascending: false }).limit(60);
+    if (error || !data || !data.length) return [];
+    // Só o dia de geração MAIS RECENTE. O relatório do ERP substitui o mês
+    // inteiro, então processar os dias anteriores é retrabalho puro — e foi o
+    // que fez a fila acumular 67 arquivos de 9 dias diferentes.
+    const ultimo = String(data[0].data_geracao);
+    return data.filter(r => String(r.data_geracao) === ultimo);
   } catch (_) { return []; }
 }
 
@@ -13235,11 +13239,15 @@ async function puxarDaFila(auto) {
         if (ordens && ordens.length) { await salvarOrdens(ordens, document.createElement('div')); nOS += ordens.length; }
       } catch (e) { falhas.push(f.name); }
     }
-    // só carimba depois que gravou. Se falhar, a fila continua cheia e o card
-    // volta na próxima abertura — falha silenciosa é o que a gente não quer.
+    // carimba os que foram importados E enterra os dias anteriores: o relatório
+    // do ERP substitui o mês, então dia velho na fila é só retrabalho.
     await sb.from('relatorios_email')
       .update({ status: 'processado', processado_em: new Date().toISOString() })
       .in('id', ids);
+    const dia = String(pend[0].data_geracao);
+    await sb.from('relatorios_email')
+      .update({ status: 'processado', processado_em: new Date().toISOString() })
+      .eq('status', 'novo').lt('data_geracao', dia);
     toast(`✅ ${prod.length} relatório(s)` + (nOS ? ` · ${nOS} OS` : '') +
       ' importado(s) da fila' + (falhas.length ? ` · ${falhas.length} falhou` : ''));
     if (nOS) { try { carregarManut(); } catch (_) {} }
