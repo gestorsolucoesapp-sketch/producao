@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.436.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.437.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -865,6 +865,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     <section id="abaImportar" class="oculto">
       <div id="faixaAtualiz"></div>
       <div id="cardFila" class="oculto"></div>
+      <div id="cardHorarios"></div>
       <div class="card">
         <div class="titulo-sec">Importar relatórios do ERP</div>
         <div class="drop" id="zonaDrop">
@@ -1788,7 +1789,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.436.0';
+const APP_VER = '3.437.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2877,6 +2878,9 @@ async function mostrarApp() {
       if (document.hidden) return;             // aba escondida não gasta rede
       try { puxarDaFila(true); } catch (_) {}
     }, 5 * 60 * 1000);
+    // relógio dos horários escolhidos — 30s pra não perder o minuto exato
+    carregarHorariosImport();
+    if (!window._horaTimer) window._horaTimer = setInterval(_tiqueHorarios, 30 * 1000);
   } catch (_) {}
 }
 // fecha o acesso ao fechar/atualizar a aba
@@ -5040,7 +5044,7 @@ function trocarAba(qual) {
   if (qual === 'painel') carregarPainel();
   if (qual === 'analise') carregarAnalise();
   if (qual === 'tarefas') carregarTarefas();
-  if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); } catch (_) {} }
+  if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
   if (qual === 'historico') carregarHistorico();
   if (qual === 'usuarios')  carregarUsuarios();
   if (qual === 'metas')     carregarMetas();
@@ -13299,7 +13303,88 @@ async function renderFila() {
     </div></div>`;
 }
 
-/** baixa os pendentes, manda cada um pro importador certo e carimba a fila */
+/* ===== HORÁRIOS DE IMPORTAÇÃO AUTOMÁTICA =====
+   O app é uma página: só dispara com a tela aberta. Guardamos os horários no
+   app_config pra valerem em qualquer aparelho, e um tique de 30s compara o
+   relógio. Cada horário dispara UMA vez por dia — a marca fica em _jaDisparou. */
+let _horariosImport = null;      // null = ainda não li do banco
+let _jaDisparou = {};            // { '2026-07-31 14:00': true }
+
+async function carregarHorariosImport() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'import_horarios').maybeSingle();
+    let v = data ? data.valor : null;
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = null; } }
+    _horariosImport = Array.isArray(v) ? v.filter(h => /^\d{2}:\d{2}$/.test(h)).sort() : [];
+  } catch (_) { _horariosImport = []; }
+  return _horariosImport;
+}
+
+async function salvarHorariosImport(arr) {
+  _horariosImport = arr.slice().sort();
+  try {
+    await sb.from('app_config').upsert(
+      { chave: 'import_horarios', valor: JSON.stringify(_horariosImport) },
+      { onConflict: 'chave' });
+  } catch (e) { toast('❌ Não consegui salvar: ' + (e.message || e)); }
+  renderHorariosImport();
+}
+
+async function addHorarioImport() {
+  const inp = $('novoHorario'); if (!inp || !inp.value) { toast('Escolha um horário.'); return; }
+  const h = String(inp.value).slice(0, 5);
+  if (!/^\d{2}:\d{2}$/.test(h)) { toast('Horário inválido.'); return; }
+  const arr = (_horariosImport || []).slice();
+  if (arr.includes(h)) { toast('Esse horário já está na lista.'); return; }
+  arr.push(h);
+  await salvarHorariosImport(arr);
+  toast('✅ ' + h + ' adicionado.');
+}
+
+async function delHorarioImport(h) {
+  await salvarHorariosImport((_horariosImport || []).filter(x => x !== h));
+}
+
+async function renderHorariosImport() {
+  const box = $('cardHorarios'); if (!box) return;
+  if (_horariosImport === null) await carregarHorariosImport();
+  const chips = (_horariosImport || []).map(h =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--leve);border:1px solid var(--linha);border-radius:999px;padding:5px 6px 5px 12px;font-size:13px;font-weight:700">
+      ⏰ ${escapeHtml(h)}
+      <button onclick="delHorarioImport('${escapeHtml(h)}')" title="remover" style="border:none;background:var(--leve-2);color:var(--fraco);border-radius:50%;width:20px;height:20px;line-height:18px;cursor:pointer;font-weight:800">×</button>
+    </span>`).join('');
+  box.innerHTML = `<div class="card">
+    <div class="titulo-sec">⏰ Importar automaticamente</div>
+    <p class="desc" style="margin:0 0 10px">Com o app aberto, ele busca a fila nestes horários e atualiza a tela sozinho.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+      <div class="campo" style="margin:0"><label for="novoHorario">Novo horário</label>
+        <input type="time" id="novoHorario" style="font-size:16px;padding:6px 9px;border:1px solid var(--linha);border-radius:10px"></div>
+      <button class="btn btn-navy" style="width:auto;padding:0 16px" onclick="addHorarioImport()">Adicionar</button>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap">${chips || '<span class="desc">Nenhum horário — hoje ele só importa ao abrir o app e de 5 em 5 minutos.</span>'}</div>
+  </div>`;
+}
+
+/** tique de 30s: compara o relógio com a lista e dispara uma vez por horário/dia */
+async function _tiqueHorarios() {
+  try {
+    if (document.hidden) return;
+    if (_horariosImport === null) { await carregarHorariosImport(); return; }
+    if (!_horariosImport.length) return;
+    const ag = new Date();
+    const hhmm = String(ag.getHours()).padStart(2, '0') + ':' + String(ag.getMinutes()).padStart(2, '0');
+    if (!_horariosImport.includes(hhmm)) return;
+    const marca = ag.toISOString().slice(0, 10) + ' ' + hhmm;
+    if (_jaDisparou[marca]) return;
+    _jaDisparou[marca] = true;
+    toast('⏰ ' + hhmm + ' — buscando relatórios…');
+    await puxarDaFila(true);
+    // atualiza a tela mesmo que a fila estivesse vazia: é o "atualizar sozinho"
+    dadosPainel = dadosPainelFull = null; dadosAnalise = null;
+    try { await carregarUltimaImportacao(); } catch (_) { }
+    try { refreshAbaAtiva(); } catch (_) { }
+  } catch (_) { }
+}
 async function puxarDaFila(auto) {
   if (_filaOcupada) return;
   const pend = await filaPendentes();
