@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.411.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.412.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.411.0';
+const APP_VER = '3.412.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2844,7 +2844,7 @@ async function mostrarApp() {
   if (souAdmin) carregarNovosIntegrantes();
   Promise.all([
     getTarefas().catch(() => {}),
-    (async () => { try { const d = await buscarTodasOS(); if (!osLista || !osLista.length) osLista = d; } catch (_) {} })()
+    (async () => { try { const d = await buscarTodasOS(null, _osPiso90()); if (!osLista || !osLista.length) osLista = d; } catch (_) {} })()
   ]).then(() => atualizarSino());
 }
 // fecha o acesso ao fechar/atualizar a aba
@@ -6267,10 +6267,15 @@ function ligarDropOS() {
 }
 // carrega TODAS as OS (o Supabase corta em 1000 por requisição → pagina)
 const OS_COLS = 'situacao,data_encerramento,id,os_num,data_abertura,data_parada,data_reinicio,recurso_cod,maquina_desc,setor,atividade,motivo,submotivo,urgencia,situacao_maquina,autor,detalhes,conclusao,colaboradores,custo,horas_parada,criado_por,criado_por_nome,criado_em,escopo,maquina_parada,responsavel_id,responsavel_nome,responsaveis,iniciada_em,iniciada_por,iniciada_por_nome,horas_execucao,foto_url';
-async function buscarTodasOS(cols) {
+/* desde = piso de data_abertura (AAAA-MM-DD). Sem ele, traz a tabela inteira.
+   Com o ano importado sao ~6 mil OS e ~2 MB por carga; o Painel e o sino nao
+   precisam disso, so a aba Manutencao precisa do historico completo. */
+async function buscarTodasOS(cols, desde) {
   const passo = 1000; let ini = 0, tudo = [];
   while (ini < 20000) {
-    const { data, error } = await sb.from('manutencao_os').select(cols || OS_COLS)
+    let q = sb.from('manutencao_os').select(cols || OS_COLS);
+    if (desde) q = q.gte('data_abertura', String(desde).slice(0, 10));
+    const { data, error } = await q
       .order('data_abertura', { ascending: false }).range(ini, ini + passo - 1);
     if (error) break;
     tudo = tudo.concat(data || []);
@@ -6278,6 +6283,11 @@ async function buscarTodasOS(cols) {
     ini += passo;
   }
   return tudo;
+}
+// piso de data para as cargas leves: 90 dias atras
+function _osPiso90() {
+  const d = new Date(Date.now() - 90 * 86400000);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 async function carregarManut() {
   setTimeout(travarSetores, 0);
@@ -7554,7 +7564,7 @@ async function carregarPainel() {
         (getRegrasPerda()),
         getMaqsAtivas(),
         (diasOverride === null ? getDiasOverride() : Promise.resolve()),
-        buscarTodasOS().then(ro => { osLista = ro || []; }).catch(() => {}),
+        buscarTodasOS(null, de).then(ro => { osLista = ro || []; }).catch(() => {}),   // só o período na tela
         sb.from('os_eventos').select('*').order('criado_em', { ascending: false }).limit(20).then(re2 => { evtOS = re2.data || []; }).catch(() => { evtOS = []; })
       ]);
       classificarPerdas(perdas);
