@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.414.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.415.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.414.0';
+const APP_VER = '3.415.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3484,7 +3484,7 @@ function abrirNotificacoes() {
     ${ns.length ? ns.map(x => {
         if (x.tipo === 'os') {
           const o = x.os;
-          const emExec = !!o.iniciada_em && !o.data_reinicio;
+          const emExec = !!o.iniciada_em && osAberta(o);
           const lida = notifLidas.includes(x.id);
           return `<div style="border-left:5px solid ${cor.os};background:#F7F9FB;border-radius:10px;padding:10px;margin-bottom:8px;${lida ? 'opacity:.55' : ''}">
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
@@ -6315,7 +6315,7 @@ const osAberta = o => {
   return !o.data_reinicio;   // fallback antigo
 };
 const osFechada = o => !osAberta(o);
-const emExecucao = o => !!o.iniciada_em && !o.data_reinicio;
+const emExecucao = o => !!o.iniciada_em && osAberta(o);
 const podeMexer = o => souAdmin || !o.iniciada_em || (perfil && o.iniciada_por === perfil.id);
 function tempoDesde(iso) {
   const ms = Date.now() - new Date(iso).getTime();
@@ -6495,9 +6495,11 @@ function detProblemasMaq(cod) {
     if (!L.length) { abreDet('🔧 ' + cod, `<p class="idet-desc">${escapeHtml(String(nome))}</p><p class="desc">Nenhuma OS no período.</p>`); return; }
     // agrupa por motivo
     const porMot = {};
-    L.forEach(o => { const k = (o.motivo || '—').toString().trim() || '—'; const g = (porMot[k] = porMot[k] || { n: 0, ab: 0 }); g.n++; if (!o.data_reinicio) g.ab++; });
+    // osAberta() olha a situacao primeiro; !data_reinicio sozinho contava 1.567 OS
+    // ja fechadas como se estivessem abertas (achado em 30/07/2026)
+    L.forEach(o => { const k = (o.motivo || '—').toString().trim() || '—'; const g = (porMot[k] = porMot[k] || { n: 0, ab: 0 }); g.n++; if (osAberta(o)) g.ab++; });
     const arr = Object.entries(porMot).map(([m, g]) => ({ l: m, v: g.n })).sort((a, b) => b.v - a.v);
-    const abertas = L.filter(o => !o.data_reinicio).length;
+    const abertas = L.filter(osAberta).length;
     // mais recente primeiro em toda lista aberta a partir daqui
     const ordOS = (a, b) => String(b.data_abertura || '').localeCompare(String(a.data_abertura || ''));
     const motDe = o => (o.motivo || '—').toString().trim() || '—';
@@ -6507,7 +6509,7 @@ function detProblemasMaq(cod) {
     _drill[chTodas] = { titulo: cod + ' · todas as OS', lista: L.slice().sort(ordOS) };
     arr.forEach((x, i) => {
       _drill['pm_' + cod + '_' + i] = { titulo: cod + ' · ' + x.l, lista: L.filter(o => motDe(o) === x.l).sort(ordOS) };
-      _drill['pma_' + cod + '_' + i] = { titulo: cod + ' · ' + x.l + ' · em aberto', lista: L.filter(o => motDe(o) === x.l && !o.data_reinicio).sort(ordOS) };
+      _drill['pma_' + cod + '_' + i] = { titulo: cod + ' · ' + x.l + ' · em aberto', lista: L.filter(o => motDe(o) === x.l && osAberta(o)).sort(ordOS) };
       x.click = `verOSDe('pm_${cod}_${i}','${cod}')`;   // clicar na barra do gráfico também abre
     });
     const corpo = `<p class="idet-desc">${escapeHtml(String(nome))}</p>` +
@@ -6989,7 +6991,7 @@ function renderManut() {
     L.forEach(o => { const k = grupoAtiv(o); if (osFechada(o)) g[k].fe++; else g[k].ab++; });
     const arr = [];
     ['Elétrica', 'Mecânica', 'Outras'].forEach(k => {
-      if (g[k].ab) { const ch = 'ab_' + k; _drill[ch] = { titulo: k + ' · em aberto', lista: L.filter(o => grupoAtiv(o) === k && !o.data_reinicio) }; arr.push({ l: k + ' · em aberto', v: g[k].ab, cor: 'var(--critico)', click: `verOSGrupo('${ch}')` }); }
+      if (g[k].ab) { const ch = 'ab_' + k; _drill[ch] = { titulo: k + ' · em aberto', lista: L.filter(o => grupoAtiv(o) === k && osAberta(o)) }; arr.push({ l: k + ' · em aberto', v: g[k].ab, cor: 'var(--critico)', click: `verOSGrupo('${ch}')` }); }
       if (g[k].fe) { const ch = 'fe_' + k; _drill[ch] = { titulo: k + ' · concluídas', lista: L.filter(o => grupoAtiv(o) === k && o.data_reinicio) }; arr.push({ l: k + ' · concluída', v: g[k].fe, cor: 'var(--ok-3)', click: `verOSGrupo('${ch}')` }); }
     });
     if (arr.length) html += card('Abertas × concluídas por atividade', 'vermelho = em aberto · verde = concluída', barrasHorizontal(arr, 'OS'));
@@ -10736,7 +10738,7 @@ function contextoIA() {
 
   let manutTxt = '';
   if (osLista && osLista.length) {
-    const ab = osLista.filter(o => !o.data_reinicio);
+    const ab = osLista.filter(osAberta);
     const porMaq = {}; osLista.forEach(o => { const k = (o.recurso_cod || o.setor || '—'); porMaq[k] = (porMaq[k] || 0) + 1; });
     const top = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k}: ${n}`).join('; ');
     const hOS = osLista.reduce((a, o) => a + (o.horas_parada || 0), 0);
@@ -11009,7 +11011,7 @@ function respostaLocal(perg) {
   // ---------- OS / MANUTENÇÃO ----------
   if (/\bos\b|ordem de servico|ordens|manutencao aberta|em aberto/.test(q)) {
     const lista = (osLista || []).filter(o => !setor || setorDe(o.recurso_cod) === setor).filter(o => !maq || String(o.recurso_cod) === maq);
-    const abertas = lista.filter(o => !o.data_reinicio);
+    const abertas = lista.filter(osAberta);   // a IA responde com a mesma regra das telas
     const porMaq = {}; abertas.forEach(o => { const c = String(o.recurso_cod); porMaq[`${c} ${nomeM(c)}`] = (porMaq[`${c} ${nomeM(c)}`] || 0) + 1; });
     return `🔧 **${escopo}**\nOS em aberto: **${abertas.length}** de ${lista.length} no total.` +
       (abertas.length ? `\n\n**Máquinas com mais OS abertas:**\n${top(porMaq, 5, v => v + ' OS')}` : '');
