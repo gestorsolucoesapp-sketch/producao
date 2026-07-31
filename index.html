@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.415.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.416.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.415.0';
+const APP_VER = '3.416.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6633,7 +6633,9 @@ function manutAnaliseCalc(L) {
   }).sort((a, b) => (b.n - a.n) || (b.h - a.h));
 
   // preventiva x corretiva
-  const ehPrev = o => /PREVENTIV/.test(norm(o.motivo) + ' ' + norm(o.submotivo) + ' ' + norm(o.atividade));
+  // atividade guarda a EQUIPE ('PREVENTIVA'), nao o tipo da OS: corretiva feita
+  // pela equipe preventiva entrava como preventiva. Vale o MOTIVO. (30/07/2026)
+  const ehPrev = o => /PREVENTIV/.test(norm(o.motivo) + ' ' + norm(o.submotivo));
   const nPrev = L.filter(ehPrev).length;
 
   // envelhecimento das abertas
@@ -6656,11 +6658,13 @@ function manutDet(tipo) {
     lista.forEach(o => { const c = String(o.recurso_cod || '—'); m[c] = (m[c] || 0) + (valFn ? valFn(o) : 1); });
     return Object.entries(m).map(([c, v]) => ({ l: c, v: v, click: `detProblemasMaq('${c}')` })).sort((a, b) => b.v - a.v);
   };
-  const blocoPior = (arr, un) => {
+  // Em preventiva, liderar a lista e BOM. Nos outros casos e problema.
+  const blocoPior = (arr, un, bom) => {
     if (!arr.length) return '';
     const p = arr[0], tot = arr.reduce((a, x) => a + x.v, 0);
-    return `<div style="background:#FDE7E7;border:1px solid #E7A1A1;border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13px;color:#8B2E2E">
-      <b>Pior máquina: ${escapeHtml(p.l)}</b> — ${escapeHtml(String(nomeMaq[p.l] || ''))}<br>
+    const cor = bom ? { bg: '#EDF7EF', bd: '#BFDCC4', tx: '#1E6B33' } : { bg: '#FDE7E7', bd: '#E7A1A1', tx: '#8B2E2E' };
+    return `<div style="background:${cor.bg};border:1px solid ${cor.bd};border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13px;color:${cor.tx}">
+      <b>${bom ? 'Máquina mais atendida' : 'Pior máquina'}: ${escapeHtml(p.l)}</b> — ${escapeHtml(String(nomeMaq[p.l] || ''))}<br>
       <span style="font-weight:700">${p.v}${un} de ${tot}${un}, ou ${Math.round(p.v / tot * 100)}% do total.</span></div>`;
   };
 
@@ -6698,9 +6702,10 @@ function manutDet(tipo) {
       `<td><span class="cel cel-tot">${x.n}×</span></td>` +
       `<td style="font-size:11.5px">${x.inter != null ? 'a cada ~' + Math.round(x.inter) + 'd' : '—'}</td></tr>`).join(''));
   } else {
-    const prev = (A.L || []).filter(o => /PREVENTIV/i.test(String(o.motivo || '') + ' ' + String(o.submotivo || '') + ' ' + String(o.atividade || '')));
+    const prev = (A.L || []).filter(o => /PREVENTIV/i.test(String(o.motivo || '') + ' ' + String(o.submotivo || '')));
     lista = prev; tit = '🛠️ Manutenção preventiva'; un = ' OS';
-    desc = `${prev.length} de ${(A.L || []).length} OS são preventivas. O resto é corretiva — máquina que já parou.`;
+    const prevAb = prev.filter(osAberta).length;
+    desc = `${prev.length} de ${(A.L || []).length} OS são preventivas (${pct(prev.length, (A.L || []).length)}) — ${prevAb} ainda em aberto, ${prev.length - prevAb} concluídas. O resto é corretiva: máquina que já tinha parado.`;
     arr = porMaquina(prev);
     const semPrev = Object.keys(nomeMaq).filter(c => !prev.some(o => String(o.recurso_cod) === c));
     tab = (arr.length ? tabSimples(['Máquina', 'Preventivas'], arr.slice(0, 40).map(x =>
@@ -6712,7 +6717,7 @@ function manutDet(tipo) {
     ? paretoSVG(arr.slice(0, 12), v => v + un, 'var(--critico)') + paretoHorizontal(arr.slice(0, 12), v => v + un, 'var(--critico)')
     : '';
   _detVoltar = null;
-  abreDet(tit, `<p class="idet-desc">${escapeHtml(desc)}</p>` + graf + blocoPior(arr, un) +
+  abreDet(tit, `<p class="idet-desc">${escapeHtml(desc)}</p>` + graf + blocoPior(arr, un, tipo === 'prev') +
     '<div style="height:8px"></div>' + tab);
 }
 
