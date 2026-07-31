@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.432.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.433.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1776,7 +1776,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.432.0';
+const APP_VER = '3.433.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9447,32 +9447,49 @@ async function detParadasMotivo(cod, motivo) {
       <td><span class="cel ${(+p.tempo_horas || 0) >= 4 ? 'baixo' : 'neutra'}">${fmtH(p.tempo_horas)}</span></td></tr>`;
   }).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--fraco);padding:14px">Nenhuma parada.</td></tr>');
 
-  h += `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Ordens de serviço da máquina no período</div>
+  h += `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Ordens de serviço ligadas a essas paradas</div>
     <div id="osDoMotivo" style="font-size:12px;color:var(--fraco)"><span class="spin"></span> buscando…</div>`;
 
   _detVoltar = () => detDesempenhoMaq(cod);
   abreDet('🔧 ' + cod + ' · ' + String(motivo).slice(0, 28), h);
 
-  // as OS não vêm no cache do painel: busca direto, só as da máquina no período
+  // Não existe chave ligando parada a OS no banco. O vínculo honesto possível é
+  // o DIA: mostra só as OS abertas (ou com máquina parada) num dia em que este
+  // motivo derrubou esta máquina. O resto das OS fica de fora de propósito.
   try {
+    const diasMot = new Set(par.map(p => String(p.dia || p.inicio || '').slice(0, 10)).filter(Boolean));
     const de = (periodoSel && periodoSel.de) || null, ate = (periodoSel && periodoSel.ate) || null;
-    let q = sb.from('manutencao_os')
-      .select('os_num,data_abertura,data_reinicio,motivo,submotivo,situacao,horas_parada,atividade')
-      .eq('recurso_cod', cod).order('data_abertura', { ascending: false }).limit(40);
+    let q = sb.from('manutencao_os').select('*')
+      .eq('recurso_cod', cod).order('data_abertura', { ascending: false }).limit(120);
     if (de) q = q.gte('data_abertura', de);
     if (ate) q = q.lte('data_abertura', ate);
-    const { data: os, error } = await q;
+    const { data: todas, error } = await q;
     const box = $('osDoMotivo'); if (!box) return;
     if (error) { box.textContent = 'Não consegui buscar as OS.'; return; }
-    if (!os || !os.length) { box.textContent = 'Nenhuma OS registrada para esta máquina no período.'; return; }
-    box.innerHTML = tabSimples(['OS · abertura', 'Motivo', 'Situação'], os.map(o => {
-      const aberta = (typeof osAberta === 'function') ? osAberta(o) : !o.data_reinicio;
-      return `<tr><td class="nome" style="font-size:11.5px;white-space:nowrap"><span class="cod">${escapeHtml(String(o.os_num || '—'))}</span>
+
+    const noDia = (o) => diasMot.has(String(o.data_abertura || '').slice(0, 10)) ||
+      diasMot.has(String(o.data_parada || '').slice(0, 10));
+    const os = (todas || []).filter(noDia);
+
+    // deixa o verOS() achar essas OS: ele lê do cache global osLista
+    try {
+      (todas || []).forEach(o => { if (!osLista.some(x => String(x.id) === String(o.id))) osLista.push(o); });
+    } catch (_) { }
+
+    if (!os.length) {
+      box.innerHTML = `<p style="margin:0">Nenhuma OS aberta nos ${diasMot.size} dia(s) em que este motivo parou a máquina.` +
+        ((todas || []).length ? `<br><span style="color:var(--fraco-2)">A máquina tem ${todas.length} OS no período, em outros dias.</span>` : '') + `</p>`;
+      return;
+    }
+    box.innerHTML = `<p style="margin:0 0 6px;color:var(--fraco-2)">${os.length} de ${(todas || []).length} OS da máquina caem num dia com esta parada · toque pra abrir</p>` +
+      tabSimples(['OS · abertura', 'Motivo', 'Situação'], os.map(o => {
+        const aberta = (typeof osAberta === 'function') ? osAberta(o) : !o.data_reinicio;
+        return `<tr onclick="verOS('${String(o.id)}')" style="cursor:pointer"><td class="nome" style="font-size:11.5px;white-space:nowrap"><span class="cod">${escapeHtml(String(o.os_num || '—'))}</span>
         <div style="font-size:11px;color:var(--fraco-2);font-weight:600">${o.data_abertura ? fmtData(String(o.data_abertura).slice(0, 10)) : '—'}${o.horas_parada ? ' · ' + fmtH(o.horas_parada) : ''}</div></td>
         <td style="text-align:left;font-size:12px">${escapeHtml(String(o.motivo || '—').slice(0, 26))}
         ${o.submotivo ? `<div style="font-size:11px;color:var(--fraco-2);font-weight:600">${escapeHtml(String(o.submotivo).slice(0, 26))}</div>` : ''}</td>
         <td><span class="cel ${aberta ? 'baixo' : 'ok'}">${aberta ? 'aberta' : 'fechada'}</span></td></tr>`;
-    }).join(''));
+      }).join(''));
   } catch (e) {
     const box = $('osDoMotivo'); if (box) box.textContent = 'Não consegui buscar as OS.';
   }
