@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.439.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.440.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1789,7 +1789,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.439.0';
+const APP_VER = '3.440.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13646,10 +13646,20 @@ async function gravar(id, substituir = false) {
     if (r.periodo.gerado && Array.isArray(r.registros)) {
       const g = String(r.periodo.gerado);
       const antes = r.registros.length;
+      // hora do registro SEM new Date(): campo do ERP com fuso aplicado mente.
+      const hhmm = v => { const m = /T(\d{2}):(\d{2})/.exec(String(v || '')) || /\b(\d{2}):(\d{2})/.exec(String(v || '')); return m ? m[1] + ':' + m[2] : null; };
       r.registros = r.registros.filter(x => {
         if (!x || String(x.dia) !== g) return true;
         const t = parseInt(x.turno, 10);
-        return !(t >= 1 && t <= 4);
+        if (t >= 1 && t <= 4) return false;          // 621/622/624: turno diz tudo
+        if (t === 5) return true;
+        // 643 e 646 não têm turno: vale o RELÓGIO. O dia operacional abre 06:00,
+        // então tudo de 06:00 em diante no dia gerado ainda não aconteceu — e o
+        // ERP lança a parada PROGRAMADA do dia inteiro logo cedo, trazendo até a
+        // janela da noite que só termina amanhã.
+        const h = hhmm(x.inicio || x.hora);
+        if (h) return h < '06:00';
+        return true;                                  // sem hora legível: não descarta
       });
       r.diaAbertoCortado = antes - r.registros.length;
     }
