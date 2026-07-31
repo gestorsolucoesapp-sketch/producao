@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.413.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.414.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.413.0';
+const APP_VER = '3.414.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6642,6 +6642,78 @@ function manutAnaliseCalc(L) {
   return { L, abertas, fechadas, totH, mttr, mediana, negativas, comH, maqTop, maqHora, motTop, reinc, nPrev, maisAntiga, velhas30 };
 }
 
+/* Detalhe dos selos do diagnóstico. Cada um abre a lista, um Pareto das máquinas
+   e destaca a pior — que é a pergunta que o selo levanta e não respondia. */
+function manutDet(tipo) {
+  const A = _mntAnaliseCache;
+  if (!A) { toast('Abra a aba Manutenção primeiro.'); return; }
+  const fh = v => (v == null) ? '—' : (Math.round(v * 10) / 10).toString().replace('.', ',') + 'h';
+  const nomeMaq = {}; (A.L || []).forEach(o => { nomeMaq[String(o.recurso_cod)] = o.maquina_desc || o.recurso_cod; });
+  const porMaquina = (lista, valFn) => {
+    const m = {};
+    lista.forEach(o => { const c = String(o.recurso_cod || '—'); m[c] = (m[c] || 0) + (valFn ? valFn(o) : 1); });
+    return Object.entries(m).map(([c, v]) => ({ l: c, v: v, click: `detProblemasMaq('${c}')` })).sort((a, b) => b.v - a.v);
+  };
+  const blocoPior = (arr, un) => {
+    if (!arr.length) return '';
+    const p = arr[0], tot = arr.reduce((a, x) => a + x.v, 0);
+    return `<div style="background:#FDE7E7;border:1px solid #E7A1A1;border-radius:12px;padding:11px 13px;margin:10px 0;font-size:13px;color:#8B2E2E">
+      <b>Pior máquina: ${escapeHtml(p.l)}</b> — ${escapeHtml(String(nomeMaq[p.l] || ''))}<br>
+      <span style="font-weight:700">${p.v}${un} de ${tot}${un}, ou ${Math.round(p.v / tot * 100)}% do total.</span></div>`;
+  };
+
+  let tit = '', desc = '', lista = [], arr = [], un = '', tab = '';
+
+  if (tipo === 'invertidas') {
+    lista = (A.L || []).filter(o => o.data_abertura && o.data_reinicio &&
+      ((new Date(o.data_reinicio) - new Date(o.data_abertura)) < 0));
+    tit = '⚠️ OS com data invertida'; un = ' OS';
+    desc = `${lista.length} OS têm o reinício ANTES da abertura. Não dá para calcular tempo de reparo com elas, então ficam fora da média — mas continuam contando como OS.`;
+    arr = porMaquina(lista);
+    tab = tabSimples(['OS', 'Máquina', 'Abertura', 'Reinício'], lista.slice(0, 60).map(o =>
+      `<tr><td class="nome" style="font-size:12px">${escapeHtml(String(o.os_num || '—'))}</td>` +
+      `<td><span class="cel neutra">${escapeHtml(String(o.recurso_cod || '—'))}</span></td>` +
+      `<td style="font-size:11.5px">${fmtData(String(o.data_abertura).slice(0, 10))}</td>` +
+      `<td style="font-size:11.5px;color:var(--critico);font-weight:700">${fmtData(String(o.data_reinicio).slice(0, 10))}</td></tr>`).join(''));
+  } else if (tipo === 'velhas') {
+    lista = A.velhas30 || []; tit = '🕒 OS abertas há 30+ dias'; un = ' OS';
+    desc = `${lista.length} ordens continuam abertas há mais de 30 dias. A mais antiga tem ${A.maisAntiga} dias.`;
+    arr = porMaquina(lista);
+    const ord = lista.slice().sort((a, b) => (diasEmAberto(b) || 0) - (diasEmAberto(a) || 0));
+    tab = tabSimples(['OS', 'Máquina', 'Dias', 'Motivo'], ord.slice(0, 60).map(o =>
+      `<tr><td class="nome" style="font-size:12px">${escapeHtml(String(o.os_num || '—'))}</td>` +
+      `<td><span class="cel neutra">${escapeHtml(String(o.recurso_cod || '—'))}</span></td>` +
+      `<td><span class="cel baixo">${diasEmAberto(o) || '—'}d</span></td>` +
+      `<td style="text-align:left;font-size:11.5px">${escapeHtml(String(o.motivo || '—'))}</td></tr>`).join(''));
+  } else if (tipo === 'reinc') {
+    tit = '🔁 Problemas reincidentes'; un = '×';
+    desc = `${(A.reinc || []).length} combinações de máquina + motivo se repetiram. Quanto menor o intervalo, mais crônico.`;
+    const m = {};
+    (A.reinc || []).forEach(x => { m[x.cod] = (m[x.cod] || 0) + x.n; });
+    arr = Object.entries(m).map(([c, v]) => ({ l: c, v: v, click: `detProblemasMaq('${c}')` })).sort((a, b) => b.v - a.v);
+    tab = tabSimples(['Máquina · motivo', 'Vezes', 'Intervalo'], (A.reinc || []).slice(0, 40).map(x =>
+      `<tr style="cursor:pointer" onclick="detProblemasMaq('${escapeHtml(x.cod)}')"><td class="nome" style="font-size:12px"><b>${escapeHtml(x.cod)}</b> · ${escapeHtml(x.mot)}</td>` +
+      `<td><span class="cel cel-tot">${x.n}×</span></td>` +
+      `<td style="font-size:11.5px">${x.inter != null ? 'a cada ~' + Math.round(x.inter) + 'd' : '—'}</td></tr>`).join(''));
+  } else {
+    const prev = (A.L || []).filter(o => /PREVENTIV/i.test(String(o.motivo || '') + ' ' + String(o.submotivo || '') + ' ' + String(o.atividade || '')));
+    lista = prev; tit = '🛠️ Manutenção preventiva'; un = ' OS';
+    desc = `${prev.length} de ${(A.L || []).length} OS são preventivas. O resto é corretiva — máquina que já parou.`;
+    arr = porMaquina(prev);
+    const semPrev = Object.keys(nomeMaq).filter(c => !prev.some(o => String(o.recurso_cod) === c));
+    tab = (arr.length ? tabSimples(['Máquina', 'Preventivas'], arr.slice(0, 40).map(x =>
+      `<tr><td class="nome"><span class="cod">${escapeHtml(x.l)}</span> ${escapeHtml(String(nomeMaq[x.l] || ''))}</td><td><span class="cel neutra">${x.v}</span></td></tr>`).join('')) : '') +
+      (semPrev.length ? `<div style="height:10px"></div><div style="background:#FDF5E6;border:1px solid #EBD3A0;border-radius:12px;padding:11px 13px;font-size:12.5px;color:#7A5A10;font-weight:600">${semPrev.length} máquina(s) não tiveram <b>nenhuma</b> preventiva no período: ${escapeHtml(semPrev.slice(0, 20).join(', '))}${semPrev.length > 20 ? '…' : ''}</div>` : '');
+  }
+
+  const graf = arr.length
+    ? paretoSVG(arr.slice(0, 12), v => v + un, 'var(--critico)') + paretoHorizontal(arr.slice(0, 12), v => v + un, 'var(--critico)')
+    : '';
+  _detVoltar = null;
+  abreDet(tit, `<p class="idet-desc">${escapeHtml(desc)}</p>` + graf + blocoPior(arr, un) +
+    '<div style="height:8px"></div>' + tab);
+}
+
 function renderManutAnalise(L) {
   const host = $('mntAnaliseHost'); if (!host) return;
   if (!L || !L.length) { host.innerHTML = ''; _mntAnaliseCache = null; return; }
@@ -6662,15 +6734,15 @@ function renderManutAnalise(L) {
       <div>
         <b>🩺 Diagnóstico da manutenção</b>
         <div class="desc" style="margin-top:2px">${A.L.length} OS · ${A.abertas.length} em aberto · ${fh(A.totH)} de reparo${A.mediana != null ? ' · mediana ' + fh(A.mediana) + ' · média ' + fh(A.mttr) : ''}</div>
-        ${A.negativas ? `<div class="desc" style="color:var(--laranja);font-weight:700;margin-top:2px">⚠️ ${A.negativas} OS com reinício anterior à abertura — fora da conta</div>` : ''}
+        ${A.negativas ? `<div class="desc" style="color:var(--laranja);font-weight:700;margin-top:2px;cursor:pointer;text-decoration:underline" onclick="manutDet('invertidas')">⚠️ ${A.negativas} OS com reinício anterior à abertura — fora da conta ›</div>` : ''}
       </div>
       <button class="btn btn-verde" style="width:auto;padding:9px 16px" onclick="manutAnaliseIA()">🤖 Analisar com IA</button>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px">
-      ${A.reinc.length ? `<span style="background:#FDE7E7;border:1px solid #E7A1A1;color:#8B2E2E;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">${A.reinc.length} problema(s) reincidente(s)</span>` : ''}
-      ${A.velhas30.length ? `<span style="background:#FDF5E6;border:1px solid #EBD3A0;color:#7A5A10;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">${A.velhas30.length} aberta(s) há 30+ dias</span>` : ''}
-      ${A.maisAntiga != null ? `<span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">mais antiga: ${A.maisAntiga}d</span>` : ''}
-      <span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800">preventiva ${pct(A.nPrev, A.L.length)}</span>
+      ${A.reinc.length ? `<span style="background:#FDE7E7;border:1px solid #E7A1A1;color:#8B2E2E;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800;cursor:pointer" onclick="manutDet('reinc')">${A.reinc.length} problema(s) reincidente(s) ›</span>` : ''}
+      ${A.velhas30.length ? `<span style="background:#FDF5E6;border:1px solid #EBD3A0;color:#7A5A10;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800;cursor:pointer" onclick="manutDet('velhas')">${A.velhas30.length} aberta(s) há 30+ dias ›</span>` : ''}
+      ${A.maisAntiga != null ? `<span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800;cursor:pointer" onclick="manutDet('velhas')">mais antiga: ${A.maisAntiga}d ›</span>` : ''}
+      <span style="background:var(--leve);border:1px solid #D8E2EC;color:var(--navy);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800;cursor:pointer" onclick="manutDet('prev')">preventiva ${pct(A.nPrev, A.L.length)} ›</span>
     </div>
     ${linhasReinc ? `<div style="font-size:11px;color:#8A97A6;margin:8px 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Problemas que persistem · toque para abrir</div>` +
       tabSimples(['Máquina · motivo', 'Vezes', 'Aberto'], linhasReinc)
