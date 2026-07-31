@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.412.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.413.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1771,7 +1771,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.412.0';
+const APP_VER = '3.413.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7318,6 +7318,30 @@ function blocoPorHora(h, dia) {
   if (t >= m(15, 11) && t <= m(20, 50)) return 'Tarde'; // T4
   return 'Noite';                                        // T5
 }
+/* ===== FAMÍLIA DE MOTIVO =====
+   O ERP espalha o mesmo assunto em vários códigos. Molde/cavidade sai em 7 motivos
+   diferentes (385h no ano) e some no Pareto como sete linhas pequenas; lubrificação
+   em 3. Aqui eles viram um grupo só, SEM se misturar com manutenção mecânica —
+   troca de molde é operação planejada, quebra não é. Agrupado por CÓDIGO, que é
+   estável, e não pelo texto, que tem acento e erro de digitação ("SEJEIRA NO MOLDE").
+   Pedido do João em 30/07/2026. */
+const FAMILIA_MOTIVO = {
+  // molde / cavidade / postiço
+  '31': 'MOLDE / CAVIDADE', '30': 'MOLDE / CAVIDADE', '294': 'MOLDE / CAVIDADE',
+  '295': 'MOLDE / CAVIDADE', '96': 'MOLDE / CAVIDADE', '97': 'MOLDE / CAVIDADE',
+  '723': 'MOLDE / CAVIDADE',
+  // lubrificação
+  '234': 'LUBRIFICAÇÃO', '302': 'LUBRIFICAÇÃO', '307': 'LUBRIFICAÇÃO'
+};
+// texto como rede de segurança, caso o código venha vazio numa importação
+function familiaMotivo(p) {
+  const cod = String((p && p.motivo_cod) || '').trim();
+  if (FAMILIA_MOTIVO[cod]) return FAMILIA_MOTIVO[cod];
+  const d = String((p && p.motivo_desc) || '').toUpperCase();
+  if (/MOLDE|CAVIDAD|POSTI|PLUG|CANECA/.test(d) && !/MEC/.test(d)) return 'MOLDE / CAVIDADE';
+  if (/LUBRIF|GRAXA/.test(d)) return 'LUBRIFICAÇÃO';
+  return (p && p.motivo_desc) || '—';
+}
 const META_APROV = 47.5;
 
 let dadosPainel = null; // cache: { producao, paradas, consumo }
@@ -8282,12 +8306,24 @@ async function detSetupsMaq(cod, dia, setor) {
 }
 async function detMotivoParada(setor, motivo, dia) {
   if (!dadosPainel) return; const m = motivo.replace(/&#39;/g, "'"); const D = dadosPainel;
-  let par = filtraParadas(D.paradas).filter(p => (p.motivo_desc || '—') === m);
+  // m pode ser um MOTIVO do ERP ou uma FAMÍLIA (MOLDE / CAVIDADE, LUBRIFICAÇÃO)
+  const ehFamilia = /^(MOLDE \/ CAVIDADE|LUBRIFICAÇÃO)$/.test(m);
+  let par = filtraParadas(D.paradas).filter(p => ehFamilia ? (familiaMotivo(p) === m) : ((p.motivo_desc || '—') === m));
   if (setor) par = par.filter(p => setorDe(p.recurso_cod) === setor);
   if (dia) par = par.filter(p => (p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null)) === dia);
   const tot = par.reduce((a, p) => a + (p.tempo_horas || 0), 0);
   const maq = {}, nm = {}; par.forEach(p => { maq[p.recurso_cod] = (maq[p.recurso_cod] || 0) + (p.tempo_horas || 0); nm[p.recurso_cod] = p.recurso_nome || p.recurso_cod; });
   const top = Object.entries(maq).sort((a, b) => b[1] - a[1]);
+  // família: mostra de que motivos do ERP ela é feita, senão o número parece vir do nada
+  let quebraFam = '';
+  if (ehFamilia) {
+    const pm = {};
+    par.forEach(p => { const k = p.motivo_desc || '—'; pm[k] = (pm[k] || 0) + (p.tempo_horas || 0); });
+    const ord = Object.keys(pm).sort((a, b) => pm[b] - pm[a]);
+    quebraFam = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Motivos que formam este grupo</div>' +
+      tabSimples(['Motivo no ERP', 'Horas'], ord.map(k =>
+        `<tr><td class="nome" style="font-size:12px">${escapeHtml(k)}</td><td><span class="cel neutra">${fmtHoras(pm[k])}</span></td></tr>`).join(''));
+  }
   // SETUP: mostra também as TROCAS REAIS por máquina (mesma conta da aba Itens)
   let trocasMaq = null, totTrocas = 0;
   if (/^SETUP$/i.test(m)) {
@@ -8305,7 +8341,7 @@ async function detMotivoParada(setor, motivo, dia) {
     return `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td>${tr}<td><span class="cel ${h > 0 ? 'cel-tot' : 'neutra'}">${h > 0 ? h.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h' : '—'}</span></td></tr>`;
   }).join('');
   abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)${trocasMaq ? ` · <b>${totTrocas} troca(s) real(is)</b> — em vermelho quem trocou mais de 1×` : ''}</p>
-    ${tabSimples(cab, linhas)}`);
+    ${tabSimples(cab, linhas)}${quebraFam}`);
 }
 // UM tipo de perda: máquinas, peso e cxs
 function detTipoPerda(setor, tipo) {
@@ -12350,9 +12386,10 @@ function renderPainel() {
             barrasVerticalScroll(sP.dados, () => '#C0504D', { media: true, fmt: fmtKg, margemEsq: 46 })); }
       } }
 
-    // Pareto de paradas (todos os setores)
+    // Pareto de paradas (todos os setores) — com família de motivo
+
     const _parF = filtraParadas(D.paradas);
-    const porMotivo = somaPor(_parF, p => p.motivo_desc || '—', p => p.tempo_horas || 0);
+    const porMotivo = somaPor(_parF, p => familiaMotivo(p), p => p.tempo_horas || 0);
     { const dd = Object.keys(porMotivo).map(m => ({ l: /^SETUP$/i.test(m) ? m + ' · …×' : m, v: porMotivo[m], click: `detMotivoParada('','${m.replace(/'/g, '&#39;')}')` }));
       html += card('Pareto de paradas · todos os setores', 'horas · toque numa barra para ver o resumo',
       paretoSVG(dd, fmtHoras, corGrafTurno('var(--alerta)')) + paretoHorizontal(dd, fmtHoras, corGrafTurno('var(--alerta)'))); }
