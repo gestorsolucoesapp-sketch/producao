@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.433.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.434.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1411,11 +1411,20 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   }
 
   function acharPeriodo(linhas) {
+    let de = null, ate = null, gerado = null;
     for (const l of linhas.slice(0, 40)) {
-      const m = /(?:Per[ií]odo|Apontamentos):\s*(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{2}\/\d{2}\/\d{4})/.exec(l.texto);
-      if (m) return { de: dataBR(m[1]), ate: dataBR(m[2]) };
+      if (!de) {
+        const m = /(?:Per[ií]odo|Apontamentos):\s*(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{2}\/\d{2}\/\d{4})/.exec(l.texto);
+        if (m) { de = dataBR(m[1]); ate = dataBR(m[2]); }
+      }
+      // quando o ERP emitiu o arquivo — é o que define o dia que ainda está aberto
+      if (!gerado) {
+        const g = /\bDATA:\s*(\d{2}\/\d{2}\/\d{4})/.exec(l.texto);
+        if (g) gerado = dataBR(g[1]);
+      }
+      if (de && gerado) break;
     }
-    return { de: null, ate: null };
+    return { de, ate, gerado };
   }
 
   // ---------- parser genérico por colunas (624 / 054 / 646) ----------
@@ -1581,7 +1590,9 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       const tp = /^(\d+) - (.*)$/.exec(v.tipo_perda || '');
       const rc = /^(\d+) - (.*)$/.exec(v.recurso || '');
       return {
-        dia: periodo.de || dataBR(v.data), turno: c.turno,
+        // a data da PRÓPRIA linha manda; periodo.de é só reserva pra linha sem
+        // data. Invertido, todo o mês colapsava no primeiro dia do relatório.
+        dia: dataBR(v.data) || periodo.de, turno: c.turno,
         op: c.op, item_cod: c.item ? c.item.cod : (mi ? mi[1] : null),
         item_desc: c.item ? c.item.desc : (mi ? mi[3] : null),
         item_versao: mi ? mi[2] : null,
@@ -1611,7 +1622,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       t => /^(Totais:|Resumo por|OP Data)/.test(t) || /Rioplastic|ROTINA|PÁGINA|DATA:|HORA:/.test(t)
     );
     return regs.map(v => ({
-      dia: periodo.de || dataBR(v.data),
+      // a data da PRÓPRIA linha manda; periodo.de é só reserva (ver parse624)
+      dia: dataBR(v.data) || periodo.de,
       op: (v.op || '').replace(/^0+/, ''), data: dataBR(v.data),
       tipo_perda_desc: v.tipo_perda || null, etapa: v.etapa || null,
       cliente: v.cliente || null, acessorio: v.acessorio || null,
@@ -1776,7 +1788,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.433.0';
+const APP_VER = '3.434.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13524,6 +13536,22 @@ async function gravar(id, substituir = false) {
     // "invalid input syntax for type date: null". Cada registro já carrega seu
     // próprio 'dia', então derivamos o intervalo real a partir dos dados.
     if (!r.periodo) r.periodo = { de: null, ate: null };
+    /* REGRA DO DIA OPERACIONAL — o dia fecha 05:59.
+       O relatório gerado no dia D traz o próprio D pela metade:
+         turno 5  → é o rabo da noite de D-1 → FICA
+         turnos 1-4 → dia que ainda não terminou → SAI
+       Sem isso, o dia de hoje entra incompleto e derruba média, meta e previsão.
+       Só filtra registro que TEM turno; 643 e 646 não têm e ficam de fora disto. */
+    if (r.periodo.gerado && Array.isArray(r.registros)) {
+      const g = String(r.periodo.gerado);
+      const antes = r.registros.length;
+      r.registros = r.registros.filter(x => {
+        if (!x || String(x.dia) !== g) return true;
+        const t = parseInt(x.turno, 10);
+        return !(t >= 1 && t <= 4);
+      });
+      r.diaAbertoCortado = antes - r.registros.length;
+    }
     if (!r.periodo.de || !r.periodo.ate) {
       const dias = (r.registros || []).map(x => x && x.dia).filter(Boolean).sort();
       if (dias.length) {
