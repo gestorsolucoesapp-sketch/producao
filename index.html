@@ -712,7 +712,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.459.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.460.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1349,6 +1349,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     <div class="ia-head">
       <div style="display:flex;align-items:center;gap:10px"><img src="ia-logo.png" alt="IA" style="width:32px;height:32px;border-radius:10px"><div><b>Assistente de Produção</b><small>IA · Rioplastic</small></div></div>
       <div style="display:flex;align-items:center;gap:2px">
+        <button id="iaModoBtn" onclick="togIaSempre()" aria-label="Modo de resposta" title="Alterna entre cálculo do app e IA" style="background:rgba(255,255,255,.16);border:none;color:#fff;font-size:11px;font-weight:800;cursor:pointer;padding:5px 9px;border-radius:999px;line-height:1;white-space:nowrap">IA</button>
         <button id="iaVozBtn" onclick="toggleVozSaida()" aria-label="Voz da IA" title="Voz da IA" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">🔊</button>
         <button onclick="fecharIA()" aria-label="Fechar">✕</button>
       </div>
@@ -1961,7 +1962,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.459.0';
+const APP_VER = '3.460.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10857,6 +10858,7 @@ function detItensDia(setor, dia) {
 /* ================= IA ================= */
 let iaHist = [];
 function abrirIA() {
+  try { pintarIaModo(); } catch (_) { }
   $('iaOverlay').classList.remove('oculto');
   if (iaRegras === null) getIaRegras();
   if (diasOverride === null) getDiasOverride();
@@ -11087,6 +11089,7 @@ async function buscarNoManual(pergunta, cod) {
     return `📖 **Do manual: ${melhor.titulo}**\n\n${trecho.slice(0, 600)}${trecho.length > 600 ? '…' : ''}`;
   } catch (_) { return null; }
 }
+function _pintarIaModoAoAbrir() { try { pintarIaModo(); } catch (_) { } }
 function fecharIA() { pararFala(); $('iaOverlay').classList.add('oculto'); }
 // abre o relatório completo do dia no chat (calculado no app, sem IA)
 function verBriefingCompleto(dia) {
@@ -11660,13 +11663,33 @@ function respostaLocal(perg) {
   return null;   // não entendi → deixa a IA responder
 }
 
+/* Chave IA sempre ligada: por padrao o assistente responde com o calculo do
+   proprio app (instantaneo e sem custo) e so chama a IA quando nao entende.
+   Com a chave ligada ele vai direto para a IA em toda pergunta. Fica salvo
+   no aparelho, por usuario. */
+let _iaSempre = (() => { try { return localStorage.getItem('rp_ia_sempre') === '1'; } catch (_) { return false; } })();
+function pintarIaModo() {
+  const b = $('iaModoBtn'); if (!b) return;
+  b.textContent = _iaSempre ? 'IA sempre' : 'IA só se precisar';
+  b.style.background = _iaSempre ? '#2e7d32' : 'rgba(255,255,255,.16)';
+}
+function togIaSempre() {
+  _iaSempre = !_iaSempre;
+  try { localStorage.setItem('rp_ia_sempre', _iaSempre ? '1' : '0'); } catch (_) { }
+  pintarIaModo();
+  try { toast(_iaSempre ? 'IA sempre: toda pergunta vai para a IA' : 'IA só quando o app não souber responder'); } catch (_) { }
+}
+try { setTimeout(pintarIaModo, 300); } catch (_) { }
+
 async function enviarIA() {
   const inp = $('iaInput'); const q = inp.value.trim(); if (!q) return;
   pararFala();
   inp.value = ''; addIA('user', q); iaHist.push({ role: 'user', content: q });
   registrarUsoIA(q);
   // ===== tenta responder LOCALMENTE (sem IA, sem custo, instantâneo) =====
+  // com a chave "IA sempre" ligada este atalho e ignorado de proposito
   try {
+    if (_iaSempre) throw new Error('ia-sempre');
     const rl = respostaLocal(q);
     if (rl && rl._consultarManual) {
       const man = await buscarNoManual(q, rl.cod);
