@@ -712,7 +712,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.456.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.457.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1961,7 +1961,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.456.0';
+const APP_VER = '3.457.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14109,6 +14109,7 @@ async function carregarProgramacao(forcar) {
     _progDados = data || [];
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
+    await _progCarregarCap();
   } catch (e) {
     if (alvo) alvo.innerHTML = '<div class="card"><p class="desc">Não consegui ler a fila: ' + escapeHtml(String(e && e.message || e)) + '</p></div>';
     return;
@@ -14215,6 +14216,56 @@ function _progAnalise(rows) {
    liberacao: molde, ferramental, largura de bobina, numero de cores e setup o
    app nao conhece. Quem decide e o PCP. */
 let _progHist = null;   // { item_cod: { recurso_cod: vezes } }
+let _progCap = null;    // { setor: kg por semana } — capacidade DEMONSTRADA, nao teorica
+
+// media semanal realizada nos ultimos 28 dias fechados. Nao e capacidade
+// nominal de placa: e o que o setor provou que entrega, que e a unica regua
+// honesta para dizer se a carga da semana cabe.
+async function _progCarregarCap() {
+  if (_progCap) return _progCap;
+  const cap = {};
+  try {
+    const ate = new Date(); ate.setDate(ate.getDate() - 1);
+    const de = new Date(ate); de.setDate(de.getDate() - 27);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const { data, error } = await sb.from('producao_resumo').select('recurso_cod,peso,dia')
+      .gte('dia', iso(de)).lte('dia', iso(ate)).limit(20000);
+    if (error) throw error;
+    (data || []).forEach(r => { const st = setorDe(r.recurso_cod); cap[st] = (cap[st] || 0) + (+r.peso || 0); });
+    Object.keys(cap).forEach(k => { cap[k] = cap[k] / 4; });     // 28 dias = 4 semanas
+  } catch (_) { }
+  _progCap = cap;
+  return cap;
+}
+
+// segunda-feira da semana de uma data
+function _progSegunda(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  const dow = (d.getDay() + 6) % 7;             // 0 = segunda
+  d.setDate(d.getDate() - dow);
+  return d.getTime();
+}
+
+/* espalha o peso de cada ordem pelas semanas que ela ocupa, proporcional ao
+   tempo. Ordem de 3 dias virando a semana nao pode cair inteira numa so. */
+function _progCargaSemanal(rows) {
+  const SEM = 7 * 24 * _PROG_H;
+  const porSet = {};
+  rows.forEach(r => {
+    const a = _progMs(r.inicio), b = _progMs(r.termino);
+    const kg = +r.kg_programado || 0;
+    if (a == null || b == null || b <= a || !kg) return;
+    const st = r.setor || 'Outros';
+    const alvo = porSet[st] = porSet[st] || {};
+    for (let w = _progSegunda(a); w < b; w += SEM) {
+      const ini = Math.max(a, w), fim = Math.min(b, w + SEM);
+      if (fim <= ini) continue;
+      alvo[w] = (alvo[w] || 0) + kg * (fim - ini) / (b - a);
+    }
+  });
+  return porSet;
+}
 
 async function _progCarregarHist() {
   if (_progHist) return _progHist;
@@ -14525,6 +14576,60 @@ function renderProgramacao() {
         + '</div>').join('')
       + '</div>');
   }
+
+  /* ---------- carga semana a semana contra a capacidade demonstrada ---------- */
+  try {
+    const porSet = _progCargaSemanal(rows);
+    const cap = _progCap || {};
+    const ORDEM = ['Extrusão', 'Termoformagem'];
+    const setores = Object.keys(porSet).sort((a, b) => {
+      const ia = ORDEM.indexOf(a), ib = ORDEM.indexOf(b);
+      if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      const ta = Object.values(porSet[a]).reduce((x, y) => x + y, 0);
+      const tb = Object.values(porSet[b]).reduce((x, y) => x + y, 0);
+      return tb - ta;
+    });
+    if (setores.length) {
+      const semAtual = _progSegunda(Date.now());
+      let h = '<div class="card"><h3 style="margin:0 0 4px">Carga semanal × capacidade demonstrada</h3>'
+        + '<p class="desc" style="margin:0 0 10px">A carga de cada ordem é distribuída pelas semanas que ela ocupa, proporcional ao tempo programado. '
+        + 'A régua é a <b>média semanal realizada nos últimos 28 dias</b> — o que o setor provou que entrega, não capacidade nominal.</p>';
+      setores.forEach(st => {
+        const c = (cap[st] || 0);
+        const semanas = Object.keys(porSet[st]).map(Number).filter(w => w >= semAtual).sort((a, b) => a - b).slice(0, 9);
+        if (!semanas.length) return;
+        h += '<div style="margin-bottom:13px">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:5px">'
+          + '<b>' + escapeHtml(st) + '</b>'
+          + '<span class="desc" style="font-size:11px">capacidade ' + (c > 0 ? _progT(c) + '/semana' : 'sem base') + '</span></div>';
+        semanas.forEach(w => {
+          const kg = porSet[st][w];
+          const pct = c > 0 ? (kg / c * 100) : 0;
+          const cor = pct > 100 ? '#c62828' : pct > 85 ? '#ef6c00' : pct < 40 ? '#0277bd' : '#2e7d32';
+          const d = new Date(w), f = (x) => String(x).padStart(2, '0');
+          const rot = f(d.getDate()) + '/' + f(d.getMonth() + 1);
+          h += '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0">'
+            + '<span class="mono desc" style="width:48px;flex:none">' + rot + '</span>'
+            + '<div style="flex:1;background:#eceff1;border-radius:5px;height:9px;overflow:hidden;position:relative">'
+            + '<div style="width:' + Math.min(100, pct).toFixed(1) + '%;height:100%;background:' + cor + '"></div></div>'
+            + '<span class="mono" style="width:58px;flex:none;text-align:right">' + _progT(kg) + '</span>'
+            + '<span class="mono" style="width:42px;flex:none;text-align:right;color:' + cor + ';font-weight:700">' + (c > 0 ? fmt(pct, 0) + '%' : '—') + '</span>'
+            + '</div>';
+        });
+        const estouro = semanas.filter(w => c > 0 && porSet[st][w] / c > 1);
+        const vazio = semanas.filter(w => c > 0 && porSet[st][w] / c < 0.4);
+        if (estouro.length || vazio.length) {
+          h += '<div class="desc" style="font-size:11px;margin-top:4px">'
+            + (estouro.length ? '<b style="color:#c62828">' + estouro.length + ' semana(s) acima da capacidade</b>' : '')
+            + (estouro.length && vazio.length ? ' · ' : '')
+            + (vazio.length ? '<b style="color:#0277bd">' + vazio.length + ' semana(s) abaixo de 40%</b>' : '')
+            + '</div>';
+        }
+        h += '</div>';
+      });
+      partes.push(h + '</div>');
+    }
+  } catch (_) { }
 
   /* ---------- quando cada máquina seca ---------- */
   const comSeca = maqs.filter(m => m.seca != null).sort((a, b) => a.seca - b.seca);
