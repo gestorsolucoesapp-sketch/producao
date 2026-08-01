@@ -152,6 +152,8 @@ nav{background:var(--topo)}
 #setorGlobalBox>.sg-campo.oculto{display:none}
 #selResumo{background:var(--preto-fosco);color:var(--areia);text-align:center;font-size:11.5px;padding:0 12px 10px;margin:0;width:100%;box-sizing:border-box;border-bottom:1px solid rgba(184,155,94,.35)}
 #selResumo:empty{display:none}
+#selRecorte{background:var(--preto-fosco);color:#fff;text-align:center;font-size:12.5px;font-weight:700;padding:0 12px 8px;margin:0;width:100%;box-sizing:border-box}
+#selRecorte:empty{display:none}
 #selResumo b{color:#fff;font-weight:700}
 .acoes-sutis{display:flex;gap:4px;justify-content:center;margin-top:0;flex-wrap:wrap}
 /* o card das ações só tem esta linha: os seletores de período e setor vivem
@@ -710,7 +712,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.452.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.453.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -743,6 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       </select></div>
   </div>
   <div id="selResumo"></div>
+  <div id="selRecorte"></div>
   <nav><div class="abas">
     <button class="aba ativa" data-aba="painel" onclick="trocarAba('painel')">Painel</button>
     <button class="aba" data-aba="analise" onclick="trocarAba('analise')">Itens</button>
@@ -1958,7 +1961,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.452.0';
+const APP_VER = '3.453.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4126,7 +4129,13 @@ function _amEscopo(cache) {
   const dias = cache.prod.map(r => String(r.dia).slice(0, 10)).filter(Boolean).sort();
   const ultimo = dias.length ? dias[dias.length - 1] : (a.ym + '-01');
   let de, ate, rotulo;
-  if (_amScope === 'diaria') { de = ate = ultimo; rotulo = 'Dia ' + fmtData(ultimo); }
+  if (_amScope === 'diaria') {
+    // BUG: usava sempre o ULTIMO dia do cache do mes, entao "Dia anterior"
+    // renderizava o mesmo conteudo de "Ultimo dia". Vale o dia ESCOLHIDO.
+    const esc = (typeof periodoSel === 'object' && periodoSel && periodoSel.de && periodoSel.de === periodoSel.ate) ? periodoSel.de : null;
+    de = ate = esc || ultimo;
+    rotulo = 'Dia ' + fmtData(de);
+  }
   else if (_amScope === 'anual') { de = a.ano + '-01-01'; ate = ultimo; rotulo = 'Ano ' + a.ano; }
   else { de = a.ym + '-01'; ate = ultimo; rotulo = 'Mês ' + (typeof mesLabel === 'function' ? mesLabel(a.ym) : a.ym); }
   const fdia = r => { const d = String(r.dia || '').slice(0, 10); return d >= de && d <= ate; };
@@ -4760,7 +4769,29 @@ function mudarMaqGlobal(v) {
   setTimeout(sincMaqGlobal, 30);
 }
 // lista as máquinas do setor ativo por produção OU parada (Injeção só tem parada)
+/* linha de recorte da barra preta: quanto o SETOR/MAQUINA selecionados
+   produziram no periodo. Fica fora do renderPainel de proposito — o Painel usa
+   o seletor dele (fSetor), e nas outras abas quem vale e o seletor da aba. */
+function atualizarRecorteTarja() {
+  const el = $('selRecorte'); if (!el) return;
+  try {
+    if (!dadosPainel || !dadosPainel.producao) { el.innerHTML = ''; return; }
+    const ss = (typeof _selSetorDaAba === 'function') ? _selSetorDaAba() : null;
+    const setor = (ss && ss.value) || '';
+    const mq = (typeof maqSelAtual === 'function') ? maqSelAtual() : '';
+    if (!setor && !mq) { el.innerHTML = ''; return; }
+    const met = ($('fMetrica') && $('fMetrica').value) || 'peso';
+    const v = dadosPainel.producao
+      .filter(r => (!setor || setorDe(r.recurso_cod) === setor) && (!mq || String(r.recurso_cod) === mq))
+      .reduce((a, r) => a + (met === 'peso' ? (+r.peso || 0) : (+r.quantidade || 0)), 0);
+    const txt = met === 'peso'
+      ? (v >= 1000 ? fmt(v / 1000, 1) + ' t' : fmt(v, 0) + ' kg')
+      : fmt(v, 0) + (met === 'milheiro' ? ' mil' : ' cxs');
+    el.innerHTML = escapeHtml(mq ? ('Máquina ' + mq + (setor ? ' · ' + setor : '')) : setor) + ' · ' + txt + ' produzidos no período';
+  } catch (_) { el.innerHTML = ''; }
+}
 function sincMaqGlobal() {
+  try { atualizarRecorteTarja(); } catch (_) {}
   const g = $('maqGlobal'), w = $('sgMaq'); if (!g || !w) return;
   const usaMaq = ['painel', 'analise', 'analisemais', 'oee', 'manut', 'programacao'].includes(_abaAtual);
   if (!dadosPainelFull || !usaMaq) { w.classList.add('oculto'); return; }
@@ -5245,6 +5276,7 @@ function trocarAba(qual) {
   if (qual === 'conf') carregarConf();
   if (qual === 'programacao') carregarProgramacao(true);   // entrar na aba sempre busca fila nova
   sincSetorGlobal();
+  try { atualizarRecorteTarja(); } catch (_) {}
   setTimeout(sincSetorGlobal, 400); setTimeout(sincSetorGlobal, 1500);
   setTimeout(() => { try { medirTopoApp(); } catch (_) {} }, 120);
 }
@@ -12812,25 +12844,8 @@ function renderPainel() {
       // o setor já aparece na pílula acima: aqui só o recorte de datas, turno e a métrica
       const _imp = _ultImport
         ? `<span style="display:block;font-size:11px;font-weight:600;opacity:.85;color:${_ultImport.atraso >= 1 ? '#F0A0A0' : 'inherit'}">🗂️ dados até ${_ultImport.ate ? escapeHtml(fmtData(_ultImport.ate)) : '—'} · importado ${escapeHtml(_ultImport.quando)}</span>` : '';
-      // com setor (ou maquina) filtrado, mostra na hora quanto esse recorte produziu
-      let _rec = '';
-      try {
-        const _mq = maqSelAtual();
-        if (setor || _mq) {
-          // D so vem filtrado por TURNO: setor e maquina precisam ser aplicados aqui,
-          // senao a linha mostra a fabrica inteira com o rotulo do setor.
-          const _v = (D.producao || [])
-            .filter(r => (!setor || setorDe(r.recurso_cod) === setor) && (!_mq || String(r.recurso_cod) === _mq))
-            .reduce((a, r) => a + (metrica === 'peso' ? (+r.peso || 0) : ehMil ? valMil(r) : (+r.quantidade || 0)), 0);
-          const _txt = metrica === 'peso'
-            ? (_v >= 1000 ? fmt(_v / 1000, 1) + ' t' : fmt(_v, 0) + ' kg')
-            : fmt(_v, 0) + (ehMil ? ' mil' : ' cxs');
-          _rec = `<span style="display:block;font-size:12.5px;font-weight:700;color:#fff;margin-top:2px">`
-               + `${escapeHtml(_mq ? 'Máquina ' + _mq : setor)} · ${_txt} produzidos no período</span>`;
-        }
-      } catch (_) {}
       sr.innerHTML = `${periodoSel ? escapeHtml(periodoSel.label) : ''}${rangeReal(D.producao)}${_tur ? ' · <b>Turno ' + escapeHtml(_tur) + '</b>' : ''} · <b>${rotMet}</b>` +
-        (ehMil ? ' <span style="opacity:.7">· base 622</span>' : '') + _rec + _imp;
+        (ehMil ? ' <span style="opacity:.7">· base 622</span>' : '') + _imp;
     } }
 
   const ehBobina = c => /BOBINA/i.test(c.componente_desc || '');
