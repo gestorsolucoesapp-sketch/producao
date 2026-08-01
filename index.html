@@ -710,7 +710,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.446.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.447.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1958,7 +1958,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.446.0';
+const APP_VER = '3.447.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13956,7 +13956,7 @@ async function gravar(id, substituir = false) {
    producao acumulada por OP. Tudo aqui e leitura: a aba nao escreve nada.
    As unidades NAO se misturam: comparacao entre setores e sempre por PESO
    (Termoformagem e Kit apontam caixas; Extrusao aponta kg de bobina).      */
-let _progDados = null, _progSetorSel = '', _progMaqSel = '';
+let _progDados = null, _progSetorSel = '', _progMaqSel = '', _progCat = null;
 const _PROG_H = 3600000;
 const _progMs = (v) => { const t = v ? Date.parse(v) : NaN; return isNaN(t) ? null : t; };
 const _progDia = (v) => v ? String(v).slice(0, 10) : null;
@@ -13992,6 +13992,12 @@ async function carregarProgramacao() {
 }
 function mudarSetorProg() { _progSetorSel = $('progSetor').value; _progMaqSel = ''; _progMontarSeletores(); renderProgramacao(); }
 function mudarMaqProg() { _progMaqSel = $('progMaq').value; renderProgramacao(); }
+// clique no indicador abre a lista completa daquela categoria; clicar de novo fecha
+function progCat(c) {
+  _progCat = (_progCat === c) ? null : c;
+  renderProgramacao();
+  if (_progCat) { const el = $('progLista'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
 
 function _progMontarSeletores() {
   const rows = _progDados || [];
@@ -14043,15 +14049,17 @@ function _progAnalise(rows) {
         || (i != null && i < agora - 45 * 24 * _PROG_H)
         || (e != null && e < agora - 45 * 24 * _PROG_H);
     });
-    m.sobre = []; m.buracos = []; m.foraOrdem = 0;
+    m.sobre = []; m.buracos = []; m.foraOrdemOps = [];
+    m.semEntregaOps = m.ops.filter(r => !r.entrega);
     for (let i = 0; i < m.ops.length - 1; i++) {
       const a = m.ops[i], b = m.ops[i + 1];
       const fa = _progMs(a.termino), ib = _progMs(b.inicio);
-      if (a.ordem != null && b.ordem != null && b.ordem < a.ordem) m.foraOrdem++;
+      if (a.ordem != null && b.ordem != null && b.ordem < a.ordem) m.foraOrdemOps.push({ a: a, b: b });
       if (fa == null || ib == null) continue;
       if (ib < fa) m.sobre.push({ a: a, b: b });
       else if (ib - fa > 4 * _PROG_H) m.buracos.push({ de: fa, ate: ib, h: (ib - fa) / _PROG_H, dep: b });
     }
+    m.foraOrdem = m.foraOrdemOps.length;
     m.hParada = m.buracos.reduce((a, g) => a + g.h, 0);
     lista.push(m);
   });
@@ -14407,22 +14415,27 @@ function renderProgramacao() {
   const foraOrdem = maqs.reduce((a, m) => a + m.foraOrdem, 0);
   const semEntrega = maqs.reduce((a, m) => a + m.semEntrega, 0);
 
-  const chip = (n, txt, cor) => '<div style="flex:1;min-width:96px;background:' + cor + '20;border:1px solid ' + cor + '55;border-radius:10px;padding:8px;text-align:center">'
-    + '<div class="mono" style="font-size:20px;font-weight:700;color:' + cor + '">' + fmt(n, 0) + '</div>'
-    + '<div class="desc" style="font-size:11px;line-height:1.25">' + txt + '</div></div>';
+  const chip = (n, txt, cor, cat) => {
+    const on = (_progCat === cat);
+    return '<div onclick="progCat(\'' + cat + '\')" style="flex:1;min-width:96px;cursor:pointer;background:' + cor + (on ? '38' : '20')
+      + ';border:' + (on ? '2px' : '1px') + ' solid ' + cor + (on ? 'ff' : '55') + ';border-radius:10px;padding:8px;text-align:center">'
+      + '<div class="mono" style="font-size:20px;font-weight:700;color:' + cor + '">' + fmt(n, 0) + '</div>'
+      + '<div class="desc" style="font-size:11px;line-height:1.25">' + txt + '</div></div>';
+  };
   partes.push('<div class="card"><h3 style="margin:0 0 10px">Indicadores de aderência da programação</h3>'
     + '<div style="display:flex;flex-wrap:wrap;gap:8px">'
-    + chip(risco.length, 'ordens com<br>prazo comprometido', '#c62828')
-    + chip(travadas.length, 'ordens com<br>datas inconsistentes', '#ef6c00')
-    + chip(sobre.length, 'conflitos de<br>alocação', '#6a1b9a')
-    + chip(buracos.length, 'janelas ociosas<br>com carga na sequência', '#0277bd')
-    + chip(foraOrdem, 'ordens fora da<br>sequência programada', '#455a64')
-    + chip(semEntrega, 'ordens sem prazo<br>cadastrado no ERP', '#546e7a')
+    + chip(risco.length, 'ordens com<br>prazo comprometido', '#c62828', 'risco')
+    + chip(travadas.length, 'ordens com<br>datas inconsistentes', '#ef6c00', 'inconsist')
+    + chip(sobre.length, 'conflitos de<br>alocação', '#6a1b9a', 'conflito')
+    + chip(buracos.length, 'janelas ociosas<br>com carga na sequência', '#0277bd', 'ociosa')
+    + chip(foraOrdem, 'ordens fora da<br>sequência programada', '#455a64', 'sequencia')
+    + chip(semEntrega, 'ordens sem prazo<br>cadastrado no ERP', '#546e7a', 'semprazo')
     + '</div>'
+    + '<p class="desc" style="margin:10px 0 0;font-size:11.5px">Toque em um indicador para abrir a relação completa das ordens.</p>'
     + (semEntrega ? '<p class="desc" style="margin:10px 0 0">Ordens sem data de entrega no RPCP264 — ausência de cadastro na origem, não falha de leitura. Sem esse campo não há apuração de aderência de prazo para o volume correspondente.</p>' : '')
     + '</div>');
 
-  /* ---------- detalhamento dos alertas ---------- */
+  /* ---------- detalhamento ---------- */
   const linhaOp = (m, r, extra) => '<div style="padding:7px 0;border-bottom:1px solid #eceff1">'
     + '<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px">'
     + '<span><b class="mono">' + escapeHtml(m.cod) + '</b> · OP <b class="mono">' + escapeHtml(r.op || '—') + '</b></span>'
@@ -14430,7 +14443,58 @@ function renderProgramacao() {
     + '<div class="desc" style="font-size:11px">' + escapeHtml(String(r.item_desc || '').slice(0, 90)) + '</div>'
     + '<div class="desc" style="font-size:11px">' + extra + '</div></div>';
 
-  if (risco.length) {
+  /* ---------- relação completa da categoria selecionada ---------- */
+  if (_progCat) {
+    const foraSeq = maqs.flatMap(m => m.foraOrdemOps.map(x => ({ m: m, x: x })));
+    const semPrazo = maqs.flatMap(m => m.semEntregaOps.map(r => ({ m: m, r: r })));
+    const cab = { risco: ['Ordens com prazo comprometido', 'Conclusão programada posterior à data de entrega.'],
+      inconsist: ['Ordens com datas inconsistentes', 'Início ou prazo fora da janela plausível.'],
+      conflito: ['Conflitos de alocação', 'Ordens concorrentes no mesmo recurso e janela.'],
+      ociosa: ['Janelas ociosas com carga subsequente', 'Recurso sem alocação com ordem programada na sequência.'],
+      sequencia: ['Ordens fora da sequência programada', 'A ordem seguinte no tempo tem número de sequência anterior.'],
+      semprazo: ['Ordens sem prazo cadastrado no ERP', 'Sem data de entrega na origem — fora da apuração de aderência.'] }[_progCat] || ['', ''];
+
+    let itens = [];
+    if (_progCat === 'risco') {
+      itens = risco.slice().sort((a, b) => String(a.r.entrega).localeCompare(String(b.r.entrega))).map(o => {
+        const d = Math.round((_progMs(o.r.termino) - _progMs(o.r.entrega)) / (24 * _PROG_H));
+        return linhaOp(o.m, o.r, 'prazo <b>' + escapeHtml(fmtData(o.r.entrega)) + '</b> · conclusão <b>' + _progDataHora(_progMs(o.r.termino))
+          + '</b> · <b style="color:#c62828">desvio de ' + d + ' dias</b>' + (o.r.cliente ? ' · ' + escapeHtml(String(o.r.cliente).slice(0, 45)) : ''));
+      });
+    } else if (_progCat === 'inconsist') {
+      itens = travadas.map(o => linhaOp(o.m, o.r, 'início ' + _progDataHora(_progMs(o.r.inicio)) + ' · prazo '
+        + (o.r.entrega ? escapeHtml(fmtData(o.r.entrega)) : 'não cadastrado')
+        + (o.r.pct_concluido != null ? ' · ' + fmt(o.r.pct_concluido, 1) + '% apontado' : '')));
+    } else if (_progCat === 'semprazo') {
+      itens = semPrazo.map(o => linhaOp(o.m, o.r, 'início ' + _progDataHora(_progMs(o.r.inicio)) + ' · conclusão ' + _progDataHora(_progMs(o.r.termino))
+        + ' · <span class="desc">sem data de entrega na origem</span>'));
+    } else if (_progCat === 'conflito') {
+      itens = sobre.map(o => '<div style="padding:7px 0;border-bottom:1px solid #eceff1;font-size:13px">'
+        + 'Recurso <b class="mono">' + escapeHtml(o.m.cod) + '</b> · OP <b class="mono">' + escapeHtml(o.x.a.op) + '</b> ('
+        + _progDataHora(_progMs(o.x.a.inicio)) + '→' + _progDataHora(_progMs(o.x.a.termino)) + ')<br>× OP <b class="mono">'
+        + escapeHtml(o.x.b.op) + '</b> (' + _progDataHora(_progMs(o.x.b.inicio)) + '→' + _progDataHora(_progMs(o.x.b.termino)) + ')</div>');
+    } else if (_progCat === 'ociosa') {
+      itens = buracos.slice().sort((a, b) => b.g.h - a.g.h).map(o => '<div style="padding:7px 0;border-bottom:1px solid #eceff1;font-size:13px">'
+        + 'Recurso <b class="mono">' + escapeHtml(o.m.cod) + '</b> · <b>' + fmt(o.g.h, 1) + ' h</b> sem alocação · '
+        + _progDataHora(o.g.de) + ' → ' + _progDataHora(o.g.ate)
+        + '<div class="desc" style="font-size:11px">ordem subsequente: ' + escapeHtml(o.g.dep.op || '—') + '</div></div>');
+    } else if (_progCat === 'sequencia') {
+      itens = foraSeq.map(o => '<div style="padding:7px 0;border-bottom:1px solid #eceff1;font-size:13px">'
+        + 'Recurso <b class="mono">' + escapeHtml(o.m.cod) + '</b> · OP <b class="mono">' + escapeHtml(o.x.a.op) + '</b> (seq. ' + (o.x.a.ordem != null ? o.x.a.ordem : '—') + ')'
+        + ' roda antes da OP <b class="mono">' + escapeHtml(o.x.b.op) + '</b> (seq. ' + (o.x.b.ordem != null ? o.x.b.ordem : '—') + ')'
+        + '<div class="desc" style="font-size:11px">' + _progDataHora(_progMs(o.x.a.inicio)) + ' → ' + _progDataHora(_progMs(o.x.b.inicio)) + '</div></div>');
+    }
+
+    partes.push('<div class="card" id="progLista">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+      + '<h3 style="margin:0 0 4px">' + cab[0] + '</h3>'
+      + '<button class="btn" style="padding:4px 10px;font-size:12px" onclick="progCat(null)">Fechar</button></div>'
+      + '<p class="desc" style="margin:0 0 8px">' + cab[1] + ' Total: <b>' + fmt(itens.length, 0) + '</b>.</p>'
+      + (itens.length ? itens.join('') : '<p class="desc">Nenhuma ordem nesta condição na seleção atual.</p>')
+      + '</div>');
+  }
+
+  if (!_progCat && risco.length) {
     const ord = risco.slice().sort((a, b) => String(a.r.entrega).localeCompare(String(b.r.entrega)));
     partes.push('<div class="card"><h3 style="margin:0 0 4px">Ordens com prazo comprometido</h3>'
       + '<p class="desc" style="margin:0 0 8px">Conclusão programada posterior à data de entrega. Ordenadas pelo prazo mais antigo — exibindo ' + Math.min(30, ord.length) + ' de ' + ord.length + '.</p>'
@@ -14441,7 +14505,7 @@ function renderProgramacao() {
         }).join('')
       + '</div>');
   }
-  if (sobre.length) {
+  if (!_progCat && sobre.length) {
     partes.push('<div class="card"><h3 style="margin:0 0 4px">Conflitos de alocação</h3>'
       + '<p class="desc" style="margin:0 0 8px">Duas ordens alocadas no mesmo recurso e na mesma janela. Reproduzido conforme a origem — o sequenciamento é atribuição do PCP.</p>'
       + sobre.slice(0, 20).map(o => '<div style="padding:7px 0;border-bottom:1px solid #eceff1;font-size:13px">'
@@ -14449,7 +14513,7 @@ function renderProgramacao() {
         + '<br>× OP <b class="mono">' + escapeHtml(o.x.b.op) + '</b> (' + _progDataHora(_progMs(o.x.b.inicio)) + '→' + _progDataHora(_progMs(o.x.b.termino)) + ')</div>').join('')
       + '</div>');
   }
-  if (buracos.length) {
+  if (!_progCat && buracos.length) {
     const ord = buracos.slice().sort((a, b) => b.g.h - a.g.h);
     const totH = buracos.reduce((a, o) => a + o.g.h, 0);
     partes.push('<div class="card"><h3 style="margin:0 0 4px">Janelas ociosas com carga subsequente</h3>'
@@ -14460,7 +14524,7 @@ function renderProgramacao() {
         + '<div class="desc" style="font-size:11px">ordem subsequente: ' + escapeHtml(o.g.dep.op || '—') + '</div></div>').join('')
       + '</div>');
   }
-  if (travadas.length) {
+  if (!_progCat && travadas.length) {
     partes.push('<div class="card"><h3 style="margin:0 0 4px">Ordens com datas inconsistentes</h3>'
       + '<p class="desc" style="margin:0 0 8px">Início ou prazo fora da janela plausível (superior a 45 dias no passado). Indicativo de saldo residual ou apontamento pendente de baixa.</p>'
       + travadas.slice(0, 25).map(o => linhaOp(o.m, o.r,
