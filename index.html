@@ -712,7 +712,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.458.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.459.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1961,7 +1961,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.458.0';
+const APP_VER = '3.459.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14110,6 +14110,7 @@ async function carregarProgramacao(forcar) {
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
     await _progCarregarCap();
+    await _progCarregarSetup();
   } catch (e) {
     if (alvo) alvo.innerHTML = '<div class="card"><p class="desc">Não consegui ler a fila: ' + escapeHtml(String(e && e.message || e)) + '</p></div>';
     return;
@@ -14217,6 +14218,63 @@ function _progAnalise(rows) {
    app nao conhece. Quem decide e o PCP. */
 let _progHist = null;   // { item_cod: { recurso_cod: vezes } }
 let _progCap = null;    // { setor: kg por semana } — capacidade DEMONSTRADA, nao teorica
+let _progSetup = null;  // { recurso_cod: horas medias por troca }
+
+// tempo medio de UMA troca em cada maquina, medido nas paradas de SETUP dos
+// ultimos 60 dias. E o preco de cada mudanca de item na sequencia.
+async function _progCarregarSetup() {
+  if (_progSetup) return _progSetup;
+  const m = {};
+  try {
+    const d = new Date(); d.setDate(d.getDate() - 60);
+    const { data, error } = await sb.from('paradas').select('recurso_cod,tempo_horas,motivo_desc')
+      .eq('motivo_desc', 'SETUP').gte('dia', d.toISOString().slice(0, 10)).limit(8000);
+    if (error) throw error;
+    const soma = {}, n = {};
+    (data || []).forEach(r => {
+      const c = String(r.recurso_cod || ''); if (!c) return;
+      soma[c] = (soma[c] || 0) + (+r.tempo_horas || 0); n[c] = (n[c] || 0) + 1;
+    });
+    Object.keys(soma).forEach(c => { if (n[c] >= 3) m[c] = soma[c] / n[c]; });
+  } catch (_) { }
+  _progSetup = m;
+  return m;
+}
+
+/* SEQUENCIA SUGERIDA
+   Duas forcas puxam para lados opostos: prazo pede ordem por entrega, setup
+   pede ordens do mesmo item juntas. O meio termo que nao quebra prazo:
+   agrupa por SEMANA de entrega e, dentro da semana, junta o mesmo item.
+   Quem nao tem entrega (Embaladeiras, boa parte da Extrusao e da TF) e
+   agrupado pela semana do termino ja programado. */
+function _progSequencia(m) {
+  const SEM = 7 * 24 * _PROG_H;
+  const chave = (r) => {
+    const e = _progMs(r.entrega) || _progMs(r.termino);
+    return e == null ? Number.MAX_SAFE_INTEGER : _progSegunda(e);
+  };
+  const atual = m.ops.slice();
+  const sug = m.ops.slice().sort((a, b) => {
+    const ka = chave(a), kb = chave(b);
+    if (ka !== kb) return ka - kb;
+    const ia = String(a.item_cod || ''), ib = String(b.item_cod || '');
+    if (ia !== ib) return ia.localeCompare(ib);
+    const ea = _progMs(a.entrega) || 0, eb = _progMs(b.entrega) || 0;
+    if (ea !== eb) return ea - eb;
+    return (_progMs(a.inicio) || 0) - (_progMs(b.inicio) || 0);
+  });
+  const trocas = (arr) => {
+    let t = 0;
+    for (let i = 1; i < arr.length; i++) {
+      const x = String(arr[i - 1].item_cod || ''), y = String(arr[i].item_cod || '');
+      if (x && y && x !== y) t++;
+    }
+    return t;
+  };
+  const tAtual = trocas(atual), tSug = trocas(sug);
+  const setup = (_progSetup && _progSetup[m.cod]) || 0;
+  return { atual: tAtual, sug: tSug, ganho: Math.max(0, tAtual - tSug), setup: setup, horas: Math.max(0, tAtual - tSug) * setup, seq: sug };
+}
 
 // media semanal realizada nos ultimos 28 dias fechados. Nao e capacidade
 // nominal de placa: e o que o setor provou que entrega, que e a unica regua
@@ -14625,6 +14683,52 @@ function renderProgramacao() {
             + '</div>';
         }
         h += '</div>';
+      });
+      partes.push(h + '</div>');
+    }
+  } catch (_) { }
+
+  /* ---------- sequência sugerida ---------- */
+  try {
+    const ORDEM2 = ['Extrusão', 'Impressão', 'Termoformagem', 'Embaladeiras'];
+    const seqs = maqs.map(m => ({ m: m, r: _progSequencia(m) })).filter(x => x.r.ganho > 0 && x.m.nOps >= 4);
+    if (seqs.length) {
+      seqs.sort((a, b) => (b.r.horas - a.r.horas) || (b.r.ganho - a.r.ganho));
+      const totH = seqs.reduce((a, x) => a + x.r.horas, 0);
+      const totT = seqs.reduce((a, x) => a + x.r.ganho, 0);
+      let h = '<div class="card"><h3 style="margin:0 0 4px">Sequência sugerida</h3>'
+        + '<p class="desc" style="margin:0 0 10px">Duas coisas puxam para lados opostos: o prazo pede ordem por entrega, a produtividade pede o mesmo item junto. '
+        + 'A sugestão agrupa por <b>semana de entrega</b> e, dentro da semana, junta as ordens do mesmo item — ganha setup sem empurrar prazo. '
+        + 'O tempo de troca é o <b>SETUP real medido</b> em cada máquina nos últimos 60 dias.</p>'
+        + '<div style="background:#E8F5E9;border:1px solid #A5D6A7;border-radius:10px;padding:9px 11px;margin-bottom:11px;font-size:13px">'
+        + '<b>' + fmt(totT, 0) + ' trocas a menos</b> no total, o equivalente a <b>' + fmt(totH, 0) + ' h</b> de máquina recuperadas.</div>';
+      const porSet = {};
+      seqs.forEach(x => { (porSet[x.m.setor] = porSet[x.m.setor] || []).push(x); });
+      const setores = Object.keys(porSet).sort((a, b) => {
+        const ia = ORDEM2.indexOf(a), ib = ORDEM2.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+      setores.forEach(st => {
+        h += '<div style="margin:12px 0 5px;font-size:12px;font-weight:800;color:var(--fraco)">' + escapeHtml(st.toUpperCase()) + '</div>';
+        porSet[st].forEach(x => {
+          const m = x.m, r = x.r;
+          h += '<details style="border-bottom:1px solid #eceff1;padding:7px 0">'
+            + '<summary style="cursor:pointer;font-size:13px"><b class="mono">' + escapeHtml(m.cod) + '</b> · '
+            + 'hoje <b>' + r.atual + '</b> trocas → sugerido <b>' + r.sug + '</b>'
+            + (r.setup > 0 ? ' · recupera <b style="color:#2e7d32">' + fmt(r.horas, 1) + ' h</b>' : ' · <span class="desc">sem setup medido</span>')
+            + '</summary><div style="margin-top:6px">'
+            + '<div class="desc" style="font-size:11px;margin-bottom:5px">'
+            + (r.setup > 0 ? 'cada troca custa <b>' + fmt(r.setup, 2) + ' h</b> nesta máquina · ' : '')
+            + m.nOps + ' ordens</div>'
+            + r.seq.slice(0, 40).map((o, i) => '<div style="padding:3px 0;border-top:1px dashed #eceff1;font-size:11.5px">'
+              + '<span class="mono desc" style="display:inline-block;width:24px">' + (i + 1) + '</span>'
+              + '<b class="mono">' + escapeHtml(o.op || '—') + '</b> · item <b class="mono">' + escapeHtml(o.item_cod || '—') + '</b>'
+              + ' · ' + _progT(+o.kg_programado || 0)
+              + ' · entrega ' + (o.entrega ? escapeHtml(fmtData(o.entrega)) : '<span class="desc">sem data</span>')
+              + '</div>').join('')
+            + (r.seq.length > 40 ? '<div class="desc" style="font-size:11px;padding-top:4px">… e mais ' + (r.seq.length - 40) + ' ordens</div>' : '')
+            + '</div></details>';
+        });
       });
       partes.push(h + '</div>');
     }
