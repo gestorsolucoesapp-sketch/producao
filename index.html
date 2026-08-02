@@ -716,7 +716,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.473.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.474.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1977,7 +1977,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.473.0';
+const APP_VER = '3.474.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4239,6 +4239,7 @@ function _amPreencheMaquinas(cache) {
   sel.innerHTML = '<option value="">Todas as máquinas (' + arr.length + ')</option>' +
     arr.map(c => '<option value="' + escapeHtml(c) + '"' + (c === _amMaq ? ' selected' : '') + '>' + escapeHtml(c + (nome[c] ? ' · ' + nome[c] : '')) + '</option>').join('');
   if (_amMaq && !arr.includes(_amMaq)) { _amMaq = ''; sel.value = ''; }
+  try { sincMaqGlobal(); } catch (_) {}   // idem Manutencao: espelha so depois de preencher
 }
 function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'todos') return true; if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return s !== 'Extrusão'; return s === _amSetor; }
 // máquina tem precedência: escolhida uma, o setor deixa de importar
@@ -7277,6 +7278,10 @@ function renderManut() {
       if (maqF) L = L.filter(o => String(o.recurso_cod) === maqF);
     }
   }
+  /* a pilula espelha manutMaq; trocarAba sincroniza em 0/400/1500ms, mas
+     carregarManut e assincrono: se as OS demoram mais que isso, a pilula
+     copiava um select ainda vazio e ficava so com "Todas". */
+  try { sincMaqGlobal(); } catch (_) {}
 
   // busca livre: motivo, submotivo, detalhes, atividade, nº da OS e máquina
   {
@@ -9030,10 +9035,19 @@ async function ensureAnalise() {
   dadosAnalise = null; dadosProducaoFull = null;
   try {
     const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
-    const [rows, paradas] = await Promise.all([
+    let [rows, paradas] = await Promise.all([
       fetchTudo('producao', 'dia,data_inicio,op,item_cod,item_desc,recurso_cod,recurso_nome,quantidade,peso,unidade', de, ate),
       fetchTudo('paradas', 'dia,motivo_desc,tempo_horas,recurso_cod,op,inicio,fim', de, ate)
     ]);
+    /* RECORTE DE MAQUINA (pilula da tarja preta). Esta aba NAO le dadosPainel:
+       busca direto do banco. Sem este filtro, escolher uma maquina nao mudava
+       nada aqui — a tabela Boca x setor seguia mostrando a fabrica inteira.
+       aplicarMaqGlobal() zera dadosAnalise, entao a troca cai sempre aqui. */
+    if (typeof _maqSel !== 'undefined' && _maqSel) {
+      const _c = String(_maqSel);
+      rows = rows.filter(r => String(r.recurso_cod) === _c);
+      paradas = paradas.filter(p => String(p.recurso_cod) === _c);
+    }
     setupParadas = paradas.filter(p => /SETUP/i.test(p.motivo_desc || ''));
     todasParadas = paradas.slice();   // todas — para o tempo líquido por OP
     aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]);
