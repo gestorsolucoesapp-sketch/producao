@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.487.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.488.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1978,7 +1978,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.487.0';
+const APP_VER = '3.488.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4364,6 +4364,69 @@ async function osDoMotivo(cod, motivo) {
   verOSGrupo(ch);
 }
 
+/* APONTAMENTOS DE PRODUCAO de uma maquina num bloco de turno.
+   O agregado da tela vem do RPCP621 (producao_resumo), que nao tem item nem OP.
+   Para detalhar e preciso o RPCP622 (tabela producao) — por isso a consulta
+   direta. Os dois relatorios divergem (~9% na Termoformagem em 01/08), entao o
+   total daqui pode nao fechar com o do cartao; o aviso no rodape diz isso. */
+async function mtDetProducao(cod, bl) {
+  const S = _mtSnap, M = S && S.M, a = M && M[cod] && M[cod][bl];
+  if (!a) { toast('Sem dados deste turno'); return; }
+  const tit = 'Produção · ' + cod + ' · ' + bl;
+  abreDet(tit, '<p class="desc">buscando apontamentos…</p>');
+  try {
+    const { data, error } = await sb.from('producao')
+      .select('dia,turno,op,item_cod,item_desc,quantidade,unidade,peso')
+      .eq('recurso_cod', String(cod))
+      .gte('dia', S.de).lte('dia', S.ate)
+      .order('dia', { ascending: false }).limit(1000);
+    if (error) throw error;
+    const rows = (data || []).filter(r => blocoTurno(r.turno, r.dia) === bl);
+    if (!rows.length) {
+      abreDet(tit, '<p class="desc">Nenhum apontamento do 622 nesta máquina e turno no período.</p>');
+      return;
+    }
+    const un = v => S.fV(v, cod);
+    // por item: soma peso, caixas e conta OPs distintas
+    const porItem = {};
+    rows.forEach(r => {
+      const k = (r.item_cod || '—') + ' · ' + (r.item_desc || '');
+      const o = porItem[k] || (porItem[k] = { kg: 0, cx: 0, ops: new Set(), n: 0 });
+      o.kg += (+r.peso || 0);
+      if (String(r.unidade || '').toUpperCase() === 'CX') o.cx += (+r.quantidade || 0);
+      if (r.op) o.ops.add(String(r.op));
+      o.n++;
+    });
+    const ordI = Object.keys(porItem).sort((x, y) => porItem[y].kg - porItem[x].kg);
+    const totKg = rows.reduce((s, r) => s + (+r.peso || 0), 0);
+    const linhasI = ordI.map(k => {
+      const o = porItem[k];
+      return `<tr><td class="nome" style="font-size:12px">${escapeHtml(k)}` +
+        `<div style="font-size:10.5px;color:var(--fraco-2)">${o.n} apontamento${o.n > 1 ? 's' : ''}${o.ops.size ? ' · ' + o.ops.size + ' OP' + (o.ops.size > 1 ? 's' : '') : ''}</div></td>` +
+        `<td><span class="cel cel-tot">${fmtKg(o.kg)}</span></td>` +
+        `<td><span class="cel neutra">${o.cx ? fmtNum(o.cx) : '—'}</span></td></tr>`;
+    }).join('');
+
+    const MAXA = 30;
+    const linhasA = rows.slice(0, MAXA).map(r => `<tr>` +
+      `<td class="nome" style="font-size:12px">${escapeHtml(fmtDataSem(String(r.dia).slice(0, 10)))}` +
+      `<div style="font-size:10.5px;color:var(--fraco-2)">T${escapeHtml(String(r.turno || '—'))}${r.op ? ' · OP ' + escapeHtml(String(r.op)) : ''}</div></td>` +
+      `<td class="nome" style="font-size:12px">${escapeHtml(String(r.item_cod || '—'))}</td>` +
+      `<td><span class="cel cel-tot">${fmtKg(+r.peso || 0)}</span></td></tr>`).join('');
+
+    abreDet(tit,
+      '<div style="font-size:12px;color:var(--fraco)">total <b style="color:var(--txt-2)">' + un(a.v) + '</b> no cartão · <b>' + fmtKg(totKg) + '</b> somando os apontamentos</div>' +
+      '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Por item</div>' +
+      tabSimples(['Item', 'Peso', 'Cxs'], linhasI) +
+      '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Apontamento a apontamento' +
+      (rows.length > MAXA ? ` <span style="text-transform:none;font-weight:600">· ${MAXA} mais recentes de ${rows.length}</span>` : '') + '</div>' +
+      tabSimples(['Dia · turno · OP', 'Item', 'Peso'], linhasA) +
+      '<p class="desc" style="margin-top:10px;font-size:11px">O cartão soma o RPCP621 e esta lista sai do RPCP622. Os dois relatórios divergem na origem, então os totais podem não fechar.</p>');
+  } catch (e) {
+    abreDet(tit, '<p class="desc">Não consegui buscar os apontamentos: ' + escapeHtml(String((e && e.message) || e)) + '</p>');
+  }
+}
+
 function mtDetParadas(cod, bl) {
   const M = _mtSnap && _mtSnap.M, a = M && M[cod] && M[cod][bl];
   if (!a) { toast('Sem dados deste turno'); return; }
@@ -4574,7 +4637,7 @@ function cardMaquinaTurno(E) {
               + '<span class="desc" style="font-size:10px">' + (a.pa > 0 ? _mtH(a.pa) + ' apontadas' : 'sem apontamento') + '</span>' : '') +
             '<span style="margin-left:auto;width:12px;height:12px;border-radius:50%;background:' + dot + '"></span></div>' +
             _mtLinhaEquipe(c, bb) +
-            '<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin-bottom:3px"><span style="width:64px;flex:none;font-size:11px;font-weight:600;color:var(--fraco);line-height:1.5">Produção</span>' +
+            '<div style="display:flex;align-items:baseline;gap:6px;font-size:11px;margin-bottom:3px"><span style="width:64px;flex:none;font-size:11px;font-weight:600;color:var(--fraco);line-height:1.5;cursor:pointer;text-decoration:underline dotted" onclick="mtDetProducao(\'' + c + '\',\'' + bb + '\')">Produção 🔎</span>' +
             '<span style="font-size:11px;line-height:1.5;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">atingiu <b style="color:' + MT_TXT[fP] + '">' + Math.round(p) + '%</b> da meta' + (d > 1 ? ' <i style="font-style:normal;font-size:9px" class="desc">em ' + _fmtDias(a.dias, M[c]) + '</i>' : '') + '</span>' +
             '<span style="margin-left:auto;font-size:11px;color:var(--fraco);white-space:nowrap;line-height:1.5">' + fV(a.v, c) + '</span></div>' +
             _mtBarra(fP, p, 150, 100, 'meta ' + (meta ? fV(meta, c) : '—') + (d > 1 ? '/dia' : '')) +
