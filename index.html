@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.479.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.480.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1982,7 +1982,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.479.0';
+const APP_VER = '3.480.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8440,14 +8440,17 @@ const ico = k => INFOS[k] ? `<button class="i-info" onclick="event.stopPropagati
 const LIM_DESC = 120;
 const _descLongas = [];
 let _compactando = false;
+/* titulo da secao: so o irmao anterior e o h3 DIRETO do pai. A versao anterior
+   fazia querySelector subindo ate 6 niveis — no <main> isso vira consulta no
+   documento inteiro, uma por descricao, 28 vezes. No celular custava caro. */
 function _tituloPerto(el) {
-  let n = el;
-  for (let i = 0; i < 6 && n; i++) {
-    n = n.previousElementSibling || n.parentElement;
-    if (!n) break;
-    if (/^H[1-4]$/.test(n.tagName) || n.classList?.contains('titulo-sec')) return n.textContent.trim().slice(0, 60);
-    const t = n.querySelector?.('h3, .titulo-sec');
-    if (t) return t.textContent.trim().slice(0, 60);
+  let n = el.previousElementSibling;
+  for (let i = 0; i < 3 && n; i++, n = n.previousElementSibling) {
+    if (/^H[1-4]$/.test(n.tagName) || n.classList.contains('titulo-sec')) return n.textContent.trim().slice(0, 60);
+  }
+  const pai = el.parentElement;
+  if (pai) for (const f of pai.children) {
+    if (/^H[1-4]$/.test(f.tagName) || f.classList.contains('titulo-sec')) return f.textContent.trim().slice(0, 60);
   }
   return 'Como este número é feito';
 }
@@ -8459,7 +8462,7 @@ function compactarDescricoes(root) {
   if (_compactando) return;
   _compactando = true;
   try {
-    (root || document).querySelectorAll('p.desc:not([data-info])').forEach(el => {
+    (root || document.querySelector('main') || document).querySelectorAll('p.desc:not([data-info])').forEach(el => {
       el.setAttribute('data-info', '1');
       const txt = (el.textContent || '').trim();
       if (txt.length < LIM_DESC) return;
@@ -8470,10 +8473,24 @@ function compactarDescricoes(root) {
   } catch (_) { }
   _compactando = false;
 }
+/* Observa so o <main>, nao o documento inteiro, e roda em tempo ocioso para
+   nunca competir com a renderizacao. */
+function _ligaObsDesc() {
+  const alvo = document.querySelector('main');
+  if (!alvo) { setTimeout(_ligaObsDesc, 500); return; }
+  const agenda = () => {
+    clearTimeout(window._tDesc);
+    window._tDesc = setTimeout(() => {
+      const f = () => compactarDescricoes();
+      (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 800 }) : f());
+    }, 250);
+  };
+  try { new MutationObserver(agenda).observe(alvo, { childList: true, subtree: true }); } catch (_) { }
+  agenda();
+}
 try {
-  new MutationObserver(() => { clearTimeout(window._tDesc); window._tDesc = setTimeout(() => compactarDescricoes(), 60); })
-    .observe(document.documentElement, { childList: true, subtree: true });
-  document.addEventListener('DOMContentLoaded', () => compactarDescricoes());
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ligaObsDesc);
+  else _ligaObsDesc();
 } catch (_) { }
 
 // selo do período selecionado (usado no topo dos modais de detalhe)
