@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.486.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.487.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1978,7 +1978,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.486.0';
+const APP_VER = '3.487.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8934,8 +8934,53 @@ async function detMotivoParada(setor, motivo, dia) {
     const tr = trocasMaq ? `<td ${dia ? `onclick=\"detSetupsMaq('${c}','${dia}','${setor || ''}')\" style=\"cursor:pointer\"` : ''}><span class="cel ${(trocasMaq[String(c)] || 0) > 1 ? 'baixo' : 'neutra'}">${trocasMaq[String(c)] || 0}×${dia ? ' ›' : ''}</span></td>` : '';
     return `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(nm[c])}</td>${tr}<td><span class="cel ${h > 0 ? 'cel-tot' : 'neutra'}">${h > 0 ? h.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h' : '—'}</span></td></tr>`;
   }).join('');
+  /* QUANDO a parada aconteceu: so o total por maquina nao deixa ver se foram
+     duas paradas longas ou vinte curtas, nem em que dia e horario cairam. */
+  const _hm = v => { const s = String(v || ''); const mm = /T(\d{2}):(\d{2})/.exec(s) || /\b(\d{2}):(\d{2})/.exec(s); return mm ? mm[1] + ':' + mm[2] : '—'; };
+  const ordP = par.slice().sort((a, b) => String(b.inicio || b.dia || '').localeCompare(String(a.inicio || a.dia || '')));
+  const MAXP = 25;
+  const linhasP = ordP.slice(0, MAXP).map(pp => {
+    const d = pp.dia || (pp.inicio ? String(pp.inicio).slice(0, 10) : null);
+    return `<tr><td class="nome" style="font-size:12px">${d ? escapeHtml(fmtDataSem(d)) : '—'}<div style="font-size:10.5px;color:var(--fraco-2)">${_hm(pp.inicio)} → ${_hm(pp.fim)}</div></td>` +
+      `<td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(pp.recurso_cod || '—'))}</span></td>` +
+      `<td><span class="cel cel-tot">${(+pp.tempo_horas || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span></td></tr>`;
+  }).join('');
+  const blocoParadas = par.length
+    ? '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Quando aconteceu' +
+      (ordP.length > MAXP ? ` <span style="text-transform:none;font-weight:600">· mostrando as ${MAXP} mais recentes de ${ordP.length}</span>` : '') + '</div>' +
+      tabSimples(['Dia · horário', 'Máq.', 'Duração'], linhasP)
+    : '';
+
+  /* ORDENS DE SERVICO das mesmas maquinas no mesmo periodo. manutencao_os nao
+     esta em dadosPainel, por isso a consulta direta. */
+  let blocoOS = '';
+  try {
+    const cods = Object.keys(maq).map(String).filter(Boolean);
+    const de = dia || (periodoSel && periodoSel.de) || null;
+    const ate = dia || (periodoSel && periodoSel.ate) || null;
+    if (cods.length && de && ate) {
+      const { data: osR } = await sb.from('manutencao_os')
+        .select('os_num,recurso_cod,situacao,atividade,motivo,detalhes,data_abertura,data_encerramento')
+        .in('recurso_cod', cods)
+        .gte('data_abertura', de).lte('data_abertura', ate + 'T23:59:59')
+        .order('data_abertura', { ascending: false }).limit(30);
+      if (osR && osR.length) {
+        const linhasOS = osR.map(o => {
+          const ab = o.data_abertura ? fmtDataSem(String(o.data_abertura).slice(0, 10)) : '—';
+          const fech = !!o.data_encerramento;
+          const txt = String(o.atividade || o.motivo || o.detalhes || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+          return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(o.os_num || '—'))}</span> ${escapeHtml(String(o.recurso_cod || ''))}` +
+            `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(ab)}${txt ? ' · ' + escapeHtml(txt) : ''}</div></td>` +
+            `<td><span class="cel ${fech ? 'neutra' : 'baixo'}">${fech ? 'fechada' : escapeHtml(String(o.situacao || 'aberta'))}</span></td></tr>`;
+        }).join('');
+        blocoOS = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Ordens de serviço das mesmas máquinas</div>' +
+          tabSimples(['OS · máquina · abertura', 'Situação'], linhasOS);
+      }
+    }
+  } catch (_) { /* sem OS o modal continua util */ }
+
   abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)${trocasMaq ? ` · <b>${totTrocas} troca(s) real(is)</b> — em vermelho quem trocou mais de 1×` : ''}</p>
-    ${tabSimples(cab, linhas)}${quebraFam}`);
+    ${tabSimples(cab, linhas)}${quebraFam}${blocoParadas}${blocoOS}`);
 }
 // UM tipo de perda: máquinas, peso e cxs
 function detTipoPerda(setor, tipo) {
@@ -12251,12 +12296,28 @@ function paretoSVG(dados, fmtVal, cor) {
   const larg = (W - padL - padR) / arr.length, bw = Math.min(46, larg * 0.58);
   let bars = '', pts = [], rotulos = '', vals = '';
   let ac = 0;
-  // quebra o rótulo em até 2 linhas de ~13 caracteres (antes cortava em 8 com "…")
+  /* QUEBRA DO ROTULO: o limite era 13 caracteres FIXOS, mas a coluna tem ~60px e
+     13 caracteres a font-size 10 ocupam ~73px — por isso "AGUARDANDO MANUTENCAO"
+     invadia "FALTA DE RECURSO HUMANO". Agora o limite sai da largura real da
+     coluna, cabem 3 linhas, e palavra maior que a coluna e cortada com hifen
+     (LIMPEZA/ORGANIZACAO tambem quebra na barra). */
+  const maxCh = Math.max(7, Math.floor((larg - 6) / 5.4));
   const quebra = (s) => {
-    const p = String(s).split(/\s+/); const ln = []; let cur = '';
-    p.forEach(w => { if ((cur + ' ' + w).trim().length <= 13) cur = (cur + ' ' + w).trim(); else { if (cur) ln.push(cur); cur = w; } });
+    const p = String(s).replace(/\//g, '/ ').split(/\s+/).filter(Boolean);
+    const ln = []; let cur = '';
+    p.forEach(w0 => {
+      let w = w0;
+      while (w.length > maxCh) {
+        if (cur) { ln.push(cur); cur = ''; }
+        ln.push(w.slice(0, maxCh - 1) + '-');
+        w = w.slice(maxCh - 1);
+      }
+      if (!w) return;
+      if ((cur + ' ' + w).trim().length <= maxCh) cur = (cur + ' ' + w).trim();
+      else { if (cur) ln.push(cur); cur = w; }
+    });
     if (cur) ln.push(cur);
-    if (ln.length > 2) { const r = ln.slice(1).join(' '); ln.length = 1; ln.push(r.length > 13 ? r.slice(0, 12) + '…' : r); }
+    if (ln.length > 3) { ln.length = 3; ln[2] = ln[2].slice(0, Math.max(1, maxCh - 1)) + '…'; }
     return ln;
   };
   arr.forEach((d, i) => {
