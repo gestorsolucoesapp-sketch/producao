@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.490.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.491.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1978,7 +1978,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.490.0';
+const APP_VER = '3.491.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3092,7 +3092,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
   await aplicarPermissoes();
   // abre a primeira aba permitida
   const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
@@ -7697,6 +7697,7 @@ function kghDaCelula(cod, bloco) {
   return `<div style="font-size:10px;color:var(--fraco);margin-top:3px;line-height:1.3">meta ${f(metaKgh)} kg/h${linhaReal}</div>`;
 }
 async function carregarMetas() {
+  try { await getSetupCfg(); } catch (_) { }
   // usa cache: metas mudam pouco; a view do real (pesada) só é buscada se o real/h estiver visível
   await Promise.all([
     (metasData ? Promise.resolve() : getMetas()),
@@ -7733,6 +7734,29 @@ function renderMetas() {
   html += `<tr style="border-top:2px solid var(--navy);font-weight:700;background:var(--leve-5)"><td style="text-align:left;padding:8px 6px">TOTAL ${escapeHtml(setor)}</td>${_BLOCOS_META.map(b => `<td style="text-align:center"><span id="metaTotB_${b[1]}">—</span></td>`).join('')}<td><span class="cel neutra" id="metaTotDia" style="font-weight:700">—</span></td><td><span class="cel cel-tot" id="metaTotMes" style="font-weight:700">—</span></td></tr>`;
   html += `</tbody></table></div>`;
   html += `<div id="metaTotGeral" class="desc" style="margin-top:8px;text-align:center;font-weight:600"></div>`;
+
+  /* METAS DE SETUP POR SETOR — cada setor tem tempo alvo proprio. O "ignorar
+     abaixo de" existe porque ha setup curto de virada de turno que nao e troca
+     de verdade e derruba a media (caso da Impressao). 0 = considera todos. */
+  const _cfg = setupCfg || _setupCfgPadrao();
+  const _roS = metasEditavel ? '' : 'readonly';
+  html += `<div style="margin-top:18px;border-top:2px solid var(--borda);padding-top:14px">
+    <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:2px">🔧 Setup por setor</div>
+    <div class="desc" style="margin-bottom:8px">Tempo alvo de cada setup e duração mínima para entrar na média. Vale para os cards “Setups por máquina” do Painel.</div>
+    <div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>
+      <th style="text-align:left">Setor</th><th>Meta (min)</th><th>Ignorar abaixo de (min)</th></tr></thead><tbody>`;
+  Object.keys(SETOR_MAQ).forEach(st => {
+    const c = _cfg[st] || { meta: META_SETUP_MIN, min: 0 }, sl = _slug(st);
+    html += `<tr><td class="nome" style="text-align:left">${escapeHtml(st)}</td>
+      <td><input type="number" inputmode="numeric" min="1" step="1" id="scMeta_${sl}" value="${c.meta}" ${_roS}
+        style="width:80px;padding:5px 6px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${metasEditavel ? '' : ';background:var(--leve-3);color:#7a8794'}"></td>
+      <td><input type="number" inputmode="numeric" min="0" step="1" id="scMin_${sl}" value="${c.min}" ${_roS}
+        style="width:80px;padding:5px 6px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${metasEditavel ? '' : ';background:var(--leve-3);color:#7a8794'}"></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  if (metasEditavel) html += `<button class="btn" style="margin-top:10px" onclick="salvarSetupCfg()">Salvar metas de setup</button>`;
+  html += `</div>`;
+
   $('metasConteudo').innerHTML = html;
   metasTotaisLive();
   // rodapé: fator OEE + salvar (se pode editar) ou aviso de leitura
@@ -9315,7 +9339,45 @@ function contaSetup(cod) { return setorDe(cod) !== 'Extrusão'; }
 /* card: nº de setups por máquina no período. Barra = qtd de trocas.
    Ao clicar numa máquina: tempo total de setup, média por setup e por turno.
    Meta de referência: 1h30 (90 min) por setup. */
-const META_SETUP_MIN = 90;
+const META_SETUP_MIN = 90;                 // usado so como padrao inicial
+/* SETUP POR SETOR — cada setor tem meta de tempo propria, e a Impressao tem
+   setups curtos de virada de turno que puxavam a media para baixo e davam um
+   numero falso. Por isso alem da meta existe o MINIMO: parada de setup abaixo
+   dele nao entra na media. Editavel na aba Metas, guardado em app_config. */
+let setupCfg = null;   // { 'Impressão': {meta:90, min:60}, ... }
+const _setupCfgPadrao = () => {
+  const o = {};
+  Object.keys(SETOR_MAQ).forEach(s => { o[s] = { meta: META_SETUP_MIN, min: 0 }; });
+  return o;
+};
+async function getSetupCfg() {
+  if (setupCfg) return setupCfg;
+  setupCfg = _setupCfgPadrao();
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'setup_cfg').maybeSingle();
+    if (data && data.valor) {
+      const j = JSON.parse(data.valor) || {};
+      Object.keys(j).forEach(s => { if (setupCfg[s]) setupCfg[s] = Object.assign(setupCfg[s], j[s]); });
+    }
+  } catch (_) { }
+  return setupCfg;
+};
+const setupMetaDe = st => ((setupCfg && setupCfg[st] && +setupCfg[st].meta) || META_SETUP_MIN);
+const setupMinDe = st => ((setupCfg && setupCfg[st] && +setupCfg[st].min) || 0);
+async function salvarSetupCfg() {
+  const cfg = {};
+  Object.keys(SETOR_MAQ).forEach(s => {
+    const em = $('scMeta_' + _slug(s)), en = $('scMin_' + _slug(s));
+    if (!em) return;
+    cfg[s] = { meta: Math.max(1, parseInt(em.value, 10) || META_SETUP_MIN), min: Math.max(0, parseInt(en ? en.value : 0, 10) || 0) };
+  });
+  try {
+    await sb.from('app_config').upsert({ chave: 'setup_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    setupCfg = Object.assign(_setupCfgPadrao(), cfg);
+    toast('Metas de setup salvas');
+  } catch (e) { toast('Erro ao salvar: ' + (e.message || e)); }
+}
+const _slug = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]/g, '');
 function cardSetupsMaquina(D, setor) {
   try {
     // SETUP = troca de ITEM diferente (calcularTrocas já ignora troca de OP do mesmo
@@ -9332,6 +9394,8 @@ function cardSetupsMaquina(D, setor) {
       if (setor && setorDe(c) !== setor) return;
       if (!/setup/i.test(p.motivo_desc || '')) return;
       if (!diasPeriodo.has(String(p.dia).slice(0, 10))) return;
+      // corte por duracao minima do setor: virada de turno nao e setup de verdade
+      if (setor && setupMinDe(setor) > 0 && (p.tempo_horas || 0) * 60 < setupMinDe(setor)) return;
       const minTot = _turFiltro
         ? (tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[_turFiltro] || 0) * 60
         : (p.tempo_horas || 0) * 60;
@@ -9371,9 +9435,20 @@ function cardSetupsMaquina(D, setor) {
     const totMin = cods.reduce((a, c) => a + porMaq[c].min, 0);
     const corBarra = corGrafTurno('var(--azul-2)');
     const totTro = cods.reduce((a, c) => a + (porMaq[c].tro || 0), 0);
-    return card('🔧 Setups por máquina' + ico('setups'), totSetups + ' parada(s) de setup no período' + (totTro ? ' · ' + totTro + ' troca(s) de item' : '') + ' · ' + fmtMinSet(totMin) + ' parados',
-      barrasVerticalScroll(arr, () => corBarra, { meta: META_SETUP_MIN, fmt: fmtMinSet, margemEsq: 48 }) +
-      paretoHorizontal(arr.map(x => ({ l: x.l + ' · ' + (x.semFull || x.sem), v: x.v, click: x.click })), fmtMinSet, corBarra));
+    /* SEM setor: card global e so panorama — cada setor tem meta diferente, uma
+       linha unica ali compararia Impressao com Termoformagem. A meta so aparece
+       nos cards por setor. */
+    const _metaSt = setor ? setupMetaDe(setor) : null;
+    const _minSt = setor ? setupMinDe(setor) : 0;
+    const _sub = totSetups + ' parada(s) de setup no período'
+      + (totTro ? ' · ' + totTro + ' troca(s) de item' : '')
+      + ' · ' + fmtMinSet(totMin) + ' parados'
+      + (_metaSt ? ' · meta ' + fmtMinSet(_metaSt) : ' · sem meta (visão geral)')
+      + (_minSt ? ' · ignora setup < ' + fmtMinSet(_minSt) : '');
+    return card('🔧 Setups por máquina' + (setor ? ' · ' + setor : '') + ico('setups'), _sub,
+      barrasVerticalScroll(arr, () => corBarra, _metaSt ? { meta: _metaSt, fmt: fmtMinSet, margemEsq: 48 } : { fmt: fmtMinSet, margemEsq: 48 }) +
+      paretoHorizontal(arr.map(x => ({ l: x.l + ' · ' + (x.semFull || x.sem), v: x.v, click: x.click })), fmtMinSet, corBarra),
+      'Setups por máquina' + (setor ? ' · ' + setor : ''));
   } catch (_) { return ''; }
 }
 function _cardSetupsMaquinaOLD(D, setor) {
@@ -13328,6 +13403,8 @@ function renderPainel() {
     html += card('Produção por máquina · todos os setores', (metrica === 'peso' ? 'peso' : 'cxs') + ' — todas as máquinas, Extrusão incluída',
       gMaqPeso(D.producao, val, uni, todasMaq, D.nomeMaq));
     try { html += cardSetupsMaquina(D, null); } catch (_) {}
+    // um card por setor: meta de tempo e corte minimo sao proprios de cada um
+    try { Object.keys(SETOR_MAQ).forEach(st => { html += cardSetupsMaquina(D, st) || ''; }); } catch (_) {}
 
     // ⏱️ Produção perdida por PARADA (baseado na meta kg/h de cada máquina)
     { const kp = kgPerdidoParadas(D);
