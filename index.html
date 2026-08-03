@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.545.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.546.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.545.0';
+const APP_VER = '3.546.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9966,8 +9966,16 @@ function detSetupsMaquina(cod, setor) {
     const trocas = calcularTrocas(setor || '').filter(t => String(t.maq) === cod && diasPeriodo.has(String(t.dia).slice(0, 10)) && (!_tur || (t.horaEntrou && blocoParadaTurno(t.horaEntrou, t.dia) === _tur)));
     const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
     const nTrocas = trocas.length;
-    // tempo real de setup = paradas de motivo SETUP dessa máquina no período
-    const setups = (D.paradas || []).filter(p => String(p.recurso_cod) === cod && /setup/i.test(p.motivo_desc || '') && diasPeriodo.has(String(p.dia).slice(0, 10)));
+    /* CORTE MÍNIMO DA ABA METAS — o card do Painel já respeitava, este modal não.
+       Era por isso que o resíduo de 1 minuto da 703 (11:28→11:29) entrava na
+       conta: com "ignorar abaixo de 60 min" configurado na Impressão, ele nem
+       deveria existir como setup. SETUP é troca de item, não apontamento solto. */
+    const _setSt = setor || (typeof setorDe === 'function' ? setorDe(cod) : '');
+    const _minSt = _setSt ? setupMinDe(_setSt) : 0;
+    const setupsBrutos = (D.paradas || []).filter(p => String(p.recurso_cod) === cod && /setup/i.test(p.motivo_desc || '') && diasPeriodo.has(String(p.dia).slice(0, 10)));
+    const setups = _minSt > 0 ? setupsBrutos.filter(p => (+p.tempo_horas || 0) * 60 >= _minSt) : setupsBrutos;
+    const nIgnoradas = setupsBrutos.length - setups.length;
+    const minIgnorados = setupsBrutos.filter(p => setups.indexOf(p) < 0).reduce((a, p) => a + (+p.tempo_horas || 0) * 60, 0);
     if (!setups.length && !nTrocas) { abreDet(cod, `<p class="idet-desc">${escapeHtml(nome)}</p><p class="desc">Sem setups no período.</p>`); return; }
     // Parada que atravessa o corte do turno tem que ser FATIADA, igual o card do
     // Painel faz. Sem isso o modal soma a parada inteira no turno em que ela
@@ -10004,14 +10012,16 @@ function detSetupsMaquina(cod, setor) {
     const divisorMedia = nTrocas > 0 ? nTrocas : nSetups;
     const mediaMin = divisorMedia > 0 ? totMin / divisorMedia : 0;
     const fmtMin = m => { const hh = Math.floor(m / 60), mm = Math.round(m % 60); return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}` : `${mm}min`; };
-    const corMedia = mediaMin > META_SETUP_MIN ? 'var(--critico)' : 'var(--ok-2)';
+    const _metaSt = _setSt ? setupMetaDe(_setSt) : META_SETUP_MIN;
+    const corMedia = mediaMin > _metaSt ? 'var(--critico)' : 'var(--ok-2)';
     const corpo = `<p class="idet-desc">${escapeHtml(nome)} · ${nSetups} parada(s) de setup${nTrocas !== nSetups ? ` · <b>${nTrocas} troca(s) de item</b>` : ''}</p>`
+      + (nIgnoradas > 0 ? `<p class="desc" style="margin:-4px 0 4px">${nIgnoradas} parada(s) de SETUP abaixo de ${fmtMin(_minSt)} ficaram de fora (${fmtMin(minIgnorados)}) — regra do corte mínimo da aba Metas.</p>` : '')
       + (nTrocas > 0 && nSetups > nTrocas ? `<p class="desc" style="margin:-4px 0 8px">O ERP registrou ${nSetups} paradas para ${nTrocas} troca(s) — a média é por troca, que é o que a meta cobra.</p>` : '')
       + `
       <div class="idet-grid">
         <div><b>${nSetups}</b><span>parada(s) de setup</span></div>
         <div><b>${fmtMin(totMin)}</b><span>tempo total</span></div>
-        <div><b style="color:${corMedia}">${divisorMedia ? fmtMin(mediaMin) : '—'}</b><span>média por ${nTrocas > 0 ? 'troca de item' : 'parada'} · meta ${fmtMin(META_SETUP_MIN)}</span></div>
+        <div><b style="color:${corMedia}">${divisorMedia ? fmtMin(mediaMin) : '—'}</b><span>média por ${nTrocas > 0 ? 'troca de item' : 'parada'} · meta ${fmtMin(_metaSt)}</span></div>
       </div>
       <div style="height:8px"></div><div style="font-size:11px;color:#8A97A6;margin-bottom:4px;font-weight:600">Setups por turno</div>
       ${tabSimples(['Turno', 'Iniciados', 'Tempo no turno'], (_tur ? [_tur] : ['Manhã', 'Tarde', 'Noite']).map(t => {
