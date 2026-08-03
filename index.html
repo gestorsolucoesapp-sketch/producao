@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.527.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.528.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1265,6 +1265,14 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <div class="campo campo-dup" style="margin:0;flex:1">
             <label for="progSetor">Setor</label>
             <select id="progSetor" onchange="mudarSetorProg()"><option value="">Todos (resumo geral)</option></select>
+          </div>
+          <div class="campo campo-dup" style="margin:0;flex:1 1 100%">
+            <label for="progBusca">Consultar máquina, pedido ou item</label>
+            <div style="display:flex;gap:6px">
+              <input id="progBusca" type="search" inputmode="search" placeholder="ex.: 703 · 225156 · 1605495 · natural"
+                     style="flex:1;min-width:0" onkeydown="if(event.key==='Enter'){event.preventDefault();progBuscar();}">
+              <button class="btn btn-navy" style="white-space:nowrap" onclick="progBuscar()">Buscar</button>
+            </div>
           </div>
           <div class="campo campo-dup" style="margin:0;flex:1">
             <label for="progMaq">Máquina</label>
@@ -2176,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.527.0';
+const APP_VER = '3.528.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16598,6 +16606,89 @@ function cardProblemas(maqs) {
     totN + ' ordem(ns) para avaliar' + (nCrit ? ' · ' + nCrit + ' precisa(m) de ação' : ''),
     '<p class="desc" style="margin:0 0 4px">Nada aqui é corrigido sozinho — cada linha é uma decisão de quem programa. Toque para ver as ordens.</p>' + corpo,
     'Problemas de programação');
+}
+
+
+/* ---------- CONSULTA: máquina, pedido ou item num campo só ----------
+   Três perguntas que apareciam sempre e não tinham porta de entrada:
+   "como está a fila da 703?", "cadê o pedido 225156?", "onde roda o 1605495?".
+   Um campo resolve os três porque os formatos não se confundem: código de
+   recurso é curto e existe na fila; pedido do REST196 tem 6 dígitos; item tem
+   6 ou 7 e existe no cadastro. Se não bater nada, cai para busca por texto. */
+function progBuscar() {
+  const el = $('progBusca'); if (!el) return;
+  const q = String(el.value || '').trim();
+  if (!q) return;
+  const todas = _progDados || [];
+  const pend = (_cart196 && _cart196.pend) || [];
+  const alvo = q.replace(/\D/g, '');
+
+  // 1) máquina: bate com um recurso que tem ordem na fila
+  if (alvo && todas.some(r => String(r.recurso_cod) === alvo)) return detFilaMaquina(alvo);
+  // 2) pedido: existe no REST196 (o pedido lá vem como 225156/1)
+  if (alvo && pend.some(p => String(p.pedido || '').split('/')[0] === alvo)) return detPedido(alvo);
+  // 3) item: na fila ou na carteira
+  if (alvo && (todas.some(r => String(r.item_cod) === alvo) || pend.some(p => String(p.item_cod) === alvo)))
+    return detItemMaquinas(alvo);
+
+  // 4) texto livre: item, descrição ou cliente
+  const t = q.toLowerCase();
+  const achou = [];
+  const vistos = new Set();
+  todas.forEach(r => {
+    const k = 'i' + r.item_cod;
+    if (vistos.has(k)) return;
+    if (String(r.item_cod || '').includes(q) || String(r.item_desc || '').toLowerCase().includes(t)) {
+      vistos.add(k); achou.push({ tipo: 'item', cod: String(r.item_cod), desc: r.item_desc });
+    }
+  });
+  pend.forEach(p => {
+    const k = 'p' + String(p.pedido || '').split('/')[0];
+    if (vistos.has(k)) return;
+    if (String(p.cliente || '').toLowerCase().includes(t)) {
+      vistos.add(k); achou.push({ tipo: 'pedido', cod: String(p.pedido || '').split('/')[0], desc: p.cliente });
+    }
+  });
+  if (!achou.length) {
+    abreDet('Busca: ' + q, '<p class="desc">Nada encontrado na fila de hoje nem na carteira. Confira se o número está completo — recurso (ex. 703), pedido (ex. 225156) ou item (ex. 1605495).</p>');
+    return;
+  }
+  abreDet('Busca: ' + q,
+    `<p class="idet-desc">${achou.length} resultado(s)</p>`
+    + tabSimples(['Resultado', 'Tipo'], achou.slice(0, 40).map(a =>
+      `<tr onclick="${a.tipo === 'item' ? `detItemMaquinas('${escapeHtml(a.cod)}')` : `detPedido('${escapeHtml(a.cod)}')`}" style="cursor:pointer">`
+      + `<td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(a.cod)}</span> ${escapeHtml(_descItem(a.desc, '', 40))}</td>`
+      + `<td class="nome" style="font-size:11.5px">${a.tipo === 'item' ? 'item' : 'pedido'} ›</td></tr>`).join('')));
+}
+
+/* FILA DA MÁQUINA — na ordem do RPCP264, que é a sequência que o chão segue.
+   Diferente do card de carga, que ordena por entrega: aqui a posição é a real. */
+function detFilaMaquina(cod) {
+  const rows = (_progDados || []).filter(r => String(r.recurso_cod) === String(cod))
+    .sort((a, b) => (a.ordem != null && b.ordem != null) ? a.ordem - b.ordem
+      : a.ordem != null ? -1 : b.ordem != null ? 1
+      : String(a.inicio || '9999').localeCompare(String(b.inicio || '9999')));
+  if (!rows.length) { abreDet('Máquina ' + cod, '<p class="desc">Sem ordens na fila desta máquina na foto atual.</p>'); return; }
+  const nome = rows[0].recurso_nome || cod;
+  const totKg = rows.reduce((s, r) => s + (+r.kg_programado || 0), 0);
+  const totCx = rows.reduce((s, r) => s + (+r.quantidade || 0), 0);
+  const err = rows.filter(r => coresCabe(r.recurso_cod, r.cores) === false);
+  const linhas = rows.map((r, i) => {
+    const atrasa = r.entrega && r.termino && String(r.termino).slice(0, 10) > String(r.entrega);
+    return `<tr onclick="detItemMaquinas('${escapeHtml(String(r.item_cod || ''))}')" style="cursor:pointer">`
+      + `<td><span class="cel ${i < 3 ? 'cel-tot' : 'neutra'}">${i + 1}º</span></td>`
+      + `<td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.item_cod || '—'))}</span> ${escapeHtml(_descItem(r.item_desc, '', 38))}`
+      + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op || '—'))}${r.cliente ? ' · ' + escapeHtml(String(r.cliente).slice(0, 22)) : ''}</div>`
+      + (r.cores != null ? `<div style="margin-top:2px">${selCores(r.cores, r.recurso_cod)}</div>` : '')
+      + `</td>`
+      + `<td><span class="cel cel-tot">${kg(r.kg_programado)}<div style="font-size:10px;font-weight:600;opacity:.8">${fmt(r.quantidade || 0, 0)} cx</div></span></td>`
+      + `<td class="nome" style="font-size:11.5px">${r.inicio ? escapeHtml(fmtDataSem(String(r.inicio).slice(0, 10))) : '—'}`
+      + `<div style="font-size:10px;color:${atrasa ? 'var(--critico)' : 'var(--fraco-2)'}">${r.entrega ? 'entrega ' + escapeHtml(fmtDataSem(r.entrega)) + (atrasa ? ' ⚠️' : '') : 'sem entrega'}</div></td></tr>`;
+  }).join('');
+  abreDet('Fila ' + cod + ' · ' + String(nome).slice(0, 24),
+    `<p class="idet-desc"><b>${rows.length}</b> ordem(ns) · <b>${kg(totKg)}</b> · ${fmt(totCx, 0)} cx · na ordem do RPCP264</p>`
+    + (err.length ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:8px 11px;margin-bottom:6px;font-size:12.5px;color:#8C2F2F"><b>${err.length} ordem(ns) com mais cores do que esta máquina roda</b> — precisam ser reprogramadas para ${IMPR_ACIMA6.join(', ')}.</div>` : '')
+    + tabSimples(['#', 'Item · OP', 'Programado', 'Início'], linhas));
 }
 
 function renderProgramacao() {
