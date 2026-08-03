@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.517.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.518.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2147,7 +2147,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.517.0';
+const APP_VER = '3.518.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8806,10 +8806,14 @@ async function detDia(setor, dia) {
 
   let itensHtml = '<p class="desc">Sem itens detalhados nesse dia.</p>';
   let itensResumo = '';
+  let rows622 = [];   // guardado fora do try para a conferencia 621 x 622 abaixo
   try {
     const cods = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
-    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,recurso_cod,op').eq('dia', dia).in('recurso_cod', cods);
+    // turno entra no select por causa da conferencia 621 x 622 (a divergencia
+    // costuma estar num turno so, e sem o turno nao da para apontar onde)
+    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,recurso_cod,op,turno').eq('dia', dia).in('recurso_cod', cods);
     if (error) throw error;
+    rows622 = data || [];
     const porItem = {};
     (data || []).forEach(r => { const k = r.item_cod || r.item_desc || '\u2014'; const o = (porItem[k] = porItem[k] || { desc: r.item_desc || r.item_cod || '\u2014', peso: 0, qtd: 0, ops: new Set() }); o.peso += (+r.peso || 0); o.qtd += (+r.quantidade || 0); if (r.op != null && String(r.op).trim() !== '') o.ops.add(String(r.op).trim()); });
     const itens = Object.entries(porItem).sort((a, b) => emCx ? b[1].qtd - a[1].qtd : b[1].peso - a[1].peso);
@@ -8819,6 +8823,52 @@ async function detDia(setor, dia) {
       itensHtml = tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => { const ops = [...v.ops]; const opTxt = ops.length ? ` <span style="color:var(--fraco-2);font-weight:600">\u00b7 OP ${escapeHtml(ops.slice(0, 3).join(', '))}${ops.length > 3 ? ' +' + (ops.length - 3) : ''}</span>` : ''; return `<tr><td class="nome"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc))}${opTxt}</td><td><span class="cel cel-tot">${fmtKg(v.peso)}</span></td><td>${fmtNum(v.qtd)}</td></tr>`; }).join(''));
     }
   } catch (_) { itensHtml = '<p class="desc">Não consegui carregar os itens.</p>'; }
+
+  /* CONFERENCIA 621 x 622 — o cabecalho e o grafico saem do resumo (621) e o
+     bloco "Itens do dia" sai do detalhe por item (622). Quando os dois nao
+     fecham, quem soma os itens acha que achou erro. Em vez de esconder, o app
+     aponta ONDE: maquina, turno e as OPs daquele turno, que e o que o pessoal
+     do ERP precisa para acertar o apontamento.
+     Em 02/08 os 491 kg de diferenca estavam inteiros no turno 3, o da virada. */
+  let divHtml = '';
+  try {
+    const _k = (c, t) => String(c) + '|' + (t == null || t === '' ? '?' : t);
+    const M = {};
+    const _get = (c, t) => { const k = _k(c, t); return (M[k] = M[k] || { c: String(c), t: t, kg1: 0, cx1: 0, kg2: 0, cx2: 0, ops: new Set() }); };
+    prod.forEach(r => { const o = _get(r.recurso_cod, r.turno); o.kg1 += (+r.peso || 0); o.cx1 += (+r.quantidade || 0); });
+    rows622.forEach(r => { const o = _get(r.recurso_cod, r.turno); o.kg2 += (+r.peso || 0); o.cx2 += (+r.quantidade || 0); if (r.op != null && String(r.op).trim() !== '') o.ops.add(String(r.op).trim()); });
+    // tolerancia: 0,5 kg ou 1 caixa evita ruido de arredondamento do ERP
+    const fora = Object.values(M)
+      .filter(o => Math.abs(o.kg2 - o.kg1) >= 0.5 || Math.abs(o.cx2 - o.cx1) >= 1)
+      .sort((a, b) => Math.abs(b.kg2 - b.kg1) - Math.abs(a.kg2 - a.kg1));
+    if (fora.length) {
+      const dKg = fora.reduce((a, o) => a + (o.kg2 - o.kg1), 0);
+      const dCx = fora.reduce((a, o) => a + (o.cx2 - o.cx1), 0);
+      const sinal = v => (v > 0 ? '+' : v < 0 ? '\u2212' : '') + fmtNum(Math.abs(Math.round(v)));
+      const linhasDiv = fora.map(o => {
+        const dk = o.kg2 - o.kg1, dc = o.cx2 - o.cx1;
+        const cor = dk > 0 ? 'var(--laranja)' : 'var(--critico)';
+        const ops = [...o.ops];
+        const tLab = 'T' + (o.t == null || o.t === '' ? '?' : o.t)
+          + (typeof blocoTurno === 'function' ? ' \u00b7 ' + blocoTurno(o.t, dia) : '');
+        const so621 = o.kg2 === 0 && o.cx2 === 0, so622 = o.kg1 === 0 && o.cx1 === 0;
+        const nota = so622 ? '<div style="font-size:10.5px;color:var(--critico)">só no 622 — não existe no resumo</div>'
+          : so621 ? '<div style="font-size:10.5px;color:var(--critico)">só no 621 — sem itens apontados</div>' : '';
+        return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(o.c)}</span> ${escapeHtml(tLab)}`
+          + (ops.length ? `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(ops.slice(0, 4).join(', '))}${ops.length > 4 ? ' +' + (ops.length - 4) : ''}</div>` : '')
+          + nota + `</td>`
+          + `<td style="font-size:12px">${fmtNum(Math.round(o.kg1))}<div style="font-size:10.5px;color:var(--fraco-2)">${fmtNum(Math.round(o.cx1))} cx</div></td>`
+          + `<td style="font-size:12px">${fmtNum(Math.round(o.kg2))}<div style="font-size:10.5px;color:var(--fraco-2)">${fmtNum(Math.round(o.cx2))} cx</div></td>`
+          + `<td><span class="cel" style="background:#FBE3E3;color:${cor};font-weight:700">${sinal(dk)} kg</span>`
+          + `<div style="font-size:10.5px;color:var(--fraco-2)">${sinal(dc)} cx</div></td></tr>`;
+      }).join('');
+      divHtml = `<div style="height:10px"></div>`
+        + `<div style="font-weight:800;color:#B3261E;font-size:13px;margin:4px 0 2px">\u26a0\ufe0f Conferência 621 × 622 · ${sinal(dKg)} kg · ${sinal(dCx)} cxs</div>`
+        + `<p class="idet-desc" style="margin:0 0 5px">O cabeçalho e o gráfico vêm do <b>resumo (621)</b>; o bloco “Itens do dia” vem do <b>detalhe por item (622)</b>. Abaixo, só onde os dois não fecham — com a OP e o turno para acertar no ERP.</p>`
+        + tabSimples(['Máquina · Turno · OP', '621', '622', 'Diferença'], linhasDiv)
+        + `<p style="font-size:11px;color:var(--fraco);margin-top:5px">Diferença = 622 − 621. Positivo: o item foi apontado e não entrou no resumo. Negativo: o resumo tem peso sem item correspondente. Turno da virada costuma divergir enquanto o dia não fechou — se ainda estiver torto no relatório de depois de amanhã, é apontamento para corrigir.</p>`;
+    }
+  } catch (e) { console.warn('conferencia 621x622:', e && e.message); }
 
   const codsSetor = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
   const rodaram = new Set(Object.keys(maq).filter(c => (maq[c] || 0) > 0).map(String));
@@ -8835,7 +8885,8 @@ async function detDia(setor, dia) {
 
   abreDet('Dia ' + fmtDataSem(dia), `
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
-    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:4px 0 3px">Turnos · produção vs meta</div>
+    ${divHtml}
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">Turnos · produção vs meta</div>
     <div style="font-size:11px;color:var(--fraco-2);margin-bottom:4px">toque num turno \u203a pra ver os itens (com OP) e máquinas dele</div>
     ${tabSimples(['Turno', 'Produção', 'Meta'], turnoRows)}
     ${/* o mês inteiro dia a dia já está no botão "Ver turnos" abaixo do gráfico;
