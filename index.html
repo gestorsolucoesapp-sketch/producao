@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.521.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.522.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2176,7 +2176,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.521.0';
+const APP_VER = '3.522.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14950,12 +14950,26 @@ function _progAnalise(rows) {
   const lista = [];
   Object.keys(porMaq).forEach(k => {
     const m = porMaq[k];
+    /* A FILA É A ORDEM DO RELATÓRIO, NÃO A DATA. No RPCP264 a sequência impressa
+       é a coluna Fila/Ordem do PPCP024 — é ela que o chão de fábrica segue.
+       As datas discordam de propósito quando a OP tem Prazo OP fixado: na 504 a
+       ordem impressa é 263367, 262074, 263021, 262371, 262754 e as datas são
+       02/08, 02/08, 12/08, 15/08, 03/08. Ordenar por data embaralhava a fila.
+       O cronograma continua sendo analisado por data, mas numa cópia separada. */
     m.ops.sort((a, b) => {
+      const oa = a.ordem, ob = b.ordem;
+      if (oa != null && ob != null) return oa - ob;
+      if (oa != null) return -1;
+      if (ob != null) return 1;
       const ia = _progMs(a.inicio), ib = _progMs(b.inicio);
-      if (ia == null && ib == null) return (a.ordem || 0) - (b.ordem || 0);
+      if (ia == null && ib == null) return 0;
       if (ia == null) return 1;
       if (ib == null) return -1;
       return ia - ib;
+    });
+    const crono = m.ops.slice().sort((a, b) => {
+      const ia = _progMs(a.inicio), ib = _progMs(b.inicio);
+      if (ia == null) return 1; if (ib == null) return -1; return ia - ib;
     });
     m.nOps = m.ops.length;
     m.kg = m.ops.reduce((a, r) => a + (+r.kg_programado || 0), 0);
@@ -14973,13 +14987,20 @@ function _progAnalise(rows) {
     });
     m.sobre = []; m.buracos = []; m.foraOrdemOps = [];
     m.semEntregaOps = m.ops.filter(r => !r.entrega);
-    for (let i = 0; i < m.ops.length - 1; i++) {
-      const a = m.ops[i], b = m.ops[i + 1];
+    // buraco e sobreposicao sao do CRONOGRAMA: comparar por data, nao por fila
+    for (let i = 0; i < crono.length - 1; i++) {
+      const a = crono[i], b = crono[i + 1];
       const fa = _progMs(a.termino), ib = _progMs(b.inicio);
-      if (a.ordem != null && b.ordem != null && b.ordem < a.ordem) m.foraOrdemOps.push({ a: a, b: b });
       if (fa == null || ib == null) continue;
       if (ib < fa) m.sobre.push({ a: a, b: b });
       else if (ib - fa > 4 * _PROG_H) m.buracos.push({ de: fa, ate: ib, h: (ib - fa) / _PROG_H, dep: b });
+    }
+    // fora de ordem agora e o que interessa de verdade: a fila diz uma coisa e a
+    // data diz outra — OP que esta antes na fila mas comeca depois da seguinte
+    for (let i = 0; i < m.ops.length - 1; i++) {
+      const a = m.ops[i], b = m.ops[i + 1];
+      const ia = _progMs(a.inicio), ib = _progMs(b.inicio);
+      if (ia != null && ib != null && ib < ia) m.foraOrdemOps.push({ a: a, b: b });
     }
     m.foraOrdem = m.foraOrdemOps.length;
     m.hParada = m.buracos.reduce((a, g) => a + g.h, 0);
@@ -15762,19 +15783,21 @@ function detItemMaquinas(item) {
     const posDe = (r) => {
       const daMaq = todas.filter(x => String(x.recurso_cod) === String(r.recurso_cod))
         .sort((a, b) => (a.ordem != null && b.ordem != null) ? (a.ordem - b.ordem)
+          : a.ordem != null ? -1 : b.ordem != null ? 1
           : String(a.inicio || '').localeCompare(String(b.inicio || '')));
       const i = daMaq.findIndex(x => String(x.op) === String(r.op) && String(x.item_cod) === String(r.item_cod));
       return { pos: i >= 0 ? i + 1 : null, total: daMaq.length };
     };
     const linhasOnde = fila.slice()
-      .sort((a, b) => String(a.inicio || '9999').localeCompare(String(b.inicio || '9999')))
+      .sort((a, b) => (posDe(a).pos || 9999) - (posDe(b).pos || 9999))
       .map(r => {
         const c = String(r.recurso_cod);
         const { pos, total } = posDe(r);
         const os = (_osParada || {})[c] || [];
         const dtIni = r.inicio ? String(r.inicio).slice(0, 10) : null;
         return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(r.recurso_nome || '').slice(0, 22))}`
-          + `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(r.setor || '—')} · OP ${escapeHtml(String(r.op || '—'))}</div></td>`
+          + `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(r.setor || '—')} · OP ${escapeHtml(String(r.op || '—'))}</div>`
+          + (r.cores != null ? `<div style="margin-top:2px">${selCores(r.cores, r.recurso_cod)}</div>` : '') + `</td>`
           + `<td><span class="cel ${pos && pos <= 3 ? 'cel-tot' : 'neutra'}">${pos ? pos + 'º' : '—'}${total ? '<div style="font-size:10px;font-weight:600;opacity:.8">de ' + total + '</div>' : ''}</span></td>`
           + `<td class="nome" style="font-size:11.5px">${dtIni ? escapeHtml(fmtDataSem(dtIni)) : '—'}`
           + `<div style="font-size:10px;color:var(--fraco-2)">${r.termino ? 'até ' + escapeHtml(fmtDataSem(String(r.termino).slice(0, 10))) : ''}</div></td>`
