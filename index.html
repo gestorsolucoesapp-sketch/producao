@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.496.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.497.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2058,7 +2058,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.496.0';
+const APP_VER = '3.497.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15194,11 +15194,18 @@ async function carregarCapMaquina() {
         .select('recurso_cod,peso,dia').gte('dia', de).range(ini, ini + 999);
       if (error) throw error;
       const arr = data || [];
-      arr.forEach(r => { const c = String(r.recurso_cod); m[c] = (m[c] || 0) + (+r.peso || 0); });
+      arr.forEach(r => {
+        const c = String(r.recurso_cod);
+        const o = m[c] || (m[c] = { kg: 0, dias: new Set() });
+        o.kg += (+r.peso || 0); o.dias.add(String(r.dia).slice(0, 10));
+      });
       if (arr.length < 1000) break;
       ini += 1000;
     }
-    Object.keys(m).forEach(c => { m[c] = m[c] / 4; });   // 28 dias -> semana
+    // 28 dias -> semana. Guarda tambem em quantos dias a maquina rodou: com
+    // poucos dias a capacidade "demonstrada" fica fraca e as semanas de fila
+    // explodem — o modal avisa em vez de deixar o numero parecer fila enorme.
+    Object.keys(m).forEach(c => { m[c] = { sem: m[c].kg / 4, kg28: m[c].kg, dias: m[c].dias.size }; });
   } catch (e) { console.warn('capacidade por maquina:', e.message || e); }
   _capMaq = m;
   return m;
@@ -15231,13 +15238,13 @@ function cardMatrizItemMaquina(rows) {
     const a = porItem[i], hs = hist[i] || [];
     const porMaq = {}; hs.forEach(m => porMaq[m.cod] = m.kg);
     const nMaq = hs.length;
-    return `<tr><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(i)}</span> ${escapeHtml(String(a.desc).slice(0, 26))}`
+    return `<tr><td class="nome" style="font-size:11.5px;cursor:pointer" onclick="detItemMaquinas('${escapeHtml(i)}')"><span class="cod">${escapeHtml(i)}</span> ${escapeHtml(String(a.desc).slice(0, 26))}`
       + `<div style="font-size:10px;color:${nMaq <= 1 ? 'var(--critico)' : 'var(--fraco-2)'}">${nMaq === 0 ? 'sem histórico' : nMaq === 1 ? 'só 1 máquina' : nMaq + ' máquinas'}</div></td>`
       + maqs.map(m => {
         const kg = porMaq[m] || 0, naF = a.naFila.has(m);
         if (!kg && !naF) return '<td style="padding:1px"></td>';
         const op = kg ? (0.18 + 0.72 * Math.min(1, kg / maxKg)) : 0.12;
-        return `<td style="padding:1px" title="${escapeHtml(i)} na ${escapeHtml(m)}: ${Math.round(kg).toLocaleString('pt-BR')} kg${naF ? ' · na fila agora' : ''}">`
+        return `<td style="padding:1px;cursor:pointer" onclick="detItemMaquinas('${escapeHtml(i)}')" title="${escapeHtml(i)} na ${escapeHtml(m)}: ${Math.round(kg).toLocaleString('pt-BR')} kg${naF ? ' · na fila agora' : ''} — toque para o histórico do item">`
           + `<div style="height:17px;border-radius:4px;background:rgba(47,111,237,${op.toFixed(2)});${naF ? 'outline:2px solid var(--verde);outline-offset:-2px' : ''}"></div></td>`;
       }).join('') + '</tr>';
   }).join('');
@@ -15262,8 +15269,8 @@ function cardCargaMaquina(rows) {
     nome[c] = nome[c] || r.recurso_nome || '';
   });
   const arr = Object.keys(carga).map(c => {
-    const cap = _capMaq[c] || 0;
-    return { c, kg: carga[c], cap, sem: cap > 0 ? carga[c] / cap : null };
+    const o = _capMaq[c] || null, cap = o ? o.sem : 0;
+    return { c, kg: carga[c], cap, dias: o ? o.dias : 0, sem: cap > 0 ? carga[c] / cap : null };
   }).filter(x => x.kg > 0).sort((a, b) => (b.sem == null ? -1 : b.sem) - (a.sem == null ? -1 : a.sem));
   if (!arr.length) return '';
   const maxSem = Math.max(1, ...arr.map(x => x.sem || 0));
@@ -15271,15 +15278,95 @@ function cardCargaMaquina(rows) {
   const linhas = arr.slice(0, 20).map(x => {
     const pct = x.sem == null ? 0 : Math.min(100, (x.sem / maxSem) * 100);
     const cor = x.sem == null ? 'var(--fraco-3)' : x.sem > 4 ? 'var(--critico)' : x.sem > 2 ? 'var(--laranja)' : 'var(--ok-2)';
-    return `<div style="margin-bottom:7px"><div style="display:flex;align-items:baseline;gap:6px;font-size:11.5px">`
+    const fraca = x.dias > 0 && x.dias < 6;      // menos de 6 dias rodados em 28
+    return `<div style="margin-bottom:7px;cursor:pointer" onclick="detCargaMaquina('${x.c}')"><div style="display:flex;align-items:baseline;gap:6px;font-size:11.5px">`
       + `<span class="cod">${escapeHtml(x.c)}</span><span style="color:var(--fraco);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(String(nome[x.c]).slice(0, 26))}</span>`
       + `<b style="color:${cor}">${x.sem == null ? '—' : x.sem.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' sem'}</b></div>`
       + `<div style="height:9px;border-radius:5px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:${cor}"></div></div>`
-      + `<div style="font-size:10px;color:var(--fraco-2)">fila ${fmtT(x.kg)} · entrega ${x.cap > 0 ? fmtT(x.cap) + '/semana' : 'sem base'}</div></div>`;
+      + `<div style="font-size:10px;color:var(--fraco-2)">fila ${fmtT(x.kg)} · entrega ${x.cap > 0 ? fmtT(x.cap) + '/semana' : 'sem base'}`
+      + (fraca ? ` · <b style="color:var(--laranja)">só ${x.dias} dia(s) em 28 — base fraca</b>` : '') + ' ›</div></div>';
   }).join('');
   return card('⚖️ Carga × capacidade por máquina' + ico('cargamaq'),
-    `${arr.length} máquina(s) com fila · barra = semanas de serviço acumulado`,
+    `${arr.length} máquina(s) com fila · toque numa barra para ver a fila e as alternativas`,
     linhas, 'Carga × capacidade por máquina');
+}
+
+/* Detalhe de UM item: onde ele ja rodou, com quanto e quando, mais onde esta
+   programado agora e quanto o cliente ainda espera. Responde a pergunta do PCP:
+   "se a maquina de sempre parar, para onde eu jogo isso?" */
+function detItemMaquinas(item) {
+  const it = String(item);
+  const hs = (_itemMaqCache || {})[it] || [];
+  const fila = (_progDados || []).filter(r => String(r.item_cod) === it);
+  const pend = (_cart196 && _cart196.pend || []).filter(p => String(p.item_cod) === it);
+  const est = (_cart196 && _cart196.est || []).find(e => String(e.item_cod) === it);
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const desc = (fila[0] && fila[0].item_desc) || (pend[0] && pend[0].item_desc) || (est && est.item_desc) || '';
+  const naFila = new Set(fila.map(r => String(r.recurso_cod)));
+
+  const hMaq = hs.length
+    ? tabSimples(['Máquina', 'Já produziu', 'Vezes', 'Último'], hs.map(m =>
+      `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(m.cod)}</span>${naFila.has(m.cod) ? ' <span style="background:var(--verde);color:#fff;border-radius:5px;padding:0 5px;font-size:10px;font-weight:800">na fila</span>' : ''}</td>`
+      + `<td><span class="cel cel-tot">${kg(m.kg)}</span></td>`
+      + `<td><span class="cel neutra">${m.vezes || '—'}</span></td>`
+      + `<td class="nome" style="font-size:11.5px">${m.ult ? escapeHtml(fmtDataSem(m.ult)) : '—'}</td></tr>`).join(''))
+    : '<p class="desc">Este item não aparece no histórico de produção do período importado. Sem base para dizer onde ele roda.</p>';
+
+  const novas = fila.filter(r => !hs.some(m => m.cod === String(r.recurso_cod)));
+  const aviso = novas.length
+    ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:9px 11px;margin:8px 0;font-size:12.5px;color:#8C2F2F">Está programado em ${[...new Set(novas.map(r => r.recurso_cod))].join(', ')}, máquina(s) onde <b>nunca rodou</b> no período importado. Pode ser item novo, pode ser engano de programação.</div>`
+    : '';
+
+  abreDet('Item ' + it + (desc ? ' · ' + String(desc).slice(0, 40) : ''),
+    `<p class="idet-desc">`
+    + (est ? `estoque <b>${kg(+est.peso || 0)}</b> · ` : '')
+    + (pend.length ? `pendente <b>${kg(pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0))}</b> em ${pend.length} pedido(s) · ` : '')
+    + `fila <b>${kg(fila.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0))}</b> em ${fila.length} ordem(ns)</p>`
+    + aviso + hMaq);
+}
+
+/* Detalhe de UMA maquina: a fila dela, a base da capacidade e — o que mais
+   interessa — quais itens dessa fila JA RODARAM em outra maquina, que sao os
+   candidatos naturais a migrar quando ela esta estourada. */
+function detCargaMaquina(cod) {
+  const rows = (_progDados || []).filter(r => String(r.recurso_cod) === String(cod));
+  const o = (_capMaq || {})[String(cod)] || null;
+  const hist = _itemMaqCache || {};
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const nome = (rows[0] && rows[0].recurso_nome) || cod;
+  const total = rows.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0);
+  const sem = o && o.sem > 0 ? total / o.sem : null;
+
+  let base = '<p class="idet-desc">Sem produção nos últimos 28 dias — não há base para estimar semanas de fila.</p>';
+  if (o) {
+    base = `<p class="idet-desc"><b>${kg(total)}</b> na fila · entregou <b>${kg(o.kg28)}</b> em <b>${o.dias} dia(s)</b> nos últimos 28`
+      + (sem != null ? ` · <b style="color:${sem > 4 ? 'var(--critico)' : sem > 2 ? 'var(--laranja)' : 'var(--ok-2)'}">${sem.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} semanas</b>` : '')
+      + (o.dias < 6 ? '<br><span style="color:var(--laranja)">Base fraca: a máquina rodou poucos dias no período, então a capacidade sai baixa e as semanas ficam infladas. Não é fila grande, é falta de referência.</span>' : '')
+      + '</p>';
+  }
+
+  // fila da maquina, da entrega mais antiga
+  const ord = rows.slice().sort((a, b) => String(a.entrega || '9999-99-99').localeCompare(String(b.entrega || '9999-99-99')));
+  const linhasFila = ord.slice(0, 25).map(r => {
+    const it = String(r.item_cod || '');
+    const outras = (hist[it] || []).filter(m => m.cod !== String(cod));
+    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(it || '—')}</span> ${escapeHtml(String(r.item_desc || '').slice(0, 30))}`
+      + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op || '—'))}${r.cliente ? ' · ' + escapeHtml(String(r.cliente).slice(0, 20)) : ''}</div></td>`
+      + `<td><span class="cel cel-tot">${kg(+r.kg_programado || +r.peso || 0)}</span></td>`
+      + `<td class="nome" style="font-size:11.5px">${r.entrega ? escapeHtml(fmtDataSem(r.entrega)) : '—'}</td>`
+      + `<td class="nome">${outras.length
+        ? outras.slice(0, 3).map(m => `<span title="${escapeHtml(m.cod)}: ${Math.round(m.kg).toLocaleString('pt-BR')} kg" style="display:inline-block;margin-right:3px;padding:0 5px;border-radius:5px;font-size:10px;font-weight:800;background:var(--leve);color:var(--fraco);border:1px solid var(--borda)">${escapeHtml(m.cod)}</span>`).join('')
+        : '<span style="font-size:10px;color:var(--fraco-2)">só aqui</span>'}</td></tr>`;
+  }).join('');
+
+  const migraveis = ord.filter(r => ((hist[String(r.item_cod)] || []).filter(m => m.cod !== String(cod)).length > 0));
+  const kgMigra = migraveis.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0);
+
+  abreDet('Máquina ' + cod + ' · ' + nome,
+    base
+    + (migraveis.length ? `<div style="background:var(--leve-4);border-radius:10px;padding:9px 11px;margin:2px 0 10px;font-size:12.5px"><b>${migraveis.length} ordem(ns) · ${kg(kgMigra)}</b> são de itens que já rodaram em outra máquina — candidatos a migrar. <span style="color:var(--fraco)">Precedente não é liberação: molde, largura de bobina e ferramental quem decide é o PCP.</span></div>` : '')
+    + tabSimples(['Item · OP', 'Programado', 'Entrega', 'Roda também em'], linhasFila)
+    + (ord.length > 25 ? `<p class="desc">mostrando as 25 de entrega mais próxima, de ${ord.length}</p>` : ''));
 }
 
 /* ===== ALOCACAO DO ESTOQUE =====
