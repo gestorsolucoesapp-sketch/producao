@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.524.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.525.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2176,7 +2176,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.524.0';
+const APP_VER = '3.525.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15889,6 +15889,30 @@ function detCargaMaquina(cod) {
    entao somar caixas de itens diferentes e dividir por 20 subestimaria. */
 const CX_POR_PALETE = 20;
 const _ehCx = u => String(u || '').toUpperCase() === 'CX';
+/* DESCRIÇÃO QUE DIFERENCIA — cortar em 40 caracteres pelo começo esconde
+   exatamente o que distingue os itens de um mesmo pedido: "EMB CP FA BRANCO
+   300ML (75X122) NATIVO A / NATIVO L / NATIVO U" viravam três linhas idênticas
+   na tela, e o pedido parecia duplicado quando eram açaí, laranja e uva.
+   Duas defesas: tirar o prefixo que todos compartilham, e quando ainda passar
+   do limite, cortar pelo MEIO — porque o que diferencia mora no fim. */
+function _prefixoComum(arr) {
+  const L = (arr || []).map(x => String(x || '')).filter(Boolean);
+  if (L.length < 2) return '';
+  let p = L[0];
+  for (const s of L.slice(1)) {
+    let i = 0; while (i < p.length && i < s.length && p[i] === s[i]) i++;
+    p = p.slice(0, i); if (!p) break;
+  }
+  const k = p.lastIndexOf(' ');
+  return k >= 12 ? p.slice(0, k) : '';
+}
+function _descItem(desc, prefixo, max) {
+  max = max || 46;
+  let d = String(desc || '').trim();
+  if (prefixo && d.startsWith(prefixo) && d.length > prefixo.length + 1) d = '…' + d.slice(prefixo.length).trim();
+  if (d.length <= max) return d;
+  return d.slice(0, max - 17).trim() + '…' + d.slice(-15).trim();
+}
 function _paletes(cx) { return Math.ceil((+cx || 0) / CX_POR_PALETE); }
 function _paletesPorItem(linhas) {
   const porItem = {};
@@ -15957,6 +15981,7 @@ function detPedido(num) {
   const tot = L.reduce((s, l) => s + (+l.peso_pendente || 0), 0);
   const falta = L.reduce((s, l) => s + (l._falta || 0), 0);
   const nFalta = L.filter(l => l._falta > 0.001).length;
+  const prefDesc = _prefixoComum(L.map(l => l.item_desc));
   const cxTot = L.reduce((s, l) => s + (_ehCx(l.un) ? (+l.qtd_pendente || 0) : 0), 0);
   const palTot = L.reduce((s, l) => s + (_ehCx(l.un) ? _paletes(+l.qtd_pendente || 0) : 0), 0);
   const ord = L.slice().sort((a, b) => (b._falta || 0) - (a._falta || 0) || (+b.peso_pendente || 0) - (+a.peso_pendente || 0));
@@ -15968,12 +15993,15 @@ function detPedido(num) {
     const pal = cx ? _paletes(cx) : 0;
     const temEst = Math.max(0, need - f);       // quanto desta linha ja esta coberto
     return `<tr><td class="nome" style="font-size:12px">${_selo196(String(l.item_cod))}`
-      + `<div style="font-size:10.5px;color:var(--fraco-2);margin-top:2px">${escapeHtml(String(l.item_desc || '').slice(0, 40))}</div></td>`
+      + `<div style="font-size:10.5px;color:var(--fraco-2);margin-top:2px">${escapeHtml(_descItem(l.item_desc, prefDesc))}</div></td>`
       + `<td><span class="cel cel-tot">${kg(need)}${cx ? `<div style="font-size:10px;font-weight:600;opacity:.8">${fmt(cx, 0)} cx · ${pal} pal</div>` : ''}</span></td>`
       + `<td><span class="cel ${ok ? 'ok' : 'baixo'}">${ok ? '✓ material pronto' : 'falta ' + kg(f)}`
       + (!ok && temEst > 0 ? `<div style="font-size:10px;font-weight:600;opacity:.85">tem ${kg(temEst)}</div>` : '')
       + '</span></td></tr>';
   }).join('');
+  const notaPref = prefDesc
+    ? `<p style="font-size:11px;color:var(--fraco);margin:0 0 4px">Todos os itens começam com <b>${escapeHtml(prefDesc)}</b> — abaixo aparece só o que muda.</p>`
+    : '';
   abreDet('Pedido ' + num + ' · ' + String(cli).slice(0, 28),
     `<p class="idet-desc"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b>`
     + (cxTot ? ` · <b>${fmt(cxTot, 0)} cx</b> · ${fmt(palTot, 0)} pal` : '')
@@ -15982,6 +16010,7 @@ function detPedido(num) {
           + ` — <b>o caminhão só sai quando a última chegar</b>`
         : ' · <b style="color:var(--ok-2)">tudo em estoque — pode faturar</b>')
     + `${L[0].entrega ? ' · entrega ' + escapeHtml(fmtDataSem(L[0].entrega)) : ''}</p>`
+    + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas));
 }
 
@@ -16454,7 +16483,7 @@ function cardCoresMaquina() {
   const acima6 = comDado.filter(r => r.cores > 6);
   const linhas = (erradas.length ? erradas : acima6.slice(0, 12)).map(r => {
     const ruim = coresCabe(r.recurso_cod, r.cores) === false;
-    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.item_cod || '—'))}</span> ${escapeHtml(String(r.item_desc || '').slice(0, 40))}`
+    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.item_cod || '—'))}</span> ${escapeHtml(_descItem(r.item_desc, '', 46))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op || '—'))} · ${escapeHtml(String(r.recurso_cod))} ${escapeHtml(String(r.recurso_nome || ''))}</div>`
       + (ruim ? `<div style="font-size:10.5px;color:var(--critico);font-weight:800">❌ ERRO DE PROGRAMAÇÃO — ${r.cores} cores não rodam na ${escapeHtml(String(r.recurso_cod))}. Reprogramar para ${IMPR_ACIMA6.join(', ')}.</div>` : '')
       + `</td><td>${selCores(r.cores, r.recurso_cod)}</td>`
