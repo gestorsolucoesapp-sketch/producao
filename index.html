@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.499.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.500.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2046,6 +2046,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     const soma = (k) => registros.reduce((a, r) => a + (r[k] != null ? r[k] : (k === 'peso' ? (r.peso_pendente || 0) : k === 'quantidade' ? (r.qtd_pendente || 0) : 0)), 0);
     return {
       rotina, nome: NOMES[rotina], periodo, registros,
+      // lista propria do REST196 (estoque deduplicado). Vai no OBJETO e nao no
+      // array: o corte do dia aberto recria r.registros com filter() e a
+      // propriedade pendurada no array se perdia — foi o que deixou a tabela
+      // rest196_estoque vazia e fez TUDO aparecer travado na Programacao.
+      estoque: (registros && registros._estoque) || null,
       resumo: {
         linhas: registros.length,
         total_quantidade: +soma('quantidade').toFixed(3),
@@ -2072,7 +2077,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.499.0';
+const APP_VER = '3.500.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14507,7 +14512,7 @@ async function gravar(id, substituir = false) {
        Só filtra registro que TEM turno; 643 e 646 não têm e ficam de fora disto. */
     // o 264 e FOTO da fila (nao tem turno e nao e producao apontada): o corte
     // do dia aberto nao se aplica — aplicar apagaria a fila inteira.
-    if (r.rotina !== '264' && r.periodo.gerado && Array.isArray(r.registros)) {
+    if (r.rotina !== '264' && r.rotina !== '196' && r.periodo.gerado && Array.isArray(r.registros)) {
       const g = String(r.periodo.gerado);
       const antes = r.registros.length;
       // hora do registro SEM new Date(): campo do ERP com fuso aplicado mente.
@@ -14583,9 +14588,9 @@ async function gravar(id, substituir = false) {
     /* ESTOQUE do REST196: vem deduplicado no parser (_estoque) porque no PDF ele
        se repete a cada cliente que pede o mesmo item. Gravado a parte, senao
        qualquer soma de estoque contaria o mesmo material varias vezes. */
-    if (r.rotina === '196' && Array.isArray(r.registros._estoque) && r.registros._estoque.length) {
+    if (r.rotina === '196' && Array.isArray(r.estoque) && r.estoque.length) {
       try {
-        const est = r.registros._estoque;
+        const est = r.estoque;
         for (let i = 0; i < est.length; i += 400) {
           const { error: eE } = await sb.from('rest196_estoque')
             .upsert(est.slice(i, i + 400), { onConflict: 'dia_foto,item_cod' });
@@ -15333,6 +15338,41 @@ function detItemMaquinas(item) {
       + `<td class="nome" style="font-size:11.5px">${m.ult ? escapeHtml(fmtDataSem(m.ult)) : '—'}</td></tr>`).join(''))
     : '<p class="desc">Este item não aparece no histórico de produção do período importado. Sem base para dizer onde ele roda.</p>';
 
+  /* SUGESTAO DE ONDE PRODUZIR. So entra maquina que JA RODOU o item — precedente
+     de producao, nao liberacao. Entre elas, ordena por quem tem menos semanas de
+     fila (carga / capacidade demonstrada em 28 dias). Maquina sem base de
+     capacidade fica no fim, marcada, porque o numero dela nao e comparavel. */
+  let sug = '';
+  if (hs.length) {
+    const cargaMaq = {};
+    (_progDados || []).forEach(r => { const c = String(r.recurso_cod); cargaMaq[c] = (cargaMaq[c] || 0) + (+r.kg_programado || +r.peso || 0); });
+    const cand = hs.map(m => {
+      const o = (_capMaq || {})[m.cod] || null;
+      const cap = o ? o.sem : 0;
+      return { cod: m.cod, kgHist: m.kg, ult: m.ult, carga: cargaMaq[m.cod] || 0, cap,
+               dias: o ? o.dias : 0, sem: cap > 0 ? (cargaMaq[m.cod] || 0) / cap : null };
+    }).sort((a, b) => (a.sem == null ? 1 : b.sem == null ? -1 : a.sem - b.sem));
+    const melhor = cand.find(c => c.sem != null) || cand[0];
+    const atual = cand.filter(c => naFila.has(c.cod));
+    if (melhor) {
+      const outras = cand.filter(c => c.cod !== melhor.cod);
+      sug = `<div style="background:var(--leve-4);border-left:4px solid var(--verde);border-radius:10px;padding:10px 12px;margin:8px 0">`
+        + `<div style="font-weight:800;color:var(--navy);font-size:13px">Sugestão: produzir na <span class="cod">${escapeHtml(melhor.cod)}</span></div>`
+        + `<div style="font-size:12px;color:var(--fraco);margin-top:2px">`
+        + (melhor.sem != null
+            ? `É a máquina com <b>menos fila</b> entre as que já rodaram este item: ${melhor.sem.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} semana(s) de serviço`
+            : 'É a única com precedente de produção — mas sem produção nos últimos 28 dias, então não dá para estimar a fila dela')
+        + (melhor.dias > 0 && melhor.dias < 6 ? ` <span style="color:var(--laranja)">(base fraca: rodou ${melhor.dias} dia(s) em 28)</span>` : '')
+        + (atual.length && atual[0].cod !== melhor.cod && atual[0].sem != null
+            ? ` · hoje está programado na ${escapeHtml(atual[0].cod)}, com ${atual[0].sem.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} semana(s)` : '')
+        + `. Já produziu <b>${kg(melhor.kgHist)}</b> dele${melhor.ult ? ', último em ' + escapeHtml(fmtDataSem(melhor.ult)) : ''}.`
+        + `</div>`
+        + (outras.length ? `<div style="font-size:11.5px;color:var(--fraco-2);margin-top:4px">Alternativas: ` + outras.slice(0, 4).map(c => `<b>${escapeHtml(c.cod)}</b> (${c.sem != null ? c.sem.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' sem' : 'sem base'})`).join(' · ') + '</div>' : '')
+        + `<div style="font-size:11px;color:var(--fraco-2);margin-top:5px">Precedente de produção não é liberação: molde, largura de bobina, número de cores e ferramental o app não conhece. Quem decide é o PCP.</div>`
+        + `</div>`;
+    }
+  }
+
   const novas = fila.filter(r => !hs.some(m => m.cod === String(r.recurso_cod)));
   const aviso = novas.length
     ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:9px 11px;margin:8px 0;font-size:12.5px;color:#8C2F2F">Está programado em ${[...new Set(novas.map(r => r.recurso_cod))].join(', ')}, máquina(s) onde <b>nunca rodou</b> no período importado. Pode ser item novo, pode ser engano de programação.</div>`
@@ -15343,7 +15383,7 @@ function detItemMaquinas(item) {
     + (est ? `estoque <b>${kg(+est.peso || 0)}</b> · ` : '')
     + (pend.length ? `pendente <b>${kg(pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0))}</b> em ${pend.length} pedido(s) · ` : '')
     + `fila <b>${kg(fila.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0))}</b> em ${fila.length} ordem(ns)</p>`
-    + aviso + hMaq);
+    + sug + aviso + hMaq);
 }
 
 /* Detalhe de UMA maquina: a fila dela, a base da capacidade e — o que mais
@@ -15454,8 +15494,8 @@ function cardDestrava() {
     const ganho = a.falta > 0 ? (a.kgSo / a.falta) : 0;
     const ms = (hist[k] || []).slice(0, 4).map(m => `<span style="display:inline-block;margin-right:3px;padding:0 5px;border-radius:5px;font-size:10px;font-weight:800;background:var(--leve);color:var(--fraco);border:1px solid var(--borda)">${escapeHtml(m.cod)}</span>`).join('')
       || '<span style="font-size:10px;color:var(--critico)">sem histórico</span>';
-    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 34))}`
-      + `<div style="font-size:10.5px;color:var(--fraco-2)">roda em ${ms}</div></td>`
+    return `<tr style="cursor:pointer" onclick="detItemMaquinas('${escapeHtml(k)}')"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 34))}`
+      + `<div style="font-size:10.5px;color:var(--fraco-2)">roda em ${ms} ›</div></td>`
       + `<td><span class="cel baixo">${kg(a.falta)}</span></td>`
       + `<td><span class="cel ${a.kgSo > 0 ? 'cel-tot' : 'neutra'}">${a.kgSo > 0 ? kg(a.kgSo) : '—'}</span></td>`
       + `<td><span class="cel neutra">${a.so || '—'}${a.peds > a.so ? ' <small>de ' + a.peds + '</small>' : ''}</span></td>`
@@ -15464,7 +15504,7 @@ function cardDestrava() {
 
   const topPed = t1.slice().sort((a, b) => b.kg - a.kg).slice(0, 8).map(p => {
     const k = [...p.blq][0], a = alav[k] || {};
-    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))}`
+    return `<tr style="cursor:pointer" onclick="detItemMaquinas('${escapeHtml(k)}')"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.atr > 0 ? ' · <b style="color:var(--critico)">' + p.atr + 'd</b>' : ''}${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}</div></td>`
       + `<td><span class="cel cel-tot">${kg(p.kg)}</span></td>`
       + `<td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(k)}</span> falta ${kg(a.falta || 0)}</td></tr>`;
