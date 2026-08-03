@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.549.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.550.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.549.0';
+const APP_VER = '3.550.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3301,7 +3301,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); getPerdaCfg(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
   await aplicarPermissoes();
   // abre a primeira aba permitida
   const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
@@ -8042,6 +8042,7 @@ function kghDaCelula(cod, bloco) {
 }
 async function carregarMetas() {
   try { await getSetupCfg(); } catch (_) { }
+  try { await getPerdaCfg(); } catch (_) { }
   // usa cache: metas mudam pouco; a view do real (pesada) só é buscada se o real/h estiver visível
   await Promise.all([
     (metasData ? Promise.resolve() : getMetas()),
@@ -8099,6 +8100,24 @@ function renderMetas() {
   });
   html += `</tbody></table></div>`;
   if (metasEditavel) html += `<button class="btn" style="margin-top:10px" onclick="salvarSetupCfg()">Salvar metas de setup</button>`;
+  html += `</div>`;
+
+  /* METAS DE PERDA POR SETOR — alimenta o card "Perdas x meta" do Painel.
+     Percentual sobre produzido + perdido, que e como o card ja calcula. */
+  const _cfgP = perdaCfg || _perdaCfgPadrao();
+  html += `<div style="margin-top:18px;border-top:2px solid var(--borda);padding-top:14px">
+    <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:2px">♻️ Perda por setor</div>
+    <div class="desc" style="margin-bottom:8px">Percentual máximo de refugo aceito em cada setor. Vale para o card “Perdas x meta” do Painel — a máquina acima disso entra na lista vermelha. Conta sobre produzido + perdido.</div>
+    <div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>
+      <th style="text-align:left">Setor</th><th>Meta de perda (%)</th></tr></thead><tbody>`;
+  SETORES_AVAL.forEach(st => {
+    const c = _cfgP[st] || { pct: META_PERDA_PADRAO }, sl = _slug(st);
+    html += `<tr><td class="nome" style="text-align:left">${escapeHtml(st)}</td>
+      <td><input type="number" inputmode="decimal" min="0.1" max="100" step="0.1" id="pcPct_${sl}" value="${c.pct}" ${_roS}
+        style="width:80px;padding:5px 6px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${metasEditavel ? '' : ';background:var(--leve-3);color:#7a8794'}"></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  if (metasEditavel) html += `<button class="btn" style="margin-top:10px" onclick="salvarPerdaCfg()">Salvar metas de perda</button>`;
   html += `</div>`;
 
   $('metasConteudo').innerHTML = html;
@@ -9771,6 +9790,55 @@ const META_SETUP_MIN = 90;                 // usado so como padrao inicial
    setups curtos de virada de turno que puxavam a media para baixo e davam um
    numero falso. Por isso alem da meta existe o MINIMO: parada de setup abaixo
    dele nao entra na media. Editavel na aba Metas, guardado em app_config. */
+/* META DE PERDA POR SETOR — antes era 2,5% chumbado no codigo para a fabrica
+   inteira. Cada setor tem realidade propria (bobina, tampa, injetado), entao a
+   meta passa a ser configuravel na aba Metas. Guardada em app_config, chave
+   'perda_cfg', mesmo padrao da config de setup. */
+const META_PERDA_PADRAO = 2.5;
+let perdaCfg = null;   // { 'Termoformagem': {pct:2.5}, ... }
+const _perdaCfgPadrao = () => {
+  const o = {};
+  SETORES_AVAL.forEach(s => { o[s] = { pct: META_PERDA_PADRAO }; });
+  return o;
+};
+async function getPerdaCfg() {
+  if (perdaCfg) return perdaCfg;
+  perdaCfg = _perdaCfgPadrao();
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'perda_cfg').maybeSingle();
+    if (data && data.valor) {
+      const j = JSON.parse(data.valor) || {};
+      Object.keys(j).forEach(st => { if (perdaCfg[st]) perdaCfg[st] = Object.assign(perdaCfg[st], j[st]); });
+    }
+  } catch (_) { }
+  return perdaCfg;
+}
+const perdaMetaDe = st => {
+  const v = perdaCfg && perdaCfg[st] && +perdaCfg[st].pct;
+  return (v > 0) ? v : META_PERDA_PADRAO;
+};
+async function salvarPerdaCfg() {
+  const cfg = {};
+  SETORES_AVAL.forEach(st => {
+    const el = $('pcPct_' + _slug(st));
+    if (!el) return;
+    const v = parseFloat(String(el.value).replace(',', '.'));
+    cfg[st] = { pct: (isNaN(v) || v <= 0) ? META_PERDA_PADRAO : Math.min(100, v) };
+  });
+  // o supabase-js NAO lanca quando o RLS recusa: devolve { error }. Sem checar,
+  // o toast diria "salvas" e o numero voltaria ao antigo no proximo carregamento.
+  try {
+    const { error } = await sb.from('app_config').upsert({ chave: 'perda_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    if (error) throw error;
+    perdaCfg = Object.assign(_perdaCfgPadrao(), cfg);
+    toast('Metas de perda salvas');
+    try { renderPainel(); } catch (_) { }
+  } catch (e) {
+    toast('❌ Não salvou: ' + (e.message || e));
+    perdaCfg = null;
+    try { await getPerdaCfg(); renderMetas(); } catch (_) { }
+  }
+}
 let setupCfg = null;   // { 'Impressão': {meta:90, min:60}, ... }
 const _setupCfgPadrao = () => {
   const o = {};
@@ -13514,7 +13582,8 @@ let _perdaModo = 'acima';
    com o tipo de perda que mais pesa e o custo estimado. */
 function cardPerdaMeta(D, setor) {
   try {
-    const META_PERDA = 2.5;
+    // meta por SETOR (aba Metas). Cada maquina e comparada com a meta do setor dela.
+    const metaDe = c => perdaMetaDe(setorDe(c));
     const emCx = c => setorDe(c) === 'Embaladeiras';
     const val = r => { const c = String(r.recurso_cod); return emCx(c) ? (r.quantidade || 0) : (r.peso || 0); };
 
@@ -13542,13 +13611,18 @@ function cardPerdaMeta(D, setor) {
       if (!dias[c] || dias[c].size < 3) return;
       const pct = pe / (p + pe) * 100;
       const top = Object.entries(tipo[c] || {}).sort((a, b) => b[1].kg - a[1].kg)[0];
-      linhas.push({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, pct: pct, kg: pe,
+      linhas.push({ cod: c, nome: (D.nomeMaq && D.nomeMaq[c]) || c, pct: pct, kg: pe, meta: metaDe(c),
         tipo: top ? top[0] : '\u2014', tipoKg: top ? top[1].kg : 0, tipoN: top ? top[1].n : 0, cx: emCx(c) });
     });
     if (!linhas.length) return '';
 
-    const acima = linhas.filter(x => x.pct > META_PERDA).sort((a, b) => b.pct - a.pct);
-    const dentro = linhas.filter(x => x.pct <= META_PERDA).sort((a, b) => a.pct - b.pct);
+    const acima = linhas.filter(x => x.pct > x.meta).sort((a, b) => b.pct - a.pct);
+    const dentro = linhas.filter(x => x.pct <= x.meta).sort((a, b) => a.pct - b.pct);
+    // com meta por setor, "acima de X%" so faz sentido quando ha um setor filtrado
+    const _metasVis = [...new Set(linhas.map(x => x.meta))];
+    const _txtMeta = _metasVis.length === 1
+      ? 'acima de ' + String(_metasVis[0]).replace('.', ',') + '%'
+      : 'acima da meta do setor';
     const modo = (_perdaModo === 'ok') ? 'ok' : 'acima';
     const lista = (modo === 'ok') ? dentro : acima;
 
@@ -13566,7 +13640,7 @@ function cardPerdaMeta(D, setor) {
     const barra = `<div style="margin-bottom:9px">` +
       `<div style="display:flex;height:14px;border-radius:6px;overflow:hidden;background:var(--leve-2)">` +
       `<div style="width:${pctA}%;background:var(--critico)"></div><div style="width:${pctD}%;background:var(--ok-2)"></div></div>` +
-      `<div style="font-size:12px;color:var(--fraco);margin-top:5px"><b style="color:var(--critico)">${pctA}% das máquinas acima de ${String(META_PERDA).replace('.', ',')}%</b> · ${acima.length} de ${tot} avaliadas` +
+      `<div style="font-size:12px;color:var(--fraco);margin-top:5px"><b style="color:var(--critico)">${pctA}% das máquinas ${_txtMeta}</b> · ${acima.length} de ${tot} avaliadas` +
       (custo > 0 ? ` · <b style="color:var(--critico)">R$ ${Math.round(custo).toLocaleString('pt-BR')}</b> em refugo acima da meta` : '') +
       `</div></div>` +
       `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px">` +
@@ -13576,14 +13650,14 @@ function cardPerdaMeta(D, setor) {
     const corpo = lista.length
       ? tabSimples(['M\u00e1quina', 'Perda', 'Principal tipo'], lista.slice(0, 20).map(x =>
           `<tr onclick="detPerdaMaq('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td>` +
-          `<td><span class="cel ${x.pct > META_PERDA ? 'baixo' : 'ok'}">${x.pct.toFixed(1).replace('.', ',')}%</span></td>` +
+          `<td><span class="cel ${x.pct > x.meta ? 'baixo' : 'ok'}" title="meta do setor: ${String(x.meta).replace('.', ',')}%">${x.pct.toFixed(1).replace('.', ',')}%</span></td>` +
           `<td style="font-size:12px;line-height:1.35">${escapeHtml((x.tipo || '\u2014').slice(0, 22))}` +
           `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${Math.round(x.tipoKg).toLocaleString('pt-BR')}</b> ${x.cx ? 'cx' : 'kg'}` +
           `${x.tipoN > 0 ? ` \u00b7 ${x.tipoN} lan\u00e7amento${x.tipoN > 1 ? 's' : ''}` : ''}` +
           ` \u00b7 de ${Math.round(x.kg).toLocaleString('pt-BR')} total</div></td></tr>`).join(''))
       : '<p class="vazio-painel">Nenhuma m\u00e1quina nessa faixa.</p>';
 
-    return card('\u267b\ufe0f Perdas x meta', (setor ? setor + ' \u00b7 ' : '') + tot + ' m\u00e1quina(s) \u00b7 meta 2,5% \u00b7 toque numa linha pra ver o detalhe',
+    return card('\u267b\ufe0f Perdas x meta', (setor ? setor + ' \u00b7 ' : '') + tot + ' m\u00e1quina(s) \u00b7 meta ' + (_metasVis.length === 1 ? String(_metasVis[0]).replace('.', ',') + '%' : 'por setor') + ' \u00b7 toque numa linha pra ver o detalhe',
       barra + corpo, 'Perdas acima da meta');
   } catch (_) { return ''; }
 }
