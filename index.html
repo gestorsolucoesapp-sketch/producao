@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.505.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.506.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2083,7 +2083,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.505.0';
+const APP_VER = '3.506.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14706,6 +14706,7 @@ async function carregarProgramacao(forcar) {
     try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
     try { await carregarItemMaquina(); } catch (_) { }
     try { await carregarCapMaquina(); } catch (_) { }
+    try { await carregarOsParada(); } catch (_) { }
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
     await _progCarregarCap();
@@ -15226,6 +15227,28 @@ async function carregarItemMaquina() {
    entregou nos ultimos 28 dias. O _progCap ja fazia isso por SETOR; por maquina
    e o que permite dizer "essa aqui esta estourada e aquela esta ociosa". */
 let _capMaq = null;
+/* MAQUINA PARADA AGORA. manutencao_os tem 2.320 registros com maquina_parada e
+   sem encerramento — quase tudo historico com o campo nunca fechado. Recorte:
+   OS marcada como maquina parada, sem data de encerramento e aberta nos ultimos
+   30 dias. Isso da 15 maquinas, numero coerente com o chao de fabrica. */
+let _osParada = null;
+async function carregarOsParada() {
+  if (_osParada) return _osParada;
+  const m = {};
+  try {
+    const d = new Date(Date.now() - 3 * 3600 * 1000); d.setDate(d.getDate() - 30);
+    const { data, error } = await sb.from('manutencao_os')
+      .select('os_num,recurso_cod,setor,motivo,atividade,data_abertura,urgencia')
+      .is('data_encerramento', null).is('maquina_parada', true)
+      .gte('data_abertura', d.toISOString().slice(0, 10))
+      .order('data_abertura', { ascending: false }).limit(200);
+    if (error) throw error;
+    (data || []).forEach(o => { const c = String(o.recurso_cod); (m[c] = m[c] || []).push(o); });
+  } catch (e) { console.warn('OS parada:', e.message || e); }
+  _osParada = m;
+  return m;
+}
+
 async function carregarCapMaquina() {
   if (_capMaq) return _capMaq;
   const m = {};
@@ -15412,6 +15435,43 @@ function detItemMaquinas(item) {
     }
   } catch (_) { }
 
+  /* ONDE ESTE ITEM ESTA AGORA: maquina, POSICAO na fila daquela maquina, datas
+     previstas e se a maquina esta parada com OS aberta. Sem a posicao nao da
+     para saber se e o proximo a entrar ou se tem 40 ordens na frente. */
+  let onde = '';
+  if (fila.length) {
+    const todas = _progDados || [];
+    const posDe = (r) => {
+      const daMaq = todas.filter(x => String(x.recurso_cod) === String(r.recurso_cod))
+        .sort((a, b) => (a.ordem != null && b.ordem != null) ? (a.ordem - b.ordem)
+          : String(a.inicio || '').localeCompare(String(b.inicio || '')));
+      const i = daMaq.findIndex(x => String(x.op) === String(r.op) && String(x.item_cod) === String(r.item_cod));
+      return { pos: i >= 0 ? i + 1 : null, total: daMaq.length };
+    };
+    const linhasOnde = fila.slice()
+      .sort((a, b) => String(a.inicio || '9999').localeCompare(String(b.inicio || '9999')))
+      .map(r => {
+        const c = String(r.recurso_cod);
+        const { pos, total } = posDe(r);
+        const os = (_osParada || {})[c] || [];
+        const dtIni = r.inicio ? String(r.inicio).slice(0, 10) : null;
+        return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(r.recurso_nome || '').slice(0, 22))}`
+          + `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(r.setor || '—')} · OP ${escapeHtml(String(r.op || '—'))}</div></td>`
+          + `<td><span class="cel ${pos && pos <= 3 ? 'cel-tot' : 'neutra'}">${pos ? pos + 'º' : '—'}${total ? '<div style="font-size:10px;font-weight:600;opacity:.8">de ' + total + '</div>' : ''}</span></td>`
+          + `<td class="nome" style="font-size:11.5px">${dtIni ? escapeHtml(fmtDataSem(dtIni)) : '—'}`
+          + `<div style="font-size:10px;color:var(--fraco-2)">${r.termino ? 'até ' + escapeHtml(fmtDataSem(String(r.termino).slice(0, 10))) : ''}</div></td>`
+          + `<td class="nome">${os.length
+            ? `<span onclick="event.stopPropagation();osDoMotivo('${escapeHtml(c)}','')" style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:800;background:var(--crit-bg3);color:#8C2F2F;cursor:pointer" title="${escapeHtml(String(os[0].motivo || os[0].atividade || '').slice(0, 60))} — aberta em ${os[0].data_abertura ? fmtDataSem(String(os[0].data_abertura).slice(0, 10)) : '—'}">🔧 parada · OS ${escapeHtml(String(os[0].os_num || ''))}</span>`
+            : '<span style="font-size:10.5px;color:var(--ok-2)">rodando</span>'}</td></tr>`;
+      }).join('');
+    const paradas = [...new Set(fila.map(r => String(r.recurso_cod)))].filter(c => ((_osParada || {})[c] || []).length);
+    onde = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Onde está na fila</div>'
+      + (paradas.length ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:8px 11px;margin-bottom:6px;font-size:12.5px;color:#8C2F2F"><b>Atenção:</b> ${paradas.length === 1 ? 'a máquina ' + paradas[0] + ' está' : 'as máquinas ' + paradas.join(', ') + ' estão'} com OS de manutenção aberta e marcada como parada. Enquanto isso, esta fila não anda.</div>` : '')
+      + tabSimples(['Máquina · setor', 'Posição', 'Previsto', 'Situação'], linhasOnde);
+  } else if (pend.length) {
+    onde = '<div style="height:10px"></div><div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:9px 11px;font-size:12.5px;color:#8C2F2F"><b>Não está na fila.</b> Há pedido pendente deste item e nenhuma ordem programada para produzi-lo.</div>';
+  }
+
   const novas = fila.filter(r => !hs.some(m => m.cod === String(r.recurso_cod)));
   const aviso = novas.length
     ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:9px 11px;margin:8px 0;font-size:12.5px;color:#8C2F2F">Está programado em ${[...new Set(novas.map(r => r.recurso_cod))].join(', ')}, máquina(s) onde <b>nunca rodou</b> no período importado. Pode ser item novo, pode ser engano de programação.</div>`
@@ -15422,7 +15482,7 @@ function detItemMaquinas(item) {
     + (est ? `estoque <b>${kg(+est.peso || 0)}</b> · ` : '')
     + (pend.length ? `pendente <b>${kg(pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0))}</b> em ${pend.length} pedido(s) · ` : '')
     + `fila <b>${kg(fila.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0))}</b> em ${fila.length} ordem(ns)</p>`
-    + sug + aviso + hMaq + bloqueia);
+    + sug + aviso + onde + hMaq + bloqueia);
 }
 
 /* Detalhe de UMA maquina: a fila dela, a base da capacidade e — o que mais
