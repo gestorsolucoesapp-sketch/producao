@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.536.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.537.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.536.0';
+const APP_VER = '3.537.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8126,7 +8126,9 @@ async function salvarMetas() {
     if (!isNaN(pf) && pf >= 10 && pf <= 100) {
       await getOeeFatores();
       oeeFatores[$('metaSetor').value] = pf / 100;
-      await sb.from('app_config').update({ valor: JSON.stringify(oeeFatores) }).eq('chave', 'oee_fatores');
+      // mesmo caso do setup: sem checar o error, o fator OEE voltava sozinho
+      const { error: eF } = await sb.from('app_config').update({ valor: JSON.stringify(oeeFatores) }).eq('chave', 'oee_fatores');
+      if (eF) { toast('❌ Fator OEE não salvo: ' + eF.message); return; }
     } }
   const setor = $('metaSetor').value, cods = SETOR_MAQ[setor] || [], arr = [];
   cods.forEach(c => { const cod = String(c); _BLOCOS_META.forEach(b => { const el = $(`meta_${cod}_${b[1]}`); if (!el) return; const v = parseFloat(el.value); arr.push({ recurso_cod: cod, bloco: b[0], meta: isNaN(v) ? 0 : v }); }); });
@@ -9750,11 +9752,24 @@ async function salvarSetupCfg() {
     if (!em) return;
     cfg[s] = { meta: Math.max(1, parseInt(em.value, 10) || META_SETUP_MIN), min: Math.max(0, parseInt(en ? en.value : 0, 10) || 0) };
   });
+  /* O supabase-js NAO lanca excecao quando o RLS recusa: devolve { error }.
+     Como aqui so havia try/catch, a gravação barrada passava batida, o toast
+     dizia "salvas" e o setupCfg era atualizado so na memoria — a tela mostrava
+     o numero novo ate o proximo carregamento e entao voltava o antigo.
+     Foi o que aconteceu com a meta da Embaladeiras. */
   try {
-    await sb.from('app_config').upsert({ chave: 'setup_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    const { error } = await sb.from('app_config').upsert({ chave: 'setup_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    if (error) throw error;
     setupCfg = Object.assign(_setupCfgPadrao(), cfg);
     toast('Metas de setup salvas');
-  } catch (e) { toast('Erro ao salvar: ' + (e.message || e)); }
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    toast(/permission|policy|row-level/i.test(msg)
+      ? '❌ Sem permissão para salvar as metas de setup. Peça ao administrador.'
+      : '❌ Não salvou: ' + msg);
+    setupCfg = null;                 // força reler do banco
+    try { await getSetupCfg(); renderMetas(); } catch (_) { }   // devolve o valor real à tela
+  }
 }
 const _slug = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]/g, '');
 function cardSetupsMaquina(D, setor) {
