@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.506.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.507.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2083,7 +2083,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.506.0';
+const APP_VER = '3.507.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15587,16 +15587,28 @@ function _alocarEstoque() {
    item — o GRUPO DOM tem tres presos no 1605349 e a MULTIDRINKS quatro. Somados,
    viram uma decisao so: produzir um item libera o cliente inteiro, e a carga
    sai junta. Por pedido isso fica picado e parece problema pequeno. */
+/* SETOR DO ITEM. O REST196 nao traz setor — ele e de vendas. Deduz pela maquina
+   que mais produziu o item no historico (v_item_maquina) e, se nao houver
+   historico, pela maquina onde ele esta programado na fila. */
+function _setorDoItem(item) {
+  const hs = (_itemMaqCache || {})[String(item)] || [];
+  if (hs.length) return setorDe(hs[0].cod);
+  const naFila = (_progDados || []).find(r => String(r.item_cod) === String(item));
+  return naFila ? (naFila.setor || setorDe(naFila.recurso_cod)) : null;
+}
+
 function cardPorCliente() {
   const A = _alocarEstoque();
   if (!A || !A.peds.length) return '';
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const _stC = (typeof _progSetorSel !== 'undefined' && _progSetorSel) ? _progSetorSel : '';
   const cli = {};
   A.peds.forEach(p => {
     const c = String(p.cli || '—');
     const a = cli[c] || (cli[c] = { c, peds: 0, travados: 0, kg: 0, kgTrav: 0, itens: new Set(), atraso: 0, ent: null });
     a.peds++; a.kg += p.kg;
-    if (p.blq.size) { a.travados++; a.kgTrav += p.kg; p.blq.forEach(k => a.itens.add(k)); }
+    const blq = _stC ? [...p.blq].filter(k => _setorDoItem(k) === _stC) : [...p.blq];
+    if (blq.length) { a.travados++; a.kgTrav += p.kg; blq.forEach(k => a.itens.add(k)); }
     if (p.atraso > a.atraso) a.atraso = p.atraso;
     if (p.blq.size && p.ent && (!a.ent || p.ent < a.ent)) a.ent = p.ent;
   });
@@ -15616,8 +15628,8 @@ function cardPorCliente() {
       + `<td class="nome">${its}</td></tr>`;
   }).join('');
   const um = arr.filter(a => a.itens.size === 1);
-  return card('🏢 Travado por cliente' + ico('porcliente'),
-    `${arr.length} cliente(s) com carga travada`
+  return card('🏢 Travado por cliente' + (_stC ? ' · ' + escapeHtml(_stC) : '') + ico('porcliente'),
+    `${arr.length} cliente(s) com carga travada` + (_stC ? ` por itens da <b>${escapeHtml(_stC)}</b>` : '')
     + (um.length ? ` · <b>${um.length}</b> deles presos num <b>único item</b>, somando ${kg(um.reduce((s, a) => s + a.kgTrav, 0))}` : ''),
     tabSimples(['Cliente', 'Travado', 'Itens', 'Quais'], linhas)
     + (arr.length > 15 ? `<p class="desc">mostrando os 15 maiores de ${arr.length}</p>` : ''),
@@ -15691,7 +15703,14 @@ function cardDestrava() {
     a.peds++; a.kgTrav += p.kg;
     if (p.blq.size === 1) { a.so++; a.kgSo += p.kg; }
   }));
-  const ord = Object.keys(alav).sort((x, y) => (alav[y].kgSo - alav[x].kgSo) || (alav[y].kgTrav - alav[x].kgTrav));
+  /* RECORTE POR SETOR. As BARRAS continuam da fabrica inteira de proposito: um
+     pedido cruza setores, e chamar de "completo" um pedido em que so a Impressao
+     terminou faria o card dizer que o caminhao sai quando ele nao sai. O que
+     filtra e a parte acionavel — os itens que AQUELE setor precisa produzir. */
+  const _st = (typeof _progSetorSel !== 'undefined' && _progSetorSel) ? _progSetorSel : '';
+  const ordTodos = Object.keys(alav).sort((x, y) => (alav[y].kgSo - alav[x].kgSo) || (alav[y].kgTrav - alav[x].kgTrav));
+  const ord = _st ? ordTodos.filter(k => _setorDoItem(k) === _st) : ordTodos;
+  const pedsSetor = _st ? A.peds.filter(p => [...p.blq].some(k => _setorDoItem(k) === _st)) : null;
   const hist = _itemMaqCache || {};
   const linhasTab = ord.slice(0, 14).map(k => {
     const a = alav[k];
@@ -15709,7 +15728,8 @@ function cardDestrava() {
       + `<td class="nome" style="font-size:11.5px">${a.kgSo > 0 && a.falta > 0 ? '<b>' + ganho.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '×</b>' : '<span style="color:var(--fraco-2)">divide bloqueio</span>'}</td></tr>`;
   }).join('');
 
-  const topPed = t1.slice().sort((a, b) => b.kg - a.kg).slice(0, 8).map(p => {
+  const topPed = t1.filter(p => !_st || [...p.blq].some(k => _setorDoItem(k) === _st))
+    .sort((a, b) => b.kg - a.kg).slice(0, 8).map(p => {
     const k = [...p.blq][0], a = alav[k] || {};
     return `<tr style="cursor:pointer" onclick="detItemMaquinas('${escapeHtml(k)}')"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.atraso > 0 ? ' · <b style="color:var(--critico)">' + p.atraso + 'd vencido</b>' : ''}${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}</div></td>`
@@ -15730,7 +15750,11 @@ function cardDestrava() {
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
     + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
-    + '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Itens por alavanca</div>'
+    + (_st ? `<div style="background:var(--leve-4);border-left:4px solid var(--azul-marca);border-radius:10px;padding:9px 11px;margin:10px 0 4px;font-size:12.5px">`
+        + `<b>${escapeHtml(_st)}:</b> ${ord.length} item(ns) deste setor segurando <b>${pedsSetor.length}</b> pedido(s), somando <b>${kg(pedsSetor.reduce((s, p) => s + p.kg, 0))}</b>.`
+        + `<div style="font-size:11px;color:var(--fraco-2);margin-top:3px">As barras acima continuam da fábrica inteira: um pedido cruza setores e só fatura quando <b>todos</b> entregam.</div></div>` : '')
+    + '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Itens por alavanca'
+    + (_st ? ` · ${escapeHtml(_st)}` : '') + '</div>'
     + tabSimples(['Item faltante', 'Falta produzir', 'Libera sozinho', 'Pedidos', 'Ganho'], linhasTab)
     + (topPed ? '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Pedidos a um item de sair</div>'
       + tabSimples(['Pedido · cliente', 'Libera', 'Falta'], topPed) : ''),
