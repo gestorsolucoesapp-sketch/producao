@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.556.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.557.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.556.0';
+const APP_VER = '3.557.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -17232,6 +17232,42 @@ function detFilaMaquina(cod) {
     + tabSimples(['#', 'Item · OP', 'Programado', 'Início'], linhas));
 }
 
+/* OP EM ANDAMENTO — a fila diz o que esta PROGRAMADO; o 622 diz o que ja foi
+   APONTADO. Cruzando os dois pela OP sai o saldo, sem ninguem digitar nada:
+   a cada importacao a baixa acontece sozinha.
+   O que interessa nao e so o saldo, e o TEMPO PARADO: OP comecada que nao
+   recebe apontamento ha semanas esta ocupando lugar na fila da maquina sem
+   estar rodando. Em 03/08/2026 havia OP 100% apontada desde 30/06 ainda na
+   fila, e outra sem apontamento desde 09/05. */
+function cardOpAndamento(rows) {
+  try {
+    const hoje = hojeISO();
+    const dias = d => { if (!d) return null; const a = new Date(String(d).slice(0, 10) + 'T00:00:00'), b = new Date(hoje + 'T00:00:00'); return Math.round((b - a) / 86400000); };
+    const L = (rows || []).filter(r => (+r.kg_produzido || 0) > 0).map(r => {
+      const prog = +r.kg_programado || 0, feito = +r.kg_produzido || 0;
+      const pct = r.pct_concluido != null ? +r.pct_concluido : (prog > 0 ? feito / prog * 100 : 0);
+      return { r, prog, feito, saldo: Math.max(0, prog - feito), pct, parada: dias(r.ultimo_apontamento || r.inicio) };
+    });
+    if (!L.length) return '';
+    L.sort((a, b) => b.pct - a.pct);
+    const encalhadas = L.filter(x => x.pct >= 99.5);
+    const linhas = L.slice(0, 20).map(x => {
+      const r = x.r, fim = x.pct >= 99.5;
+      const cor = fim ? 'var(--critico)' : (x.pct >= 70 ? '#1E7B45' : 'var(--laranja)');
+      return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.recurso_cod))}</span> ${escapeHtml(String(r.recurso_nome || '').slice(0, 16))}`
+        + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op))} · ${escapeHtml(String(r.item_desc || '').slice(0, 28))}</div></td>`
+        + `<td><span class="cel neutra">${_progT(x.prog)}</span></td>`
+        + `<td><span class="cel" style="color:${cor};font-weight:800">${Math.round(x.pct)}%<div style="font-size:10px;font-weight:600;opacity:.85">falta ${_progT(x.saldo)}</div></span></td></tr>`;
+    }).join('');
+    const aviso = encalhadas.length
+      ? `<p class="desc" style="margin:0 0 8px;color:var(--critico)"><b>${encalhadas.length} OP já apontada 100%</b> continua na fila — ocupa lugar na máquina sem ter o que produzir. Vale conferir se foi encerrada no ERP.</p>`
+      : '';
+    return card('⏳ OP em andamento',
+      `${L.length} de ${(rows || []).length} ordens já receberam apontamento · programado × produzido, pela OP · a baixa acontece sozinha a cada importação`,
+      aviso + tabSimples(['Máquina / OP', 'Programado', 'Apontado'], linhas),
+      'OP em andamento');
+  } catch (_) { return ''; }
+}
 function renderProgramacao() {
   const alvo = $('progConteudo'); if (!alvo) return;
   const todas = _progDados || [];
@@ -17271,6 +17307,7 @@ function renderProgramacao() {
   try { const cd = cardDestrava(); if (cd) partes.push(cd); } catch (e) { console.warn('destrava:', e); }
   try { const pc = cardPorCliente(); if (pc) partes.push(pc); } catch (e) { console.warn('porCliente:', e); }
   try { const cc = cardCarteira196(rows); if (cc) partes.push(cc); } catch (e) { console.warn('carteira196:', e); }
+  try { const oa = cardOpAndamento(rows); if (oa) partes.push(oa); } catch (e) { console.warn('opAndamento:', e); }
   try { const cm = cardCargaMaquina(rows); if (cm) partes.push(cm); } catch (e) { console.warn('cargaMaquina:', e); }
   try { const mx = cardMatrizItemMaquina(rows); if (mx) partes.push(mx); } catch (e) { console.warn('matriz:', e); }
 
