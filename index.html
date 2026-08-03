@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.548.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.549.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.548.0';
+const APP_VER = '3.549.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5956,6 +5956,12 @@ function metaDiariaSemExtrusao() {
    e Compressao porque sao linhas proprias, fora do fluxo do material formado.
    Confirmado pelo Joao em 03/08/2026. */
 const foraDoAgregado = st => st === 'Extrusão' || st === 'Injeção' || st === 'Compressão';
+/* Injecao e Compressao sao linhas SEPARADAS: nunca somam junto com
+   Termoformagem, Impressao, Rotulagem, Sleeve e Embaladeiras — nem em producao,
+   nem em horas paradas, nem em perda, nem na contagem de maquinas. Aparecem so
+   quando escolhidas no filtro. Confirmado pelo Joao em 03/08/2026. */
+const setorSeparado = st => st === 'Injeção' || st === 'Compressão';
+const somaAgregado = r => !setorSeparado(setorDe(r.recurso_cod));
 // Extrusão produz BOBINA (kg). O ERP repete o peso no campo "quantidade" — logo "cxs" ali é o próprio kg.
 // Compressao (AGILLE) aponta em MIL, nao em CX: somar "quantidade" ali daria
 // milheiro contado como caixa. Fica so em kg, igual a Extrusao.
@@ -13851,13 +13857,13 @@ function renderPainel() {
 
   if (!setor) {
     // ===== RESUMO GERAL: todos os setores =====
-    const totalV = D.producao.reduce((a, r) => a + val(r), 0);
-    const extrusaoV = D.producao.reduce((a, r) => a + (setorDe(r.recurso_cod) === 'Extrusão' ? val(r) : 0), 0);
-    const semExtrusaoV = totalV - extrusaoV;
-    const dias = [...new Set(D.producao.map(r => r.dia))];
-    const horasParada = filtraParadas(D.paradas).reduce((a, p) => a + (p.tempo_horas || 0), 0);
-    const pesoProd = D.producao.reduce((a, r) => a + (r.peso || 0), 0);
-    const pesoPerda = D.perdas.filter(perdaConta).reduce((a, r) => a + (r.peso || 0), 0);
+    // Injecao e Compressao ficam FORA de todas as somas deste bloco.
+    const _prodAg = D.producao.filter(somaAgregado);
+    const totalV = _prodAg.reduce((a, r) => a + val(r), 0);
+    const dias = [...new Set(_prodAg.map(r => r.dia))];
+    const horasParada = filtraParadas(D.paradas).filter(somaAgregado).reduce((a, p) => a + (p.tempo_horas || 0), 0);
+    const pesoProd = _prodAg.reduce((a, r) => a + (r.peso || 0), 0);
+    const pesoPerda = D.perdas.filter(perdaConta).filter(somaAgregado).reduce((a, r) => a + (r.peso || 0), 0);
     const perdaPct = (pesoProd + pesoPerda) > 0 ? pesoPerda / (pesoProd + pesoPerda) * 100 : null;
     const bob = D.consumo.filter(c => ehBobina(c) && setorDe(c.recurso_cod) === 'Termoformagem');
     const consumoBob = (bob.length ? bob : D.consumo.filter(ehBobina)).reduce((a, c) => a + (c.peso || 0), 0);
@@ -13959,11 +13965,13 @@ function renderPainel() {
     // a faixa do periodo tambem no resumo geral: antes ela so existia com um
     // setor selecionado, entao em "Todos" o topo ficava vazio
     try {
-      const _pAll = D.producao.reduce((a, r) => a + val(r), 0);
-      const _mqAll = [...new Set(D.producao.map(r => r.recurso_cod))].length;
-      const _hAll = filtraParadas(D.paradas).reduce((a, x) => a + (x.tempo_horas || 0), 0);
-      const _pkAll = D.producao.reduce((a, r) => a + (r.peso || 0), 0);
-      const _peAll = D.perdas.filter(perdaConta).reduce((a, r) => a + (r.peso || 0), 0);
+      // mesma regra dos KPIs: Injecao e Compressao nao entram em nenhuma soma.
+      const _prodK = D.producao.filter(somaAgregado);
+      const _pAll = _prodK.reduce((a, r) => a + val(r), 0);
+      const _mqAll = [...new Set(_prodK.map(r => r.recurso_cod))].length;
+      const _hAll = filtraParadas(D.paradas).filter(somaAgregado).reduce((a, x) => a + (x.tempo_horas || 0), 0);
+      const _pkAll = _prodK.reduce((a, r) => a + (r.peso || 0), 0);
+      const _peAll = D.perdas.filter(perdaConta).filter(somaAgregado).reduce((a, r) => a + (r.peso || 0), 0);
       const _pctAll = (_pkAll + _peAll) > 0 ? (_peAll / (_pkAll + _peAll) * 100) : null;
       const _bobAll = D.consumo.filter(c => /BOBINA/i.test(c.componente_desc || '') && setorDe(c.recurso_cod) === 'Termoformagem').reduce((a, c) => a + (c.peso || 0), 0);
       const _pTermo = D.producao.filter(r => setorDe(r.recurso_cod) === 'Termoformagem').reduce((a, r) => a + (r.peso || 0), 0);
@@ -13978,9 +13986,9 @@ function renderPainel() {
       const _dias = [...new Set(D.producao.map(r => String(r.dia || '').slice(0, 10)).filter(Boolean))].sort();
       let _t = secao('periodo', 'Período' + (_dias.length ? ' · ' + fmtData(_dias[0]) + ' → ' + fmtData(_dias[_dias.length - 1]) : '') + (periodoSel ? ' · ' + periodoSel.label : ''));
       _t += `<div class="kpis">
-        <div class="kpi destaque" title="A soma de todos os setores conta o mesmo material mais de uma vez: a Extrusão produz a bobina e a Termoformagem transforma essa mesma bobina em pote e copo. Impressão, Rotulagem, Sleeve e Embaladeiras passam de novo pelo material já contado."><div class="v">${fmtV(_pTermoV)}</div><div class="l">Produção Termoformagem${metrica === 'quantidade' ? ' (cxs)' : ''}</div><div style="font-size:11px;font-weight:700;color:inherit;opacity:.85;margin-top:4px">todos os setores · ${fmtV(_pAll)}</div></div>
+        <div class="kpi destaque" title="A soma de todos os setores conta o mesmo material mais de uma vez: a Extrusão produz a bobina e a Termoformagem transforma essa mesma bobina em pote e copo. Impressão, Rotulagem, Sleeve e Embaladeiras passam de novo pelo material já contado."><div class="v">${fmtV(_pTermoV)}</div><div class="l">Produção Termoformagem${metrica === 'quantidade' ? ' (cxs)' : ''}</div><div style="font-size:11px;font-weight:700;color:inherit;opacity:.85;margin-top:4px">todos os setores, sem Injeção/Compressão · ${fmtV(_pAll)}</div></div>
         <div class="kpi"><div class="v">${_mqAll}</div><div class="l">Máquinas</div></div>
-        <div class="kpi"><div class="v">${fmtNum(_hAll)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
+        <div class="kpi" title="Injeção e Compressão são linhas separadas e não entram nesta soma."><div class="v">${fmtNum(_hAll)}<span style="font-size:13px"> h</span></div><div class="l">Horas paradas</div></div>
         <div class="kpi"><div class="v">${_pctAll != null ? _pctAll.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—'}</div><div class="l">Perda período</div></div>`;
       if (_apAll != null) _t += kpiAprov(_apAll, _pTermo, _bobAll);
       _t += `</div>`;
