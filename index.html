@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.554.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.555.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.554.0';
+const APP_VER = '3.555.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11476,6 +11476,41 @@ function relMetaDiaMaq(cod) {
   ['Manhã', 'Tarde', 'Noite'].forEach(b => { if (m[b]) { s += m[b]; achou = true; } });
   return achou ? s : null;
 }
+/* DESEMPENHO x META POR MAQUINA — mesmo numero do chip da aba Itens:
+   media diaria da maquina no periodo carregado / meta diaria dela.
+   ATENCAO ao interpretar: e o desempenho GERAL da maquina, nao o desempenho
+   dela NAQUELE item — a meta e da maquina e do turno inteiro, e num turno ela
+   roda varios itens. Serve para escolher, entre as maquinas que ja rodaram o
+   item, qual vem entregando meta; nao prova que o item sai melhor ali.
+   E as metas nao sao comparaveis entre si: maquina com meta mais folgada
+   aparece melhor. Confirmado com o Joao em 03/08/2026. */
+let _perfMaqCacheKey = null, _perfMaqCache = null;
+function perfMaqMeta() {
+  try {
+    const src = (typeof dadosPainelFull !== 'undefined' && dadosPainelFull && dadosPainelFull.producao) ? dadosPainelFull.producao
+      : (typeof dadosPainel !== 'undefined' && dadosPainel && dadosPainel.producao) ? dadosPainel.producao : null;
+    if (!src || !src.length || !metasData) return {};
+    const chave = src.length + '|' + (src[0] && src[0].dia) + '|' + (src[src.length - 1] && src[src.length - 1].dia);
+    if (_perfMaqCacheKey === chave && _perfMaqCache) return _perfMaqCache;
+    const agg = {};
+    src.forEach(r => {
+      const c = String(r.recurso_cod || ''); if (!c || !r.dia) return;
+      const e = (agg[c] = agg[c] || { kg: 0, cx: 0, dias: new Set() });
+      e.kg += (+r.peso || 0);
+      if (String(r.unidade || '').toUpperCase() === 'CX') e.cx += (+r.quantidade || 0);
+      e.dias.add(String(r.dia).slice(0, 10));
+    });
+    const out = {};
+    Object.keys(agg).forEach(c => {
+      const meta = relMetaDiaMaq(c); if (!meta) return;
+      const e = agg[c], d = e.dias.size; if (!d) return;
+      const vol = setorEmCx(setorDe(c)) ? e.cx : e.kg;
+      out[c] = vol / d / meta * 100;
+    });
+    _perfMaqCacheKey = chave; _perfMaqCache = out;
+    return out;
+  } catch (_) { return {}; }
+}
 function relChipMaq(cod, ym) {
   const e = _relMaqStats[ym + '|' + String(cod)];
   const meta = relMetaDiaMaq(cod);
@@ -16757,14 +16792,25 @@ function cardDestrava() {
   const ord = _st ? ordTodos.filter(k => _setorDoItem(k) === _st) : ordTodos;
   const pedsSetor = _st ? A.peds.filter(p => [...p.blq].some(k => _setorDoItem(k) === _st)) : null;
   const hist = _itemMaqCache || {};
+  const _perf = perfMaqMeta();   // ★ = melhor desempenho x meta entre as do histórico
   const linhasTab = ord.slice(0, 14).map(k => {
     const a = alav[k];
     const ganho = a.falta > 0 ? (a.kgSo / a.falta) : 0;
     const cxFalta = A.linhas.filter(l => String(l.item_cod) === k && l._falta > 0.001 && _ehCx(l.un))
       .reduce((s, l) => { const need = +l.peso_pendente || 0; const q = +l.qtd_pendente || 0; return s + (need > 0 ? q * (l._falta / need) : 0); }, 0);
     const palFalta = cxFalta > 0 ? _paletes(cxFalta) : 0;
-    const ms = (hist[k] || []).slice(0, 4).map(m => `<span style="display:inline-block;margin-right:3px;padding:0 5px;border-radius:5px;font-size:10px;font-weight:800;background:var(--leve);color:var(--fraco);border:1px solid var(--borda)">${escapeHtml(m.cod)}</span>`).join('')
-      || '<span style="font-size:10px;color:var(--critico)">sem histórico</span>';
+    const _mq = (hist[k] || []).slice(0, 4);
+    const _melhor = _mq.filter(m => _perf[m.cod] != null).sort((a, b) => _perf[b.cod] - _perf[a.cod])[0];
+    const ms = _mq.map(m => {
+      const p = _perf[m.cod], eh = !!(_melhor && m.cod === _melhor.cod);
+      const tip = (p != null)
+        ? m.cod + ': ' + Math.round(p) + '% da meta no período' + (eh ? ' — melhor entre as que já rodaram este item' : '')
+        : m.cod + ': sem meta cadastrada, fora da comparação';
+      const est = eh
+        ? 'background:#E4F5EA;color:#1E7B45;border:1px solid #1E7B4555'
+        : 'background:var(--leve);color:var(--fraco);border:1px solid var(--borda)';
+      return `<span title="${escapeHtml(tip)}" style="display:inline-block;margin-right:3px;padding:0 5px;border-radius:5px;font-size:10px;font-weight:800;${est}">${eh ? '★ ' : ''}${escapeHtml(m.cod)}</span>`;
+    }).join('') || '<span style="font-size:10px;color:var(--critico)">sem histórico</span>';
     return `<tr style="cursor:pointer" onclick="detItemMaquinas('${escapeHtml(k)}')"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 34))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">roda em ${ms} ›</div></td>`
       + `<td><span class="cel baixo">${kg(a.falta)}${palFalta ? `<div style="font-size:10px;font-weight:600;opacity:.8">~${plt(palFalta)}</div>` : ''}</span></td>`
