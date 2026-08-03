@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.547.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.548.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.547.0';
+const APP_VER = '3.548.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4544,7 +4544,7 @@ function _amPreencheMaquinas(cache) {
   if (_amMaq && !arr.includes(_amMaq)) { _amMaq = ''; sel.value = ''; }
   try { sincMaqGlobal(); } catch (_) {}   // idem Manutencao: espelha so depois de preencher
 }
-function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'todos') return true; if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return s !== 'Extrusão'; return s === _amSetor; }
+function _amKeepSetor(cod) { const s = setorDe(cod); if (_amSetor === 'todos') return true; if (_amSetor === 'extrusao') return s === 'Extrusão'; if (_amSetor === 'transf') return !foraDoAgregado(s); return s === _amSetor; }
 // máquina tem precedência: escolhida uma, o setor deixa de importar
 function _amKeep(cod) { return _amMaq ? (String(cod) === _amMaq) : _amKeepSetor(cod); }
 
@@ -5943,11 +5943,19 @@ function metaDiariaSetor(setor) {
 function metaDiariaSemExtrusao() {
   if (!metasData) return null;
   let s = 0, achou = false;
-  Object.keys(SETOR_MAQ).filter(x => x !== 'Extrusão').forEach(st => (SETOR_MAQ[st] || []).forEach(c => {
+  // meta agregada da fabrica: so os setores que entram no total (fora Extrusao,
+  // Injecao e Compressao), senao a meta somada nao bate com a producao somada.
+  Object.keys(SETOR_MAQ).filter(x => !foraDoAgregado(x)).forEach(st => (SETOR_MAQ[st] || []).forEach(c => {
     const m = metasData[String(c)]; if (m) ['Manhã', 'Tarde', 'Noite'].forEach(b => { if (m[b]) { s += m[b]; achou = true; } });
   }));
   return achou ? s : null;
 }
+/* Setores que NAO entram nas analises agregadas do painel principal: aparecem
+   como informacao e no seletor, mas ficam fora dos totais. Extrusao porque a
+   bobina e materia-prima da Termoformagem (contaria o mesmo quilo 2x); Injecao
+   e Compressao porque sao linhas proprias, fora do fluxo do material formado.
+   Confirmado pelo Joao em 03/08/2026. */
+const foraDoAgregado = st => st === 'Extrusão' || st === 'Injeção' || st === 'Compressão';
 // Extrusão produz BOBINA (kg). O ERP repete o peso no campo "quantidade" — logo "cxs" ali é o próprio kg.
 // Compressao (AGILLE) aponta em MIL, nao em CX: somar "quantidade" ali daria
 // milheiro contado como caixa. Fica so em kg, igual a Extrusao.
@@ -11417,10 +11425,10 @@ async function preencherRelItensOps(setor) {
     box.innerHTML = '<p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando' + (setor ? ' · ' + escapeHtml(setor) : '') + '…</p>';
     const rows0 = await fetchTudo('producao', 'dia,op,item_cod,item_desc,recurso_cod,quantidade,unidade,peso', de, ate);
     let rows = rows0.filter(r => r.item_cod);
-    // Extrusão é matéria-prima (bobina): entra só quando escolhida explicitamente,
-    // senão o mesmo material seria contado duas vezes junto com a transformação.
+    // Extrusão, Injeção e Compressão entram só quando escolhidas explicitamente,
+    // senão o agregado mistura material contado duas vezes com linha própria.
     if (setor) rows = rows.filter(r => setorDe(r.recurso_cod) === setor);
-    else rows = rows.filter(r => setorDe(r.recurso_cod) !== 'Extrusão');
+    else rows = rows.filter(r => !foraDoAgregado(setorDe(r.recurso_cod)));
     _relRowsCache = { chave, rows, setor };
     await relMontaTabela();
     return;
@@ -13866,9 +13874,11 @@ function renderPainel() {
 
     // produção por setor — mostra TODOS os setores, mesmo com produção zero
     const porSetor = somaPor(D.producao, r => setorDe(r.recurso_cod), val);
-    const ordemSet = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras'];
+    const ordemSet = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Injeção', 'Compressão'];
     const arrS = ordemSet.map(s => ({ l: s, v: porSetor[s] || 0, cor: CORES[SETORES.indexOf(s) % CORES.length], click: `resumoSetor('${s}')` }));
-    if (porSetor['Outros']) arrS.push({ l: 'Outros', v: porSetor['Outros'], cor: CORES[6] });
+    // a cor de "Outros" tem que vir pelo indice do setor: fixar CORES[6] passou a
+    // pintar "Outros" com a cor da Injecao quando o setor entrou na lista.
+    if (porSetor['Outros']) arrS.push({ l: 'Outros', v: porSetor['Outros'], cor: CORES[SETORES.indexOf('Outros') % CORES.length] });
     arrS.sort((a, b) => b.v - a.v);
     html += card('Produção por setor', (metrica === 'peso' ? 'peso total' : 'cxs total') + ' · toque num setor para ver o resumo', barrasHorizontal(arrS, uni));
 
