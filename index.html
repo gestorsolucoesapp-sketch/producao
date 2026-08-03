@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.520.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.521.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1894,6 +1894,27 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       }
     }
 
+    /* ATRIBUTOS E DETALHES — o ERP passou a imprimir "Imprimir Atributos: Sim" e
+       "Imprimir Detalhes: Sim", e com isso o bloco de cada OP carrega muito mais
+       do que OP/item/qtd/peso. O que aproveitamos aqui:
+       - Quantidade Cores: na Impressao e restricao de maquina, nao enfeite —
+         acima de 6 cores a OP nao roda em 702, 703, 705, 708 e 710;
+       - Quantidade (em) Estoque: quanto ja existe pronto do item;
+       - Prazo / Data do Pedido: idade real do pedido, melhor que a data de entrega;
+       - Suprimento para a Ordem de Producao N: liga a OP da extrusao a OP da
+         termoformagem que vai consumir a bobina — e a cadeia entre etapas;
+       - Largura / Espessura Lamina: identidade da bobina na extrusao. */
+    /* o ERP mistura os dois formatos no MESMO relatorio: espessura sai "0.80"
+       (ponto decimal) e tambem "0,98" (virgula). numBR sozinho le 0.80 como 80. */
+    const numFlex = (v) => { const z = String(v || '').trim(); return /^\d+\.\d+$/.test(z) ? parseFloat(z) : numBR(z); };
+    const nCores = /Quantidade\s+Cores\s*:\s*(\d+)/i.exec(txt);
+    const nEstoq = /Quantidade\s+(?:em\s+)?[Ee]stoque\s*:\s*([\d.]*\d(?:,\d+)?)/i.exec(txt);
+    const nPrazo = /Prazo\s*:\s*(\d+)\s*dias?/i.exec(txt);
+    const nDtPed = /Data do Pedido\s*:\s*(\d{2})\/(\d{2})\/(\d{4})/i.exec(txt);
+    const nSupr = /Suprimento para a Ordem de Produ[cç][aã]o\s*:?\s*([\d.]+)/i.exec(txt);
+    const nLarg = /Largura\s+L[aâ]mina\s*:\s*([\d.]*\d(?:,\d+)?)/i.exec(txt);
+    const nEsp = /Espessura\s+L[aâ]mina\s*:\s*([\d.]*\d(?:,\d+)?)/i.exec(txt);
+
     const limpa = (v) => String(v || '').replace(/\s+/g, ' ').trim() || null;
     const prod = limpa(bloco.cols.produto) || '';
     const mP = /^(\d{4,10})\s*-\s*([\s\S]*)$/.exec(prod);
@@ -1911,6 +1932,14 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       entrega: mE ? (mE[3] + '-' + mE[2] + '-' + mE[1]) : null,
       quantidade: quantidade,
       peso: peso,
+      cores: nCores ? +nCores[1] : null,
+      estoque: nEstoq ? numFlex(nEstoq[1]) : null,
+      prazo_dias: nPrazo ? +nPrazo[1] : null,
+      data_pedido: nDtPed ? (nDtPed[3] + '-' + nDtPed[2] + '-' + nDtPed[1]) : null,
+      // o ERP as vezes escreve 262.073 e as vezes 262073 para a mesma OP
+      suprimento_op: nSupr ? nSupr[1].replace(/\./g, '') : null,
+      largura: nLarg ? numFlex(nLarg[1]) : null,
+      espessura: nEsp ? numFlex(nEsp[1]) : null,
       inicio: dts[0] || null,
       termino: dts[1] || null,
       ordem: ordem
@@ -2147,7 +2176,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.520.0';
+const APP_VER = '3.521.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8737,6 +8766,7 @@ const INFOS = {
   destrava: { t: 'O que destrava faturamento', d: "<b>Palete = 20 caixas.</b> Só entra o que é medido em CX — MIL, UN e PC ficam de fora porque não são caixa. O arredondamento é <b>por item e para cima</b>: palete misturado existe, mas o normal é um item por palete, então somar caixas de itens diferentes e dividir por 20 subestimaria.<br><br>O caminhão não sai incompleto: o pedido só fatura quando <b>todas</b> as linhas dele têm material. Por isso a leitura é por <b>pedido</b>, não por item.<br><br><b>Libera sozinho</b> = quanto de pedido sai se só aquele item for resolvido, contando apenas os pedidos em que ele é o <b>único</b> bloqueio. Item que divide o bloqueio com outro aparece como “divide bloqueio”: resolver um só não adianta, os dois precisam sair juntos.<br><br><b>Ganho</b> = kg liberados por kg produzido. Acima de 1× significa que produzir pouco destrava muito.<br><br>O estoque é <b>alocado</b> na ordem da entrega mais antiga antes da conta. Sem isso o mesmo material contaria uma vez por cliente — o COPO 250ML está em 11 pedidos." },
   matriz: { t: 'Matriz item × máquina', d: "Cada linha é um item com carga na fila; cada coluna, uma máquina. A célula pinta quando aquele item <b>já foi produzido</b> naquela máquina, segundo o histórico do RPCP622 — mais escura quanto mais kg. O <b>contorno verde</b> marca onde ele está na fila agora.<br><br>Item com uma máquina só fica em vermelho na legenda: é o que trava quando aquela máquina para. Com mais meses do ano importados o mapa fica mais fiel — hoje, com julho e agosto, 546 dos 607 itens aparecem com máquina única, e parte disso é falta de histórico, não restrição real." },
   cargamaq: { t: 'Carga × capacidade por máquina', d: "Quantas <b>semanas de serviço</b> cada máquina tem na fila: kg programados ÷ o que ela entregou por semana nos últimos 28 dias.<br><br>Capacidade <b>demonstrada</b>, não de catálogo. Verde até 2 semanas, laranja até 4, vermelho acima. Máquina sem produção no período fica sem base de comparação.<br><br>O card \"Carga de cada semana\" faz a mesma leitura por <b>setor</b>; aqui é por máquina, que é onde a decisão acontece — uma estourada e outra ociosa dentro do mesmo setor não aparecem no número do setor." },
+  cores: { t: 'Cores × máquina', d: "Na Impressão, o número de cores é <b>restrição física</b>: acima de 6 cores a OP não roda em <b>702, 703, 705, 708 e 710</b>. Sobram <b>704, 706, 707 e 709</b>.<br><br>O dado vem do RPCP264, campo <b>Quantidade Cores</b>, que só aparece quando o relatório é gerado com <b>Imprimir Atributos: Sim</b>.<br><br>Quando o campo vem vazio o app não opina — nulo é diferente de “cabe em qualquer uma”. Por isso o card mostra quantas OPs trouxeram o número." },
   filafalta: { t: 'Máquina produzindo e sem ordem na fila', d: "Compara quem <b>produziu nos últimos 30 dias</b> com quem tem ordem na programação carregada.<br><br>O RPCP264 vem <b>um PDF por máquina</b>. Se um arquivo não for importado — ou for importado e o parser não tirar nada dele — a importação não reclama e a máquina desaparece da fila em silêncio.<br><br>Mas a mesma tela aparece quando a fila está <b>vazia de verdade</b> e o relatório nem chegou a ser tirado. O app não distingue os dois casos: por isso o botão <b>“fila vazia mesmo”</b>, que tira a máquina da lista <b>naquela foto</b>. Na foto seguinte a pergunta se refaz — senão um arquivo que sumisse de vez nunca mais seria acusado.<br><br>Exige 3 dias de produção para não acusar máquina parada por escala." },
   propostas: { t: 'Propostas × capacidade', d: "Vem do relatório <b>Propostas × Pedidos</b> que o comercial manda — o funil <b>antes</b> da carteira.<br><br>São três degraus: <b>sem pedido</b> é proposta pura, ainda não virou nada no ERP; <b>com pedido, fora da carteira</b> é venda fechada que não apareceu no REST196 (quase sempre bloqueio de crédito, arte ou aprovação); <b>na carteira</b> é o que o card Carteira × fila já cobre.<br><br>O cruzamento usa o pedido do REST196 sem a sequência do item: lá ele vem como <code>227480/1</code>, aqui como <code>227480</code>.<br><br>Os kg viram <b>dias de Termoformagem</b> pela média dos últimos 90 dias, porque kg solto não diz se cabe. O risco quase nunca é o volume do mês — é a <b>concentração numa semana</b>.<br><br>Proposta <b>não</b> é demanda confirmada: trate como cenário, não como carteira." },
   carteira: { t: 'Carteira × fila', d: "A coluna <b>Roda em</b> lista as máquinas que já produziram aquele item, tiradas do histórico do RPCP622. <b>Verde</b> = a máquina está com o item na fila agora. <b>Cinza</b> = só histórico, ou seja, é uma alternativa possível. Quanto mais meses do ano importados, mais fiel fica.<br><br>Cruza o <b>REST196</b> (Saldos de Estoque x Pedidos) com a fila do <b>RPCP264</b>, item a item.<br><br>O estoque sai de uma tabela própria e <b>deduplicada</b>: no PDF ele se repete a cada cliente que pede o mesmo item, então somar as linhas contaria o mesmo material várias vezes.<br><br>O campo <code>&lt;&gt;</code> do ERP é dias: positivo é <b>atraso</b>, negativo é <b>reprogramação</b> — a entrega foi puxada para trás da origem, e por isso não conta como atraso." },
@@ -14270,7 +14300,7 @@ const MAPA = {
   '643': { tabela: 'paradas', linha: r => ({ dia: r.dia, motivo_cod: r.motivo_cod, motivo_desc: r.motivo_desc, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, data: r.data, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, inicio: r.inicio, fim: r.fim, tempo_horas: r.tempo_horas, tempo_exato: r.tempo_exato }) },
   '196': { tabela: 'rest196_pendente', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, vendedor: r.vendedor, cliente: r.cliente, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, un: r.un, pedido: r.pedido, origem: r.origem, entrega: r.entrega, dias: r.dias, qtd_total: r.qtd_total, qtd_pendente: r.qtd_pendente, peso_pendente: r.peso_pendente }) },
   'PROP': { tabela: 'propostas', linha: r => ({ dia_foto: r.dia_foto, proposta: r.proposta, pedido: r.pedido, emissao: r.emissao, cliente_cod: r.cliente_cod, cliente: r.cliente, entrega: r.entrega, situacao: r.situacao, peso: r.peso, rs_kg: r.rs_kg, qtde: r.qtde, rs_qtde: r.rs_qtde, atendido: r.atendido, valor: r.valor, ordem_compra: r.ordem_compra }) },
-  '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem }) },
+  '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, cores: r.cores, estoque: r.estoque, prazo_dias: r.prazo_dias, data_pedido: r.data_pedido, suprimento_op: r.suprimento_op, largura: r.largura, espessura: r.espessura }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
 
@@ -14843,7 +14873,7 @@ async function carregarProgramacao(forcar) {
   if (alvo) alvo.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando a fila…</p>';
   try {
     const { data, error } = await sb.from('v_fila_op')
-      .select('dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo')
+      .select('dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo,cores,estoque,prazo_dias,data_pedido,suprimento_op,largura,espessura')
       .limit(8000);
     if (error) throw error;
     _progDados = data || [];
@@ -16357,6 +16387,60 @@ function cardFilaFalta() {
     'Máquina fora da fila');
 }
 
+
+/* ---------- CORES x MÁQUINA (Impressão) ----------
+   Restrição física, não preferência: acima de 6 cores a OP não roda em
+   702, 703, 705, 708 e 710. Sobram 704, 706, 707 e 709.
+   O dado vem do RPCP264 no campo "Quantidade Cores", que só aparece quando o
+   relatório é tirado com "Imprimir Atributos: Sim". Sem ele, cores fica nulo e
+   o app não opina — é diferente de "cabe em qualquer uma". */
+const IMPR_MAX6 = ['702', '703', '705', '708', '710'];
+const IMPR_ACIMA6 = ['704', '706', '707', '709'];
+function coresCabe(maq, cores) {
+  if (cores == null) return null;                       // sem dado: não opina
+  if (!IMPR_MAX6.includes(String(maq)) && !IMPR_ACIMA6.includes(String(maq))) return null;
+  return cores > 6 ? !IMPR_MAX6.includes(String(maq)) : true;
+}
+function selCores(cores, maq) {
+  if (cores == null) return '';
+  const ok = coresCabe(maq, cores);
+  const cor = ok === false ? 'background:#FBE3E3;color:#B3261E' : cores > 6 ? 'background:#FFF3E0;color:#8a5000' : 'background:#ECEFF1;color:var(--fraco)';
+  return `<span class="cel" style="${cor};font-weight:700;white-space:nowrap">🎨 ${cores} cor${cores === 1 ? '' : 'es'}</span>`;
+}
+
+function cardCoresMaquina() {
+  const todas = _progDados || [];
+  const impr = todas.filter(r => String(r.setor || '') === 'Impressão');
+  if (!impr.length) return '';
+  const comDado = impr.filter(r => r.cores != null);
+  if (!comDado.length) {
+    return card('🎨 Cores × máquina' + (typeof ico === 'function' ? ico('cores') : ''),
+      'sem o campo Quantidade Cores nesta foto',
+      '<p class="desc">Nenhuma OP da Impressão trouxe o número de cores. Esse campo só sai no RPCP264 quando o relatório é gerado com <b>Imprimir Atributos: Sim</b> — sem ele o app não consegue checar se a OP cabe na máquina.</p>',
+      'Cores × máquina');
+  }
+  const erradas = comDado.filter(r => coresCabe(r.recurso_cod, r.cores) === false)
+    .sort((a, b) => (+b.kg_programado || 0) - (+a.kg_programado || 0));
+  const acima6 = comDado.filter(r => r.cores > 6);
+  const linhas = (erradas.length ? erradas : acima6.slice(0, 12)).map(r => {
+    const ruim = coresCabe(r.recurso_cod, r.cores) === false;
+    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.item_cod || '—'))}</span> ${escapeHtml(String(r.item_desc || '').slice(0, 40))}`
+      + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op || '—'))} · ${escapeHtml(String(r.recurso_cod))} ${escapeHtml(String(r.recurso_nome || ''))}</div>`
+      + (ruim ? `<div style="font-size:10.5px;color:var(--critico);font-weight:700">não roda aqui — mover para ${IMPR_ACIMA6.join(', ')}</div>` : '')
+      + `</td><td>${selCores(r.cores, r.recurso_cod)}</td>`
+      + `<td><span class="cel cel-tot">${kg(r.kg_programado)}</span></td></tr>`;
+  }).join('');
+  const kgErr = erradas.reduce((a, r) => a + (+r.kg_programado || 0), 0);
+  return card('🎨 Cores × máquina' + (typeof ico === 'function' ? ico('cores') : ''),
+    (erradas.length ? erradas.length + ' OP(s) programada(s) em máquina que não comporta' : acima6.length + ' OP(s) acima de 6 cores · todas em máquina certa'),
+    (erradas.length
+      ? '<p class="desc" style="margin:0 0 6px">Acima de 6 cores a OP <b>não roda</b> em ' + IMPR_MAX6.join(', ') + '. Estas estão programadas onde não cabem — somando <b>' + kg(kgErr) + '</b>.</p>'
+      : '<p class="desc" style="margin:0 0 6px">Nenhuma OP acima de 6 cores está em máquina incompatível. Abaixo, as de 7 ou mais cores, que só rodam em ' + IMPR_ACIMA6.join(', ') + '.</p>')
+    + tabSimples(['Item · OP · Máquina', 'Cores', 'Peso'], linhas)
+    + '<p style="font-size:11px;color:var(--fraco);margin-top:6px">' + comDado.length + ' de ' + impr.length + ' OP(s) da Impressão trouxeram o número de cores.</p>',
+    'Cores × máquina');
+}
+
 function renderProgramacao() {
   const alvo = $('progConteudo'); if (!alvo) return;
   const todas = _progDados || [];
@@ -16389,6 +16473,7 @@ function renderProgramacao() {
 
   /* ---------- carteira x fila (REST196 x RPCP264) ---------- */
   try { const ff = cardFilaFalta(); if (ff) partes.push(ff); } catch (e) { console.warn('filaFalta:', e); }
+  try { const cm = cardCoresMaquina(); if (cm) partes.push(cm); } catch (e) { console.warn('cores:', e); }
   try { const pp = cardPropostas(); if (pp) partes.push(pp); } catch (e) { console.warn('propostas:', e); }
   try { const pa = cardPlanoAcao(); if (pa) partes.push(pa); } catch (e) { console.warn('plano:', e); }
   try { const cd = cardDestrava(); if (cd) partes.push(cd); } catch (e) { console.warn('destrava:', e); }
