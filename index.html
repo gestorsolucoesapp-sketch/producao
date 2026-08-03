@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.537.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.538.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.537.0';
+const APP_VER = '3.538.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14265,8 +14265,58 @@ async function carregarUsuarios() {
       ${setorSel}
       ${metasTog}
       ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
+      ${eu ? '' : `<div style="margin-top:8px;border-top:1px dashed var(--borda);padding-top:8px">
+        <button onclick="usrExcluir('${u.id}')" style="background:transparent;border:1px solid var(--critico);color:var(--critico);font-size:12px;font-weight:700;padding:6px 12px;border-radius:9px;cursor:pointer">🗑️ Excluir cadastro</button>
+        <span class="desc" style="margin-left:8px;font-size:11px">remove o acesso de vez</span></div>`}
     </div>`;
   }).join('');
+}
+
+/* EXCLUIR CADASTRO — irreversível, então antes de apagar o app confere o que
+   está amarrado na pessoa. Tarefa ou OS em aberto no nome dela viram órfãs:
+   somem do sino de todo mundo e ninguém descobre, porque o sintoma é a ausência
+   de uma linha. Nesse caso a exclusão é barrada até alguém repassar.
+   Apaga só o perfil: a conta de login em si sai pelo painel do Supabase. */
+async function usrExcluir(id) {
+  if (!souAdmin) { toast('Só administrador pode excluir cadastro.'); return; }
+  if (perfil && String(perfil.id) === String(id)) { toast('Você não pode excluir o próprio cadastro.'); return; }
+  let alvo = null;
+  try { const { data } = await sb.from('perfis').select('nome,email,papel').eq('id', id).maybeSingle(); alvo = data; } catch (_) { }
+  const quem = (alvo && (alvo.nome || alvo.email)) || 'este cadastro';
+
+  // 1) o que ficaria órfão
+  let nT = 0, nO = 0;
+  try {
+    const t = await sb.from('tarefas').select('id', { count: 'exact', head: true }).eq('responsavel_id', id).eq('concluida', false);
+    nT = t.count || 0;
+    const o = await sb.from('manutencao_os').select('id', { count: 'exact', head: true }).eq('responsavel_id', id).is('data_reinicio', null);
+    nO = o.count || 0;
+  } catch (_) { }
+  if (nT || nO) {
+    alert('Não dá para excluir ' + quem + ' ainda.\n\n'
+      + (nT ? '• ' + nT + ' tarefa(s) em aberto no nome dessa pessoa\n' : '')
+      + (nO ? '• ' + nO + ' OS de manutenção em aberto\n' : '')
+      + '\nRepasse para outra pessoa (ou conclua) e tente de novo. Se excluir agora, esses itens somem do sino de todo mundo.');
+    return;
+  }
+
+  // 2) admin não fica sem par
+  if (alvo && alvo.papel === 'admin') {
+    try {
+      const { count } = await sb.from('perfis').select('id', { count: 'exact', head: true }).eq('papel', 'admin').eq('ativo', true);
+      if ((count || 0) <= 1) { alert('Esse é o último administrador ativo. Promova outra pessoa antes de excluir.'); return; }
+    } catch (_) { }
+  }
+
+  if (!confirm('Excluir o cadastro de ' + quem + '?\n\nEssa ação não tem volta.')) return;
+  const dig = prompt('Para confirmar, digite EXCLUIR:');
+  if (String(dig || '').trim().toUpperCase() !== 'EXCLUIR') { toast('Cancelado.'); return; }
+
+  const { error } = await sb.from('perfis').delete().eq('id', id);
+  if (error) { toast('❌ Não excluiu: ' + error.message); return; }
+  toast('🗑️ Cadastro de ' + quem + ' excluído.');
+  try { await carregarNovosIntegrantes(); } catch (_) { }
+  carregarUsuarios();
 }
 
 async function usrExcecao(id, on) {
