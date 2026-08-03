@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.502.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.503.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2083,7 +2083,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.502.0';
+const APP_VER = '3.503.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15379,6 +15379,27 @@ function detItemMaquinas(item) {
     }
   }
 
+  /* PEDIDOS QUE ESTE ITEM SEGURA — com numero do pedido, para levar direto ao
+     comercial ou ao PCP sem ter que cruzar na mao. */
+  let bloqueia = '';
+  try {
+    const A = _alocarEstoque();
+    if (A) {
+      const alvo = A.peds.filter(p => p.blq.has(it)).sort((a, b) => (a.blq.size - b.blq.size) || (b.kg - a.kg));
+      if (alvo.length) {
+        const so = alvo.filter(p => p.blq.size === 1);
+        bloqueia = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Pedidos que este item segura</div>'
+          + `<p class="desc" style="margin:0 0 5px">${alvo.length} pedido(s)` + (so.length ? ` · <b>${so.length}</b> em que ele é o <b>único</b> bloqueio, somando <b>${kg(so.reduce((s, p) => s + p.kg, 0))}</b>` : '') + '</p>'
+          + tabSimples(['Pedido · cliente', 'Valor', 'Entrega'], alvo.slice(0, 20).map(p =>
+            `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))}`
+            + `<div style="font-size:10.5px;color:${p.blq.size === 1 ? 'var(--ok-2)' : 'var(--fraco-2)'}">${p.blq.size === 1 ? 'só este item trava' : 'trava com mais ' + (p.blq.size - 1) + ' item(ns)'}</div></td>`
+            + `<td><span class="cel ${p.blq.size === 1 ? 'cel-tot' : 'neutra'}">${kg(p.kg)}</span></td>`
+            + `<td class="nome" style="font-size:11.5px">${p.ent ? escapeHtml(fmtDataSem(p.ent)) : '—'}${p.atr > 0 ? '<div style="font-size:10px;color:var(--critico)">' + p.atr + 'd</div>' : ''}</td></tr>`).join(''))
+          + (alvo.length > 20 ? `<p class="desc">mostrando 20 de ${alvo.length}</p>` : '');
+      }
+    }
+  } catch (_) { }
+
   const novas = fila.filter(r => !hs.some(m => m.cod === String(r.recurso_cod)));
   const aviso = novas.length
     ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:10px;padding:9px 11px;margin:8px 0;font-size:12.5px;color:#8C2F2F">Está programado em ${[...new Set(novas.map(r => r.recurso_cod))].join(', ')}, máquina(s) onde <b>nunca rodou</b> no período importado. Pode ser item novo, pode ser engano de programação.</div>`
@@ -15389,7 +15410,7 @@ function detItemMaquinas(item) {
     + (est ? `estoque <b>${kg(+est.peso || 0)}</b> · ` : '')
     + (pend.length ? `pendente <b>${kg(pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0))}</b> em ${pend.length} pedido(s) · ` : '')
     + `fila <b>${kg(fila.reduce((s, r) => s + (+r.kg_programado || +r.peso || 0), 0))}</b> em ${fila.length} ordem(ns)</p>`
-    + sug + aviso + hMaq);
+    + sug + aviso + hMaq + bloqueia);
 }
 
 /* Detalhe de UMA maquina: a fila dela, a base da capacidade e — o que mais
@@ -15479,6 +15500,38 @@ function _alocarEstoque() {
   return { linhas, peds: Object.values(peds), saldo };
 }
 
+/* Lista os pedidos de um grupo de bloqueio: 0 = completos, 1/2 = travados por
+   1 ou 2 itens, 3 = tres ou mais. Mostra o NUMERO DO PEDIDO, o cliente e
+   exatamente quais itens estao segurando cada um. */
+function detGrupoTravado(gid) {
+  const A = _alocarEstoque();
+  if (!A) { toast('Importe o REST196 primeiro'); return; }
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const L = A.peds.filter(p => gid === 3 ? p.blq.size >= 3 : p.blq.size === gid)
+    .sort((a, b) => b.kg - a.kg);
+  const TIT = ['Completos — dá para faturar hoje', 'Travados por 1 item só', 'Travados por 2 itens', 'Travados por 3 ou mais'];
+  if (!L.length) { abreDet(TIT[gid], '<p class="desc">Nenhum pedido neste grupo.</p>'); return; }
+  const descItem = {};
+  A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
+  const faltaItem = {};
+  A.linhas.forEach(l => { if (l._falta > 0.001) faltaItem[String(l.item_cod)] = (faltaItem[String(l.item_cod)] || 0) + l._falta; });
+  const MAX = 40;
+  const linhas = L.slice(0, MAX).map(p => {
+    const pal = _paletesPorItem(A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num));
+    const blq = [...p.blq].map(k =>
+      `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(k)}')" style="display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:700;background:var(--crit-bg3);color:#8C2F2F;cursor:pointer" title="${escapeHtml(descItem[k] || '')} — falta ${kg(faltaItem[k] || 0)}">${escapeHtml(k)}</span>`).join('');
+    return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 28))}`
+      + `<div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + escapeHtml(fmtDataSem(p.ent)) : ''}${p.atr > 0 ? ' · <b style="color:var(--critico)">' + p.atr + 'd</b>' : ''}</div></td>`
+      + `<td><span class="cel cel-tot">${kg(p.kg)}<div style="font-size:10px;font-weight:600;opacity:.8">${pal} pal</div></span></td>`
+      + `<td class="nome">${blq || '<span style="font-size:10.5px;color:var(--ok-2)">nada falta</span>'}</td></tr>`;
+  }).join('');
+  abreDet(TIT[gid],
+    `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(L.reduce((s, p) => s + p.kg, 0))}</b>`
+    + (gid ? ' · toque num código vermelho para ver o item e a sugestão de máquina' : '') + '</p>'
+    + tabSimples(['Pedido · cliente', 'Valor', gid ? 'Itens que travam' : 'Situação'], linhas)
+    + (L.length > MAX ? `<p class="desc">mostrando os ${MAX} maiores de ${L.length}</p>` : ''));
+}
+
 /* ===== O QUE DESTRAVA FATURAMENTO =====
    O caminhao nao sai incompleto: o pedido so fatura quando TODAS as linhas dele
    tem material. Ranqueia os itens faltantes pelo que cada um libera sozinho —
@@ -15537,19 +15590,19 @@ function cardDestrava() {
       + `<td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(k)}</span> falta ${kg(a.falta || 0)}</td></tr>`;
   }).join('');
 
-  const barra = (rot, L, cor) => {
+  const barra = (rot, L, cor, gid) => {
     const pct = A.peds.length ? (L.length / A.peds.length * 100) : 0;
-    return `<div style="margin-bottom:6px"><div style="display:flex;font-size:11.5px"><span style="flex:1;color:var(--fraco)">${rot}</span><b style="color:${cor}">${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</b></div>`
+    return `<div style="margin-bottom:6px;cursor:pointer" onclick="detGrupoTravado(${gid})"><div style="display:flex;font-size:11.5px"><span style="flex:1;color:var(--fraco)">${rot} ›</span><b style="color:${cor}">${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</b></div>`
       + `<div style="height:8px;border-radius:4px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:${cor}"></div></div></div>`;
   };
 
   return card('🚚 O que destrava faturamento' + ico('destrava'),
     `${A.peds.length} pedido(s) na carteira · ${kg(S(A.peds.filter(p => p.blq.size)))} · ${plt(pal(A.peds.filter(p => p.blq.size)))} travados em ${A.peds.filter(p => p.blq.size).length} pedido(s)`
     + (semUn ? ` · <span style="color:var(--laranja)">${semUn} linha(s) sem unidade ficaram fora da conta de paletes</span>` : ''),
-    barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)')
-    + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)')
-    + barra('Travados por 2 itens', t2, '#c96a1f')
-    + barra('Travados por 3 ou mais', t3, 'var(--critico)')
+    barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)', 0)
+    + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
+    + barra('Travados por 2 itens', t2, '#c96a1f', 2)
+    + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
     + '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Itens por alavanca</div>'
     + tabSimples(['Item faltante', 'Falta produzir', 'Libera sozinho', 'Pedidos', 'Ganho'], linhasTab)
     + (topPed ? '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Pedidos a um item de sair</div>'
