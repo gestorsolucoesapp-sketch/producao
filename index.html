@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.516.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.517.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2147,7 +2147,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.516.0';
+const APP_VER = '3.517.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11048,7 +11048,16 @@ let _relCache = { chave: null, html: '' };
 let _relRowsCache = { chave: null, rows: [], setor: '' };
 let _relRef = { ref: '', ymAnt: '' };
 let _relMesSel = null;   // null = ainda não definido; '' = ambos os meses
-let _relUltGlobal = '';  // último mês visto no seletor global
+let _relUltGlobal = '';  // assinatura do último período visto no seletor global
+/* A aba Itens só sabia filtrar por MÊS. Com o seletor global em "Último dia"
+   ela continuava somando o mês inteiro e o subtítulo dizia "período: ago/2026",
+   enquanto o modal do dia mostrava só o dia — mesma tela, dois números.
+   (02/08: o item 1002319 aparecia com 1.306 cxs na aba e 775 cxs no modal,
+   porque a aba estava somando 01/08 + 02/08.)
+   _relFaixaGlobal guarda a faixa de dias quando o período global NÃO é mês;
+   _relFaixaOn desliga quando o usuário escolhe um mês na mão, para o seletor
+   de mês da própria aba continuar mandando. */
+let _relFaixaGlobal = null, _relFaixaOn = true;
 let _relMaqStats = {}, _relMeses = [], _relEmCx = false, _relDiasMes = {}, _relOeeCache = {};
 // OEE da máquina no mês — usa exatamente o computeOEE do app (mesma fórmula da aba OEE).
 // Só vale para o mês que está no seletor global, porque é dele que vem o dadosPainel.
@@ -11122,7 +11131,12 @@ async function preencherRelItensOps(setor) {
     // mês de referência = o do seletor global de período (se for 'mes'); senão, o último dia com produção
     const glYM = (typeof periodoSel === 'object' && periodoSel && periodoSel.tipo === 'mes') ? periodoSel.ym : '';
     const ref = glYM || (ULTIMO_DIA_PROD || hojeISO()).slice(0, 7);
-    if (glYM && glYM !== _relUltGlobal) { _relUltGlobal = glYM; _relMesSel = null; }   // trocou o mês lá em cima → re-sincroniza
+    const glSig = (typeof periodoSel === 'object' && periodoSel)
+      ? (periodoSel.tipo || '') + '|' + (periodoSel.de || '') + '|' + (periodoSel.ate || '') : '';
+    if (glSig !== _relUltGlobal) { _relUltGlobal = glSig; _relMesSel = null; _relFaixaOn = true; }   // trocou o período lá em cima → re-sincroniza
+    _relFaixaGlobal = (typeof periodoSel === 'object' && periodoSel && periodoSel.de
+      && (periodoSel.tipo === 'dia' || periodoSel.tipo === 'custom'))
+      ? { de: periodoSel.de, ate: periodoSel.ate || periodoSel.de, label: periodoSel.label || '' } : null;
     const [y, m] = ref.split('-').map(Number);
     const ymAnt = (m === 1) ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
     const de = ymAnt + '-01', ate = ultimoDiaMes(ref);
@@ -11142,17 +11156,20 @@ async function preencherRelItensOps(setor) {
   } catch (e) { box.innerHTML = '<p class="vazio-painel">Erro ao carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
 }
 
-function relTrocaMes(v) { _relMesSel = v || ''; relMontaTabela(); }
+function relTrocaMes(v) { _relFaixaOn = false; _relMesSel = v || ''; relMontaTabela(); }
 
 // Paradas da máquina filtrada — agrupadas por motivo, somadas e em ordem decrescente
 async function relParadasMaq(cod) {
+  // segue a mesma faixa da tabela: paradas do mês inteiro ao lado de produção
+  // de um dia só é a mesma divergência aparecendo de outro jeito.
+  const _fx = (_relFaixaOn && _relFaixaGlobal) ? _relFaixaGlobal : null;
   const ym = _relMesSel || _relRef.ref;
-  const de = ym + '-01', ate = ultimoDiaMes(ym);
+  const de = _fx ? _fx.de : ym + '-01', ate = _fx ? _fx.ate : ultimoDiaMes(ym);
   abreDet('Paradas · máquina ' + cod, '<p class="idet-desc"><span class="spin"></span> Carregando…</p>');
   try {
     const linhas0 = await fetchTudo('paradas', 'dia,recurso_cod,motivo_desc,tempo_horas,inicio', de, ate);
     const linhas = (linhas0 || []).filter(r => String(r.recurso_cod) === String(cod));
-    if (!linhas.length) { $('itemDetCorpo').innerHTML = seloPeriodo('Mês', mesLabel(ym)) + '<p class="idet-desc">Nenhuma parada registrada nesta máquina no período.</p>'; return; }
+    if (!linhas.length) { $('itemDetCorpo').innerHTML = seloPeriodo(_fx ? 'Período' : 'Mês', _fx ? (_fx.label || fmtData(_fx.de)) : mesLabel(ym)) + '<p class="idet-desc">Nenhuma parada registrada nesta máquina no período.</p>'; return; }
     const ag = {};
     linhas.forEach(r => {
       const m = (r.motivo_desc || '—').trim();
@@ -11174,7 +11191,7 @@ async function relParadasMaq(cod) {
     }).join('') +
       '<tr style="border-top:2px solid var(--navy);font-weight:700;background:var(--leve-5)"><td class="nome">TOTAL · ' + arr.length + ' motivo(s) · ' + totN + ' ocorr.</td>' +
       '<td><span class="cel cel-tot">' + fh(totH) + '</span></td><td></td><td></td></tr>';
-    $('itemDetCorpo').innerHTML = seloPeriodo('Mês', mesLabel(ym)) +
+    $('itemDetCorpo').innerHTML = seloPeriodo(_fx ? 'Período' : 'Mês', _fx ? (_fx.label || fmtData(_fx.de)) : mesLabel(ym)) +
       '<p class="idet-desc">Somadas por motivo, da maior para a menor · % acum. mostra o corte de Pareto.</p>' +
       tabSimples(['Motivo', 'Horas', '%', '% acum.'], corpo);
   } catch (e) {
@@ -11193,7 +11210,9 @@ async function relMontaTabela() {
       _relMesSel = (gl === ref || gl === ymAnt) ? gl : ref;
     }
     let rows = _relRowsCache.rows || [];
-    if (_relMesSel) rows = rows.filter(r => String(r.dia || '').slice(0, 7) === _relMesSel);
+    const faixa = (_relFaixaOn && _relFaixaGlobal) ? _relFaixaGlobal : null;
+    if (faixa) rows = rows.filter(r => { const d = String(r.dia || '').slice(0, 10); return d >= faixa.de && d <= faixa.ate; });
+    else if (_relMesSel) rows = rows.filter(r => String(r.dia || '').slice(0, 7) === _relMesSel);
     const rel = {};
     rows.forEach(r => {
       const cod = String(r.item_cod || '—'), op = String(r.op || '—'), k = cod + '@@' + op;
@@ -11223,7 +11242,7 @@ async function relMontaTabela() {
     // milheiro = nativo MIL + (cxs × unidades por caixa extraídas da descrição) / 1000
     const _unidCx = d => { const s = String(d || ''); let m = /(\d{1,6})\s*UNID/i.exec(s); if (m) return +m[1]; m = /\bCX\s*(\d{2,6})/i.exec(s); return m ? +m[1] : null; };
     relArr.forEach(x => { const u = _unidCx(x.desc); x.unid = u; x.mil = x.milNat + (u ? x.cx * u / 1000 : 0); });
-    if (!relArr.length) { box.innerHTML = '<p class="vazio-painel">Sem produção em ' + (_relMesSel ? mesLabel(_relMesSel) : 'mês atual + anterior') + (setor ? ' neste setor' : '') + '.</p>'; relPreencheSelMes(); return; }
+    if (!relArr.length) { box.innerHTML = '<p class="vazio-painel">Sem produção em ' + (faixa ? (faixa.label || fmtData(faixa.de)) : (_relMesSel ? mesLabel(_relMesSel) : 'mês atual + anterior')) + (setor ? ' neste setor' : '') + '.</p>'; relPreencheSelMes(); return; }
     const totCx = relArr.reduce((a, x) => a + x.cx, 0), totKg = relArr.reduce((a, x) => a + x.kg, 0), totMil = relArr.reduce((a, x) => a + x.mil, 0);
     const vazio = '<span style="color:#B8C2CC">—</span>';
     const nCx = v => v > 0 ? '<span class="cel ok">' + fmtNum(Math.round(v)) + '</span>' : vazio;
@@ -11242,7 +11261,9 @@ async function relMontaTabela() {
       <td>${totMil > 0 ? '<span class="cel ok">' + totMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio}</td>
       <td>${totCx > 0 ? '<span class="cel ok">' + fmtNum(Math.round(totCx)) + '</span>' : vazio}</td>
       <td><span class="cel cel-tot">${fmtKg(totKg)}</span></td></tr>`;
-    const per = _relMesSel ? mesLabel(_relMesSel) : (mesLabel(ymAnt) + ' + ' + mesLabel(ref));
+    const per = faixa
+      ? (faixa.label || (faixa.de === faixa.ate ? fmtData(faixa.de) : fmtData(faixa.de) + ' → ' + fmtData(faixa.ate)))
+      : (_relMesSel ? mesLabel(_relMesSel) : (mesLabel(ymAnt) + ' + ' + mesLabel(ref)));
     const html = `<div style="font-size:11px;color:var(--fraco);margin:-2px 0 6px">período: <b>${per}</b> · ${relArr.length} item×OP <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div id="relMaqChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px"></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>OP</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
     box.innerHTML = html;
     relPreencheSelMes();
