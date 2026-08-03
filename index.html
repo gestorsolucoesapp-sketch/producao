@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.533.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.534.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.533.0';
+const APP_VER = '3.534.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3919,8 +3919,9 @@ function calcNotificacoes(incluirLidas) {
   // novos integrantes — SÓ o gestor é avisado
   if (souAdmin) {
     (novosIntegrantes || []).forEach(u => {
-      out.push({ id: 'novo-' + u.id, tipo: 'novo', novo: u,
-        txt: `🆕 Novo cadastro: <b>${escapeHtml(u.nome || u.email || 'sem nome')}</b>${u.setor ? ' · ' + escapeHtml(u.setor) : ''} · há ${diasCorridos(u.criado_em)}d` });
+      const pend = u.aprovado !== true;
+      out.push({ id: 'novo-' + u.id, tipo: 'novo', novo: u, pendente: pend,
+        txt: `${pend ? '🔓 Aguardando liberação' : '🆕 Novo cadastro'}: <b>${escapeHtml(u.nome || u.email || 'sem nome')}</b>${u.setor ? ' · ' + escapeHtml(u.setor) : ''} · há ${diasCorridos(u.criado_em)}d` });
     });
   }
   // OS de manutenção direcionadas a você, em aberto
@@ -3987,15 +3988,42 @@ function abrirNotificacoes() {
         }
         const lidaT = notifLidas.includes(x.id);
         const acaoClique = x.tipo === 'novo' ? 'irParaUsuarios()' : 'irParaTarefas()';
+        /* Cadastro novo esperando liberação: o gestor já é avisado aqui, então
+           mandar ele até a aba Usuários só para clicar em um botão era volta
+           desnecessária. Libera direto do sino, com o mesmo update de sempre. */
+        const btnLib = (x.tipo === 'novo' && x.pendente && souAdmin)
+          ? `<div style="margin-top:8px;display:flex;gap:6px">
+               <button onclick="liberarAcessoDoSino('${x.novo.id}')" class="btn btn-verde" style="flex:2;padding:8px;font-size:13px">✅ Liberar acesso</button>
+               <button onclick="irParaUsuarios()" class="btn btn-borda" style="flex:1;padding:8px;font-size:12px">Abrir cadastro</button>
+             </div>`
+          : (x.tipo === 'novo' && !x.pendente)
+          ? `<div style="margin-top:6px;font-size:11.5px;color:var(--ok-2);font-weight:700">✓ acesso já liberado</div>` : '';
         return `<div style="border-left:5px solid ${cor[x.tipo]};background:#F7F9FB;border-radius:10px;padding:10px;margin-bottom:8px;${lidaT ? 'opacity:.55' : ''}">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
             <div onclick="${acaoClique}" style="cursor:pointer;font-size:13px;color:#2C3E50;flex:1">${x.txt}</div>
             ${lidaT ? '<span style="font-size:11px;color:var(--fraco-2);white-space:nowrap">✓ lida</span>' : `<button onclick="marcarLida('${x.id}')" style="background:transparent;border:0;color:var(--azul-marca);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;padding:0">✓ lida</button>`}
-          </div></div>`;
+          </div>${btnLib}</div>`;
       }).join('')
       : '<p class="vazio-painel">Nada por aqui. Tudo em dia! ✅</p>'}
   </div>`;
   document.body.appendChild(ov);
+}
+async function liberarAcessoDoSino(id) {
+  const u = (novosIntegrantes || []).find(x => String(x.id) === String(id));
+  const nome = (u && (u.nome || u.email)) || 'este cadastro';
+  if (!confirm('Liberar o acesso de ' + nome + ' ao app?')) return;
+  try {
+    const { error } = await sb.from('perfis').update({ aprovado: true }).eq('id', id);
+    if (error) throw error;
+    if (u) u.aprovado = true;
+    toast('✅ Acesso liberado para ' + nome + '.');
+    try { if (typeof carregarUsuarios === 'function' && typeof _abaAtual !== 'undefined' && _abaAtual === 'usuarios') carregarUsuarios(); } catch (_) { }
+    atualizarSino();
+    $('notifOv') && $('notifOv').remove();
+    abrirNotificacoes();      // reabre já refletindo o estado novo
+  } catch (e) {
+    toast('Erro ao liberar: ' + (e && e.message || e));
+  }
 }
 function irParaTarefas() {
   $('notifOv') && $('notifOv').remove();
@@ -13964,7 +13992,8 @@ function renderPainel() {
 let novosIntegrantes = [];   // cadastros recentes (só o gestor é avisado)
 async function carregarNovosIntegrantes() {
   try {
-    const { data } = await sb.from('perfis').select('id,nome,email,setor,criado_em,role').order('criado_em', { ascending: false }).limit(50);
+    // 'aprovado' entra aqui para o sino poder liberar o acesso sem passar pela aba Usuários
+    const { data } = await sb.from('perfis').select('id,nome,email,setor,criado_em,role,aprovado').order('criado_em', { ascending: false }).limit(50);
     novosIntegrantes = (data || []).filter(u => u.criado_em && diasCorridos(u.criado_em) <= 7);
     atualizarSino();
   } catch (_) {}
