@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.543.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.544.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.543.0';
+const APP_VER = '3.544.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10412,6 +10412,31 @@ function irParaPlano(cod, motivo) {
   if (box) { box.style.transition = 'box-shadow .3s'; box.style.boxShadow = '0 0 0 3px rgba(0,150,77,.35)'; setTimeout(() => { box.style.boxShadow = ''; }, 1200); }
 }
 
+/* MANDAR O PLANO PARA OUTRA PESSOA. Antes o plano nascia sempre no nome de quem
+   criou, então o gestor abria a máquina, escrevia a ação e ela ficava com ele.
+   Agora dá para escolher o responsável, e o sininho da pessoa avisa sozinho:
+   calcNotificacoes já mostra tarefa recebida de outra pessoa nos últimos 7 dias. */
+function _paRespId() { const s = $('paResp'); return (s && s.value) ? s.value : null; }
+function _paRespNome() {
+  const s = $('paResp'); if (!s || !s.value) return null;
+  const u = (_paUsuarios || []).find(x => String(x.id) === String(s.value));
+  return (u && u.nome) || (s.options[s.selectedIndex] ? s.options[s.selectedIndex].text.split(' · ')[0] : null);
+}
+let _paUsuarios = null;
+async function paPreencherResp() {
+  const sel = $('paResp'); if (!sel) return;
+  if (!_paUsuarios) {
+    try {
+      const { data } = await sb.from('perfis').select('id,nome,setor,ativo,aprovado').order('nome');
+      _paUsuarios = (data || []).filter(u => u.ativo !== false && u.aprovado === true);
+    } catch (_) { _paUsuarios = []; }
+  }
+  const meu = (perfil && perfil.id) || '';
+  sel.innerHTML = '<option value="">eu mesmo</option>'
+    + _paUsuarios.filter(u => String(u.id) !== String(meu))
+      .map(u => `<option value="${escapeHtml(String(u.id))}">${escapeHtml(u.nome || 'sem nome')}${u.setor ? ' · ' + escapeHtml(u.setor) : ''}</option>`).join('');
+}
+
 async function salvarPlanoAcao(cod) {
   const tit = ($('paTit') && $('paTit').value || '').trim();
   const msg = $('paMsg');
@@ -10421,8 +10446,8 @@ async function salvarPlanoAcao(cod) {
     descricao: ($('paDesc') && $('paDesc').value || '').trim() || null,
     criado_por: (perfil && perfil.id) || null,
     criado_por_nome: (perfil && perfil.nome) || null,
-    responsavel_id: (perfil && perfil.id) || null,
-    responsavel_nome: (perfil && perfil.nome) || null,
+    responsavel_id: _paRespId() || (perfil && perfil.id) || null,
+    responsavel_nome: _paRespNome() || (perfil && perfil.nome) || null,
     setor: setorDe(cod) || null,
     recurso_cod: String(cod),
     prazo: ($('paPrazo') && $('paPrazo').value) || null,
@@ -10434,7 +10459,10 @@ async function salvarPlanoAcao(cod) {
     const { error } = await sb.from('tarefas').insert(reg);
     if (error) throw error;
     if (msg) msg.textContent = '';
-    try { toast('📋 Plano de ação criado'); } catch (_) {}
+    try {
+      const outro = _paRespNome();
+      toast(outro ? '📤 Plano enviado para ' + outro + ' — ela vai ser avisada no sininho.' : '📋 Plano de ação criado');
+    } catch (_) {}
     if ($('paTit')) $('paTit').value = '';
     if ($('paDesc')) $('paDesc').value = '';
     carregarPlanosMaq(cod);
@@ -10604,6 +10632,12 @@ async function detDesempenhoMaq(cod, focarMotivo) {
       <div class="desc" style="margin-bottom:8px">Vira tarefa na aba Tarefas, amarrada à máquina ${escapeHtml(cod)}.</div>
       <input id="paTit" placeholder="o que fazer…" value="${escapeHtml(cod + (motTop ? ' · ' + motTop : ''))}" style="width:100%;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:15px;box-sizing:border-box;margin-bottom:6px">
       <textarea id="paDesc" rows="2" placeholder="causa provável, o que já foi tentado, o que precisa…" style="width:100%;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px;box-sizing:border-box;margin-bottom:6px"></textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+        <span class="desc" style="font-size:12px;white-space:nowrap">Responsável:</span>
+        <select id="paResp" style="flex:1;min-width:150px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
+          <option value="">eu mesmo</option>
+        </select>
+      </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <input id="paPrazo" type="date" style="flex:1;min-width:130px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
         <select id="paPrior" style="flex:1;min-width:110px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">
@@ -10616,6 +10650,7 @@ async function detDesempenhoMaq(cod, focarMotivo) {
 
   _detVoltar = null;
   abreDet('🎯 ' + cod, h + '<div id="dmPlanos"></div><div id="dmOS"><p class="desc" style="margin-top:10px">buscando ordens de serviço…</p></div>');
+  try { paPreencherResp(); } catch (_) { }
   carregarPlanosMaq(cod);
   // veio pelo + da lista: já desce até a caixa de plano, com o motivo preenchido
   if (focarMotivo !== undefined) setTimeout(() => { try { irParaPlano(cod, focarMotivo || motTop || ''); } catch (_) {} }, 120);
