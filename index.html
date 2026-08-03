@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.492.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.493.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1452,6 +1452,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     const cab = linhas.slice(0, 40).map(l => l.texto).join('\n');
     const m = /ROTINA:\s*RPCP(\d{3})/.exec(cab);
     if (m) return m[1];
+    // REST196 "Saldos de Estoque x Pedidos": rotina de VENDAS, prefixo REST
+    if (/ROTINA:\s*REST196/.test(cab) || /Saldos de Estoque x Pedidos/.test(cab)) return '196';
     // 624 filtrado não tem cabeçalho: identifica pelo header de colunas
     if (linhas.some(l => /^Data Ordem Item\/Vers/.test(l.texto))) return '624';
     return null;
@@ -1471,7 +1473,9 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       }
       if (de && gerado) break;
     }
-    return { de, ate, gerado };
+    let hora = null;
+    for (const l of linhas.slice(0, 40)) { const h2 = /\bHORA:\s*(\d{2}:\d{2}(?::\d{2})?)/.exec(l.texto); if (h2) { hora = h2[1]; break; } }
+    return { de, ate, gerado, hora };
   }
 
   // ---------- parser genérico por colunas (624 / 054 / 646) ----------
@@ -1740,6 +1744,80 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     }).filter(r => r.data && r.quantidade != null);
   }
 
+  /* ---------- REST196: Saldos de Estoque x Pedidos ----------
+     Estrutura: Vendedor > Cliente > linhas de pedido. Armadilhas cobertas:
+     a) o cabecalho Vendedor/Cliente REPETE no topo de cada pagina — tratar como
+        cliente novo descarta as linhas de pedido continuadas (sumiram 3.480 kg
+        do JAZAM entre as paginas 32 e 33 na primeira versao do parser);
+     b) o mesmo item pode ter VARIAS linhas de pedido, e da segunda em diante o
+        codigo do item vem em branco: herda do anterior;
+     c) o ESTOQUE se repete a cada cliente que pede o mesmo item (o 100321
+        aparece 11 vezes) — por isso sai deduplicado em lista propria, senao
+        qualquer soma de estoque conta o mesmo material varias vezes;
+     d) o campo <> e dias: positivo = atraso, negativo = REPROGRAMACAO, quando a
+        entrega foi puxada para tras da origem (confirmado pelo Joao 02/08/2026);
+     e) a descricao quebra em ate 3 linhas e as colunas numericas ficam na 1a. */
+  const COLS196 = [
+    ['item', 0, 85], ['desc', 85, 292], ['un', 292, 322], ['qtd_est', 322, 382],
+    ['peso_est', 382, 443], ['pedido', 443, 482], ['origem', 482, 533],
+    ['entrega', 533, 600], ['dias', 600, 665], ['total', 665, 702],
+    ['pend', 702, 760], ['peso_pend', 760, 830]
+  ];
+  function parse196(linhas, periodo) {
+    const dtBR = s => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(s || ''); return m ? m[3] + '-' + m[2] + '-' + m[1] : null; };
+    const ehNum = t => /^[\d.,-]+$/.test(t);
+    const col = it => {
+      const x = ehNum(it.s) ? (it.x + (it.w || 0)) : it.x;
+      for (const c of COLS196) if (x >= c[1] && x <= c[2]) return c[0];
+      return null;
+    };
+    const out = [], estoque = {};
+    let vend = null, cli = null, ult = null;
+    for (const l of linhas) {
+      const t = (l.texto || '').trim();
+      let m;
+      if ((m = /^Vendedor:\s*(.+?)(?:\s+Operador Telemarketing:.*)?$/.exec(t)) && m[1].length > 3 && !/Listar/.test(t)) {
+        const novo = m[1].trim(); if (novo !== vend) ult = null; vend = novo; continue;
+      }
+      if ((m = /^Cliente:\s*(.+)$/.exec(t))) {
+        const novo = m[1].trim(); if (novo !== cli) ult = null; cli = novo; continue;
+      }
+      if (/^(Total Cliente:|Total Vendedor:|Total Geral:|Item\/Vers|ROTINA|DATA:|HORA:|P[ÁA]GINA|Saldos de|Per[ií]odo:|Vers[ãa]o:|Grupo:|Classe:|Dep[óo]sito:|Listar|Estoque|Entrega|Quantidades)/.test(t)) continue;
+
+      const c = {};
+      for (const it of (l.itens || [])) { const k = col(it); if (k) c[k] = ((c[k] || '') + ' ' + it.s).trim(); }
+      const pedido = c.pedido || '';
+      if (!/^\d{5,7}\/\d+$/.test(pedido)) continue;
+
+      let item = (c.item || '').trim(), desc, un, qe, pe;
+      if (/^\d+\/\d+$/.test(item)) {
+        desc = (c.desc || '').trim(); un = (c.un || '').trim();
+        qe = numBR(c.qtd_est); pe = numBR(c.peso_est);
+        ult = { item: item, desc: desc, un: un, qe: qe, pe: pe };
+      } else {
+        if (!ult) continue;              // linha orfa: sem item anterior nao da para saber de quem e
+        item = ult.item; desc = ult.desc; un = ult.un; qe = ult.qe; pe = ult.pe;
+      }
+      const pp = numBR(c.peso_pend);
+      if (pp == null) continue;
+      const cod = String(item).split('/')[0], ver = String(item).split('/')[1] || null;
+      out.push({
+        dia_foto: periodo.gerado, hora_foto: periodo.hora || null,
+        vendedor: vend, cliente: cli,
+        item_cod: cod, item_versao: ver, item_desc: desc || null, un: un || null,
+        pedido: pedido, origem: dtBR(c.origem), entrega: dtBR(c.entrega),
+        dias: (c.dias != null && /^-?\d+$/.test(String(c.dias).trim())) ? parseInt(c.dias, 10) : null,
+        qtd_total: numBR(c.total), qtd_pendente: numBR(c.pend), peso_pendente: pp
+      });
+      if (!(cod in estoque) && qe != null) {
+        estoque[cod] = { dia_foto: periodo.gerado, item_cod: cod, item_desc: desc || null, un: un || null, qtd: qe, peso: pe };
+      }
+    }
+    if (periodo && periodo.gerado) { periodo.de = periodo.de || periodo.gerado; periodo.ate = periodo.ate || periodo.gerado; }
+    out._estoque = Object.values(estoque);
+    return out;
+  }
+
   // ---------- API principal ----------
   const NOMES = {
     '621': 'Produção resumida (Dia × Turno × Recurso)',
@@ -1748,7 +1826,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     '054': 'Perdas por Tipo/Item/Cliente (rotulagem)',
     '643': 'Paradas (Motivo × OP × Dia × Item)',
     '646': 'Consumo de componentes (Dia × Recurso)',
-    '264': 'Fila de produção por recurso (carga programada)'
+    '264': 'Fila de produção por recurso (carga programada)',
+    '196': 'Saldos de Estoque × Pedidos (carteira em aberto)'
   };
 
 
@@ -1948,6 +2027,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       case '643': registros = parse643(linhas, periodo); break;
       case '646': registros = parse646(linhas, periodo); break;
       case '264': registros = parse264(linhas, periodo); break;
+      case '196': registros = parse196(linhas, periodo); break;
     }
     const soma = (k) => registros.reduce((a, r) => a + (r[k] || 0), 0);
     return {
@@ -1962,7 +2042,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     };
   }
 
-  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES, __parse264: parse264 };
+  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES, __parse264: parse264, __parse196: parse196 };
 });
 
 </script>
@@ -1978,7 +2058,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.492.0';
+const APP_VER = '3.493.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8562,6 +8642,7 @@ function abreDet(titulo, corpoHtml) {
 const INFOS = {
   setups: { t: 'Setups por máquina', d: "A barra é o <b>tempo médio por setup</b> da máquina no período, não o total. A <b>linha azul</b> é a meta de <b>1h30</b>.<br><br>Um setup é toda parada apontada como SETUP. Toque numa barra para ver as paradas que formaram a média." },
   oee: { t: 'Como o OEE é calculado', d: "OEE = <b>Disponibilidade</b> (horas − paradas) × <b>Performance</b> (produção ÷ capacidade teórica) × <b>Qualidade</b> (boa ÷ total). Capacidade = meta ÷ fator do setor.<br><br><b>Por que passa de 100%?</b> A capacidade teórica sai da meta cadastrada. Se a meta estiver defasada para baixo, a Performance estoura e leva o OEE junto — 130% não significa que a máquina rendeu além do físico, significa que a meta está velha." },
+  carteira: { t: 'Carteira × fila', d: "Cruza o <b>REST196</b> (Saldos de Estoque x Pedidos) com a fila do <b>RPCP264</b>, item a item.<br><br>O estoque sai de uma tabela própria e <b>deduplicada</b>: no PDF ele se repete a cada cliente que pede o mesmo item, então somar as linhas contaria o mesmo material várias vezes.<br><br>O campo <code>&lt;&gt;</code> do ERP é dias: positivo é <b>atraso</b>, negativo é <b>reprogramação</b> — a entrega foi puxada para trás da origem, e por isso não conta como atraso." },
   metas: { t: 'Metas por máquina e turno', d: "Meta em <b>kg</b> por máquina e bloco de turno. A soma vira a linha de meta verde no gráfico \"Produção por dia\".<br><br>O mês é convertido em <b>dias equivalentes</b>: dia útil vale 1, sábado 0,46 (10,98 h de 23,92) e domingo 0. Por isso um mês com mais sábados tem meta menor." },
   conf: { t: 'Conferência de apontamentos', d: "Cada linha compara <b>um turno de uma máquina</b> com o mesmo turno da mesma máquina nos <b>45 dias anteriores</b>. Turnos agrupados como na Análise+: <b>Manhã</b> = T1+T3 · <b>Tarde</b> = T2+T4 · <b>Noite</b> = T5.<br><br>A sensibilidade é o desvio-padrão: <b>2σ</b> mostra tudo que fugiu um pouco, <b>3σ</b> o suspeito e <b>5σ</b> só o grave." },
   manutOS: { t: 'Ordens de serviço', d: "Foto da OS ou digitação manual · vira histórico por máquina.<br><br>O PDF do ERP é lido com mais precisão que a foto do papel, e dá para arrastar várias de uma vez. Os relatórios <code>RSMI005</code> e <code>RSMI010</code> também entram sozinhos pela importação automática." },
@@ -14018,6 +14099,7 @@ const MAPA = {
   '624': { tabela: 'perdas', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, data: r.data, ordem: r.ordem, acessorio: r.acessorio, tipo_perda_cod: r.tipo_perda_cod, tipo_perda_desc: r.tipo_perda_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '054': { tabela: 'perdas_cliente', linha: r => ({ dia: r.dia, op: r.op, data: r.data, tipo_perda_desc: r.tipo_perda_desc, etapa: r.etapa, cliente: r.cliente, acessorio: r.acessorio, quantidade: r.quantidade, peso: r.peso, item_desc: r.item_desc }) },
   '643': { tabela: 'paradas', linha: r => ({ dia: r.dia, motivo_cod: r.motivo_cod, motivo_desc: r.motivo_desc, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, data: r.data, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, inicio: r.inicio, fim: r.fim, tempo_horas: r.tempo_horas, tempo_exato: r.tempo_exato }) },
+  '196': { tabela: 'rest196_pendente', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, vendedor: r.vendedor, cliente: r.cliente, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, un: r.un, pedido: r.pedido, origem: r.origem, entrega: r.entrega, dias: r.dias, qtd_total: r.qtd_total, qtd_pendente: r.qtd_pendente, peso_pendente: r.peso_pendente }) },
   '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
@@ -14466,6 +14548,10 @@ async function gravar(id, substituir = false) {
       const lote = linhas.slice(i, i + 400);
       const { error: e2 } = (mapa.tabela === 'producao_resumo')
         ? await sb.from(mapa.tabela).upsert(lote, { onConflict: 'dia,turno,recurso_cod,unidade' })
+        : (mapa.tabela === 'rest196_pendente')
+        // carteira e FOTO do dia: reimportar o mesmo REST196 corrige o dia em
+        // vez de duplicar; os dias anteriores ficam intactos.
+        ? await sb.from(mapa.tabela).upsert(lote, { onConflict: 'dia_foto,pedido,item_cod' })
         : (mapa.tabela === 'fila_producao')
         // uma foto por dia/maquina/OP: reimportar o mesmo PDF corrige a foto do dia
         // em vez de duplicar. As fotos dos dias anteriores NAO sao tocadas.
@@ -14477,12 +14563,26 @@ async function gravar(id, substituir = false) {
       }
       if (barra) barra.firstElementChild.style.width = Math.round(Math.min(100, ((i + 400) / linhas.length) * 100)) + '%';
     }
+    /* ESTOQUE do REST196: vem deduplicado no parser (_estoque) porque no PDF ele
+       se repete a cada cliente que pede o mesmo item. Gravado a parte, senao
+       qualquer soma de estoque contaria o mesmo material varias vezes. */
+    if (r.rotina === '196' && Array.isArray(r.registros._estoque) && r.registros._estoque.length) {
+      try {
+        const est = r.registros._estoque;
+        for (let i = 0; i < est.length; i += 400) {
+          const { error: eE } = await sb.from('rest196_estoque')
+            .upsert(est.slice(i, i + 400), { onConflict: 'dia_foto,item_cod' });
+          if (eE) { console.warn('estoque REST196:', eE.message); break; }
+        }
+      } catch (_) { }
+    }
+
     // 3) só agora tira o que era do mesmo período e veio de importações anteriores.
     //    Se algo acima falhou, nada foi apagado e o dado antigo continua de pé.
     // fila_producao e HISTORICO (uma foto por dia) e nao tem coluna 'dia':
     // a limpeza por periodo NAO roda aqui. Se rodasse, o delete em importacoes
     // levaria junto (ON DELETE CASCADE) a fila das outras maquinas do mesmo dia.
-    if (mapa.tabela !== 'fila_producao' && r.periodo.de && r.periodo.ate) {
+    if (mapa.tabela !== 'fila_producao' && mapa.tabela !== 'rest196_pendente' && r.periodo.de && r.periodo.ate) {
       const { error: eDel } = await sb.from(mapa.tabela).delete()
         .gte('dia', r.periodo.de).lte('dia', r.periodo.ate)
         .neq('importacao_id', imp.id);
@@ -14563,6 +14663,7 @@ async function carregarProgramacao(forcar) {
       .limit(8000);
     if (error) throw error;
     _progDados = data || [];
+    try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
     await _progCarregarCap();
@@ -15014,6 +15115,85 @@ function _progDiagnostico(maqs, rows, setorFiltro) {
   return achados;
 }
 
+/* ---------- CARTEIRA (REST196) x FILA (RPCP264) ----------
+   Tres perguntas que a fila sozinha nao responde:
+   1) o cliente espera e o material JA existe em estoque — e so faturar;
+   2) falta estoque e o item ESTA na fila — vai ser produzido;
+   3) falta estoque e o item esta FORA da fila — ninguem esta olhando.
+   O estoque vem da tabela propria (deduplicada); somar o estoque das linhas de
+   pedido contaria o mesmo material uma vez por cliente. */
+let _cart196 = null;
+async function carregarCarteira196() {
+  const { data: dd } = await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+  const dia = dd && dd[0] && dd[0].dia_foto;
+  if (!dia) { _cart196 = null; return; }
+  const [pend, est] = await Promise.all([
+    fetchTudoSimples('rest196_pendente', 'item_cod,item_desc,cliente,pedido,entrega,dias,peso_pendente,qtd_pendente', 'dia_foto', dia),
+    fetchTudoSimples('rest196_estoque', 'item_cod,item_desc,qtd,peso', 'dia_foto', dia)
+  ]);
+  _cart196 = { dia, pend: pend || [], est: est || [] };
+}
+// paginacao simples por igualdade (o fetchTudo do app filtra por 'dia', aqui e 'dia_foto')
+async function fetchTudoSimples(tabela, colunas, campo, valor) {
+  const passo = 1000; let ini = 0, tudo = [];
+  for (let g = 0; g < 40; g++) {
+    const { data, error } = await sb.from(tabela).select(colunas).eq(campo, valor)
+      .order('item_cod', { ascending: true }).range(ini, ini + passo - 1);
+    if (error) throw error;
+    const d = data || []; tudo = tudo.concat(d);
+    if (d.length < passo) break;
+    ini += passo;
+  }
+  return tudo;
+}
+function cardCarteira196(rows) {
+  if (!_cart196 || !_cart196.pend.length) return '';
+  const C = _cart196;
+  const naFila = new Set((rows || []).map(r => String(r.item_cod || '')).filter(Boolean));
+  const estoque = {}; C.est.forEach(e => { estoque[String(e.item_cod)] = +e.peso || 0; });
+  const ag = {};
+  C.pend.forEach(p => {
+    const k = String(p.item_cod);
+    const a = ag[k] || (ag[k] = { kg: 0, desc: p.item_desc || '', cli: new Set(), atraso: 0, ent: null });
+    a.kg += (+p.peso_pendente || 0);
+    a.cli.add(p.cliente);
+    if ((p.dias || 0) > a.atraso) a.atraso = p.dias;         // negativo = reprogramacao, nao atraso
+    if (p.entrega && (!a.ent || p.entrega < a.ent)) a.ent = p.entrega;
+  });
+  const G = { fat: [], fila: [], risco: [] };
+  Object.keys(ag).forEach(k => {
+    const a = ag[k], e = estoque[k] || 0;
+    if (e >= a.kg) G.fat.push([k, a, e]);
+    else if (naFila.has(k)) G.fila.push([k, a, e]);
+    else G.risco.push([k, a, e]);
+  });
+  const t = L => L.reduce((s, x) => s + x[1].kg, 0);
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const bloco = (tit, L, cor, nota) => {
+    if (!L.length) return '';
+    const ord = L.slice().sort((a, b) => b[1].kg - a[1].kg).slice(0, 12);
+    return `<div style="margin-top:12px"><div style="font-weight:800;color:${cor};font-size:13px">${tit} · ${L.length} item(ns) · ${kg(t(L))}</div>`
+      + (nota ? `<div class="desc" style="margin:1px 0 5px">${nota}</div>` : '')
+      + tabSimples(['Item', 'Pendente', 'Estoque', 'Entrega'], ord.map(([k, a, e]) =>
+        `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 42))}`
+        + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.cli.size} cliente(s)${a.atraso > 0 ? ' · <b style="color:var(--critico)">' + a.atraso + 'd de atraso</b>' : ''}</div></td>`
+        + `<td><span class="cel cel-tot">${kg(a.kg)}</span></td>`
+        + `<td><span class="cel ${e > 0 ? 'neutra' : 'baixo'}">${kg(e)}</span></td>`
+        + `<td class="nome" style="font-size:12px">${a.ent ? escapeHtml(fmtDataSem(a.ent)) : '—'}</td></tr>`).join(''))
+      + (L.length > 12 ? `<div class="desc" style="margin-top:3px">mostrando os 12 maiores de ${L.length}</div>` : '')
+      + '</div>';
+  };
+  const semPedido = (rows || []).filter(r => r.item_cod && !ag[String(r.item_cod)]);
+  const kgSem = semPedido.reduce((s, r) => s + (+r.peso || 0), 0);
+  return card('📦 Carteira × fila' + ico('carteira'),
+    'REST196 de ' + fmtDataSem(C.dia) + ' · ' + C.pend.length + ' linha(s) de pedido · ' + kg(C.pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0)) + ' pendentes',
+    bloco('🚨 Falta estoque e está FORA da fila', G.risco, 'var(--critico)', 'Ninguém programou e não há material. É onde o atraso nasce.')
+    + bloco('🕐 Falta estoque, mas está na fila', G.fila, 'var(--laranja)', 'Vai ser produzido — confira se a data da fila cobre a entrega.')
+    + bloco('✅ Já tem estoque — é só faturar', G.fat, 'var(--verde)', 'Material pronto. Se está atrasado, o gargalo não é produção.')
+    + (semPedido.length ? `<div style="margin-top:12px"><div style="font-weight:800;color:var(--fraco);font-size:13px">📋 Na fila sem pedido pendente · ${semPedido.length} ordem(ns) · ${kg(kgSem)}</div><div class="desc">Produção para estoque. Pode ser certo, pode ser fila mal montada.</div></div>` : ''),
+    'Carteira × fila');
+}
+
 function renderProgramacao() {
   const alvo = $('progConteudo'); if (!alvo) return;
   const todas = _progDados || [];
@@ -15043,6 +15223,9 @@ function renderProgramacao() {
   { const c = $('progFiltros'); if (c) c.classList.remove('oculto'); }
   const maqs = _progAnalise(rows);
   const partes = [];
+
+  /* ---------- carteira x fila (REST196 x RPCP264) ---------- */
+  try { const cc = cardCarteira196(rows); if (cc) partes.push(cc); } catch (e) { console.warn('carteira196:', e); }
 
   /* ---------- leitura da fila (diagnóstico automático) ---------- */
   const diag = _progDiagnostico(maqs, rows, _progSetorSel);
