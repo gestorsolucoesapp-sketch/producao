@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.507.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.508.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2083,7 +2083,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.507.0';
+const APP_VER = '3.508.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15590,6 +15590,31 @@ function _alocarEstoque() {
 /* SETOR DO ITEM. O REST196 nao traz setor — ele e de vendas. Deduz pela maquina
    que mais produziu o item no historico (v_item_maquina) e, se nao houver
    historico, pela maquina onde ele esta programado na fila. */
+/* ETIQUETA DO ITEM QUE TRAVA: alem do codigo, diz se ha ORDEM PROGRAMADA e em
+   qual maquina. Sem isso o codigo vermelho nao responde a pergunta que importa
+   — "alguem ja mandou produzir?" — e obrigava a abrir item por item.
+   Verde = programado (mostra a maquina, e "parada" se ela estiver com OS aberta).
+   Vermelho pulsante = nenhuma ordem na fila: ninguem programou. */
+function _selo196(k) {
+  const cod = String(k);
+  const ords = (_progDados || []).filter(r => String(r.item_cod) === cod);
+  const desc = (((_cart196 && _cart196.pend) || []).find(p => String(p.item_cod) === cod) || {}).item_desc || '';
+  const tip = escapeHtml(String(desc).slice(0, 50));
+  if (!ords.length) {
+    return `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(cod)}')" title="${tip} — nenhuma ordem na fila" `
+      + `style="display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:700;background:var(--crit-bg3);color:#8C2F2F;cursor:pointer;border:1px solid #E2A0A0">`
+      + `${escapeHtml(cod)} <b>· sem programação</b></span>`;
+  }
+  const maqs = [...new Set(ords.map(r => String(r.recurso_cod)))];
+  const parada = maqs.filter(c => (((_osParada || {})[c]) || []).length);
+  const prim = ords.slice().sort((a, b) => String(a.inicio || '9999').localeCompare(String(b.inicio || '9999')))[0];
+  const ini = prim && prim.inicio ? fmtDataSem(String(prim.inicio).slice(0, 10)) : null;
+  return `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(cod)}')" title="${tip} — programado em ${escapeHtml(maqs.join(', '))}${ini ? ', início ' + escapeHtml(ini) : ''}" `
+    + `style="display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:700;background:${parada.length ? 'var(--crit-bg3);color:#8C2F2F' : 'var(--leve);color:var(--fraco)'};cursor:pointer;border:1px solid ${parada.length ? '#E2A0A0' : 'var(--borda)'}">`
+    + `${escapeHtml(cod)} · <b>${escapeHtml(maqs.slice(0, 2).join('/'))}${maqs.length > 2 ? '+' + (maqs.length - 2) : ''}</b>`
+    + (parada.length ? ' 🔧' : '') + (ini ? ` <span style="font-weight:500;opacity:.75">${escapeHtml(ini)}</span>` : '') + '</span>';
+}
+
 function _setorDoItem(item) {
   const hs = (_itemMaqCache || {})[String(item)] || [];
   if (hs.length) return setorDe(hs[0].cod);
@@ -15618,7 +15643,7 @@ function cardPorCliente() {
   A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
   const linhas = arr.slice(0, 15).map(a => {
     const pal = _paletesPorItem(A.linhas.filter(l => String(l.cliente || '—') === a.c));
-    const its = [...a.itens].map(k => `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(k)}')" style="display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:700;background:var(--crit-bg3);color:#8C2F2F;cursor:pointer" title="${escapeHtml(descItem[k] || '')}">${escapeHtml(k)}</span>`).join('');
+    const its = [...a.itens].map(k => _selo196(k)).join('');
     return `<tr><td class="nome" style="font-size:12px">${escapeHtml(a.c.slice(0, 30))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.travados} de ${a.peds} pedido(s) travado(s)`
       + (a.atraso > 0 ? ` · <b style="color:var(--critico)">${a.atraso}d vencido</b>` : '')
@@ -15654,8 +15679,7 @@ function detGrupoTravado(gid) {
   const MAX = 40;
   const linhas = L.slice(0, MAX).map(p => {
     const pal = _paletesPorItem(A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num));
-    const blq = [...p.blq].map(k =>
-      `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(k)}')" style="display:inline-block;margin:1px 4px 1px 0;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:700;background:var(--crit-bg3);color:#8C2F2F;cursor:pointer" title="${escapeHtml(descItem[k] || '')} — falta ${kg(faltaItem[k] || 0)}">${escapeHtml(k)}</span>`).join('');
+    const blq = [...p.blq].map(k => _selo196(k)).join('');
     return `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 28))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + escapeHtml(fmtDataSem(p.ent)) : ''}`
       + (p.atraso > 0 ? ` · <b style="color:var(--critico)">${p.atraso}d vencido</b>` : '')
@@ -15666,7 +15690,8 @@ function detGrupoTravado(gid) {
   abreDet(TIT[gid],
     `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(L.reduce((s, p) => s + p.kg, 0))}</b>`
     + (gid ? ` · <b>${gid === 3 ? '3 ou mais itens' : gid + ' item' + (gid > 1 ? 'ns' : '')}</b> segurando cada pedido — o resto das linhas já tem material` : '')
-    + (gid ? ' · toque num código vermelho para ver o item e a sugestão de máquina' : '') + '</p>'
+    + '</p>'
+    + (gid ? '<p class="desc" style="margin:-4px 0 8px">Ao lado do código vem a <b>máquina programada</b> e a data de início · <b>🔧</b> = máquina parada com OS aberta · <b>sem programação</b> = nenhuma ordem na fila. Toque para ver o item e a sugestão de máquina.</p>' : '')
     + tabSimples(['Pedido · cliente', 'Valor', gid ? 'Itens que travam' : 'Situação'], linhas)
     + (L.length > MAX ? `<p class="desc">mostrando os ${MAX} maiores de ${L.length}</p>` : ''));
 }
