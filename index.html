@@ -735,7 +735,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.569.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.570.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2198,7 +2198,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.569.0';
+const APP_VER = '3.570.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5279,11 +5279,30 @@ function mudarTurnoGlobal(v) {
   // dentro do OEE nao mudava nada na tela.
   if (_abaAtual !== 'painel') recarregarAbaAtual();
 }
+/* SETOR VALE ENTRE ABAS. Cada aba tinha o SEU filtro de setor e eles nao
+   conversavam: escolher "Impressao" no Painel e ir para Manutencao mostrava
+   "Todos os setores" la, com a pilula do topo exibindo o setor da aba nova.
+   Parecia vazamento de filtro e nao era — era filtro que nao acompanhava.
+   A preferencia fica guardada aqui e e aplicada ao ABRIR cada aba, nao em
+   todas de uma vez: aba oculta nao precisa redesenhar.
+   Se a aba nao tiver aquele setor na lista (o organograma tem setores de RH
+   que nao existem na producao), ela mantem o dela — nunca forcamos um valor
+   que nao existe. */
+let _setorPref = null;
 function mudarSetorGlobal(v) {
   const src = _selSetorDaAba(); if (!src || src.disabled) return;
+  _setorPref = v;
   src.value = v;
   src.dispatchEvent(new Event('change'));
   setTimeout(sincSetorGlobal, 30);
+}
+function _aplicarSetorPref() {
+  if (_setorPref == null) return;
+  const src = _selSetorDaAba(); if (!src || src.disabled) return;
+  if (src.value === _setorPref) return;
+  if (![...src.options].some(o => o.value === _setorPref)) return;   // aba nao tem esse setor
+  src.value = _setorPref;
+  src.dispatchEvent(new Event('change'));
 }
 
 /* ===== filtro GLOBAL de MÁQUINA =====
@@ -5804,6 +5823,8 @@ function trocarAba(qual) {
   if (qual === 'conf' && !souDev && !abasPermitidas.includes('conf')) return;
   if (qual !== 'usuarios' && qual !== 'organograma' && qual !== 'rh' && qual !== 'conf' && !abasPermitidas.includes(qual)) return;
   _abaAtual = qual;
+  // o setor escolhido acompanha a troca de aba (ver _setorPref)
+  setTimeout(() => { try { _aplicarSetorPref(); } catch (_) {} }, 60);
   try { if (typeof presTrocouAba === 'function') presTrocouAba(); } catch (_) {}   // presença mostra a tela atual
   document.querySelectorAll('.aba').forEach(a => a.classList.toggle('ativa', a.dataset.aba === qual));
   { const at = document.querySelector('.aba.ativa'); if (at && at.scrollIntoView) at.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); }
@@ -13208,6 +13229,7 @@ function parAlterna(id) {
 }
 // Pareto CLÁSSICO em SVG: barras verticais + linha de % acumulado (eixo direito 0–100%)
 function paretoSVG(dados, fmtVal, cor) {
+  const _rotBarra = {};   // i -> posicao do rotulo do valor, para o % nao colidir
   const ord = [...dados].filter(d => d.v > 0).sort((a, b) => b.v - a.v);
   if (!ord.length) return '<p class="vazio-painel">Sem dados.</p>';
   // corta a cauda: mantém até 80% do acumulado (mín. 5, máx. 10) e agrupa o resto em OUTROS.
@@ -13271,6 +13293,10 @@ function paretoSVG(dados, fmtVal, cor) {
     bars += `<g${clk}>`;
     if (d.click) bars += `<rect x="${(padL + i * larg).toFixed(1)}" y="0" width="${larg.toFixed(1)}" height="${base}" fill="transparent"/>`;
     bars += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${cor || 'var(--alerta)'}"/>`;
+    /* guarda onde ficou o rotulo do VALOR: com uma barra so, o ponto do
+       acumulado cai em 100% (topo) e o "100%" pousava exatamente em cima do
+       "3x". Agora o % desvia quando os dois disputam o mesmo ponto. */
+    _rotBarra[i] = { x: cx, y: y - 5 };
     bars += `<text x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#16283A">${fmtVal(d.v)}</text></g>`;
     ac += d.v; const pa = ac / tot;
     const py = topo + (1 - pa) * (base - topo);
@@ -13284,7 +13310,14 @@ function paretoSVG(dados, fmtVal, cor) {
   let dots = '', pcts = '';
   pts.forEach(p => {
     dots += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="#28348E"/>`;
-    pcts += `<text x="${p[0].toFixed(1)}" y="${(p[1] - 8).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#28348E">${Math.round(p[2] * 100)}%</text>`;
+    {
+      const rb = _rotBarra[i];
+      let yP = p[1] - 8, anc = 'middle', xP = p[0];
+      // colidiu com o rotulo do valor? sobe mais e joga para a direita.
+      if (rb && Math.abs(rb.x - p[0]) < 30 && Math.abs(rb.y - yP) < 12) { yP = Math.min(rb.y, yP) - 12; anc = 'start'; xP = p[0] + 6; }
+      if (yP < 10) { yP = (rb ? rb.y : p[1]) + 14; anc = 'start'; xP = p[0] + 6; }
+      pcts += `<text x="${xP.toFixed(1)}" y="${yP.toFixed(1)}" text-anchor="${anc}" font-size="10" font-weight="700" fill="#28348E">${Math.round(p[2] * 100)}%</text>`;
+    }
   });
   const y80 = topo + 0.2 * (base - topo);
   const svg = `<svg width="100%" height="auto" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%">
