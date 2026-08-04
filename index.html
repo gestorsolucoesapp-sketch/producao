@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.589.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.590.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.589.0';
+const APP_VER = '3.590.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8615,6 +8615,19 @@ function horaHHMMParada(inicio) {
   const m = String(inicio).match(/[T ](\d{2}):(\d{2})/);
   return m ? m[1] + ':' + m[2] : null;
 }
+/* rotulo do turno para EXIBIR: quando a parada atravessa o corte, mostra as
+   duas fatias ("Manhã 1h29 · Tarde 56min") em vez de fingir que foi so uma. */
+function rotuloTurnoParada(p, dia) {
+  const tot = _horasOrig(p);
+  let f = null;
+  try { f = tempoParadaPorTurno(p.inicio, tot, dia || _diaDeParada(p)); } catch (_) { f = null; }
+  const cor = t => t === 'Manhã' ? '#E0A82D' : t === 'Tarde' ? '#70AD47' : '#5B9BD5';
+  const hm = v => { const m = Math.round(v * 60); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
+  const ts = f ? Object.entries(f).filter(([, v]) => v > 0.0005) : [];
+  if (!ts.length) { let b = null; try { b = blocoParadaTurno(p.inicio, dia || p.dia); } catch (_) { } return b || '—'; }
+  if (ts.length === 1) return `<span style="color:${cor(ts[0][0])};font-weight:700">${ts[0][0]}</span>`;
+  return ts.map(([t, v]) => `<span style="color:${cor(t)};font-weight:700">${t}</span> <span style="font-size:10px;color:var(--fraco)">${hm(v)}</span>`).join('<br>');
+}
 function blocoParadaTurno(inicio, dia) {
   const hhmm = horaHHMMParada(inicio);
   if (!hhmm) return null;
@@ -9132,15 +9145,36 @@ function aplicarPadraoParadas(motivos) {
    entrada de 8 telas, selecionar um turno não mudava nada nelas: o modal da
    máquina continuava listando as paradas dos três turnos.
    A parada é classificada pelo turno em que COMEÇOU. */
+/* 04/08/2026 — PARADA QUE ATRAVESSA TURNO.
+   Antes o filtro de turno olhava so a hora de INICIO: a parada inteira caia no
+   turno em que comecou e sumia do turno seguinte. Uma parada de RETRABALHO das
+   13:41 as 16:06 (2h24) ia inteira para a Manha, sendo que so 1h29 e Manha (o
+   remonte T3 vai ate 15:10) e 56min sao Tarde.
+   Medido no banco em 04/08/2026, periodo 04/07→03/08: 1.133 paradas atravessam
+   um corte de turno — 4,8% das ocorrencias, mas 29,4% das HORAS.
+   Agora o filtro devolve a parada com o tempo JA RECORTADO para o turno, e
+   guarda o total original em _totOrig. Assim todo consumidor que soma
+   tempo_horas passa a somar certo, sem precisar saber da regra. Quem precisa
+   fatiar de novo deve usar _horasOrig(p), nunca p.tempo_horas. */
+const _horasOrig = p => (p && p._totOrig != null) ? p._totOrig : ((p && p.tempo_horas) || 0);
 const filtraParadas = rows => {
   const t = (typeof turnoSelAtual === 'function') ? turnoSelAtual() : '';
-  return rows.filter(p => {
-    if (paradasExcluidas.has(p.motivo_desc || '—')) return false;
-    if (!t) return true;
-    let b = null;
-    try { b = blocoParadaTurno(p.inicio, p.dia); } catch (_) { b = null; }
-    return b === t;
+  const base = (rows || []).filter(p => !paradasExcluidas.has(p.motivo_desc || '—'));
+  if (!t) return base;
+  const out = [];
+  base.forEach(p => {
+    const tot = _horasOrig(p);
+    let fatia = null;
+    try { fatia = tempoParadaPorTurno(p.inicio, tot, _diaDeParada(p))[t]; } catch (_) { fatia = null; }
+    if (fatia == null) {                       // sem hora de início: cai na régua antiga
+      let b = null;
+      try { b = blocoParadaTurno(p.inicio, p.dia); } catch (_) { b = null; }
+      if (b === t) out.push(p);
+      return;
+    }
+    if (fatia > 0.0005) out.push(Object.assign({}, p, { tempo_horas: fatia, _totOrig: tot }));
   });
+  return out;
 };
 function abrirFiltroParadas() {
   if (dadosPainel) aplicarPadraoParadas([...new Set(dadosPainel.paradas.map(p => p.motivo_desc || '—'))]);
@@ -9609,7 +9643,7 @@ async function detParadasMaqDia(cod, dia, bloco) {
   if (bloco) {
     // divide paradas que cruzam o corte: fica só a fração de tempo que caiu neste turno
     rows = rows.map(r => {
-      const fatia = tempoParadaPorTurno(r.inicio, r.tempo_horas || 0, dia)[bloco] || 0;
+      const fatia = tempoParadaPorTurno(r.inicio, _horasOrig(r), dia)[bloco] || 0;
       return fatia > 0 ? Object.assign({}, r, { tempo_horas: fatia, _totOrig: r.tempo_horas }) : null;
     }).filter(Boolean);
   }
@@ -9744,7 +9778,7 @@ function detApontMotivoMaq(cod, dia, motivo) {
     const cores = { 'Manhã': '#E0A93B', 'Tarde': '#5F9B4A', 'Noite': '#4A82C4' };
     let totMostra = 0;
     const linhas = par.slice().sort((a, b) => String(a.inicio || '').localeCompare(String(b.inicio || ''))).map(p => {
-      const fatias = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, _diaDeParada(p));
+      const fatias = tempoParadaPorTurno(p.inicio, _horasOrig(p), _diaDeParada(p));
       const turnos = Object.entries(fatias).filter(([, v]) => v > 0.0005);
       const turnoTxt = turnos.map(([t, v]) => `<span style="color:${cores[t]};font-weight:700">${t}${turnos.length > 1 ? ' ' + dur(v) : ''}</span>`).join(' <span style="color:var(--fraco)">+</span> ');
       // com turno filtrado, mostra só a fração daquele turno
@@ -9784,9 +9818,9 @@ function detMaquina(cod, dia) {
 
   const par = filtraParadas(D.paradas).filter(p => String(p.recurso_cod) === cod && (!dia || _diaDeParada(p) === dia));
   const parBloco = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; let parSemHora = 0;
-  par.forEach(p => { const fatias = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, _diaDeParada(p)); let algum = false; ['Manhã', 'Tarde', 'Noite'].forEach(t => { if (fatias[t] > 0.0005) { parBloco[t] += fatias[t]; algum = true; } }); if (!algum) parSemHora += (p.tempo_horas || 0); });
+  par.forEach(p => { const fatias = tempoParadaPorTurno(p.inicio, _horasOrig(p), _diaDeParada(p)); let algum = false; ['Manhã', 'Tarde', 'Noite'].forEach(t => { if (fatias[t] > 0.0005) { parBloco[t] += fatias[t]; algum = true; } }); if (!algum) parSemHora += (p.tempo_horas || 0); });
   // se há turno filtrado, horas e motivos consideram só a fração daquele turno
-  const parTurno = _turFiltro ? par.map(p => { const f = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, _diaDeParada(p))[_turFiltro] || 0; return f > 0 ? Object.assign({}, p, { tempo_horas: f }) : null; }).filter(Boolean) : par;
+  const parTurno = _turFiltro ? par.map(p => { const f = tempoParadaPorTurno(p.inicio, _horasOrig(p), _diaDeParada(p))[_turFiltro] || 0; return f > 0 ? Object.assign({}, p, { tempo_horas: f }) : null; }).filter(Boolean) : par;
   const horas = parTurno.reduce((a, p) => a + (p.tempo_horas || 0), 0);
   const mot = {}; parTurno.forEach(p => { const m = p.motivo_desc || '—'; mot[m] = (mot[m] || 0) + (p.tempo_horas || 0); });
   const topMot = Object.entries(mot).sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -10314,7 +10348,7 @@ function cardSetupsMaquina(D, setor) {
       // corte por duracao minima do setor: virada de turno nao e setup de verdade
       if (setor && setupMinDe(setor) > 0 && (p.tempo_horas || 0) * 60 < setupMinDe(setor)) return;
       const minTot = _turFiltro
-        ? (tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[_turFiltro] || 0) * 60
+        ? (tempoParadaPorTurno(p.inicio, _horasOrig(p), p.dia)[_turFiltro] || 0) * 60
         : (p.tempo_horas || 0) * 60;
       if (_turFiltro && minTot <= 0) return;      // parada sem nenhum minuto neste turno
       const o = (porMaq[c] = porMaq[c] || { n: 0, min: 0, tro: 0 });
@@ -10427,7 +10461,7 @@ function detSetupParada(chave, cod) {
   if (minReal != null && Math.abs(minReal - min) > 5) {
     linhas.push(['Intervalo do relógio', fmtH(minReal) + ' — o ERP descontou ' + fmtH(minReal - min)]);
   }
-  linhas.push(['Turno do início', blocoParadaTurno(p.inicio, dIni) || '—']);
+  linhas.push(['Turno', rotuloTurnoParada(p, dIni)]);
   linhas.push(['Dia lançado no ERP', p.dia ? fmtData(p.dia) : '—']);
   linhas.push(['OP', p.op ? String(p.op) : '—']);
   if (p.item_cod) linhas.push(['Item', String(p.item_cod)]);
@@ -10485,7 +10519,7 @@ function detSetupsMaquina(cod, setor) {
       const minCheio = (p.tempo_horas || 0) * 60;
       const dia = String(p.dia || '').slice(0, 10);
       let fatias = null;
-      try { fatias = tempoParadaPorTurno(p.inicio, (p.tempo_horas || 0), dia); } catch (_) { fatias = null; }
+      try { fatias = tempoParadaPorTurno(p.inicio, _horasOrig(p), dia); } catch (_) { fatias = null; }
       if (fatias) {
         ['Manhã', 'Tarde', 'Noite'].forEach(b => {
           const m = (fatias[b] || 0) * 60;
@@ -11035,7 +11069,7 @@ async function detParadasMotivo(cod, motivo) {
     const dFim = String(p.fim || '').slice(0, 10), hFim = horaHHMMParada(p.fim) || '';
     const virou = dFim && dIni && dFim !== dIni;
     let bloco = '—';
-    try { bloco = blocoParadaTurno(p.inicio, p.dia || dIni) || '—'; } catch (_) { }
+    try { bloco = rotuloTurnoParada(p, p.dia || dIni); } catch (_) { }
     const op = [p.op, p.item_desc].filter(Boolean).join(' · ');
     return `<tr>
       <td class="nome" style="font-size:11.5px;white-space:nowrap">${dIni ? fmtData(dIni) : '—'} ${hIni}
@@ -14034,7 +14068,7 @@ function analiseTurnoCompleta(bloco, setor) {
     const noBloco = p => blocoParadaTurno(p.inicio, p.dia) === bloco;   // com a data: sábado/domingo usam a régua reduzida
     // divide paradas que cruzam o corte: usa só a fração de tempo que caiu neste turno
     const parT = filtraParadas(D.paradas || []).filter(p => noSet(p.recurso_cod)).map(p => {
-      const fatia = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[bloco] || 0;
+      const fatia = tempoParadaPorTurno(p.inicio, _horasOrig(p), p.dia)[bloco] || 0;
       return fatia > 0 ? Object.assign({}, p, { tempo_horas: fatia }) : null;
     }).filter(Boolean);
     const horas = parT.reduce((a, p) => a + (p.tempo_horas || 0), 0);
@@ -14389,7 +14423,7 @@ function renderPainel() {
     // que caiu no turno selecionado (ex.: 15:02→15:19 no filtro Manhã entra só até 15:10)
     const _paradasTurno = [];
     (D.paradas || []).forEach(p => {
-      const fatia = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, p.dia)[_turnoSel] || 0;
+      const fatia = tempoParadaPorTurno(p.inicio, _horasOrig(p), p.dia)[_turnoSel] || 0;
       if (fatia > 0) _paradasTurno.push(Object.assign({}, p, { tempo_horas: fatia, _fatiado: true }));
     });
     D = Object.assign({}, D, {
