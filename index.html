@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.590.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.591.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.590.0';
+const APP_VER = '3.591.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11914,10 +11914,35 @@ function relMetaDiaMaq(cod) {
    E as metas nao sao comparaveis entre si: maquina com meta mais folgada
    aparece melhor. Confirmado com o Joao em 03/08/2026. */
 let _perfMaqCacheKey = null, _perfMaqCache = null;
+/* A ★ da melhor máquina no "Itens por alavanca" depende de DUAS coisas:
+   metasData e a produção do período. A aba Programação nunca carregou nenhuma
+   das duas — ela só busca a fila e a carteira. Resultado: a estrela só aparecia
+   se você tivesse passado pelo Painel antes; entrando direto na Programação,
+   perfMaqMeta() devolvia {} e todas as máquinas ficavam cinza.
+   Aqui fica a fonte reserva: producao_resumo do período (306 linhas no mês —
+   medido em 04/08/2026), carregada pela própria aba. */
+let _perfMaqExtra = null, _perfMaqExtraKey = '';
+async function carregarPerfMaq() {
+  try {
+    if (!metasData) { try { await getMetas(); } catch (_) { } }
+    const jaTem = (typeof dadosPainelFull !== 'undefined' && dadosPainelFull && dadosPainelFull.producao && dadosPainelFull.producao.length);
+    if (jaTem) { _perfMaqExtra = null; return; }
+    const de = periodoSel && periodoSel.de, ate = periodoSel && periodoSel.ate;
+    if (!de || !ate) return;
+    const k = de + '|' + ate;
+    if (_perfMaqExtraKey === k && _perfMaqExtra) return;
+    const { data, error } = await sb.from('producao_resumo')
+      .select('dia,recurso_cod,peso,quantidade,unidade').gte('dia', de).lte('dia', ate).limit(20000);
+    if (error) throw error;
+    _perfMaqExtra = data || []; _perfMaqExtraKey = k;
+    _perfMaqCacheKey = null;      // invalida o cache do calculo
+  } catch (e) { _perfMaqExtra = null; console.warn('perfMaq:', e && e.message); }
+}
 function perfMaqMeta() {
   try {
-    const src = (typeof dadosPainelFull !== 'undefined' && dadosPainelFull && dadosPainelFull.producao) ? dadosPainelFull.producao
-      : (typeof dadosPainel !== 'undefined' && dadosPainel && dadosPainel.producao) ? dadosPainel.producao : null;
+    const src = (typeof dadosPainelFull !== 'undefined' && dadosPainelFull && dadosPainelFull.producao && dadosPainelFull.producao.length) ? dadosPainelFull.producao
+      : (typeof dadosPainel !== 'undefined' && dadosPainel && dadosPainel.producao && dadosPainel.producao.length) ? dadosPainel.producao
+      : (_perfMaqExtra && _perfMaqExtra.length) ? _perfMaqExtra : null;
     if (!src || !src.length || !metasData) return {};
     const chave = src.length + '|' + (src[0] && src[0].dia) + '|' + (src[src.length - 1] && src[src.length - 1].dia);
     if (_perfMaqCacheKey === chave && _perfMaqCache) return _perfMaqCache;
@@ -15929,6 +15954,7 @@ async function carregarProgramacao(forcar) {
     try { await carregarOsParada(); } catch (_) { }
     try { await carregarMaqAtiva(); } catch (e) { _maqAtiva = null; console.warn('maqAtiva:', e && e.message); }
     try { await carregarOpSaiu(); } catch (_) { _opSaiu = null; }
+    try { await carregarPerfMaq(); } catch (_) { }   // ★ da melhor máquina precisa de meta + produção
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
     await _progCarregarCap();
