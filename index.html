@@ -721,7 +721,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.557.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.558.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2184,7 +2184,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.557.0';
+const APP_VER = '3.558.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5934,6 +5934,12 @@ async function getMetas() {
   } catch (_) {}
   return metasData;
 }
+/* Sabado reduzido: 10,98 h contra 23,92 h do dia cheio. O grafico "Producao por
+   dia" ja desenhava as duas linhas com esse fator; a aba Metas nao mostrava
+   nenhum total. Agora as duas telas usam ESTA constante — se um dia a jornada
+   mudar, muda aqui e sai certo nos dois lugares. */
+const EQ_DIA_REDUZIDO = 10.98 / 23.92;   // 0,459
+const metaReduzidaSetor = setor => { const m = metaDiariaSetor(setor); return m == null ? null : m * EQ_DIA_REDUZIDO; };
 // meta diária = soma das metas (Manhã+Tarde+Noite) das máquinas do setor (ou de todos)
 function metaDiariaSetor(setor) {
   if (!metasData) return null;
@@ -8130,6 +8136,28 @@ function renderMetas() {
   html += `</tbody></table></div>`;
   if (metasEditavel) html += `<button class="btn" style="margin-top:10px" onclick="salvarSetupCfg()">Salvar metas de setup</button>`;
   html += `</div>`;
+
+  /* TOTAL DIARIO POR SETOR — soma do que esta cadastrado acima. E a mesma linha
+     azul do grafico "Producao por dia" do Painel, para o Joao conferir sem
+     precisar trocar de aba. O reduzido usa o mesmo fator do grafico. */
+  html += `<div style="margin-top:18px;border-top:2px solid var(--borda);padding-top:14px">
+    <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:2px">📐 Meta diária somada</div>
+    <div class="desc" style="margin-bottom:8px">Soma de Manhã + Tarde + Noite das máquinas de cada setor. É a linha azul do gráfico “Produção por dia”. O sábado reduzido tem ${(EQ_DIA_REDUZIDO * 100).toFixed(0)}% da jornada (10,98 h de 23,92 h), então a meta dele é proporcional.</div>
+    <div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>
+      <th style="text-align:left">Setor</th><th>Dia cheio</th><th>Sábado reduzido</th></tr></thead><tbody>`;
+  const _fmtMeta = v => (v == null) ? '<span style="color:var(--fraco-2)">sem meta</span>'
+    : (v >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + ' t' : Math.round(v) + ' kg');
+  setoresOrdenados().forEach(st => {
+    const mc = metaDiariaSetor(st), mr = metaReduzidaSetor(st);
+    html += `<tr><td class="nome" style="text-align:left">${escapeHtml(st)}${foraDoAgregado(st) ? '<div style="font-size:10px;color:var(--fraco-2);font-weight:600">fora do total da fábrica</div>' : ''}</td>
+      <td><span class="cel ${mc == null ? 'neutra' : 'ok'}">${_fmtMeta(mc)}</span></td>
+      <td><span class="cel neutra">${_fmtMeta(mr)}</span></td></tr>`;
+  });
+  const _tc = metaDiariaSemExtrusao();
+  html += `<tr style="border-top:2px solid var(--borda)"><td class="nome" style="text-align:left;font-weight:800">Fábrica<div style="font-size:10px;color:var(--fraco-2);font-weight:600">sem Extrusão/Injeção/Compressão</div></td>
+    <td><span class="cel ok" style="font-weight:800">${_fmtMeta(_tc)}</span></td>
+    <td><span class="cel neutra" style="font-weight:800">${_fmtMeta(_tc == null ? null : _tc * EQ_DIA_REDUZIDO)}</span></td></tr>`;
+  html += `</tbody></table></div></div>`;
 
   /* METAS DE PERDA POR SETOR — alimenta o card "Perdas x meta" do Painel.
      Percentual sobre produzido + perdido, que e como o card ja calcula. */
@@ -12927,7 +12955,7 @@ function barrasVertical(dados, corFn, opts) {
     const temMeta = (opts.meta != null && opts.meta > 0);
     // média por dia EQUIVALENTE usando d.eq (vem de serieProducao via equivDia:
     // útil=1, sábado=0,46, DOMINGO=0). Idêntico ao letreiro. Fallback: d.red → 0,46.
-    const PESO_RED = 10.98 / 23.92;
+    const PESO_RED = EQ_DIA_REDUZIDO;
     const _comProd = dados.filter(d => d.v > 0);
     const _pesoEq = d => (d.eq != null ? d.eq : (d.red ? PESO_RED : 1));
     const _baseEq = _comProd.reduce((a, d) => a + _pesoEq(d), 0);
