@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.588.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.589.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.588.0';
+const APP_VER = '3.589.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8262,15 +8262,23 @@ async function getMetasReal() {
   } catch (_) {}
   return metasReal;
 }
-// regra da empresa: 22,5 h úteis/dia ÷ 3 turnos = 7,5 h por turno
-const H_TURNO = 7.5;
+/* 04/08/2026: aqui usava-se 7,5 h FIXO para os tres turnos (22,5 ÷ 3). So que
+   os turnos nao sao iguais — Manha 7,55 h, Tarde 7,23 h, Noite 9,13 h — e as
+   metas sao proporcionais a essa jornada. Dividir tudo por 7,5 fazia a NOITE
+   parecer mais exigente do que e: a 1801 aparecia como 57 cxs/h a noite contra
+   47 pela manha, quando o ritmo pedido e o MESMO (46,8 cxs/h nos tres).
+   A funcao horasBlocoRate() ja existia com os numeros certos e e a mesma que a
+   conta de producao perdida por parada usa. */
+const H_TURNO = 7.5;   // mantido so para nao quebrar chamada antiga
+const hDoBloco = b => (horasBlocoRate(null)[b] || H_TURNO);
 const MOSTRAR_REAL_KGH = false; // real/h oculto até calibrarmos o cálculo (view v_metas_real_2026)
 function kghDaCelula(cod, bloco) {
   const m = (metasData && metasData[cod]) || {};
-  const metaKgh = (m[bloco] || 0) / H_TURNO;                 // meta ÷ 7,5
+  const hB = hDoBloco(bloco);
+  const metaKgh = (m[bloco] || 0) / hB;                      // meta ÷ jornada REAL do bloco
   let realKgh = null;
   const rr = metasReal && metasReal[cod] && metasReal[cod][bloco];
-  if (rr) { const horas = rr.dias * H_TURNO - (rr.h_parada || 0); realKgh = horas > 0 ? rr.kg / horas : null; }
+  if (rr) { const horas = rr.dias * hB - (rr.h_parada || 0); realKgh = horas > 0 ? rr.kg / horas : null; }
   const f = n => (n == null || !(n > 0)) ? '—' : Math.round(n).toLocaleString('pt-BR');
   const linhaReal = MOSTRAR_REAL_KGH ? `<br>real ${f(realKgh)}/h` : '';
   // setor medido em caixas: mostra cxs/h e o kg/h equivalente (≈, pelo mix real da máquina)
@@ -12929,7 +12937,7 @@ function respostaLocal(perg) {
       const c = String(p.recurso_cod); const md = metasData && metasData[c];
       if (!md) return;
       const metaDiaKg = ['Manhã', 'Tarde', 'Noite'].reduce((a, b) => a + ((md[b]) || 0), 0);
-      const kgh = metaDiaKg / 22.5;   // 22,5 h úteis/dia
+      const kgh = metaDiaKg / horasDiaRate(p.dia || null);   // jornada real do dia (23,91 h no 5 turnos)
       kgPerdido += (+p.tempo_horas || 0) * kgh;
     });
 
