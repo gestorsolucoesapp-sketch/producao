@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.599.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.600.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.599.0';
+const APP_VER = '3.600.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2392,8 +2392,17 @@ function _equivDiaMaq(dia, mq) {
    meta da Tarde do sabado era cobrada inteira e o percentual saia errado.
    Usado so na Analise+; o Painel segue com equivDia, como pedido. */
 const _EQ_MANHA_RED = 5.50 / 7.55;            // 0,7285 — tabela oficial: sabado Manha 5,50 h contra 7,55 h do dia util
+/* 04/08/2026: o Painel tinha uma regua propria para o sabado — so a Manha
+   reduzida, Tarde e Noite valendo turno CHEIO. Pela tabela oficial isso so vale
+   quando ha hora extra; no sabado normal a Tarde e 5,48 h e a Noite nao roda.
+   Agora as duas contas derivam das MESMAS horas (horasBlocoDe), entao Painel e
+   OEE nao divergem mais. */
 function _equivBlocoDia(dia, bloco) {
   if (!dia || typeof _diaReduzido !== 'function' || !_diaReduzido(dia)) return 1;
+  try {
+    const h = horasBlocoDe(dia)[bloco], hn = horasBlocoNormal()[bloco];
+    if (hn > 0) return h / hn;
+  } catch (_) { }
   return bloco === 'Manhã' ? _EQ_MANHA_RED : 1;
 }
 function _diasEqBloco(setDias, bloco) {
@@ -6246,6 +6255,36 @@ function fatorDoDia(dia) {
   const n = HORAS_DIA_NORMAL();
   return n > 0 ? tot / n : 1;
 }
+/* SABADO COM HORA EXTRA — 04/08/2026, tabela oficial de horarios.
+   Regra escrita: "QUANDO TRABALHA O SABADO A PARTIR DAS 17:00 E HORAS EXTRAS E
+   CONTA ATE AS 20:50 PARA O TURNO DA TARDE E O TURNO DA NOITE CONTINUA DAS
+   20:51 AS 05:59."
+   Ou seja o sabado tem DUAS reguas:
+     normal  → Manha 5,50 · Tarde 5,48 (11:31–17:00) · Noite nao trabalha
+     com HE  → Manha 5,50 · Tarde 9,32 (11:31–20:50) · Noite 9,13
+   Detectamos a HE pelo proprio apontamento: turno 5 no sabado, ou parada que
+   comecou depois das 17:00. Nenhuma das duas contas do app fazia isso — o OEE
+   usava sempre a regua normal e o Painel sempre a cheia. */
+let _sabHE = new Set(), _sabHERef = null;
+function _sabHEIdx() {
+  const D = (typeof dadosPainelFull !== 'undefined' && dadosPainelFull) ? dadosPainelFull
+    : (typeof dadosPainel !== 'undefined' && dadosPainel) ? dadosPainel : null;
+  if (D === _sabHERef) return _sabHE;
+  _sabHERef = D; _sabHE = new Set();
+  if (!D) return _sabHE;
+  try {
+    (D.producao || []).forEach(r => { if ((+r.turno) === 5 && r.dia && _diaReduzido(r.dia)) _sabHE.add(r.dia); });
+    (D.paradas || []).forEach(p => {
+      const d = (typeof _diaDeParada === 'function') ? _diaDeParada(p) : p.dia;
+      if (!d || !_diaReduzido(d)) return;
+      const h = (typeof horaDecParada === 'function') ? horaDecParada(p.inicio) : null;
+      if (h != null && h >= 17) _sabHE.add(d);
+    });
+  } catch (_) { }
+  return _sabHE;
+}
+const HB_SAB = { 'Manhã': 5.50, 'Tarde': 5.48, 'Noite': 0 };
+const HB_SAB_HE = { 'Manhã': 5.50, 'Tarde': 9.32, 'Noite': 9.13 };   // 11:31→20:50 e 20:51→05:59
 function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
   // Sábado reduzido: janela de trabalho 06:00–17:00 = 10,98 h (é o que dá o 0,46 do
   // dia equivalente). Com a régua nova o corte Manhã/Tarde é 12:00, não 11:30 —
@@ -6254,7 +6293,7 @@ function horasBlocoDe(dia) { // duração dos blocos por tipo de dia
   // equivalente). Tabela oficial do sábado: Manhã 06:00–11:30 = 5,50 h ·
   // Tarde 11:31–17:00 = 5,48 h · Noite não trabalha. Total 10,98 h — o mesmo de
   // antes, mas a divisão entre Manhã e Tarde estava deslocada em 10 minutos.
-  if (dia && _diaReduzido(dia)) return { 'Manhã': 5.50, 'Tarde': 5.48, 'Noite': 0 };
+  if (dia && _diaReduzido(dia)) return _sabHEIdx().has(dia) ? Object.assign({}, HB_SAB_HE) : Object.assign({}, HB_SAB);
   const cinco = cutover5 === null ? false : (!cutover5 || !dia) ? true : dia >= cutover5;
   return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
 }
