@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.597.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.598.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.597.0';
+const APP_VER = '3.598.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6318,6 +6318,7 @@ function computeOEE(setor, ignInterromp) {
     const hB = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
     m.dias.forEach(d => { const h = horasBlocoDe(d); B.forEach(b => hB[b] += h[b]); });
     let prodM = 0, capM = 0, hProgM = 0, parM = 0, perdaM = 0;
+    const detB = {};
     B.forEach(b => {
       const prod = m.prod[b], par = Math.min(m.par[b], hB[b]), perda = m.perda[b];
       // capacidade proporcional às horas REALMENTE programadas (sábado reduzido, sem turno da noite)
@@ -6325,6 +6326,10 @@ function computeOEE(setor, ignInterromp) {
       const diasEquiv = hB[b] / hNormalB;
       const cap = metas && metas[b] ? (metas[b] / fat) * diasEquiv : 0;
       prodM += prod; capM += cap; hProgM += hB[b]; parM += par; perdaM += perda;
+      /* par vem limitado por hB[b] (Math.min): parada nao pode passar a jornada.
+         parBruto guarda o que o 643 apontou de verdade, para o detalhe mostrar
+         quando o apontamento estourou o turno. */
+      detB[b] = { prod, cap, hProg: hB[b], par, parBruto: m.par[b], perda };
       porBloco[b].prod += prod; porBloco[b].cap += cap; porBloco[b].hProg += hB[b]; porBloco[b].par += par; porBloco[b].perda += perda;
     });
     const temMeta = capM > 0;
@@ -6336,7 +6341,7 @@ function computeOEE(setor, ignInterromp) {
     const oee = (dxp != null) ? (qual != null ? dxp * qual : dxp) : null;   // sem qualidade medida (cxs), OEE = D × P
     /* 04/08/2026: guarda os numeros CRUS que entraram na conta. Sem isso o OEE
        e uma caixa-preta: da para ver o resultado, nao da para conferir. */
-    porMaq.push({ cod: c, nome: m.nome, disp, perf, qual, oee, temMeta, nDias, kg: prodM, cap: capM, hProg: hProgM, hPar: parM, refugo: perdaM });
+    porMaq.push({ cod: c, nome: m.nome, disp, perf, qual, oee, temMeta, nDias, kg: prodM, cap: capM, hProg: hProgM, hPar: parM, refugo: perdaM, blocos: detB, metas: metas || null });
     tot.prod += prodM; tot.cap += capM; tot.hProg += hProgM; tot.par += parM; tot.perda += perdaM;
   });
   const mk = (o) => {
@@ -8292,9 +8297,64 @@ function oeeMemoria(R, setor) {
     : '<div style="background:#EAF7EF;border:1px solid #A5D6A7;color:#1E7B45;border-radius:10px;padding:7px 9px;font-size:11px">✓ Nada suspeito: todas as máquinas com meta, parada apontada e refugo no período.</div>';
   return t;
 }
+/* ===== DETALHE DO OEE DE UMA MÁQUINA — 04/08/2026 =====
+   Toque na linha da tabela. Mostra turno a turno o que entrou na conta e a
+   fórmula com os números daquela máquina. */
+let _oeeUlt = null;
+function detOeeMaq(cod) {
+  if (!_oeeUlt || !_oeeUlt.R) return;
+  const R = _oeeUlt.R, setor = _oeeUlt.setor;
+  const m = R.porMaq.find(x => String(x.cod) === String(cod)); if (!m) return;
+  const uni = R.emCx ? 'cxs' : 'kg';
+  const nv = v => (v == null ? '—' : Math.round(v).toLocaleString('pt-BR'));
+  const nh = v => (v == null ? '—' : (+v).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h');
+  const pc = v => (v == null ? '—' : (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%');
+  const B = ['Manhã', 'Tarde', 'Noite'];
+
+  let h = `<p class="idet-desc"><b>${escapeHtml(setor)}</b> · ${periodoSel ? escapeHtml(periodoSel.label) : ''} · ${m.nDias} dia(s) com apontamento</p>`;
+  h += `<div style="display:flex;gap:8px;margin:8px 0 12px">${oeeChip('Disp.', m.disp)}${oeeChip('Perform.', m.perf)}${oeeChip('Qualid.', m.qual)}${oeeChip('OEE', m.oee)}</div>`;
+
+  // turno a turno
+  h += '<div style="font-weight:800;font-size:12px;margin:4px 0 5px">Turno a turno</div>';
+  h += tabSimples(['Turno', 'Produção', 'Capacidade', 'Parada'], B.map(b => {
+    const d = (m.blocos && m.blocos[b]) || {};
+    if (!(d.hProg > 0)) return '';
+    const estourou = (d.parBruto || 0) > (d.hProg || 0) + 0.01;
+    const meta = m.metas && m.metas[b] ? m.metas[b] : 0;
+    return `<tr><td class="nome" style="font-size:12px">${b}${meta ? `<div style="font-size:10px;color:var(--fraco-2)">meta ${nv(meta)} ${uni}/dia</div>` : '<div style="font-size:10px;color:var(--laranja);font-weight:700">sem meta</div>'}</td>`
+      + `<td><span class="cel cel-tot">${nv(d.prod)}</span></td>`
+      + `<td><span class="cel neutra">${d.cap > 0 ? nv(d.cap) : '—'}</span></td>`
+      + `<td><span class="cel ${estourou ? 'baixo' : 'neutra'}">${nh(d.par)}${estourou ? `<div style="font-size:9.5px;font-weight:700">apontado ${nh(d.parBruto)}</div>` : `<div style="font-size:9.5px;font-weight:600;opacity:.8">de ${nh(d.hProg)}</div>`}</span></td></tr>`;
+  }).join(''));
+
+  // a conta, com os números desta máquina
+  h += '<div style="font-weight:800;font-size:12px;margin:12px 0 5px">A conta desta máquina</div>'
+    + `<div style="background:var(--leve-5);border:1px solid var(--borda);border-radius:10px;padding:9px 11px;font-size:11.5px;line-height:1.7;color:var(--fraco)">`
+    + `Disponibilidade = (${nh(m.hProg)} − ${nh(m.hPar)}) ÷ ${nh(m.hProg)} = <b>${pc(m.disp)}</b><br>`
+    + `D × P = ${nv(m.kg)} ÷ ${nv(m.cap)} ${uni} = <b>${m.cap > 0 ? pc(m.kg / m.cap) : '—'}</b><br>`
+    + `Performance = (D × P) ÷ Disponibilidade = <b>${pc(m.perf)}</b><br>`
+    + (R.qual054 ? `Qualidade = do relatório 054, no nível do setor = <b>${pc(m.qual)}</b><br>`
+      : R.emCx ? 'Qualidade não medida (setor em caixas, refugo vem em kg)<br>'
+        : `Qualidade = ${nv(m.kg)} ÷ (${nv(m.kg)} + ${nv(m.refugo)}) = <b>${pc(m.qual)}</b><br>`)
+    + `<b style="color:var(--navy)">OEE = ${pc(m.oee)}</b></div>`;
+
+  // alertas desta máquina
+  const al = [];
+  if (!m.temMeta) al.push('Sem meta cadastrada — esta máquina <b>não entra</b> no OEE do setor.');
+  if (m.hProg > 0 && m.hPar >= m.hProg - 0.01) al.push('<b>Parada o período inteiro.</b> A disponibilidade dá 0% e a performance fica sem sentido — o OEE que aparece na linha vem de produção ÷ capacidade, sem passar pela disponibilidade.');
+  if (m.perf != null && m.perf > 1.15) al.push(`Performance de <b>${pc(m.perf)}</b>: produzir muito acima da capacidade teórica quase sempre é <b>meta desatualizada</b>.`);
+  if ((m.hPar || 0) <= 0.01 && (m.kg || 0) > 0) al.push('<b>Nenhuma parada apontada</b> no período — disponibilidade sai 100% e infla o OEE.');
+  if (!R.qual054 && !R.emCx && (m.refugo || 0) <= 0 && (m.kg || 0) > 0) al.push('<b>Zero refugo</b> com produção: qualidade sai 100%. Confira se o 624 veio completo.');
+  B.forEach(b => { const d = (m.blocos && m.blocos[b]) || {}; if ((d.parBruto || 0) > (d.hProg || 0) + 0.01 && d.hProg > 0) al.push(`<b>${b}:</b> o 643 apontou ${nh(d.parBruto)} de parada num turno de ${nh(d.hProg)}. O excesso foi cortado na conta, mas o apontamento está errado.`); });
+  if (al.length) h += '<div style="font-weight:800;font-size:12px;margin:12px 0 5px">Atenção</div>'
+    + al.map(t => `<div style="background:#FFF6E5;border:1px solid #EBCB8B;color:#7A5A10;border-radius:10px;padding:7px 9px;font-size:11px;line-height:1.5;margin-bottom:5px">⚠️ ${t}</div>`).join('');
+
+  abreDet(cod + ' · OEE', h);
+}
 function renderOEE() {
   const setor = $('oeeSetor').value || SETORES_AVAL[0];
   const R = computeOEE(setor);
+  _oeeUlt = { R, setor };
   const box = $('oeeConteudo');
   if (!R || !R.porMaq.length) { box.innerHTML = '<p class="desc">Sem produção de ' + escapeHtml(setor) + ' no período selecionado.</p>'; return; }
 
@@ -8322,9 +8382,9 @@ function renderOEE() {
   html += `<div style="display:flex;gap:8px;margin-bottom:12px">${oeeChip('Disponib.', R.total.disp)}${oeeChip('Perform.', R.total.perf)}${oeeChip('Qualidade', R.total.qual)}</div>`;
   { const _turOEE = ($('turnoGlobal') && $('turnoGlobal').value) || '';
     html += `<div style="display:flex;gap:8px;margin-bottom:12px">${(_turOEE ? [_turOEE] : ['Manhã', 'Tarde', 'Noite']).map(b => oeeChip(b, R.blocos[b].oee)).join('')}</div>`; }
-  html += `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%;min-width:390px"><thead><tr><th style="text-align:left">Máquina</th><th>Disp.</th><th>Perf.</th><th>Qual.</th><th>OEE</th></tr></thead><tbody>`;
+  html += `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%;min-width:390px"><thead><tr><th style="text-align:left">Máquina · toque para o detalhe</th><th>Disp.</th><th>Perf.</th><th>Qual.</th><th>OEE</th></tr></thead><tbody>`;
   R.porMaq.forEach(m => {
-    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${m.cod}</span> ${escapeHtml(m.nome)}</td>` +
+    html += `<tr onclick="detOeeMaq('${m.cod}')" style="cursor:pointer"><td class="nome" style="text-align:left"><span class="cod">${m.cod}</span> ${escapeHtml(m.nome)}<span style="color:var(--fraco-3);font-weight:700"> ›</span></td>` +
       [m.disp, m.perf, m.qual].map(v => `<td style="text-align:center;color:${oeeCor(v)};font-weight:600">${oeePct(v)}</td>`).join('') +
       `<td style="text-align:center"><span style="background:${oeeCor(m.oee)};color:#fff;border-radius:10px;padding:3px 8px;font-weight:700">${m.temMeta ? oeePct(m.oee) : 'sem meta'}</span></td></tr>`;
   });
