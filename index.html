@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.596.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.597.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.596.0';
+const APP_VER = '3.597.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6334,7 +6334,9 @@ function computeOEE(setor, ignInterromp) {
     const dxp = temMeta ? prodM / capM : null; // disponibilidade × performance
     const perf = (dxp != null && disp > 0) ? dxp / disp : null;
     const oee = (dxp != null) ? (qual != null ? dxp * qual : dxp) : null;   // sem qualidade medida (cxs), OEE = D × P
-    porMaq.push({ cod: c, nome: m.nome, disp, perf, qual, oee, temMeta, nDias });
+    /* 04/08/2026: guarda os numeros CRUS que entraram na conta. Sem isso o OEE
+       e uma caixa-preta: da para ver o resultado, nao da para conferir. */
+    porMaq.push({ cod: c, nome: m.nome, disp, perf, qual, oee, temMeta, nDias, kg: prodM, cap: capM, hProg: hProgM, hPar: parM, refugo: perdaM });
     tot.prod += prodM; tot.cap += capM; tot.hProg += hProgM; tot.par += parM; tot.perda += perdaM;
   });
   const mk = (o) => {
@@ -6345,7 +6347,7 @@ function computeOEE(setor, ignInterromp) {
     return { disp, perf, qual, oee: (dxp != null && qual != null) ? dxp * qual : null };
   };
   porMaq.sort((a, b) => (b.oee ?? -1) - (a.oee ?? -1));
-  return { porMaq, blocos: { 'Manhã': mk(porBloco['Manhã']), 'Tarde': mk(porBloco['Tarde']), 'Noite': mk(porBloco['Noite']) }, total: mk(tot), fator: fat, semMeta: tot.semMeta, qual054: qual054 != null };
+  return { porMaq, blocos: { 'Manhã': mk(porBloco['Manhã']), 'Tarde': mk(porBloco['Tarde']), 'Noite': mk(porBloco['Noite']) }, total: mk(tot), fator: fat, semMeta: tot.semMeta, qual054: qual054 != null, bruto: tot, porBloco, emCx: emCxOEE };
 }
 const oeePct = v => v == null ? '—' : (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
 const oeeCor = v => v == null ? 'var(--fraco-4)' : v >= 0.75 ? 'var(--ok-3)' : v >= 0.60 ? 'var(--laranja)' : 'var(--critico)';
@@ -8206,6 +8208,90 @@ async function carregarOEE() {
   renderOEE();
 }
 function mudarPeriodoOEE() { aplicarPeriodo($('oeePeriodo').value); carregarOEE(); }
+/* ===== MEMÓRIA DE CÁLCULO DO OEE — 04/08/2026 =====
+   Lista os números do período que entraram na conta e sinaliza o que pode estar
+   errado. A ideia é que dê para conferir o OEE sem abrir o banco: se o número
+   parecer estranho, o problema quase sempre está numa destas linhas. */
+function oeeMemoria(R, setor) {
+  if (!R) return '';
+  const B = R.bruto || {};
+  const uni = R.emCx ? 'cxs' : 'kg';
+  const nv = v => (v == null ? '—' : Math.round(v).toLocaleString('pt-BR'));
+  const nh = v => (v == null ? '—' : (+v).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h');
+  const linha = (rot, val, obs) => `<tr><td class="nome" style="font-size:11.5px">${rot}${obs ? `<div style="font-size:10px;color:var(--fraco-2)">${obs}</div>` : ''}</td><td style="text-align:right;font-weight:700;font-size:12px;white-space:nowrap">${val}</td></tr>`;
+
+  const comMeta = R.porMaq.filter(m => m.temMeta);
+  const dias = R.porMaq.reduce((a, m) => Math.max(a, m.nDias || 0), 0);
+
+  let t = '<div style="font-weight:800;font-size:12px;margin-bottom:5px">O que entrou na conta</div>'
+    + '<table class="aprov-tab" style="width:100%"><tbody>'
+    + linha('Período', periodoSel ? escapeHtml(periodoSel.label) : '—')
+    + linha('Setor · máquinas com produção', escapeHtml(setor) + ' · ' + R.porMaq.length)
+    + linha('Máquinas que entram no OEE', comMeta.length, R.semMeta ? R.semMeta + ' fora por não ter meta' : '')
+    + linha('Dias com apontamento', dias)
+    + linha('Produção somada', nv(B.prod) + ' ' + uni, 'relatório 621 · é o numerador da performance')
+    + linha('Capacidade teórica', nv(B.cap) + ' ' + uni, 'meta ÷ ' + (R.fator * 100).toFixed(0) + '% × dias equivalentes')
+    + linha('Horas programadas', nh(B.hProg), 'jornada dos turnos que rodaram')
+    + linha('Horas paradas', nh(B.par), 'relatório 643' + (oeeIgnInterromp ? ' · sem as INTERROMPIDO' : ' · incluindo INTERROMPIDO'))
+    + linha('Refugo', R.qual054 ? 'do 054 (nível setor)' : (R.emCx ? 'não medido em caixas' : nv(B.perda) + ' kg'), 'relatório 624')
+    + '</tbody></table>'
+    + `<div style="font-size:10.5px;color:var(--fraco);margin-top:6px;line-height:1.5">Disponibilidade = (${nh(B.hProg)} − ${nh(B.par)}) ÷ ${nh(B.hProg)}<br>D × P = ${nv(B.prod)} ÷ ${nv(B.cap)}<br>OEE = D × P × Qualidade</div>`;
+
+  // ---------- possíveis erros ----------
+  const al = [];
+  const semMeta = R.porMaq.filter(m => !m.temMeta);
+  if (semMeta.length) al.push(['crit', `<b>${semMeta.length} máquina(s) sem meta</b> ficam de fora do OEE do setor: ${semMeta.map(m => m.cod).join(', ')}. O número do setor é a média só de quem tem meta.`]);
+
+  const perfAlta = comMeta.filter(m => m.perf != null && m.perf > 1.15);
+  if (perfAlta.length) al.push(['crit', `<b>${perfAlta.length} máquina(s) com performance acima de 115%</b> (${perfAlta.map(m => m.cod + ' ' + Math.round(m.perf * 100) + '%').join(', ')}). Produzir muito acima da capacidade teórica costuma significar <b>meta desatualizada</b>, não recorde.`]);
+
+  const semParada = comMeta.filter(m => (m.hPar || 0) <= 0.01 && (m.kg || 0) > 0);
+  if (semParada.length) al.push(['aten', `<b>${semParada.length} máquina(s) sem nenhuma parada apontada</b> (${semParada.map(m => m.cod).join(', ')}) — disponibilidade sai 100% e infla o OEE. Máquina que roda o dia todo sem troca de item é raro.`]);
+
+  const paradaDemais = R.porMaq.filter(m => (m.hProg || 0) > 0 && (m.hPar || 0) > m.hProg);
+  if (paradaDemais.length) al.push(['crit', `<b>${paradaDemais.length} máquina(s) com mais parada do que jornada</b> (${paradaDemais.map(m => m.cod).join(', ')}). Parada apontada em turno que não rodou, ou hora sobreposta no 643.`]);
+
+  const semRefugo = comMeta.filter(m => (m.refugo || 0) <= 0 && (m.kg || 0) > 0);
+  if (!R.qual054 && !R.emCx && semRefugo.length) al.push(['aten', `<b>${semRefugo.length} máquina(s) com zero refugo</b> (${semRefugo.map(m => m.cod).join(', ')}) — qualidade sai 100%. Confira se o 624 do período veio completo.`]);
+
+  if (R.emCx) al.push(['info', 'Setor medido em <b>caixas</b>: o refugo do 624 vem em kg e não dá para cruzar com a produção. A qualidade não entra, e o OEE aqui é <b>Disponibilidade × Performance</b>.']);
+  if (R.qual054) al.push(['info', 'Qualidade vem do <b>054</b>, que é por setor e não por máquina — todas as máquinas recebem o mesmo percentual.']);
+
+  /* dia com parada apontada e ZERO producao: ou o 621 daquele dia nao entrou
+     (buraco de importacao), ou a maquina ficou parada o dia todo. Nos dois casos
+     o OEE despenca, e a causa nao aparece em lugar nenhum da tela. */
+  try {
+    const cods = new Set((SETOR_MAQ[setor] || []).map(String));
+    const dProd = new Set(), dPar = new Set();
+    (dadosPainel.producao || []).forEach(r => { if (cods.has(String(r.recurso_cod))) dProd.add(r.dia); });
+    (dadosPainel.paradas || []).forEach(r => { if (cods.has(String(r.recurso_cod))) { const d = _diaDeParada(r); if (d) dPar.add(d); } });
+    const soPar = [...dPar].filter(d => !dProd.has(d)).sort();
+    if (soPar.length) al.push(['crit', `<b>${soPar.length} dia(s) com parada apontada e nenhuma produção</b>: ${soPar.slice(0, 4).map(fmtData).join(', ')}${soPar.length > 4 ? ' e mais ' + (soPar.length - 4) : ''}. Ou o 621 desse dia não entrou, ou a máquina ficou parada o dia inteiro — nos dois casos o OEE cai e a causa não aparece na tela.`]);
+    /* MAQUINA DO SETOR QUE NAO ENTRA NO OEE. O calculo so conhece maquina que
+       PRODUZIU: quem ficou parada o periodo inteiro nao aparece em lugar nenhum.
+       Testado em 03/08/2026 na Injecao — 1203, 1204, 1206 e 1208 ficaram o dia
+       todo paradas (23,9 h a 28 h de parada apontada, zero producao) e o OEE do
+       setor, 45,2%, era so a media das outras quatro. */
+    const cods2 = new Set((SETOR_MAQ[setor] || []).map(String));
+    const comProd = new Set(R.porMaq.map(m => String(m.cod)));
+    const paradaPorMaq = {};
+    (dadosPainel.paradas || []).forEach(r => { const c = String(r.recurso_cod); if (cods2.has(c) && !comProd.has(c)) paradaPorMaq[c] = (paradaPorMaq[c] || 0) + (+r.tempo_horas || 0); });
+    const paradasSemProd = Object.keys(paradaPorMaq).sort();
+    const semNada = [...cods2].filter(c => !comProd.has(c) && !paradaPorMaq[c]).sort();
+    if (paradasSemProd.length) al.push(['crit', `<b>${paradasSemProd.length} máquina(s) com parada apontada e nenhuma produção</b>: ${paradasSemProd.map(c => c + ' (' + (+paradaPorMaq[c]).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h)').join(', ')}. <b>Elas não entram no OEE</b> — o número acima é a média só de quem produziu.`]);
+    if (semNada.length) al.push(['aten', `<b>${semNada.length} máquina(s) do setor sem produção e sem parada</b> no período: ${semNada.join(', ')}. Sem apontamento nenhum, o app não sabe se estavam programadas.`]);
+    // hora de parada maior que a jornada do dia é apontamento sobreposto
+    const excesso = Object.entries(paradaPorMaq).filter(([, h]) => h > 24 * Math.max(1, (R.porMaq[0] && R.porMaq[0].nDias) || 1));
+    if (excesso.length) al.push(['crit', `<b>${excesso.length} máquina(s) com mais horas de parada do que existe no período</b>: ${excesso.map(([c, h]) => c + ' ' + (+h).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h').join(', ')}. Hora sobreposta no 643 ou parada lançada em turno que não rodou.`]);
+  } catch (_) { }
+
+  const cores = { crit: ['#FDECEC', '#E5A3A3', '#8A2B2B', '⛔'], aten: ['#FFF6E5', '#EBCB8B', '#7A5A10', '⚠️'], info: ['#EEF3FA', '#BBCBE0', '#33506E', 'ℹ️'] };
+  t += '<div style="font-weight:800;font-size:12px;margin:12px 0 5px">Possíveis erros neste recorte</div>';
+  t += al.length
+    ? al.map(([k, txt]) => { const c = cores[k]; return `<div style="background:${c[0]};border:1px solid ${c[1]};color:${c[2]};border-radius:10px;padding:7px 9px;font-size:11px;line-height:1.5;margin-bottom:5px">${c[3]} ${txt}</div>`; }).join('')
+    : '<div style="background:#EAF7EF;border:1px solid #A5D6A7;color:#1E7B45;border-radius:10px;padding:7px 9px;font-size:11px">✓ Nada suspeito: todas as máquinas com meta, parada apontada e refugo no período.</div>';
+  return t;
+}
 function renderOEE() {
   const setor = $('oeeSetor').value || SETORES_AVAL[0];
   const R = computeOEE(setor);
@@ -8218,7 +8304,9 @@ function renderOEE() {
     .reduce((a, p) => a + (p.tempo_horas || 0), 0);
   const dOEE = (R.total.oee != null && Rop && Rop.total.oee != null) ? (R.total.oee - Rop.total.oee) * 100 : null;
 
-  let html = `<div style="text-align:center;margin:6px 0 10px"><div style="font-size:34px;font-weight:800;color:${oeeCor(R.total.oee)}">${oeePct(R.total.oee)}</div><div style="font-size:12px;color:var(--fraco)">OEE do setor · ${periodoSel ? escapeHtml(periodoSel.label) : ''} · fator ${(R.fator * 100).toFixed(0)}%</div></div>`;
+  let html = `<div style="text-align:center;margin:6px 0 10px"><div style="font-size:34px;font-weight:800;color:${oeeCor(R.total.oee)}">${oeePct(R.total.oee)}</div>`
+    + `<div style="font-size:12px;color:var(--fraco);display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap"><span>OEE do setor · ${periodoSel ? escapeHtml(periodoSel.label) : ''} · fator ${(R.fator * 100).toFixed(0)}%</span>${icoBtnId('icoIn_oeeMem', 'De onde vem este número')}</div></div>`
+    + icoBoxId('icoIn_oeeMem', oeeMemoria(R, setor));
 
   html += `<div style="border:1px solid var(--borda);border-radius:14px;padding:10px 12px;margin-bottom:12px;background:${oeeIgnInterromp ? '#F6FCF9' : '#FFF9EC'}">
     <label style="display:flex;align-items:center;gap:9px;cursor:pointer">
