@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.606.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.607.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.606.0';
+const APP_VER = '3.607.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14109,7 +14109,17 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
   const cel = {}, nome = {};
   const ini = c => { c = String(c); if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
   if (incluirCods) incluirCods.forEach(c => { ini(c); if (nomes && nomes[c]) nome[String(c)] = nomes[c]; });
-  rows.forEach(r => { ini(r.recurso_cod); cel[r.recurso_cod][blocoTurno(r.turno, r.dia)] += (valFn(r) || 0); nome[r.recurso_cod] = r.recurso_nome || nome[r.recurso_cod] || r.recurso_cod; });
+  /* 04/08/2026: quando a linha e refugo APONTADO num setor e atribuido a outro
+     (MATERIAL RUIM SEM IMPRESSAO da 708 vira culpa da Termoformagem), a maquina
+     de origem aparecia na tabela do setor culpado sem nenhuma pista. Guardamos
+     o setor de origem para marcar a linha. */
+  const origem = {};
+  rows.forEach(r => {
+    const c = String(r.recurso_cod);
+    ini(c); cel[c][blocoTurno(r.turno, r.dia)] += (valFn(r) || 0);
+    nome[c] = r.recurso_nome || nome[c] || c;
+    try { const so = setorDe(c); if (r._sp && r._sp !== so) origem[c] = so; } catch (_) { }
+  });
   let linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; });
   if (!incluirCods) linhas = linhas.filter(l => l.tot > 0);
   linhas.sort((a, b) => b.tot - a.tot);
@@ -14120,8 +14130,15 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     const cls = corTurno ? clsCol[i] : (corCel ? corCel(v) : 'neutra');
     return `<td><span class="cel ${cls}">${fmtCel(v)}</span></td>`;
   };
-  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}${bocaBadge(l.cod)}</td>${cH(l.m, 0)}${cH(l.ta, 1)}${cH(l.n, 2)}${cH(l.tot, 3)}</tr>`).join('');
-  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>`;
+  const selo = c => origem[c]
+    ? `<span title="refugo apontado na ${escapeHtml(origem[c])} e atribuído a este setor pela regra de tipo de perda" style="display:inline-block;background:#EEF3FA;border:1px solid #BBCBE0;color:#33506E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-left:5px;white-space:nowrap">↩ ${escapeHtml(origem[c])}</span>`
+    : '';
+  const rows2 = linhas.map(l => `<tr><td class="nome"><span class="cod">${escapeHtml(l.cod)}</span> ${escapeHtml(l.nome)}${bocaBadge(l.cod)}${selo(l.cod)}</td>${cH(l.m, 0)}${cH(l.ta, 1)}${cH(l.n, 2)}${cH(l.tot, 3)}</tr>`).join('');
+  const nOrig = Object.keys(origem).length;
+  const notaOrig = nOrig
+    ? `<p class="desc" style="font-size:10.5px;margin:6px 0 0">↩ ${nOrig} máquina(s) de outro setor: o refugo foi apontado lá, mas a regra de tipo de perda atribui a culpa a este setor. Só a parte reatribuída entra — o resto do refugo delas continua no setor de origem.</p>`
+    : '';
+  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>` + notaOrig;
 }
 // tabela de aproveitamento máquina × turno (produção termo ÷ consumo bobina)
 function tabelaAprov(termoRows, bobRows) {
