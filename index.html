@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.609.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.610.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.609.0';
+const APP_VER = '3.610.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16391,6 +16391,26 @@ let _progDados = null, _progSetorSel = '', _progMaqSel = '', _progCat = null;
    Embaladeiras, Rotulagem e Compressao vieram com desvio ZERO nas 345 OPs — o
    ERP nao recalcula a previsao desses setores. Por isso o card avisa em vez de
    mostrar uma coluna de zeros que pareceria "tudo em dia". */
+/* VENCIDA NA FILA — 04/08/2026.
+   Ha um atraso que a comparacao entre fotos NAO pega: quando o ERP simplesmente
+   nao recalcula e a data prevista fica no passado. Caso real da OP 261374 (703):
+   na foto de 31/07 e na de 03/08 o termino previsto era 01/08 02:20 — ja vencido
+   — e o desvio entre as duas fotos deu ZERO. So em 04/08 o ERP jogou para
+   04/08 19:07, e ai apareceu como +89 h de uma vez.
+   Ou seja: enquanto o ERP nao acorda, a OP atrasa em silencio. Este bloco olha a
+   foto mais recente e lista quem ja esta com o termino no passado. */
+let _filaVenc = null;
+async function carregarFilaVenc() {
+  try {
+    const { data: fot } = await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const dia = fot && fot[0] && fot[0].dia_foto; if (!dia) { _filaVenc = null; return; }
+    const { data, error } = await sb.from('fila_producao')
+      .select('recurso_cod,recurso_nome,setor,op,item_desc,cliente,entrega,termino,peso,quantidade,dia_foto')
+      .eq('dia_foto', dia).lt('termino', dia + 'T00:00:00').limit(600);
+    if (error) throw error;
+    _filaVenc = { dia, linhas: data || [] };
+  } catch (e) { _filaVenc = null; console.warn('filaVenc:', e && e.message); }
+}
 let _filaDesv = null;
 async function carregarFilaDesvio() {
   try {
@@ -16444,6 +16464,7 @@ async function carregarProgramacao(forcar) {
     try { await carregarMaqAtiva(); } catch (e) { _maqAtiva = null; console.warn('maqAtiva:', e && e.message); }
     try { await carregarOpSaiu(); } catch (_) { _opSaiu = null; }
     try { await carregarFilaDesvio(); } catch (_) { _filaDesv = null; }
+    try { await carregarFilaVenc(); } catch (_) { _filaVenc = null; }
     try { await carregarPerfMaq(); } catch (_) { }   // ★ da melhor máquina precisa de meta + produção
     _progCarregadoEm = Date.now();
     await _progCarregarHist();
@@ -18363,7 +18384,37 @@ function cardFilaDesvio() {
       + `<td><span class="cel" style="background:${cor(o.med)};color:#fff;font-weight:800">${hh(o.med)}</span></td>`
       + `<td><span class="cel neutra" style="color:${cor(o.soma)};font-weight:700">${hh(o.soma)}</span></td></tr>`).join(''));
 
+  h += _blocoVencidas();
   return h + '</div>';
+}
+/* OP que ja passou do termino previsto e continua na fila. E o atraso que a
+   comparacao entre fotos nao ve, porque enquanto o ERP nao recalcula o desvio
+   fica em zero. */
+function _blocoVencidas() {
+  if (!_filaVenc || !_filaVenc.linhas || !_filaVenc.linhas.length) return '';
+  let L = _filaVenc.linhas.slice();
+  if (_progSetorSel) L = L.filter(r => (r.setor || 'Outros') === _progSetorSel);
+  if (_progMaqSel) L = L.filter(r => String(r.recurso_cod) === _progMaqSel);
+  if (!L.length) return '';
+  const hoje = _filaVenc.dia;
+  const dias = r => (new Date(hoje + 'T00:00:00') - new Date(r.termino)) / 86400000;
+  L.forEach(r => { r._d = dias(r); });
+  L.sort((a, b) => b._d - a._d);
+  const porSet = {};
+  L.forEach(r => { const k = r.setor || 'Outros'; const o = (porSet[k] = porSet[k] || { n: 0, soma: 0, pior: 0, ent: 0 }); o.n++; o.soma += r._d; if (r._d > o.pior) o.pior = r._d; if (r.entrega && r.entrega < hoje) o.ent++; });
+  const sets = Object.entries(porSet).sort((a, b) => b[1].n - a[1].n);
+  const nd = v => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + (v >= 2 ? ' dias' : ' dia');
+  const corD = v => v >= 15 ? '#8A2B2B' : v >= 5 ? '#B26A00' : 'var(--fraco)';
+  const nEnt = L.filter(r => r.entrega && r.entrega < hoje).length;
+
+  return '<div style="height:14px"></div>'
+    + `<div style="font-weight:800;font-size:13px;color:#8A2B2B;margin-bottom:3px">⏰ Vencidas na fila · ${L.length}${icoBtnId('icoIn_venc', 'Vencidas na fila')}</div>`
+    + `<p class="desc" style="margin:0 0 7px;font-size:11px">o término previsto já passou e a OP continua na fila${nEnt ? ` · <b style="color:#8A2B2B">${nEnt} com a entrega ao cliente também vencida</b>` : ''}</p>`
+    + icoBoxId('icoIn_venc', 'Aqui o ERP <b>não recalculou</b> a previsão: a data ficou parada no passado. Enquanto isso, o desvio entre uma foto e outra dá <b>zero</b> e a OP parece em dia.<br><br>Caso real: a <b>OP 261374</b> (703) estava prevista para 01/08 02:20 nas fotos de 31/07 <i>e</i> de 03/08 — já vencida nas duas, com desvio zero entre elas. Só em 04/08 o ERP jogou para 04/08 19:07, e aí apareceu de uma vez como +89 h. Ela nunca teve apontamento de produção.<br><br>Por isso este bloco olha a <b>foto mais recente</b> e mede quanto tempo o término previsto já ficou para trás.')
+    + tabSimples(['Setor', 'OPs', 'Atraso médio'], sets.map(([k, o]) => `<tr><td class="nome" style="font-size:12px">${escapeHtml(k)}<div style="font-size:10px;color:var(--fraco-2)">pior ${nd(o.pior)}${o.ent ? ' · ' + o.ent + ' com entrega vencida' : ''}</div></td><td><span class="cel neutra">${o.n}</span></td><td><span class="cel" style="background:${corD(o.soma / o.n)};color:#fff;font-weight:800">${nd(o.soma / o.n)}</span></td></tr>`).join(''))
+    + `<p class="desc" style="margin:8px 0 4px;font-size:11px;font-weight:700">As ${Math.min(10, L.length)} mais paradas</p>`
+    + tabSimples(['Máquina · OP · item', 'Previsto', 'Parada há'], L.slice(0, 10).map(r => `<tr><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(r.recurso_cod))}</span> OP ${escapeHtml(String(r.op))}<div style="font-size:10px;color:var(--fraco-2)">${escapeHtml(String(r.item_desc || '').slice(0, 30))}</div>${r.entrega && r.entrega < hoje ? `<div style="font-size:10px;color:#8A2B2B;font-weight:700">entrega ${fmtData(r.entrega)} vencida</div>` : ''}</td><td><span class="cel neutra" style="font-size:11px">${fmtData(String(r.termino).slice(0, 10))}</span></td><td><span class="cel" style="background:${corD(r._d)};color:#fff;font-weight:800">${nd(r._d)}</span></td></tr>`).join(''))
+    + (L.length > 10 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando as 10 mais paradas de ${L.length}</p>` : '');
 }
 /* ---- CARD: OP que saiu da fila sem terminar ---- */
 const _OS_FAIXA = {
