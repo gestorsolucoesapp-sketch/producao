@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.604.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.605.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.604.0';
+const APP_VER = '3.605.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8797,6 +8797,49 @@ async function salvarMetas() {
   metasData = null; await getMetas();
   dadosPainel = dadosPainelFull = null;
   renderMetas();
+}
+/* detalhe de UMA maquina parada em UM turno: motivos, cada parada com horario e
+   quanto ela costuma produzir naquele turno. Nao ha item para mostrar — a
+   maquina nao produziu nada, e o que interessa e o motivo. */
+function _mptDetalhe(a) {
+  const D = dadosPainel || {};
+  const nh = v => (+v).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h';
+  const pars = [];
+  (D.paradas || []).forEach(p => {
+    if (String(p.recurso_cod) !== String(a.c)) return;
+    let d = null;
+    try { d = _diaDeParada(p); } catch (_) { d = p.dia; }
+    if (String(d || '').slice(0, 10) !== a.dia && String(p.dia || '').slice(0, 10) !== a.dia) return;
+    let f = null;
+    try { f = tempoParadaPorTurno(p.inicio, _horasOrig(p), d); } catch (_) { }
+    const h = f ? (f[a.b] || 0) : 0;
+    if (h > 0.0005) pars.push({ p, h });
+  });
+  pars.sort((x, y) => y.h - x.h);
+  if (!pars.length) return '<p class="desc" style="font-size:11px;margin:0">Sem parada detalhada neste turno — a máquina apenas não teve apontamento de produção.</p>';
+  const porMot = {};
+  pars.forEach(x => { const k = x.p.motivo_desc || '—'; porMot[k] = (porMot[k] || 0) + x.h; });
+  const mot = Object.entries(porMot).sort((x, y) => y[1] - x[1]);
+  let ref = '';
+  try {
+    const dias = {};
+    (D.producao || []).forEach(r => {
+      if (String(r.recurso_cod) !== String(a.c)) return;
+      if (blocoTurno(r.turno, r.dia) !== a.b) return;
+      dias[r.dia] = (dias[r.dia] || 0) + (+r.peso || 0);
+    });
+    const vs = Object.values(dias).filter(v => v > 0);
+    if (vs.length) {
+      const med = vs.reduce((s2, v) => s2 + v, 0) / vs.length;
+      ref = `<p class="desc" style="font-size:10.5px;margin:6px 0 0">Nos ${vs.length} dia(s) em que rodou neste turno, esta máquina fez em média <b>${Math.round(med).toLocaleString('pt-BR')} kg</b> — é a ordem de grandeza do que deixou de sair.</p>`;
+    }
+  } catch (_) { }
+  return '<div style="font-weight:800;font-size:11.5px;margin-bottom:4px">Por que ficou parada</div>'
+    + tabSimples(['Motivo', 'Horas'], mot.map(([k, v]) => `<tr><td class="nome" style="font-size:11px">${escapeHtml(k)}<div style="font-size:9.5px;color:var(--fraco-2)">${pars.filter(x => (x.p.motivo_desc || '—') === k).length}× · ${(v / a.h * 100).toFixed(0)}% do turno</div></td><td><span class="cel ${v >= a.h * 0.4 ? 'baixo' : 'neutra'}">${nh(v)}</span></td></tr>`).join(''))
+    + '<div style="font-weight:800;font-size:11.5px;margin:8px 0 4px">Uma a uma</div>'
+    + tabSimples(['Início → fim', 'Horas'], pars.slice(0, 15).map(x => `<tr><td class="nome" style="font-size:10.5px">${horaHHMMParada(x.p.inicio) || ''}${x.p.fim ? ' → ' + (horaHHMMParada(x.p.fim) || '') : ' → em aberto'}<div style="font-size:9.5px;color:var(--fraco-2)">${escapeHtml(String(x.p.motivo_desc || '—').slice(0, 30))}</div></td><td><span class="cel neutra">${nh(x.h)}</span></td></tr>`).join(''))
+    + (pars.length > 15 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando as 15 maiores de ${pars.length}</p>` : '')
+    + ref;
 }
 /* máquinas que ficaram um TURNO INTEIRO paradas, por dia e turno.
    Parada longa é fatiada pelos turnos que cobre (mais preciso). Só conta turno
