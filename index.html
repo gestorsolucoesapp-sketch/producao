@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.592.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.593.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.592.0';
+const APP_VER = '3.593.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12124,22 +12124,49 @@ async function relMontaTabela() {
     const nMil = v => v > 0 ? '<span class="cel ok">' + v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio;
     const _maqLista = x => [...x.maqs].sort();
     const _maqTxt = x => { const a = _maqLista(x); return a.length ? (a.length <= 2 ? a.join(' · ') : a[0] + ' +' + (a.length - 1)) : '—'; };
-    const linhas = relArr.map(x => `<tr data-b="${escapeHtml((x.cod + ' ' + x.op + ' ' + _maqLista(x).join(' ') + ' ' + x.desc).toLowerCase())}" data-m="${escapeHtml(_maqLista(x).join(','))}" data-kg="${x.kg}" data-cx="${x.cx}" data-mil="${x.mil}">
+    /* 04/08/2026 — VISÃO POR CÓDIGO.
+       A relação nasce por item×OP: o mesmo código aparece uma vez por OP (o KIT
+       1000ML saiu em 4 OPs em julho). Para saber quanto se produziu do código no
+       mês era preciso somar na mão. O botão "por código" junta as OPs e mostra
+       uma linha por item, com a contagem de OPs no lugar do número da OP.
+       Os totais são os mesmos nas duas visões — só muda o agrupamento. */
+    const _agrupaCod = arr => {
+      const m = {};
+      arr.forEach(x => {
+        const o = (m[x.cod] = m[x.cod] || { cod: x.cod, desc: x.desc, cx: 0, kg: 0, mil: 0, ops: new Set(), maqs: new Set() });
+        o.cx += x.cx; o.kg += x.kg; o.mil += x.mil;
+        if (x.op && x.op !== '—') o.ops.add(x.op);
+        [...x.maqs].forEach(q => o.maqs.add(q));
+        if ((!o.desc || o.desc === x.cod) && x.desc) o.desc = x.desc;
+      });
+      return Object.values(m).sort((a, b) => b.kg - a.kg);
+    };
+    const _linhaRel = (x, porCod) => {
+      const opTxt = porCod ? (x.ops.size + (x.ops.size === 1 ? ' OP' : ' OPs')) : x.op;
+      const busca = (x.cod + ' ' + (porCod ? [...x.ops].join(' ') : x.op) + ' ' + _maqLista(x).join(' ') + ' ' + x.desc).toLowerCase();
+      return `<tr data-b="${escapeHtml(busca)}" data-m="${escapeHtml(_maqLista(x).join(','))}" data-kg="${x.kg}" data-cx="${x.cx}" data-mil="${x.mil}">
       <td class="nome" style="text-align:left"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml(x.desc)}</td>
       <td><span class="cel cel-tot" title="${escapeHtml(_maqLista(x).join(', '))}">${escapeHtml(_maqTxt(x))}</span></td>
-      <td><span class="cel neutra">${escapeHtml(x.op)}</span></td>
+      <td><span class="cel neutra"${porCod ? ` title="${escapeHtml([...x.ops].sort().join(', '))}"` : ''}>${escapeHtml(String(opTxt))}</span></td>
       <td>${nMil(x.mil)}</td>
       <td>${nCx(x.cx)}</td>
-      <td><span class="cel cel-tot">${fmtKg(x.kg)}</span></td></tr>`).join('');
+      <td><span class="cel cel-tot">${fmtKg(x.kg)}</span></td></tr>`;
+    };
+    const arrVis = _relPorCod ? _agrupaCod(relArr) : relArr;
+    const linhas = arrVis.map(x => _linhaRel(x, _relPorCod)).join('');
+    const rotuloTot = _relPorCod ? (arrVis.length + ' código(s)') : (relArr.length + ' item×OP');
     const tot = `<tr data-b="__total" style="border-top:2px solid var(--navy);font-weight:700;background:var(--leve-5)">
-      <td class="nome" style="text-align:left">TOTAL · ${relArr.length} item×OP</td><td></td><td></td>
+      <td class="nome" style="text-align:left">TOTAL · ${rotuloTot}</td><td></td><td></td>
       <td>${totMil > 0 ? '<span class="cel ok">' + totMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span>' : vazio}</td>
       <td>${totCx > 0 ? '<span class="cel ok">' + fmtNum(Math.round(totCx)) + '</span>' : vazio}</td>
       <td><span class="cel cel-tot">${fmtKg(totKg)}</span></td></tr>`;
     const per = faixa
       ? (faixa.label || (faixa.de === faixa.ate ? fmtData(faixa.de) : fmtData(faixa.de) + ' → ' + fmtData(faixa.ate)))
       : (_relMesSel ? mesLabel(_relMesSel) : (mesLabel(ymAnt) + ' + ' + mesLabel(ref)));
-    const html = `<div style="font-size:11px;color:var(--fraco);margin:-2px 0 6px">período: <b>${per}</b> · ${relArr.length} item×OP <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div id="relMaqChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px"></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>OP</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
+    const btnVis = `<div style="display:flex;gap:6px;margin:0 0 8px">
+      <button onclick="relTrocaVisao(false)" class="btn" style="flex:1;padding:7px 8px;font-size:12px;font-weight:800;border-radius:10px;border:1px solid var(--borda);background:${_relPorCod ? '#fff' : 'var(--navy)'};color:${_relPorCod ? 'var(--navy)' : '#fff'}">por OP</button>
+      <button onclick="relTrocaVisao(true)" class="btn" style="flex:1;padding:7px 8px;font-size:12px;font-weight:800;border-radius:10px;border:1px solid var(--borda);background:${_relPorCod ? 'var(--navy)' : '#fff'};color:${_relPorCod ? '#fff' : 'var(--navy)'}">por código (soma as OPs)</button></div>`;
+    const html = btnVis + `<div style="font-size:11px;color:var(--fraco);margin:-2px 0 6px">período: <b>${per}</b> · ${rotuloTot} <span id="relInfoFiltro" style="color:var(--navy);font-weight:700"></span></div><div id="relMaqChips" style="display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px"></div><div style="overflow-x:auto"><table class="aprov-tab" id="relTab" style="width:100%"><thead><tr><th style="text-align:left">Código · Descrição</th><th>Máq.</th><th>${_relPorCod ? 'OPs' : 'OP'}</th><th>Milheiro</th><th>Cxs</th><th>Kg</th></tr></thead><tbody>${linhas}${tot}</tbody></table></div>`;
     box.innerHTML = html;
     relPreencheSelMes();
     { const todas = [...new Set(relArr.flatMap(x => [...x.maqs]))].sort((a, b) => (+a || 0) - (+b || 0));
@@ -12161,6 +12188,13 @@ const REL_FAM = {
   bandeja: /bandeja/i
 };
 let _relFam = '';
+let _relPorCod = false;
+function relTrocaVisao(porCod) {
+  if (_relPorCod === !!porCod) return;
+  _relPorCod = !!porCod;
+  const sel = document.getElementById('relSetor');
+  preencherRelItensOps(sel ? sel.value : '');
+}
 function setRelFam(f) {
   _relFam = f || '';
   document.querySelectorAll('#relFamChips .rel-fam').forEach(b => {
@@ -12187,7 +12221,7 @@ function filtrarRelItensOps() {
     if (mostra) vis++;
   });
   const inf = document.getElementById('relInfoFiltro');
-  if (inf) inf.textContent = (q || mq || _relFam) ? (vis + ' item×OP') : '';
+  if (inf) inf.textContent = (q || mq || _relFam) ? (vis + (_relPorCod ? ' código(s)' : ' item×OP')) : '';
   const box = document.getElementById('relMaqChips');
   if (box) {
     const set = new Set();
@@ -12213,7 +12247,7 @@ function filtrarRelItensOps() {
       if (sMil > 0) partes.push(sMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil');
       if (sCx > 0) partes.push(fmtNum(Math.round(sCx)) + ' cxs');
       if (sKg > 0) partes.push(fmtKg(sKg));
-      out.push('<span title="soma do que está filtrado · ' + nL + ' item×OP" style="font-size:11px;font-weight:800;color:#fff;background:var(--navy);padding:2px 8px;border-radius:10px;white-space:nowrap">Σ ' + escapeHtml(partes.join(' · ')) + '</span>');
+      out.push('<span title="soma do que está filtrado · ' + nL + (_relPorCod ? ' código(s)' : ' item×OP') + '" style="font-size:11px;font-weight:800;color:#fff;background:var(--navy);padding:2px 8px;border-radius:10px;white-space:nowrap">Σ ' + escapeHtml(partes.join(' · ')) + '</span>');
     }
     arr.forEach(c => _relMeses.forEach(ym => { if (_relMaqStats[ym + '|' + c]) out.push(relChipMaq(c, ym)); }));
     if (mq) out.push('<span onclick="relParadasMaq(\'' + mq + '\')" title="paradas somadas por motivo, da maior para a menor" style="cursor:pointer;font-size:11px;font-weight:800;color:#B0281A;background:#FBE3E0;border:1px solid #B0281A33;padding:2px 8px;border-radius:10px;white-space:nowrap">⏸ paradas de ' + escapeHtml(mq) + ' ›</span>');
