@@ -739,7 +739,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.577.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.578.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2206,7 +2206,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.577.0';
+const APP_VER = '3.578.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2239,6 +2239,14 @@ async function garantirTesseract() {
 async function garantirSortable() {
   if (window.Sortable) return;
   await carregarLib('https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js');
+}
+/* 04/08/2026: ferImportar() (importacao da planilha de ferias do RH) chamava
+   garantirXlsx() — funcao que NUNCA existiu no arquivo, e a lib XLSX nao era
+   carregada em lugar nenhum. Resultado: a importacao morria sempre, com a tela
+   parada em "lendo planilha...". Achado na varredura de identificadores. */
+async function garantirXlsx() {
+  if (window.XLSX) return;
+  await carregarLib('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
 }
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -5519,6 +5527,10 @@ function sincMaqGlobal() {
     try { renderPainel(); } catch (_) {}
     if (_abaAtual !== 'painel') recarregarAbaAtual();
   }
+  /* Sem nenhuma maquina no recorte (ex.: Compressao em jun/26, mes em que o ERP
+     ainda nao era gerado com esse setor) a pilula mostrava so "Todas" e parecia
+     quebrada. Agora ela vira risquinho, igual as outras que nao se aplicam. */
+  if (!cods.length) { _pilNA(g); return; }
   const html = '<option value="">Todas</option>' + cods.map(c =>
     `<option value="${escapeHtml(c)}">${escapeHtml(c)}${nm[c] ? ' · ' + escapeHtml(String(nm[c]).slice(0, 14)) : ''}</option>`).join('');
   _pilLiga(g, html);
@@ -8362,7 +8374,8 @@ function renderMetas() {
         style="width:80px;padding:5px 6px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${metasEditavel ? '' : ';background:var(--leve-3);color:#7a8794'}"></td></tr>`;
   });
   html += `</tbody></table></div>`;
-  if (metasEditavel) html += `<button class="btn" style="margin-top:10px" onclick="salvarPerdaCfg()">Salvar metas de perda</button>`;
+  if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:10px" onclick="salvarPerdaCfg()">💾 Salvar metas de perda</button>
+    <p class="desc" style="margin-top:6px;text-align:center">também é salvo pelo botão “Salvar metas do setor”, no fim da tela</p>`;
   html += `</div>`;
 
   $('metasConteudo').innerHTML = html;
@@ -8426,6 +8439,11 @@ async function salvarMetas() {
   if (!arr.length) { toast('Nada para salvar.'); return; }
   const { error } = await sb.from('metas').upsert(arr, { onConflict: 'recurso_cod,bloco' });
   if (error) { toast('❌ ' + error.message); return; }
+  /* As metas de PERDA ficam na mesma tela, com botao proprio. Quem editava a
+     perda e apertava este botao (o verde, no fim) perdia o que digitou: nada de
+     perda era gravado e o renderMetas() logo abaixo devolvia 2,5 na tela.
+     Agora este botao grava as duas coisas. */
+  try { await salvarPerdaCfg(true); } catch (_) { }
   toast('✅ Metas salvas.');
   metasData = null; await getMetas();
   dadosPainel = dadosPainelFull = null;
@@ -10074,7 +10092,7 @@ const perdaMetaDe = st => {
   const v = perdaCfg && perdaCfg[st] && +perdaCfg[st].pct;
   return (v > 0) ? v : META_PERDA_PADRAO;
 };
-async function salvarPerdaCfg() {
+async function salvarPerdaCfg(silencioso) {
   const cfg = {};
   SETORES_AVAL.forEach(st => {
     const el = $('pcPct_' + _slug(st));
@@ -10088,12 +10106,16 @@ async function salvarPerdaCfg() {
     const { error } = await sb.from('app_config').upsert({ chave: 'perda_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
     if (error) throw error;
     perdaCfg = Object.assign(_perdaCfgPadrao(), cfg);
-    toast('Metas de perda salvas');
-    try { renderPainel(); } catch (_) { }
+    if (!silencioso) { toast('Metas de perda salvas'); try { renderPainel(); } catch (_) { } }
+    return true;
   } catch (e) {
-    toast('❌ Não salvou: ' + (e.message || e));
+    const msg = (e && e.message) || String(e);
+    toast(/permission|policy|row-level/i.test(msg)
+      ? '❌ Sem permissão para salvar as metas de perda. Peça ao administrador.'
+      : '❌ Não salvou a perda: ' + msg);
     perdaCfg = null;
-    try { await getPerdaCfg(); renderMetas(); } catch (_) { }
+    if (!silencioso) { try { await getPerdaCfg(); renderMetas(); } catch (_) { } }
+    return false;
   }
 }
 let setupCfg = null;   // { 'Impressão': {meta:90, min:60}, ... }
