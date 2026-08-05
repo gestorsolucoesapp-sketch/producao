@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.622.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.623.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.622.0';
+const APP_VER = '3.623.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -18110,6 +18110,12 @@ function cardDestrava() {
     const ganho = a.falta > 0 ? (a.kgSo / a.falta) : 0;
     const cxFalta = A.linhas.filter(l => String(l.item_cod) === k && l._falta > 0.001 && _ehCx(l.un))
       .reduce((s, l) => { const need = +l.peso_pendente || 0; const q = +l.qtd_pendente || 0; return s + (need > 0 ? q * (l._falta / need) : 0); }, 0);
+    /* 04/08/2026: a caixa ja era calculada aqui, mas so virava palete. Peso diz
+       quanto e; caixa diz quantas embalagens sao — sao leituras diferentes e o
+       chao de fabrica pensa em caixa. Mesma regra do palete: so linha em CX. */
+    const cxSo = A.linhas.filter(l => String(l.item_cod) === k && l.blq && l.blq.size === 1 && _ehCx(l.un))
+      .reduce((s, l) => s + (+l.qtd_pendente || 0), 0);
+    const nCx = v => Math.round(v).toLocaleString('pt-BR');
     const palFalta = cxFalta > 0 ? _paletes(cxFalta) : 0;
     const _mq = (hist[k] || []).slice(0, 4);
     const _melhor = _mq.filter(m => _perf[m.cod] != null).sort((a, b) => _perf[b.cod] - _perf[a.cod])[0];
@@ -18125,8 +18131,8 @@ function cardDestrava() {
     }).join('') || '<span style="font-size:10px;color:var(--critico)">sem histórico</span>';
     return `<tr style="cursor:pointer" onclick="detItemMaquinas('${escapeHtml(k)}')"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 34))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">roda em ${ms} ›</div></td>`
-      + `<td><span class="cel baixo">${kg(a.falta)}${palFalta ? `<div style="font-size:10px;font-weight:600;opacity:.8">~${plt(palFalta)}</div>` : ''}</span></td>`
-      + `<td><span class="cel ${a.kgSo > 0 ? 'cel-tot' : 'neutra'}">${a.kgSo > 0 ? kg(a.kgSo) : '—'}</span></td>`
+      + `<td><span class="cel baixo">${kg(a.falta)}${cxFalta > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${nCx(cxFalta)} cx</div>` : ''}${palFalta ? `<div style="font-size:10px;font-weight:600;opacity:.75">~${plt(palFalta)}</div>` : ''}</span></td>`
+      + `<td><span class="cel ${a.kgSo > 0 ? 'cel-tot' : 'neutra'}">${a.kgSo > 0 ? kg(a.kgSo) : '—'}${a.kgSo > 0 && cxSo > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${nCx(cxSo)} cx</div>` : ''}</span></td>`
       + `<td><span class="cel neutra">${a.so || '—'}${a.peds > a.so ? ' <small>de ' + a.peds + '</small>' : ''}</span></td>`
       + `<td class="nome" style="font-size:11.5px">${a.kgSo > 0 && a.falta > 0 ? '<b>' + ganho.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '×</b>' : '<span style="color:var(--fraco-2)">divide bloqueio</span>'}</td></tr>`;
   }).join('');
@@ -18183,15 +18189,17 @@ function cardCarteira196(rows) {
   if (!_cart196 || !_cart196.pend.length) return '';
   const C = _cart196;
   const naFila = new Set((rows || []).map(r => String(r.item_cod || '')).filter(Boolean));
-  const estoque = {}; C.est.forEach(e => { estoque[String(e.item_cod)] = +e.peso || 0; });
+  const estoque = {}, estoqueCx = {};
+  C.est.forEach(e => { const k = String(e.item_cod); estoque[k] = +e.peso || 0; estoqueCx[k] = +e.qtd || 0; });
   const A = _alocarEstoque();
   const faltaItem = {};
   if (A) A.linhas.forEach(p => { const k = String(p.item_cod); faltaItem[k] = (faltaItem[k] || 0) + (p._falta || 0); });
   const ag = {};
   C.pend.forEach(p => {
     const k = String(p.item_cod);
-    const a = ag[k] || (ag[k] = { kg: 0, desc: p.item_desc || '', cli: new Set(), atraso: 0, ent: null });
+    const a = ag[k] || (ag[k] = { kg: 0, cx: 0, desc: p.item_desc || '', cli: new Set(), atraso: 0, ent: null });
     a.kg += (+p.peso_pendente || 0);
+    a.cx += _ehCx(p.un) ? (+p.qtd_pendente || 0) : 0;      // mesma regra do palete
     a.cli.add(p.cliente);
     if ((p.dias || 0) > a.atraso) a.atraso = p.dias;         // negativo = reprogramacao, nao atraso
     if (p.entrega && (!a.ent || p.entrega < a.ent)) a.ent = p.entrega;
@@ -18201,6 +18209,7 @@ function cardCarteira196(rows) {
   const G = { fat: [], fila: [], risco: [] };
   Object.keys(ag).forEach(k => {
     const a = ag[k], e = estoque[k] || 0, falta = faltaItem[k] || 0;
+    a.cxEst = estoqueCx[k] || 0;
     if (falta <= 0.001) G.fat.push([k, a, e]);
     else if (naFila.has(k)) G.fila.push([k, a, e]);
     else G.risco.push([k, a, e]);
@@ -18230,8 +18239,8 @@ function cardCarteira196(rows) {
         `<tr onclick="detItem('${escapeHtml(k)}')" style="cursor:pointer"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 40))} 🔎`
         + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.cli.size} cliente(s)${a.atraso > 0 ? ' · <b style="color:var(--critico)">' + a.atraso + 'd de atraso</b>' : ''}</div></td>`
         + `<td class="nome" style="min-width:96px">${badgesMaq(k)}</td>`
-        + `<td><span class="cel cel-tot">${kg(a.kg)}</span></td>`
-        + `<td><span class="cel ${e > 0 ? 'neutra' : 'baixo'}">${kg(e)}</span></td>`
+        + `<td><span class="cel cel-tot">${kg(a.kg)}${a.cx > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${Math.round(a.cx).toLocaleString('pt-BR')} cx</div>` : ''}</span></td>`
+        + `<td><span class="cel ${e > 0 ? 'neutra' : 'baixo'}">${kg(e)}${a.cxEst > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${Math.round(a.cxEst).toLocaleString('pt-BR')} cx</div>` : ''}</span></td>`
         + `<td class="nome" style="font-size:12px">${a.ent ? escapeHtml(fmtDataSem(a.ent)) : '—'}</td></tr>`).join(''))
       + (L.length > 12 ? `<div class="desc" style="margin-top:3px">mostrando os 12 maiores de ${L.length}</div>` : '')
       + '</div>';
@@ -18940,7 +18949,11 @@ function cardOpAndamento(rows) {
     const L = (rows || []).filter(r => (+r.kg_produzido || 0) > 0).map(r => {
       const prog = +r.kg_programado || 0, feito = +r.kg_produzido || 0;
       const pct = r.pct_concluido != null ? +r.pct_concluido : (prog > 0 ? feito / prog * 100 : 0);
-      return { r, prog, feito, saldo: Math.max(0, prog - feito), pct, parada: dias(r.ultimo_apontamento || r.inicio) };
+      /* caixa da OP pela proporcao da propria linha da fila: nao existe campo de
+         "caixa que falta", so o programado em caixa e em kg. */
+      const cxProg = +r.cx_programado || +r.quantidade || 0;
+      const cxSaldo = (cxProg > 0 && prog > 0) ? cxProg * Math.max(0, prog - feito) / prog : 0;
+      return { r, prog, feito, cxProg, cxSaldo, saldo: Math.max(0, prog - feito), pct, parada: dias(r.ultimo_apontamento || r.inicio) };
     });
     if (!L.length) return '';
     L.sort((a, b) => b.pct - a.pct);
@@ -18950,8 +18963,8 @@ function cardOpAndamento(rows) {
       const cor = fim ? 'var(--critico)' : (x.pct >= 70 ? '#1E7B45' : 'var(--laranja)');
       return `<tr onclick="detOP('${escapeHtml(String(r.op))}','${escapeHtml(String(r.recurso_cod))}')" style="cursor:pointer"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(r.recurso_cod))}</span> ${escapeHtml(String(r.recurso_nome || '').slice(0, 16))} 🔎`
         + `<div style="font-size:10.5px;color:var(--fraco-2)">OP ${escapeHtml(String(r.op))} · ${escapeHtml(String(r.item_desc || '').slice(0, 28))}</div></td>`
-        + `<td><span class="cel neutra">${_progT(x.prog)}</span></td>`
-        + `<td><span class="cel" style="color:${cor};font-weight:800">${Math.round(x.pct)}%<div style="font-size:10px;font-weight:600;opacity:.85">falta ${_progT(x.saldo)}</div></span></td></tr>`;
+        + `<td><span class="cel neutra">${_progT(x.prog)}${x.cxProg > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${Math.round(x.cxProg).toLocaleString('pt-BR')} cx</div>` : ''}</span></td>`
+        + `<td><span class="cel" style="color:${cor};font-weight:800">${Math.round(x.pct)}%<div style="font-size:10px;font-weight:600;opacity:.85">falta ${_progT(x.saldo)}${x.cxSaldo >= 1 ? ' · ' + Math.round(x.cxSaldo).toLocaleString('pt-BR') + ' cx' : ''}</div></span></td></tr>`;
     }).join('');
     const aviso = encalhadas.length
       ? `<p class="desc" style="margin:0 0 8px;color:var(--critico)"><b>${encalhadas.length} OP já apontada 100%</b> continua na fila — ocupa lugar na máquina sem ter o que produzir. Vale conferir se foi encerrada no ERP.</p>`
@@ -18986,7 +18999,8 @@ function renderProgramacao() {
   const foto = todas[0].dia_foto;
   const kgTudo = todas.reduce((a, r) => a + (+r.kg_programado || 0), 0);
   $('progFoto').innerHTML = 'Programação de <b>' + escapeHtml(fmtData(foto)) + '</b> · '
-    + fmt(todas.length, 0) + (todas.length === 1 ? ' ordem · <b>' : ' ordens · <b>') + _progT(kgTudo) + '</b> para produzir'
+    + fmt(todas.length, 0) + (todas.length === 1 ? ' ordem · <b>' : ' ordens · <b>') + _progT(kgTudo) + '</b>'
+    + (() => { const c = todas.reduce((a, r) => a + (+r.quantidade || 0), 0); return c > 0 ? ' · <b>' + fmt(c, 0) + '</b> cxs' : ''; })() + ' para produzir'
     + (rows.length !== todas.length ? ' · no filtro atual: ' + fmt(rows.length, 0) + ' ordens / ' + _progT(rows.reduce((a, r) => a + (+r.kg_programado || 0), 0)) : '');
 
   { const c = $('progFiltros'); if (c) c.classList.remove('oculto'); }
