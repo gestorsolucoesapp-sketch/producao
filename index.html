@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.623.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.624.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.623.0';
+const APP_VER = '3.624.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10978,6 +10978,8 @@ function detSetupsMaquina(cod, setor) {
       p._minTurno = (_tur && fatias) ? (fatias[_tur] || 0) * 60 : minCheio;
     });
     const nSetups = setups.length;
+    /* 04/08/2026: guarda as paradas para o toque no turno abrir a lista. */
+    _setupSnap = { setups, nome, fmtMin: null };
     /* A MÉDIA É POR TROCA DE ITEM, NÃO POR PARADA. Um mesmo setup costuma sair do
        ERP em mais de uma parada: na 703 em 01/08 foram 07:22→11:16 (3h54) e
        11:28→11:29 (1 min), mesma OP 262248. Dividir 3h55 por 2 paradas dava 1h57
@@ -10991,6 +10993,20 @@ function detSetupsMaquina(cod, setor) {
     const corMedia = mediaMin > _metaSt ? 'var(--critico)' : 'var(--ok-2)';
     const corpo = `<p class="idet-desc">${escapeHtml(nome)} · ${nSetups} parada(s) de setup${nTrocas !== nSetups ? ` · <b>${nTrocas} troca(s) de item</b>` : ''}</p>`
       + (nIgnoradas > 0 ? `<p class="desc" style="margin:-4px 0 4px">${nIgnoradas} parada(s) de SETUP abaixo de ${fmtMin(_minSt)} ficaram de fora (${fmtMin(minIgnorados)}) — regra do corte mínimo da aba Metas.</p>` : '')
+      + (function () {
+        /* SETUP QUE NAO E SETUP. Caso real da 501 em 04/08/2026: parada de SETUP
+           de 02/08 01:14 ate 05/08 01:35 — 72 h, com o fim no FUTURO. Ela sozinha
+           respondia por 72 das 74 h e levava a media para 24h41, num setor cujo
+           setup normal leva 40 min. Nao e desempenho ruim, e erro de digitacao. */
+        const lim = new Date(); lim.setHours(23, 59, 59);
+        const sus = setups.filter(x => (x._minCheio || 0) > 480 || (x.fim && new Date(x.fim) > lim));
+        if (!sus.length) return '';
+        const minSus = sus.reduce((a, x) => a + (x._minCheio || 0), 0);
+        return `<div style="background:#FDECEC;border:1px solid #E5A3A3;color:#8A2B2B;border-radius:10px;padding:8px 10px;font-size:11.5px;line-height:1.5;margin:2px 0 8px">`
+          + `⛔ <b>${sus.length} apontamento(s) de setup fora do normal</b> — ${fmtMin(minSus)} de ${fmtMin(totMin)} do total.<br>`
+          + sus.slice(0, 3).map(x => `${fmtData(String(x.inicio).slice(0, 10))} ${horaHHMMParada(x.inicio) || ''} → ${x.fim ? fmtData(String(x.fim).slice(0, 10)) + ' ' + (horaHHMMParada(x.fim) || '') : 'em aberto'} · <b>${fmtMin(x._minCheio || 0)}</b>${x.fim && new Date(x.fim) > lim ? ' · <b>fim no futuro</b>' : ''}${x.op ? ' · OP ' + escapeHtml(String(x.op)) : ''}`).join('<br>')
+          + `<br><span style="font-weight:600">Setup de mais de 8 h ou com fim em data futura é erro de apontamento. Enquanto ficar assim, a média deste card não serve para cobrança.</span></div>`;
+      })()
       + (nTrocas > 0 && nSetups > nTrocas ? `<p class="desc" style="margin:-4px 0 8px">O ERP registrou ${nSetups} paradas para ${nTrocas} troca(s) — a média é por troca, que é o que a meta cobra.</p>` : '')
       + `
       <div class="idet-grid">
@@ -11004,7 +11020,7 @@ function detSetupsMaquina(cod, setor) {
         // já fatiados. São bases diferentes de propósito: dividir uma pela outra
         // dava "média" sem sentido (turno com 0 início escondia 41h de parada).
         const o = porTurno[t];
-        return `<tr><td class="nome">${t}</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${o.n}×</span></td><td><span class="cel ${o.min > 0 ? (o.min > META_SETUP_MIN * 3 ? 'baixo' : 'neutra') : 'vazio'}">${o.min > 0 ? fmtMin(o.min) : '—'}</span></td></tr>`;
+        return `<tr onclick="detSetupTurno('${t}')" style="cursor:pointer"><td class="nome">${t} 🔎</td><td><span class="cel ${t === 'Manhã' ? 'cel-man' : t === 'Tarde' ? 'cel-tar' : 'cel-noi'}">${o.n}×</span></td><td><span class="cel ${o.min > 0 ? (o.min > META_SETUP_MIN * 3 ? 'baixo' : 'neutra') : 'vazio'}">${o.min > 0 ? fmtMin(o.min) : '—'}</span></td></tr>`;
       }).join(''))}
       <p class="desc" style="margin:4px 0 0;font-size:11px">Iniciados = setups que começaram no turno · Tempo = quanto da parada caiu nele (parada que vira o turno é dividida)</p>
       ${(function () {
@@ -18855,6 +18871,37 @@ async function detItem(item) {
         + `<td><span class="cel neutra" style="font-size:11px">${fmtData(v.ult)}</span></td></tr>`).join(''));
   } else h += '<p class="desc" style="margin:12px 0 0">Este item nunca foi produzido no período importado.</p>';
   abreDet('Item ' + item, h);
+}
+/* lista das paradas de setup de UM turno — 04/08/2026. abreDet e modal unico,
+   entao o detalhe substitui a tela de setups; o botao volta refaz o card. */
+let _setupSnap = null;
+function detSetupTurno(t) {
+  if (!_setupSnap || !_setupSnap.setups) return;
+  const fmtMin = m => { const hh = Math.floor(m / 60), mm = Math.round(m % 60); return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}` : `${mm}min`; };
+  const lim = new Date(); lim.setHours(23, 59, 59);
+  const L = _setupSnap.setups.filter(p2 => {
+    let f = null;
+    try { f = tempoParadaPorTurno(p2.inicio, _horasOrig(p2), _diaDeParada(p2)); } catch (_) { }
+    return f ? (f[t] || 0) > 0.0005 : (blocoParadaTurno(p2.inicio, p2.dia) === t);
+  }).map(p2 => {
+    let f = null;
+    try { f = tempoParadaPorTurno(p2.inicio, _horasOrig(p2), _diaDeParada(p2)); } catch (_) { }
+    return { p: p2, min: (f ? (f[t] || 0) : (+p2.tempo_horas || 0)) * 60, cheio: p2._minCheio || (+p2.tempo_horas || 0) * 60 };
+  }).sort((a, b) => b.min - a.min);
+  if (!L.length) { toast('Sem setup neste turno'); return; }
+  const tot = L.reduce((a, x) => a + x.min, 0);
+  abreDet(`Setups · ${_setupSnap.nome || ''} · ${t}`,
+    `<p class="idet-desc"><b>${L.length}</b> parada(s) de setup neste turno · <b>${fmtMin(tot)}</b></p>`
+    + tabSimples(['Início → fim · OP', 'Neste turno', 'Total'], L.map(x => {
+      const fut = x.p.fim && new Date(x.p.fim) > lim;
+      const gr = x.cheio > 480 || fut;
+      return `<tr><td class="nome" style="font-size:11px">${fmtData(String(x.p.inicio).slice(0, 10))} ${horaHHMMParada(x.p.inicio) || ''} → ${x.p.fim ? (String(x.p.fim).slice(0, 10) !== String(x.p.inicio).slice(0, 10) ? fmtData(String(x.p.fim).slice(0, 10)) + ' ' : '') + (horaHHMMParada(x.p.fim) || '') : 'em aberto'}`
+        + `${x.p.op ? `<div style="font-size:9.5px;color:var(--fraco-2)">OP ${escapeHtml(String(x.p.op))}</div>` : ''}`
+        + `${gr ? `<div style="font-size:9.5px;color:#8A2B2B;font-weight:800">⛔ ${fut ? 'fim em data futura' : 'setup acima de 8 h'}</div>` : ''}</td>`
+        + `<td><span class="cel ${gr ? 'baixo' : 'neutra'}">${fmtMin(x.min)}</span></td>`
+        + `<td><span class="cel ${gr ? 'baixo' : 'cel-tot'}">${fmtMin(x.cheio)}</span></td></tr>`;
+    }).join(''))
+    + '<p class="desc" style="margin:6px 0 0;font-size:10.5px">“Neste turno” é a fatia da parada que caiu aqui · “Total” é a parada inteira, mesmo que ela atravesse turnos.</p>');
 }
 async function detOP(op, cod) {
   op = String(op); cod = cod ? String(cod) : null;
