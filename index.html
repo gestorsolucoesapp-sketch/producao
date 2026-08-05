@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.627.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.628.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -921,7 +921,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
             <span class="chip">621 Produção resumida</span><span class="chip">622 Produção detalhada</span>
             <span class="chip">624 Perdas</span><span class="chip">054 Perdas cliente</span>
             <span class="chip">643 Paradas</span><span class="chip">646 Consumo</span>
-            <span class="chip">264 Fila de produção</span>
+            <span class="chip">264 Fila de produção</span><span class="chip">339 Fila (arquivo único)</span>
           </div>
         </div>
       </div>
@@ -1485,6 +1485,10 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     if (m) return m[1];
     // REST196 "Saldos de Estoque x Pedidos": rotina de VENDAS, prefixo REST
     if (/ROTINA:\s*REST196/.test(cab) || /Saldos de Estoque x Pedidos/.test(cab)) return '196';
+    /* RGER339 "Fila de Producao p/ Data - Pedido": rotina de PCP, prefixo RGER.
+       Traz a fila de TODAS as maquinas num arquivo so — ao contrario do RPCP264,
+       que vem um PDF por maquina. Mesma tabela de destino (fila_producao). */
+    if (/ROTINA:\s*RGER339/.test(cab) || /Fila de Produ\S*\s+p\/\s*Data\s*[-\u2013]\s*Pedido/.test(cab)) return '339';
     // Propostas x Pedidos: relatorio de VENDAS. O PDF que o comercial manda vem
     // recortado, sem a linha ROTINA — identifica pelo cabecalho de colunas.
     if (linhas.some(l => /^Proposta\s+Pedido\s+Emiss/.test(l.texto))) return 'PROP';
@@ -1867,6 +1871,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     '643': 'Paradas (Motivo × OP × Dia × Item)',
     '646': 'Consumo de componentes (Dia × Recurso)',
     '264': 'Fila de produção por recurso (carga programada)',
+    '339': 'Fila de produção por Data/Pedido (todas as máquinas num arquivo)',
     '196': 'Saldos de Estoque × Pedidos (carteira em aberto)',
     'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)'
   };
@@ -1914,7 +1919,12 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 
     // Quantidade e Peso: primeiro pela coluna; se a coluna vier vazia, pelo par
     // de numeros que antecede o primeiro "dd/mm/aa hh:mm".
-    const soNum = (v) => numBR(String(v || '').replace(/[^\d.,]/g, ''));
+    /* SO o primeiro numero da coluna. O rotulo "Inicio" no cabecalho fica
+       centralizado sobre o par data+hora, entao seu x nao e' o x do dado e a
+       data de inicio vazava para dentro do Peso: 2.361,60 virava
+       2.361,600608261633. O valor inteiro nunca mudava, mas os decimais sim —
+       era por isso que a soma de peso da fila nao fechava com o rodape do PDF. */
+    const soNum = (v) => { const m = /\d[\d.]*(?:,\d+)?/.exec(String(v || '')); return m ? numBR(m[0]) : null; };
     let quantidade = soNum(bloco.cols.quantidade);
     let peso = soNum(bloco.cols.peso);
     if (quantidade == null || peso == null) {
@@ -2041,6 +2051,159 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     return out;
   }
 
+  /* ---------- RGER339: Fila de Producao p/ Data - Pedido ----------
+     UM arquivo com TODAS as maquinas (o RPCP264 vem um PDF por maquina — era de
+     onde vinha a falha silenciosa "maquina produzindo e sem ordem na fila":
+     arquivo que nao entrava fazia a maquina desaparecer sem reclamar).
+     Colunas: OP | Item | Versao | Pedido | Cliente | Entr. OP | Qtd | Peso (KG) | Inicio | Termino
+     Grava na MESMA tabela fila_producao, por isso toda a aba Programacao,
+     Carteira x fila e o desvio da fila funcionam sem mudanca.
+
+     O que ele tem e o 264 nao: numero do PEDIDO na linha da OP.
+     O que ele NAO tem: cores, estoque, prazo, suprimento_op, largura, espessura
+     (sao atributos do 264 com "Imprimir Atributos: Sim") e turno. Por isso o
+     MAPA do 339 NAO envia essas colunas — assim, se o 264 do mesmo dia ja tiver
+     entrado, os atributos dele sobrevivem ao upsert.
+
+     Armadilhas cobertas (medidas no arquivo de 05/08/2026, 42 paginas):
+      1) o cabecalho de resultado tem DOIS tokens "OP" (o da coluna, em x~28, e o
+         de "Entr. OP", em x~536): vale sempre o MENOR x.
+      2) o x do rotulo "Inicio"/"Termino" NAO e o x do dado (rotulo centralizado
+         sobre o par data+hora). Se essas duas colunas nao existissem no mapa, a
+         data de inicio caia dentro do Peso e virava 2.361,600608261633.
+         Elas entram como coluna-lixo (_dt1/_dt2) so para segurar o token.
+      3) Inicio/Termino vem com ano de 4 DIGITOS (no 264 vem 2) e a Entrega
+         tambem: por isso as datas sao lidas como PAR data+hora, e a entrega
+         pela COLUNA (ela nunca tem hora).
+      4) o rodape de cada recurso e uma linha SEM OP com dois numeros nas colunas
+         Qtd e Peso. Como as linhas de continuacao so aceitam token a ESQUERDA da
+         coluna Entrega, esse subtotal e descartado sozinho — se entrasse, somaria
+         no peso da ultima OP daquele recurso.
+      5) Item, Versao e Cliente quebram em ate 3 linhas.
+      6) A PRIMEIRA pagina e a folha de parametros: lista os nomes dos recursos
+         SEM codigo. Como o regex de recurso exige digitos e nao ha cabecalho de
+         colunas ainda, nada e lido dali.
+      7) Existem OPs com Qtd 0,00 e Peso > 0 (259375, 262528, 259082) e OPs com
+         Inicio no PASSADO ou em 2027 (507). Gravadas como estao — quem acusa e
+         a aba Programacao, nao o parser.
+     Conferido contra o Total Geral do rodape: 1.036 ordens, 1.624.091,17 cx e
+     2.861.181,50 kg. */
+  const COLS339 = [
+    ['OP', 'op'], ['Item', 'item'], ['Versao', 'versao'], ['Pedido', 'pedido'],
+    ['Cliente', 'cliente'], ['Entr', 'entrega'], ['Qtd', 'qtd'], ['Peso', 'peso'],
+    ['Inicio', '_dt1'], ['Termino', '_dt2']
+  ];
+
+  function parse339(linhas, periodo) {
+    const semAc = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const limpa = (v) => String(v || '').replace(/\s+/g, ' ').trim() || null;
+    // pega SO o primeiro numero BR da coluna: blinda contra token vizinho colado
+    const soNum = (v) => { const m = /\d[\d.]*(?:,\d+)?/.exec(String(v || '')); return m ? numBR(m[0]) : null; };
+
+    const diaFoto = (periodo && periodo.gerado) || null;
+    let horaFoto = (periodo && periodo.hora) || null;
+    if (!horaFoto) {
+      for (const l of linhas.slice(0, 40)) {
+        const h = /\bHORA:\s*(\d{2}:\d{2}(?::\d{2})?)/.exec(l.texto);
+        if (h) { horaFoto = h[1]; break; }
+      }
+    }
+
+    const out = [];
+    let rec = null, colX = null, bloco = null, ordem = 0;
+
+    const fecha = () => {
+      if (!bloco) { return; }
+      const c = bloco.cols;
+      const mOp = /\b(\d{5,8})\b/.exec(c.op || '');
+      if (mOp && bloco.rec) {
+        // Inicio e Termino: os DOIS ultimos pares data+hora da linha de abertura
+        const dts = [];
+        const reDt = /(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/g;
+        let m;
+        while ((m = reDt.exec(bloco.txt))) dts.push(m[3] + '-' + m[2] + '-' + m[1] + 'T' + m[4] + ':' + m[5] + ':00-03:00');
+        const mE = /(\d{2})\/(\d{2})\/(\d{4})/.exec(c.entrega || '');
+        const item = limpa(c.item) || '';
+        // "1800051/1-COLHER MASTER ..." -> codigo 1800051, versao do item 1
+        const mI = /^(\d{4,10})\s*\/\s*(\d+)\s*-\s*([\s\S]*)$/.exec(item)
+                || /^(\d{4,10})\s*-\s*()([\s\S]*)$/.exec(item);
+        ordem++;
+        out.push({
+          dia_foto: diaFoto,
+          hora_foto: horaFoto,
+          recurso_cod: bloco.rec.cod,
+          recurso_nome: bloco.rec.nome,
+          op: mOp[1],
+          item_cod: mI ? mI[1] : null,
+          item_versao: mI ? (mI[2] || null) : null,
+          item_desc: mI ? (limpa(mI[3]) || null) : (item || null),
+          versao: limpa(c.versao),
+          pedido: (function () { const p = /\b\d{4,8}\b/.exec(c.pedido || ''); return p ? p[0] : null; })(),
+          cliente: limpa(c.cliente),
+          entrega: mE ? (mE[3] + '-' + mE[2] + '-' + mE[1]) : null,
+          quantidade: soNum(c.qtd),
+          peso: soNum(c.peso),
+          inicio: dts.length >= 2 ? dts[dts.length - 2] : (dts[0] || null),
+          termino: dts.length >= 2 ? dts[dts.length - 1] : null,
+          ordem: ordem
+        });
+      }
+      bloco = null;
+    };
+
+    for (const linha of linhas) {
+      const t = linha.texto;
+      const tSem = semAc(t);
+
+      /* Cabecalho/rodape de pagina. O TITULO ("Fila de Producao p/ Data -
+         Pedido") cai em x~392, ou seja, DENTRO da coluna Cliente: quando a
+         virada de pagina acontecia logo depois de uma OP, o titulo entrava como
+         continuacao e virava o nome do cliente daquela ordem (12 ordens de 1.036
+         no arquivo de 05/08). ROTINA/DATA/HORA/PAGINA ficam em x>750 e ja caiam
+         fora pelo corte da coluna Entrega, mas entram aqui por seguranca. */
+      if (/^(ROTINA:|DATA:|HORA:|P[AÁ]GINA:|Fila de Produ)/i.test(tSem.trim())) continue;
+
+      // troca de recurso: o ERP escreve "Recurso:1201 - INJETORA BMB 01" (sem
+      // espaco depois dos dois pontos). A ordem reinicia em cada maquina.
+      const mR = /Recurso:\s*(\d+)\s*[-\u2013]\s*(.+?)\s*$/.exec(t);
+      if (mR) { fecha(); rec = { cod: mR[1].trim(), nome: mR[2].trim() }; ordem = 0; continue; }
+
+      // cabecalho de colunas (repete a cada recurso e a cada pagina)
+      if (/\bOP\b/.test(tSem) && /\bQtd\b/.test(tSem) && /Peso/.test(tSem) && /Termino/.test(tSem)) {
+        const novo = [];
+        for (const cc of COLS339) {
+          const xs = linha.itens.filter(i => semAc(i.s).startsWith(cc[0])).map(i => i.x);
+          if (xs.length) novo.push({ chave: cc[1], x: Math.min.apply(null, xs) });
+        }
+        if (novo.length >= 7) { fecha(); colX = novo.sort((a, b) => a.x - b.x); }
+        continue;
+      }
+      if (!colX || !rec) continue;
+
+      const xOp = (colX.find(c => c.chave === 'op') || { x: -999 }).x;
+      const xEnt = (colX.find(c => c.chave === 'entrega') || { x: 99999 }).x;
+      const abre = linha.itens.some(i => /^\d{5,8}$/.test(i.s) && Math.abs(i.x - xOp) <= 14);
+      if (abre) { fecha(); bloco = { cols: {}, txt: t, rec: rec }; }
+      if (!bloco) continue;
+
+      for (const it of linha.itens) {
+        // linha de continuacao so carrega texto (Item/Versao/Pedido/Cliente).
+        // Tudo a partir da coluna Entrega e' subtotal do recurso — ignora.
+        if (!abre && it.x >= xEnt - 6) continue;
+        const cx = it.x + (it.w || 0) / 2;
+        let col = colX[0];
+        for (const c of colX) { if (cx >= c.x - 6) col = c; else break; }
+        if (col.chave === '_dt1' || col.chave === '_dt2') continue;
+        bloco.cols[col.chave] = ((bloco.cols[col.chave] || '') + ' ' + it.s).trim();
+      }
+    }
+    fecha();
+
+    // e uma FOTO do dia, nao um periodo: carimba o dia de geracao
+    if (periodo && diaFoto) { periodo.de = periodo.de || diaFoto; periodo.ate = periodo.ate || diaFoto; }
+    return out;
+  }
+
   // ---------- leitura dos TOTAIS declarados no rodapé do PDF (p/ conferência) ----------
   // Números do rodapé podem vir com "." também como decimal (ex.: 3.849.139.366 = 3.849.139,366).
   // Regra: o ÚLTIMO separador ( . ou , ) seguido de 1–3 dígitos é o decimal; os demais são milhar.
@@ -2078,6 +2241,17 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       for (const l of linhas) {
         const m = /^Total Geral:\s*([\d.,]+)\s+([\d.,]+)/i.exec((l.texto || '').trim());
         if (m) { t.peso = numAmb(m[2]); break; }
+      }
+      return t;
+    }
+    /* RGER339: o total geral do rodape vem SEM rotulo — e' so a ultima linha do
+       PDF com exatamente dois numeros (quantidade e peso). Cada recurso tambem
+       fecha com uma linha assim; vale a ULTIMA do documento. */
+    if (rotina === '339') {
+      for (const l of linhas) {
+        const tx = (l.texto || '').trim();
+        const m = /^([\d.]+,\d{2})\s+([\d.]+,\d{2})$/.exec(tx);
+        if (m) { t.quantidade = numAmb(m[1]); t.peso = numAmb(m[2]); }
       }
       return t;
     }
@@ -2156,7 +2330,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   async function parseDocumento(pdf) {
     const linhas = await extrairLinhas(pdf);
     const rotina = detectarRotina(linhas);
-    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264.');
+    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264, RGER339, REST196 ou Propostas x Pedidos.');
     const periodo = acharPeriodo(linhas);
     let registros;
     switch (rotina) {
@@ -2167,6 +2341,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       case '643': registros = parse643(linhas, periodo); break;
       case '646': registros = parse646(linhas, periodo); break;
       case '264': registros = parse264(linhas, periodo); break;
+      case '339': registros = parse339(linhas, periodo); break;
       case '196': registros = parse196(linhas, periodo); break;
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
     }
@@ -2191,7 +2366,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     };
   }
 
-  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES, __parse264: parse264, __parse196: parse196, __parsePropostas: parsePropostas };
+  return { parseDocumento, extrairLinhas, detectarRotina, numBR, dataBR, NOMES, __parse264: parse264, __parse339: parse339, __parse196: parse196, __parsePropostas: parsePropostas };
 });
 
 </script>
@@ -2207,7 +2382,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.627.0';
+const APP_VER = '3.628.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16088,7 +16263,12 @@ const MAPA = {
   '643': { tabela: 'paradas', linha: r => ({ dia: r.dia, motivo_cod: r.motivo_cod, motivo_desc: r.motivo_desc, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, data: r.data, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, inicio: r.inicio, fim: r.fim, tempo_horas: r.tempo_horas, tempo_exato: r.tempo_exato }) },
   '196': { tabela: 'rest196_pendente', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, vendedor: r.vendedor, cliente: r.cliente, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, un: r.un, pedido: r.pedido, origem: r.origem, entrega: r.entrega, dias: r.dias, qtd_total: r.qtd_total, qtd_pendente: r.qtd_pendente, peso_pendente: r.peso_pendente }) },
   'PROP': { tabela: 'propostas', linha: r => ({ dia_foto: r.dia_foto, proposta: r.proposta, pedido: r.pedido, emissao: r.emissao, cliente_cod: r.cliente_cod, cliente: r.cliente, entrega: r.entrega, situacao: r.situacao, peso: r.peso, rs_kg: r.rs_kg, qtde: r.qtde, rs_qtde: r.rs_qtde, atendido: r.atendido, valor: r.valor, ordem_compra: r.ordem_compra }) },
-  '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, cores: r.cores, estoque: r.estoque, prazo_dias: r.prazo_dias, data_pedido: r.data_pedido, suprimento_op: r.suprimento_op, largura: r.largura, espessura: r.espessura }) },
+  '264': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, cores: r.cores, estoque: r.estoque, prazo_dias: r.prazo_dias, data_pedido: r.data_pedido, suprimento_op: r.suprimento_op, largura: r.largura, espessura: r.espessura, fonte: '264' }) },
+  /* MESMA tabela do 264. NAO manda cores/estoque/prazo_dias/data_pedido/
+     suprimento_op/largura/espessura: sao atributos que so o 264 traz e, como o
+     upsert do PostgREST so atualiza as colunas enviadas, omiti-las faz o dado do
+     264 do mesmo dia SOBREVIVER a importacao do 339. */
+  '339': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, pedido: r.pedido, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, fonte: '339' }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
 
@@ -16478,7 +16658,7 @@ async function gravar(id, substituir = false) {
        Só filtra registro que TEM turno; 643 e 646 não têm e ficam de fora disto. */
     // o 264 e FOTO da fila (nao tem turno e nao e producao apontada): o corte
     // do dia aberto nao se aplica — aplicar apagaria a fila inteira.
-    if (r.rotina !== '264' && r.rotina !== '196' && r.periodo.gerado && Array.isArray(r.registros)) {
+    if (r.rotina !== '264' && r.rotina !== '339' && r.rotina !== '196' && r.periodo.gerado && Array.isArray(r.registros)) {
       const g = String(r.periodo.gerado);
       const antes = r.registros.length;
       // hora do registro SEM new Date(): campo do ERP com fuso aplicado mente.
