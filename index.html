@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.646.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.647.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2545,7 +2545,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.646.0';
+const APP_VER = '3.647.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19952,6 +19952,87 @@ function _blocoVencidas() {
    ENTREGA AO CLIENTE tambem vencida das que so estouraram a previsao interna.
    Sao coisas diferentes: previsao estourada e problema de PCP, entrega vencida
    e problema com o cliente, e so a segunda gera telefonema. */
+/* ---------- O QUE FEZ ATRASAR ----------
+   A lista de vencidas dizia QUAIS estao paradas. Faltava POR QUE.
+
+   PRIMEIRA TENTATIVA, DESCARTADA: mostrar as ordens na frente na fila. Nao
+   funciona — medido em 05/08/2026, nas 18 maquinas com OP vencida a vencida era
+   a PRIMEIRA da fila em todas as 18. O ERP ordena a fila por termino previsto,
+   entao a mais atrasada sobe sozinha para o topo. Posicao na fila nao explica
+   nada aqui, e um bloco "ordens na frente" viveria vazio.
+
+   O QUE EXPLICA: o que a maquina realmente fez enquanto a OP esperava. Duas
+   fontes, lado a lado:
+     1) as OPs que ela APONTOU no periodo — sao literalmente as que passaram na
+        frente, nao na programacao mas na realidade;
+     2) as PARADAS por motivo.
+   Quando as duas vem vazias, a maquina simplesmente nao rodou, e isso e a
+   resposta mais forte que a tela pode dar. Caso real: a 1303 tem 8 OPs vencidas
+   e apontou 19 kg em UM dia nas ultimas duas semanas.
+
+   Nao afirmo causalidade: a maquina pode ter rodado outra coisa por decisao
+   correta de prioridade. O bloco poe os fatos lado a lado e deixa a conclusao
+   com quem conhece o chao. */
+async function _vencCausas(boxId, setor) {
+  const box = $(boxId); if (!box) return;
+  if (!_filaVenc || !_filaVenc.linhas) { box.innerHTML = ''; return; }
+  const hoje = _filaVenc.dia;
+  let V = _filaVenc.linhas.filter(r => (r.setor || 'Outros') === String(setor));
+  if (_progMaqSel) V = V.filter(r => String(r.recurso_cod) === _progMaqSel);
+  if (!V.length) { box.innerHTML = ''; return; }
+  const maqs = [...new Set(V.map(r => String(r.recurso_cod)))];
+  const menos = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  const de = menos(hoje, 14);
+
+  const vencOp = new Set(V.map(r => String(r.op)));
+  let P = [];
+  try {
+    const { data, error } = await sb.from('producao')
+      .select('recurso_cod,dia,op,item_desc,peso,quantidade')
+      .in('recurso_cod', maqs.slice(0, 40)).gte('dia', de).lte('dia', hoje).limit(3000);
+    if (error) throw error;
+    P = data || [];
+  } catch (_) { box.innerHTML = '<p style="margin:0">Não consegui buscar a produção das máquinas.</p>'; return; }
+
+  const porMaq = {};
+  maqs.forEach(c => { porMaq[c] = { cod: c, venc: 0, ops: {}, kg: 0, dias: new Set() }; });
+  V.forEach(r => { const o = porMaq[String(r.recurso_cod)]; if (o) o.venc++; });
+  P.forEach(r => {
+    const o = porMaq[String(r.recurso_cod)]; if (!o) return;
+    const k = String(r.op || '—');
+    const a = (o.ops[k] = o.ops[k] || { op: k, desc: r.item_desc || '', kg: 0, dias: new Set(), venc: vencOp.has(k) });
+    a.kg += (+r.peso || 0); a.dias.add(r.dia);
+    o.kg += (+r.peso || 0); o.dias.add(r.dia);
+  });
+  const lista = Object.values(porMaq).sort((a, b) => b.venc - a.venc);
+
+  const nome = c => { const x = V.find(r => String(r.recurso_cod) === c); return (x && x.recurso_nome) || ''; };
+  const bloco = m => {
+    const ops = Object.values(m.ops).sort((a, b) => b.kg - a.kg);
+    const emVenc = ops.filter(o => o.venc).reduce((a, o) => a + o.kg, 0);
+    const cab = `<p class="desc" style="margin:9px 0 3px"><span class="cod">${escapeHtml(m.cod)}</span> ${escapeHtml(String(nome(m.cod)).slice(0, 22))} · <b>${m.venc}</b> vencida(s) — nos últimos 14 dias apontou <b>${fmtKg(m.kg)}</b> em <b>${m.dias.size}</b> dia(s)${emVenc > 0 ? ` · <span style="color:var(--ok-3)">${fmtKg(emVenc)} já foi nas próprias vencidas</span>` : ''}</p>`;
+    if (!ops.length) return cab + `<p class="desc" style="margin:0 0 4px;color:var(--critico)"><b>Nenhum apontamento de produção no período.</b> A máquina não rodou.</p>`;
+    return cab + tabSimples(['OP apontada · item', 'Dias', 'Produziu'], ops.slice(0, 8).map(o => `<tr onclick="detOP('${_jsAttr(o.op)}','${_jsAttr(m.cod)}')" style="cursor:pointer">
+      <td class="nome" style="font-size:11.5px">OP <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(o.op)}</span> 🔎${o.venc ? ' <span style="display:inline-block;background:#8A2B2B;color:#fff;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">é uma das vencidas</span>' : ''}
+        <div style="font-size:10px;color:var(--fraco-2)">${escapeHtml(String(o.desc).slice(0, 38))}</div></td>
+      <td><span class="cel neutra">${o.dias.size}</span></td>
+      <td><span class="cel ${o.venc ? 'ok' : 'cel-tot'}">${fmtKg(o.kg)}</span></td></tr>`).join(''))
+      + (ops.length > 8 ? `<p class="desc" style="font-size:10px;margin:2px 0 0">mostrando 8 de ${ops.length} OPs</p>` : '');
+  };
+
+  const paradas = lista.filter(m => !Object.keys(m.ops).length).length;
+  box.innerHTML = `<div style="font-size:11px;color:#8A97A6;margin:0 0 2px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">🔀 O que a máquina fez enquanto isso</div>
+    <p class="desc" style="margin:0 0 2px;font-size:11px">Produção apontada de ${fmtData(de)} a ${fmtData(hoje)}. Posição na fila não serve de explicação: o ERP ordena por término, então a vencida fica sempre em 1º.${paradas ? ` <b style="color:var(--critico)">${paradas} máquina(s) sem nenhum apontamento.</b>` : ''}</p>
+    ${lista.map(bloco).join('')}
+    <div style="height:12px"></div>
+    <div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">⏱ O que parou essas máquinas</div>
+    <div id="vencParBox" style="font-size:12px;color:var(--fraco)"><span class="spin"></span> buscando…</div>`;
+
+  /* janela de 14 dias: parada de dois meses atras nao explica uma fila de hoje,
+     e puxar tudo transformaria o bloco num relatorio. */
+  _fdMotivos('vencParBox', maqs, de, hoje, 0);
+}
+
 function detVencidasSetor(setor) {
   if (!_filaVenc || !_filaVenc.linhas) return;
   _detVoltar = null;
@@ -19998,7 +20079,9 @@ function detVencidasSetor(setor) {
         + `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Só a previsão interna estourou</div>`
         + tabSimples(['Máquina · OP · pedido', 'Previsto', 'Parada há'], L.filter(r => !(r.entrega && r.entrega < hoje)).slice(0, LIM).map(linha).join(''))
       : tabSimples(['Máquina · OP · pedido', 'Previsto', 'Parada há'], L.slice(0, LIM).map(linha).join('')))
-    + (L.length > LIM ? `<p class="desc">mostrando as ${LIM} mais paradas de ${L.length}</p>` : ''));
+    + (L.length > LIM ? `<p class="desc">mostrando as ${LIM} mais paradas de ${L.length}</p>` : '')
+    + `<div style="height:14px"></div><div id="vencCausaBox" style="font-size:12px;color:var(--fraco)"><span class="spin"></span> vendo o que fez atrasar…</div>`);
+  _vencCausas('vencCausaBox', setor);
 }
 
 /* ---- CARD: OP que saiu da fila sem terminar ---- */
