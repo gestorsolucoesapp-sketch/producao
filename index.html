@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.635.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.636.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2221,6 +2221,36 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
     return out;
   }
 
+  /* ---------- CATEGORIA DO DEPOSITO ----------
+     Decidido com o Joao em 05/08/2026:
+       ficam  -> produto acabado, bobinas/materia-prima e CQ/devolucao/retrabalho
+       fica a parte -> deposito 6 (PRODUTOS RESERVADOS) = ja VENDIDO, nao e' disponivel
+       saem   -> almoxarifado, insumos e pecas de manutencao, e NEM SAO GRAVADOS
+
+     O relatorio tem 47 depositos e eu nunca vi a lista completa, so os 14 do
+     cabecalho e um do preview. Por isso a regra e' por NOME, nao por codigo — e
+     o preview da importacao passa a listar os 47 ja classificados, para o Joao
+     corrigir o que cair na caixa errada. Codigo tem prioridade sobre nome:
+     app_config.estoque_dep_fora e estoque_dep_dentro (listas de codigos) mandam
+     mais que qualquer palavra do nome.
+
+     Nao casou com nada -> ACABADO, ou seja, FICA. Errar mantendo e' barato
+     (aparece na tela e se corrige); errar excluindo some com o dado calado. */
+  function estCatDeposito(cod, nome) {
+    const cfg = (typeof window !== 'undefined' && window.__estDepCfg) || null;
+    const c = String(cod || '');
+    if (cfg && Array.isArray(cfg.fora) && cfg.fora.map(String).includes(c)) return 'fora';
+    const forcado = !!(cfg && Array.isArray(cfg.dentro) && cfg.dentro.map(String).includes(c));
+    const n = String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+    if (/RESERVAD|VENDID|FATURAD/.test(n)) return 'vendido';
+    if (/CONTROLE DE QUALIDADE|\bCQ\b|DEVOLU|RETRABALH|BLOQUEAD|AVARIA|REPROVAD|QUARENTENA/.test(n)) return 'cq';
+    if (/BOBINA|MATERIA.?PRIMA|RESINA|GRANULAD|MOIDO|RECICL|MASTER ?BATCH|PIGMENTO/.test(n)) return 'bobina';
+    if (!forcado && /ALMOXARIFAD|INSUMO|MATERIAIS|MATERIAL|MANUTENCAO|FERRAMENT|\bPECA|EPI\b|EXPEDIENTE|ESCRITORIO|LIMPEZA|LUBRIFIC|COMBUSTIVEL|ATIVO|IMOBILIZAD|SUCATA|INDUSTRIAL|ALMOX/.test(n)) return 'fora';
+    return 'acabado';
+  }
+  const EST_CAT_NOME = { acabado: 'Produto acabado', bobina: 'Bobina / mat\u00e9ria-prima', cq: 'CQ / devolu\u00e7\u00e3o / retrabalho', vendido: 'Vendido (reservado)', fora: 'Fora \u2014 almoxarifado / insumos' };
+
   /* ---------- REST241: Saldos de Estoque por Deposito ----------
      Colunas: Item (codigo/versao) | Descricao | Unidade | Quantidade | Peso |
      Unitario | Valor. Valorizacao por Preco Medio.
@@ -2265,7 +2295,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 
     const out = [];
     const vistos = new Set();
-    let dep = null, ult = null, zeradas = 0, dups = 0, naoFecham = 0;
+    let dep = null, ult = null, zeradas = 0, dups = 0, naoFecham = 0, fora = 0, foraValor = 0;
+    const diag = {};
 
     for (const linha of linhas) {
       const t = limpa(linha.texto);
@@ -2282,9 +2313,14 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 
       const m = reItem.exec(t);
       if (m && dep) {
+        if (dep.cat === undefined) dep.cat = estCatDeposito(dep.cod, dep.nome);
         const quantidade = nb(m[5]), peso = nb(m[6]), unitario = nb(m[7]), valor = nb(m[8]);
         // linha 100% zerada nao carrega informacao nenhuma
         if (!quantidade && !peso && !valor) { zeradas++; ult = null; continue; }
+        // conta o deposito ANTES do corte: e' assim que os 47 aparecem no preview
+        const dg = (diag[dep.cod] = diag[dep.cod] || { cod: dep.cod, nome: dep.nome, cat: dep.cat, n: 0, valor: 0, peso: 0 });
+        dg.n++; dg.valor += (valor || 0); dg.peso += (peso || 0);
+        if (dep.cat === 'fora') { fora++; foraValor += (valor || 0); ult = null; continue; }
         const chave = dep.cod + '|' + m[1] + '|' + m[2];
         if (vistos.has(chave)) { dups++; ult = null; continue; }
         vistos.add(chave);
@@ -2299,7 +2335,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           item_cod: m[1], item_versao: m[2],
           item_desc: limpa(m[3]) || null,
           unidade: m[4],
-          quantidade: quantidade, peso: peso, unitario: unitario, valor: valor
+          quantidade: quantidade, peso: peso, unitario: unitario, valor: valor,
+          categoria: dep.cat
         };
         out.push(r); ult = r;
         continue;
@@ -2311,7 +2348,13 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       }
     }
 
-    out._diag = { zeradas: zeradas, duplicadas: dups, naoFecham: naoFecham, depositos: [...new Set(out.map(r => r.deposito_cod))].length };
+    const deps = Object.values(diag).sort((a, b) => b.valor - a.valor);
+    out._diag = {
+      zeradas: zeradas, duplicadas: dups, naoFecham: naoFecham,
+      depositos: deps.filter(d => d.cat !== 'fora').length,
+      depositosTotal: deps.length, fora: fora, foraValor: foraValor,
+      deps: deps, catNome: EST_CAT_NOME
+    };
     if (periodo && diaFoto) { periodo.de = periodo.de || diaFoto; periodo.ate = periodo.ate || diaFoto; }
     return out;
   }
@@ -2500,7 +2543,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.635.0';
+const APP_VER = '3.636.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6277,7 +6320,13 @@ function rhFicha(p) {
    sao estoque que se vende — somar tudo junto faz o numero mentir. A lista de
    travados abaixo e um chute informado a partir do nome dos depositos e PRECISA
    ser confirmada pelo Joao; por isso ela esta num lugar so, facil de corrigir. */
-const EST_TRAVADO = { '6': 'reservado', '13': 'CQ devolução', '14': 'CQ retrabalho', '35': 'CQ injetados' };
+const EST_CAT = {
+  acabado:  { nome: 'Produto acabado',            cor: '#2E7D32', grupo: 'Disponível' },
+  bobina:   { nome: 'Bobina / matéria-prima',     cor: '#1565C0', grupo: 'Disponível' },
+  vendido:  { nome: 'Vendido (reservado)',        cor: '#6A1B9A', grupo: 'Vendido' },
+  cq:       { nome: 'CQ / devolução / retrabalho', cor: '#B26B00', grupo: 'Travado' }
+};
+const estCat = c => EST_CAT[c] || { nome: 'Sem categoria', cor: '#8A97A6', grupo: 'Disponível' };
 let _estCache = null;
 
 async function carregarEstoque(force) {
@@ -6298,7 +6347,7 @@ async function carregarEstoque(force) {
     const rows = [];
     for (let ini = 0; ini < 60000; ini += 1000) {
       const { data, error } = await sb.from('estoque_deposito')
-        .select('deposito_cod,deposito_nome,item_cod,item_versao,item_desc,unidade,quantidade,peso,unitario,valor,hora_foto')
+        .select('deposito_cod,deposito_nome,item_cod,item_versao,item_desc,unidade,quantidade,peso,unitario,valor,hora_foto,categoria')
         .eq('dia_foto', dia).order('id', { ascending: true }).range(ini, ini + 999);
       if (error) throw error;
       rows.push(...(data || []));
@@ -6335,20 +6384,26 @@ function renderEstoque() {
   todas.forEach(r => {
     const c = String(r.deposito_cod);
     const o = (dep[c] = dep[c] || { cod: c, nome: r.deposito_nome || c, n: 0, kg: 0, rs: 0 });
-    o.n++; o.kg += (+r.peso || 0); o.rs += (+r.valor || 0);
+    o.n++; o.kg += (+r.peso || 0); o.rs += (+r.valor || 0); o.cat = o.cat || r.categoria;
     if (!o.nome && r.deposito_nome) o.nome = r.deposito_nome;
   });
   const lista = Object.values(dep).sort((a, b) => b.rs - a.rs);
   const rsTot = lista.reduce((a, d) => a + d.rs, 0);
   const kgTot = lista.reduce((a, d) => a + d.kg, 0);
-  const rsTrav = lista.filter(d => EST_TRAVADO[d.cod]).reduce((a, d) => a + d.rs, 0);
+  /* Tres leituras diferentes, nunca somadas: o que da pra vender, o que ja foi
+     vendido e esta so esperando carregar, e o que esta preso em CQ. Somar os
+     tres num "estoque total" e' o jeito mais facil de tomar decisao errada. */
+  const porGrupo = { 'Disponível': 0, 'Vendido': 0, 'Travado': 0 };
+  todas.forEach(r => { porGrupo[estCat(r.categoria).grupo] += (+r.valor || 0); });
+  const rsTrav = porGrupo['Travado'];
   const pctTrav = rsTot > 0 ? (rsTrav / rsTot * 100) : 0;
 
   const linha = d => {
-    const trav = EST_TRAVADO[d.cod];
+    const ct = estCat(d.cat);
+    const trav = ct.grupo !== 'Disponível' ? ct.nome : null;
     return `<tr onclick="detEstoqueDep('${escapeHtml(d.cod)}')" style="cursor:pointer">
       <td class="nome"><span class="cod">${escapeHtml(d.cod)}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(String(d.nome).slice(0, 34))}</span> 🔎
-        ${trav ? `<span style="display:inline-block;background:#FDECEA;border:1px solid #F1B7B0;color:#8A2B2B;border-radius:6px;padding:0 6px;font-size:10px;font-weight:800;margin-left:4px">${trav}</span>` : ''}
+        <span style="display:inline-block;background:${ct.cor};color:#fff;border-radius:6px;padding:0 6px;font-size:10px;font-weight:800;margin-left:4px">${ct.nome}</span>
         <div style="font-size:10.5px;color:var(--fraco-2);font-weight:600">${d.n} item(ns) · ${fmtKg(d.kg)}</div></td>
       <td><span class="cel ${trav ? 'baixo' : 'cel-tot'}">${_estRS(d.rs)}</span></td>
       <td><span class="cel neutra">${rsTot > 0 ? (d.rs / rsTot * 100).toFixed(1).replace('.', ',') : '0'}%</span></td></tr>`;
@@ -6360,11 +6415,13 @@ function renderEstoque() {
       <div><b>${_estRS(rsTot)}</b><span>valor total</span></div>
       <div><b>${fmtKg(kgTot)}</b><span>peso total</span></div>
       <div><b>${lista.length}</b><span>depósitos</span></div>
-      <div><b style="color:${pctTrav > 10 ? 'var(--critico)' : 'var(--navy)'}">${_estRS(rsTrav)}</b><span>travado · ${pctTrav.toFixed(1).replace('.', ',')}% (reservado + CQ)</span></div>
+      <div><b>${_estRS(porGrupo['Disponível'])}</b><span>disponível (acabado + bobina)</span></div>
+      <div><b style="color:#6A1B9A">${_estRS(porGrupo['Vendido'])}</b><span>já vendido (reservado)</span></div>
+      <div><b style="color:${pctTrav > 10 ? 'var(--critico)' : 'var(--navy)'}">${_estRS(rsTrav)}</b><span>travado em CQ · ${pctTrav.toFixed(1).replace('.', ',')}% do total</span></div>
     </div>
     <div style="height:10px"></div>
     ${tabSimples(['Depósito', 'Valor', '% do total'], lista.map(linha).join(''))}
-    <p class="desc" style="margin-top:8px">A marcação <b>travado</b> (reservado, CQ devolução, CQ retrabalho, CQ injetados) é uma leitura pelo nome do depósito e ainda precisa ser confirmada. Se estiver errada, me avise que eu corrijo num lugar só.</p>`;
+    <p class="desc" style="margin-top:8px">Almoxarifado, insumos e peças de manutenção <b>não entram</b> — são descartados na importação. A categoria de cada depósito é lida pelo nome; se algum estiver na caixa errada, me avise.</p>`;
 }
 
 function _estLinhaItem(r, comDep) {
@@ -6391,8 +6448,9 @@ function detEstoqueDep(cod) {
      centenas de itens e' isso que responde "por onde eu comeco". */
   let acc = 0, iA = 0;
   for (const r of itens) { acc += (+r.valor || 0); iA++; if (acc >= rs * 0.8) break; }
+  const ct = estCat(itens[0].categoria);
   abreDet('📦 ' + cod + ' · ' + String(nome).slice(0, 26),
-    `<p class="idet-desc">${escapeHtml(String(nome))}${EST_TRAVADO[cod] ? ' · <b style="color:var(--critico)">' + EST_TRAVADO[cod] + '</b>' : ''}</p>
+    `<p class="idet-desc">${escapeHtml(String(nome))} · <b style="color:${ct.cor}">${ct.nome}</b></p>
      <div class="idet-grid">
        <div><b>${_estRS(rs)}</b><span>valor</span></div>
        <div><b>${fmtKg(kg)}</b><span>peso</span></div>
@@ -16698,7 +16756,7 @@ const MAPA = {
      upsert do PostgREST so atualiza as colunas enviadas, omiti-las faz o dado do
      264 do mesmo dia SOBREVIVER a importacao do 339. */
   '339': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, pedido: r.pedido, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, fonte: '339' }) },
-  '241': { tabela: 'estoque_deposito', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, deposito_cod: r.deposito_cod, deposito_nome: r.deposito_nome, item_cod: r.item_cod, item_versao: r.item_versao || '', item_desc: r.item_desc, unidade: r.unidade, quantidade: r.quantidade, peso: r.peso, unitario: r.unitario, valor: r.valor }) },
+  '241': { tabela: 'estoque_deposito', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, deposito_cod: r.deposito_cod, deposito_nome: r.deposito_nome, item_cod: r.item_cod, item_versao: r.item_versao || '', item_desc: r.item_desc, unidade: r.unidade, quantidade: r.quantidade, peso: r.peso, unitario: r.unitario, valor: r.valor, categoria: r.categoria }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
 
@@ -16927,7 +16985,8 @@ function renderPreview(id, dup) {
   const res = r.resumo;
   const tots = [
     { l: 'Registros', v: fmt(res.linhas, 0) },
-    res.total_quantidade ? { l: 'Quantidade', v: fmt(res.total_quantidade) } : null,
+    // no REST241 a quantidade soma UN + CX + KG + PC no mesmo balde: nao significa nada
+    (res.total_quantidade && r.rotina !== '241') ? { l: 'Quantidade', v: fmt(res.total_quantidade) } : null,
     res.total_peso ? { l: 'Peso', v: fmt(res.total_peso) } : null,
     res.total_tempo ? { l: 'Horas parada', v: fmt(res.total_tempo, 2) } : null
   ].filter(Boolean).map(t => `<div class="tot"><div class="v mono">${t.v}</div><div class="l">${t.l}</div></div>`).join('');
@@ -16960,13 +17019,30 @@ function renderPreview(id, dup) {
      e da para ver ANTES de gravar. */
   const dg = r.diag;
   if (r.rotina === '241' && dg) {
-    const alerta = dg.naoFecham > 0 || dg.depositos < 2;
+    /* A LISTA DOS DEPOSITOS E A PARTE MAIS IMPORTANTE DESTE PREVIEW.
+       O REST241 tem 47 depositos e a regra de "fica x sai" e' por NOME. Mostrar
+       os 47 ja classificados ANTES de gravar e' o que permite corrigir quem caiu
+       na caixa errada — sem isso, um deposito de produto acabado com nome
+       infeliz sumiria calado. */
+    const CORCAT = { acabado: '#2E7D32', bobina: '#1565C0', cq: '#B26B00', vendido: '#6A1B9A', fora: '#8A97A6' };
+    const porCat = {};
+    (dg.deps || []).forEach(d => { const c = porCat[d.cat] = porCat[d.cat] || { n: 0, itens: 0, valor: 0 }; c.n++; c.itens += d.n; c.valor += d.valor; });
+    const resumoCat = Object.keys(porCat).map(c => `<span style="display:inline-block;background:${CORCAT[c] || '#8A97A6'};color:#fff;border-radius:7px;padding:2px 8px;font-size:11px;font-weight:800;margin:2px 3px 2px 0">${(dg.catNome && dg.catNome[c]) || c}: ${porCat[c].n} dep · ${fmt(porCat[c].itens, 0)} itens</span>`).join('');
+    const tabDeps = `<div class="amostra" style="max-height:290px;overflow:auto"><table>
+      <tr><th>Dep</th><th>Nome</th><th>Categoria</th><th>Itens</th><th>Valor</th></tr>
+      ${(dg.deps || []).map(d => `<tr style="${d.cat === 'fora' ? 'opacity:.55' : ''}"><td class="mono">${d.cod}</td><td style="text-align:left">${escapeHtml(String(d.nome || ''))}</td><td class="mono" style="color:${CORCAT[d.cat] || '#8A97A6'};font-weight:800">${d.cat === 'fora' ? 'NÃO GRAVA' : ((dg.catNome && dg.catNome[d.cat]) || d.cat)}</td><td class="mono">${fmt(d.n, 0)}</td><td class="mono">${fmt(d.valor, 2)}</td></tr>`).join('')}
+    </table></div>`;
+    const alerta = dg.naoFecham > 0 || dg.depositosTotal < 2;
     confereHtml = `<div class="confere" style="background:${alerta ? '#fff8e1' : '#e8f5e9'};color:${alerta ? '#8a6d00' : '#1b5e20'};border-color:${alerta ? '#ffe082' : '#a5d6a7'}">`
-      + `${alerta ? '🟡' : '✅'} <b>${fmt(res.linhas, 0)}</b> itens com saldo em <b>${dg.depositos}</b> depósito(s)`
-      + ` · <b>${fmt(dg.zeradas, 0)}</b> linha(s) zerada(s) descartada(s)`
+      + `${alerta ? '🟡' : '✅'} <b>${fmt(res.linhas, 0)}</b> itens vão ser gravados, de <b>${dg.depositosTotal}</b> depósito(s) lidos`
+      + ` · <b>${fmt(dg.zeradas, 0)}</b> zerada(s) descartada(s)`
+      + (dg.fora ? ` · <b>${fmt(dg.fora, 0)}</b> item(ns) de almoxarifado/insumos NÃO gravados` : '')
       + (dg.duplicadas ? ` · ${fmt(dg.duplicadas, 0)} repetida(s)` : '')
       + `<br>quantidade × unitário = valor: <b>${dg.naoFecham === 0 ? 'fecha em todas' : fmt(dg.naoFecham, 0) + ' linha(s) NÃO fecham'}</b>`
-      + (dg.depositos < 2 ? '<br><b>Só um depósito reconhecido</b> — confira se a faixa "Depósito: N - NOME" saiu no PDF.' : '')
+      + (dg.depositosTotal < 2 ? '<br><b>Só um depósito reconhecido</b> — confira se a faixa "Depósito: N - NOME" saiu no PDF.' : '')
+      + `<div style="margin-top:7px">${resumoCat}</div>`
+      + `<div style="margin-top:6px;font-weight:700">Confira a classificação abaixo antes de gravar — o que estiver como <span style="color:#8A97A6">NÃO GRAVA</span> não entra no banco.</div>`
+      + tabDeps
       + `</div>`;
   } else if (!linhasConf.length) {
     confereHtml = `<div class="confere">✔️ Confira: os totais acima devem bater com o rodapé "Total Geral" do PDF antes de gravar.</div>`;
