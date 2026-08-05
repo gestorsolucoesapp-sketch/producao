@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.626.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.627.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.626.0';
+const APP_VER = '3.627.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9448,6 +9448,7 @@ async function carregarPainel() {
       return;
     }
   }
+  try { await getMetaAtencao(); } catch (_) { }
   try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await getBocaFator(); await carregarMilImpressao(); } } catch (_) { }
   /* FALHA SILENCIOSA: se renderPainel estourava, ninguem escrevia no
      painelConteudo e a tela ficava em "Carregando dados..." para sempre, sem
@@ -14761,7 +14762,22 @@ function cardEscolherMaquina(D, setor) {
 }
 
 // resumo: máquinas abaixo da meta + principal motivo de cada uma (topo do Painel)
-let _metaModo = 'baixo';   // 'baixo' = abaixo da meta · 'ok' = na meta ou acima
+let _metaModo = 'baixo';   // 'baixo' · 'perto' · 'ok'
+/* FAIXA DE ATENÇÃO — 04/08/2026.
+   O card era binario: abaixo de 95% da meta, tudo vermelho. Uma Embaladeira com
+   86% ficava com a mesma cor de uma com 54%, e a leitura de "100% das maquinas
+   abaixo da meta" nao dizia se o setor estava perto ou longe.
+   Agora sao tres faixas. O corte de "perto" fica em app_config.meta_atencao
+   para o Joao ajustar sem deploy — padrao 85%. */
+let metaAtencao = 85;
+async function getMetaAtencao() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'meta_atencao').maybeSingle();
+    const v = data && parseFloat(String(data.valor).replace(',', '.'));
+    if (v > 0 && v < 95) metaAtencao = v;
+  } catch (_) { }
+  return metaAtencao;
+}
 
 // duração média por ocorrência: minutos abaixo de 1h, horas acima; dias quando passa de 24h
 function _fmtDur(h) {
@@ -14910,14 +14926,18 @@ function cardAbaixoMeta(D, setor) {
         '<p class="vazio-painel">' + msg + '</p>', 'Desempenho x meta');
     }
 
-    const baixas = abaixo.filter(x => x.ating < 95).sort((a, b) => a.ating - b.ating);
+    const _AT = metaAtencao;
+    const baixas = abaixo.filter(x => x.ating < _AT).sort((a, b) => a.ating - b.ating);
+    const pertos = abaixo.filter(x => x.ating >= _AT && x.ating < 95).sort((a, b) => a.ating - b.ating);
     const altas  = abaixo.filter(x => x.ating >= 95).sort((a, b) => b.ating - a.ating);
-    const modo = (_metaModo === 'ok') ? 'ok' : 'baixo';
-    const lista = (modo === 'ok') ? altas : baixas;
+    const modo = ['ok', 'perto'].includes(_metaModo) ? _metaModo : 'baixo';
+    const lista = modo === 'ok' ? altas : modo === 'perto' ? pertos : baixas;
 
-    const totalAval = baixas.length + altas.length;
+    const totalAval = baixas.length + pertos.length + altas.length;
     const pctB = totalAval ? Math.round(baixas.length / totalAval * 100) : 0;
-    const pctA = 100 - pctB;
+    const pctP = totalAval ? Math.round(pertos.length / totalAval * 100) : 0;
+    const pctA = Math.max(0, 100 - pctB - pctP);
+    const corFaixa = v => v < _AT ? 'var(--critico)' : v < 95 ? 'var(--laranja)' : 'var(--ok-2)';
 
     const bt = (m, txt, n, pct, cor) =>
       `<button class="btn" style="display:inline-block;width:auto;font-size:13px;padding:6px 12px;` +
@@ -14927,8 +14947,8 @@ function cardAbaixoMeta(D, setor) {
     // faixa proporcional: quanto do setor está com problema
     const barraPct = `<div style="margin-bottom:9px">` +
       `<div style="display:flex;height:14px;border-radius:6px;overflow:hidden;background:var(--leve-2)">` +
-      `<div style="width:${pctB}%;background:var(--critico)"></div><div style="width:${pctA}%;background:var(--ok-2)"></div></div>` +
-      `<div style="font-size:12px;color:var(--fraco);margin-top:5px"><b style="color:var(--critico)">${pctB}% das máquinas${setor ? ' da ' + escapeHtml(setor) : ''} abaixo da meta</b> · ${baixas.length} de ${totalAval} avaliadas</div></div>`;
+      `<div style="width:${pctB}%;background:var(--critico)"></div><div style="width:${pctP}%;background:var(--laranja)"></div><div style="width:${pctA}%;background:var(--ok-2)"></div></div>` +
+      `<div style="font-size:12px;color:var(--fraco);margin-top:5px">${baixas.length ? `<b style="color:var(--critico)">${baixas.length} abaixo de ${_AT}%</b>` : ''}${baixas.length && pertos.length ? ' · ' : ''}${pertos.length ? `<b style="color:var(--laranja)">${pertos.length} perto da meta</b>` : ''}${altas.length ? ` · <b style="color:var(--ok-2)">${altas.length} na meta</b>` : ''} · de ${totalAval} avaliadas</div></div>`;
 
     // Com UMA máquina no filtro, "% das máquinas" vira estatística de população
     // de tamanho 1 — só sabe dizer 0% ou 100% e não informa nada. Troca pela
@@ -14973,12 +14993,13 @@ function cardAbaixoMeta(D, setor) {
 
     const barra = _uma ? barraDias : (barraPct + `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px">` +
       bt('baixo', '\u26a0\ufe0f Abaixo', baixas.length, pctB, 'var(--critico)') +
+      bt('perto', '\u25d1 Perto', pertos.length, pctP, 'var(--laranja)') +
       bt('ok', '\u2705 Na meta', altas.length, pctA, 'var(--ok-2)') + `</div>`);
 
     const _listaFim = _uma ? [_uma] : lista;
     const corpo = _listaFim.length
       ? tabSimples(['M\u00e1quina', 'Atingiu', '', 'Principal motivo'], _listaFim.slice(0, 20).map(x =>
-          `<tr onclick="detDesempenhoMaq('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td><td><span class="cel ${x.ating < 95 ? 'baixo' : 'ok'}">${x.ating.toFixed(0)}%</span></td><td style="width:34px"><span onclick="event.stopPropagation();detDesempenhoMaq('${x.cod}', '${escapeHtml(String(x.motivo || '')).replace(/'/g, "\\'")}')" title="Criar plano de ação para esta máquina" style="cursor:pointer;display:inline-block;background:${x.ating < 95 ? 'var(--critico)' : 'var(--verde)'};color:#fff;border-radius:8px;width:26px;height:26px;line-height:26px;text-align:center;font-weight:800;font-size:16px">+</span></td><td style="font-size:12px;line-height:1.35">${escapeHtml((x.motivo || '\u2014').slice(0, 22))}${x.motivoN > 0 ? `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${x.motivoN}</b> parada${x.motivoN > 1 ? 's' : ''} \u00b7 ${x.motivoH.toFixed(0)}h \u00b7 <b style="color:${_mediaCor(x.motivoH / x.motivoN)}">${_fmtDur(x.motivoH / x.motivoN)} cada</b></div>` : ''}</td></tr>`).join(''))
+          `<tr onclick="detDesempenhoMaq('${x.cod}')" style="cursor:pointer"><td class="nome"><span class="cod">${escapeHtml(x.cod)}</span> ${escapeHtml((x.nome || '').slice(0, 13))}</td><td><span class="cel" style="background:${corFaixa(x.ating)};color:#fff;font-weight:800">${x.ating.toFixed(0)}%</span></td><td style="width:34px"><span onclick="event.stopPropagation();detDesempenhoMaq('${x.cod}', '${escapeHtml(String(x.motivo || '')).replace(/'/g, "\\'")}')" title="Criar plano de ação para esta máquina" style="cursor:pointer;display:inline-block;background:${corFaixa(x.ating)};color:#fff;border-radius:8px;width:26px;height:26px;line-height:26px;text-align:center;font-weight:800;font-size:16px">+</span></td><td style="font-size:12px;line-height:1.35">${escapeHtml((x.motivo || '\u2014').slice(0, 22))}${x.motivoN > 0 ? `<div style="font-size:11px;color:var(--fraco);margin-top:1px"><b style="color:var(--txt-2)">${x.motivoN}</b> parada${x.motivoN > 1 ? 's' : ''} \u00b7 ${x.motivoH.toFixed(0)}h \u00b7 <b style="color:${_mediaCor(x.motivoH / x.motivoN)}">${_fmtDur(x.motivoH / x.motivoN)} cada</b></div>` : ''}</td></tr>`).join(''))
       : '<p class="vazio-painel">Nenhuma m\u00e1quina nessa faixa.</p>';
 
     return card('\ud83c\udfaf Desempenho x meta', (setor ? setor + ' \u00b7 ' : '') + totalAval + ' m\u00e1quina(s) com meta \u00b7 toque numa linha pra ver paradas, OPs e ordens de servi\u00e7o',
