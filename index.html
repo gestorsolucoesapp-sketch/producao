@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.640.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.641.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2545,7 +2545,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.640.0';
+const APP_VER = '3.641.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -18657,6 +18657,71 @@ function _paletesPorItem(linhas) {
   return Object.values(porItem).reduce((s, cx) => s + _paletes(cx), 0);
 }
 
+/* ---------- MOVIMENTO DA CARTEIRA ENTRE AS FOTOS ----------
+   05/08/2026. O Joao olhou o card dois dias seguidos e perguntou se ainda estava
+   calculando: as barras pareciam congeladas. Estavam certas — refiz a conta por
+   fora, direto no banco, e bateu pedido a pedido. O que nao mudava era a
+   PROPORCAO, porque a mistura da carteira e estavel; os numeros absolutos
+   estavam andando o tempo todo e ninguem via.
+
+   E havia movimento grande escondido ali: travados por 3+ itens cairam de 132
+   para 74 em dois dias, 44%, sem aparecer em lugar nenhum da tela.
+
+   A conta vem da view v_carteira_resumo_dia, que refaz a alocacao de estoque
+   por entrega mais antiga — a mesma regra do card — para cada foto guardada.
+   Refazer isso no navegador exigiria baixar as 3.700 linhas de cada dia.
+   Como sao duas implementacoes da mesma regra, pode haver 1 pedido de diferenca
+   no arredondamento; o rodape do bloco avisa em vez de esconder. */
+let _cartMovCache = null;
+async function _cartMovimento() {
+  const box = $('cartMovBox'); if (!box) return;
+  try {
+    if (!_cartMovCache) {
+      const { data, error } = await sb.from('v_carteira_resumo_dia').select('*').order('dia_foto', { ascending: false }).limit(8);
+      if (error) throw error;
+      _cartMovCache = data || [];
+    }
+  } catch (_) { box.innerHTML = ''; return; }
+  const R = _cartMovCache;
+  if (!R || R.length < 2) { box.innerHTML = ''; return; }
+  const h = R[0], a = R[1];
+
+  const nT = v => ((+v || 0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t';
+  /* bom = true quando SUBIR e melhor (completos); false quando CAIR e melhor
+     (travados). Carteira total nao entra: cair pode ser faturamento ou pode ser
+     venda fraca, e o card nao tem como saber qual dos dois. */
+  const delta = (agora, antes, bom) => {
+    const d = (+agora || 0) - (+antes || 0);
+    if (!d) return '<span style="color:var(--fraco-2);font-weight:700">=</span>';
+    const ok = bom == null ? null : (bom ? d > 0 : d < 0);
+    const cor = ok == null ? 'var(--fraco)' : (ok ? 'var(--ok-3)' : 'var(--critico)');
+    return `<span style="color:${cor};font-weight:800">${d > 0 ? '+' : '−'}${Math.abs(d).toLocaleString('pt-BR')}</span>`;
+  };
+  const cel = (rot, agora, antes, bom) => `<div style="background:var(--fundo);border-radius:9px;padding:7px 10px;min-width:96px">
+    <div style="font-size:10px;color:var(--fraco-2);font-weight:800;text-transform:uppercase;letter-spacing:.3px">${rot}</div>
+    <div style="font-size:14px;font-weight:800">${(+agora || 0).toLocaleString('pt-BR')} <span style="font-size:11px">${delta(agora, antes, bom)}</span></div></div>`;
+
+  const hist = R.slice(0, 4).map(r => `<tr>
+    <td class="nome" style="font-size:11.5px">${fmtData(r.dia_foto)}</td>
+    <td><span class="cel neutra">${(+r.pedidos).toLocaleString('pt-BR')}<div style="font-size:9px;font-weight:400">${nT(r.kg_total)}</div></span></td>
+    <td><span class="cel ok">${r.completos}</span></td>
+    <td><span class="cel baixo">${r.trav1}</span></td>
+    <td><span class="cel baixo">${r.trav2}</span></td>
+    <td><span class="cel baixo">${r.trav3}</span></td></tr>`).join('');
+
+  box.innerHTML = `<div style="height:12px"></div>
+    <div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">📈 Movimento desde a foto de ${fmtData(a.dia_foto)}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      ${cel('Pedidos', h.pedidos, a.pedidos, null)}
+      ${cel('Completos', h.completos, a.completos, true)}
+      ${cel('Travados 1', h.trav1, a.trav1, false)}
+      ${cel('Travados 2', h.trav2, a.trav2, false)}
+      ${cel('Travados 3+', h.trav3, a.trav3, false)}
+    </div>
+    ${tabSimples(['Foto', 'Carteira', 'Compl.', 'Trav 1', 'Trav 2', 'Trav 3+'], hist)}
+    <p class="desc" style="margin-top:5px">Recalculado no banco com a mesma regra das barras (estoque alocado pela entrega mais antiga). Pode divergir em 1 pedido por arredondamento.</p>`;
+}
+
 function _alocarEstoque() {
   if (!_cart196) return null;
   const saldo = {};
@@ -19089,6 +19154,9 @@ function cardDestrava() {
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
     + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
+    /* preenchido depois: o card e montado como string e so existe no DOM
+       depois que o painel inteiro e injetado. */
+    + (setTimeout(_cartMovimento, 80), '<div id="cartMovBox"></div>')
     + (_st ? `<div style="background:var(--leve-4);border-left:4px solid var(--azul-marca);border-radius:10px;padding:9px 11px;margin:10px 0 4px;font-size:12.5px">`
         + `<b>${escapeHtml(_st)}:</b> ${ord.length} item(ns) deste setor segurando <b>${pedsSetor.length}</b> pedido(s), somando <b>${kg(pedsSetor.reduce((s, p) => s + p.kg, 0))}</b>.`
         + `<div style="font-size:11px;color:var(--fraco-2);margin-top:3px">As barras acima continuam da fábrica inteira: um pedido cruza setores e só fatura quando <b>todos</b> entregam.</div></div>` : '')
