@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.632.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.633.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2382,7 +2382,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.632.0';
+const APP_VER = '3.633.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10332,7 +10332,35 @@ async function _osDoDiaBox(boxId, cod, dias, voltar) {
 
   const dd = v => String(v || '').slice(0, 10);
   const setD = new Set(D);
-  const noDia = L.filter(o => setD.has(dd(o.data_abertura)) || setD.has(dd(o.data_parada)));
+
+  /* TURNO DA OS — o bloco nasceu cruzando so o DIA e ignorava a pilula de turno:
+     com "Noite" selecionado e uma parada as 23:21, a lista trazia a OS 00117349,
+     aberta 07:34 e concluida 09:00 — Manha inteira.
+     A OS agora e classificada pela JANELA EM QUE A MAQUINA FICOU PARADA
+     (data_parada -> reinicio, ou a abertura quando essas datas faltam), fatiada
+     pela mesma regua das paradas. OS que atravessa turno aparece nos dois.
+     OS sem horario legivel NAO e descartada: nulo nao e "outro turno". */
+  const CORT = { 'Manh\u00e3': '#E0A93B', 'Tarde': '#5F9B4A', 'Noite': '#4A82C4' };
+  const turnosDaOS = (o) => {
+    const ini = o.data_parada || o.data_abertura;
+    if (!ini) return [];
+    const fim = o.data_reinicio || o.data_encerramento || null;
+    let hrs = (o.horas_parada != null) ? +o.horas_parada : null;
+    if (hrs == null && fim) { const dif = (new Date(fim) - new Date(ini)) / 3600000; if (dif > 0 && dif < 48) hrs = dif; }
+    try {
+      const f = tempoParadaPorTurno(ini, hrs || 0, dd(ini));
+      const ts = Object.keys(f).filter(t => f[t] > 0.0005);
+      if (ts.length) return ts;
+      const b = blocoParadaTurno(ini, dd(ini));
+      return b ? [b] : [];
+    } catch (_) { return []; }
+  };
+  const _turOS = (typeof turnoSelAtual === 'function') ? turnoSelAtual() : '';
+  const selo = (o) => turnosDaOS(o).map(t => `<span style="background:${CORT[t] || '#8A97A6'};color:#fff;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:3px">${t}</span>`).join('');
+
+  const doDia = L.filter(o => setD.has(dd(o.data_abertura)) || setD.has(dd(o.data_parada)));
+  const noDia = _turOS ? doDia.filter(o => { const ts = turnosDaOS(o); return !ts.length || ts.includes(_turOS); }) : doDia;
+  const outroTurno = doDia.length - noDia.length;
   const fmtHh = h => { const m = Math.round((+h || 0) * 60); return m >= 60 ? (Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0')) : (m + 'min'); };
   const alvo = new Date(D[0] + 'T12:00:00');
   const dist = o => { const b = dd(o.data_abertura) || dd(o.data_parada); if (!b) return 999; return Math.round((new Date(b + 'T12:00:00') - alvo) / 86400000); };
@@ -10343,19 +10371,19 @@ async function _osDoDiaBox(boxId, cod, dias, voltar) {
       <td class="nome" style="font-size:11.5px;white-space:nowrap;vertical-align:top"><span class="cod">${escapeHtml(String(o.os_num || '\u2014'))}</span>
         <div style="font-size:11px;color:var(--fraco-2);font-weight:600">${o.data_abertura ? fmtData(dd(o.data_abertura)) : '\u2014'}${o.horas_parada ? ' \u00b7 ' + fmtHh(o.horas_parada) : ''}</div>
         ${extra || ''}</td>
-      <td style="text-align:left;font-size:12px;vertical-align:top">${escapeHtml(String(mot).slice(0, 46))}
+      <td style="text-align:left;font-size:12px;vertical-align:top">${selo(o)}${escapeHtml(String(mot).slice(0, 46))}
         ${o.responsavel_nome ? `<div style="font-size:10.5px;color:var(--fraco-2);font-weight:600">\u{1f464} ${escapeHtml(String(o.responsavel_nome).slice(0, 24))}</div>` : ''}</td>
       <td style="vertical-align:top"><span class="cel ${aberta ? 'baixo' : 'ok'}">${aberta ? 'aberta' : 'fechada'}</span></td></tr>`;
   };
 
   if (noDia.length) {
-    box.innerHTML = `<p style="margin:0 0 6px;color:var(--fraco-2)">${noDia.length} OS da m\u00e1quina ${escapeHtml(String(cod))} com abertura ou parada ${D.length > 1 ? 'nesses dias' : 'neste dia'} \u00b7 toque pra abrir</p>`
+    box.innerHTML = `<p style="margin:0 0 6px;color:var(--fraco-2)">${noDia.length} OS da m\u00e1quina ${escapeHtml(String(cod))}${_turOS ? ' no turno <b style="color:' + (CORT[_turOS] || 'var(--azul-2)') + '">' + escapeHtml(_turOS) + '</b>' : ''} com abertura ou parada ${D.length > 1 ? 'nesses dias' : 'neste dia'} \u00b7 toque pra abrir${outroTurno > 0 ? ' \u00b7 <span style="color:#B26B00;font-weight:700">+' + outroTurno + ' em outro turno</span>' : ''}</p>`
       + tabSimples(['OS \u00b7 abertura', 'Motivo', 'Situa\u00e7\u00e3o'], noDia.map(o => linha(o, '')).join(''));
     return;
   }
   const perto = L.slice().sort((a, b) => Math.abs(dist(a)) - Math.abs(dist(b))).slice(0, 3);
   const nd = n => n === 0 ? 'no dia' : (n < 0 ? Math.abs(n) + ' dia(s) antes' : n + ' dia(s) depois');
-  box.innerHTML = `<p style="margin:0 0 6px"><b>Nenhuma OS aberta ${D.length > 1 ? 'nesses dias' : 'neste dia'}.</b> A parada foi apontada mas n\u00e3o virou ordem de servi\u00e7o \u2014 vale conferir com a manuten\u00e7\u00e3o.</p>`
+  box.innerHTML = `<p style="margin:0 0 6px"><b>Nenhuma OS ${outroTurno > 0 ? 'no turno ' + escapeHtml(_turOS) : 'aberta ' + (D.length > 1 ? 'nesses dias' : 'neste dia')}.</b>${outroTurno > 0 ? ' A m\u00e1quina tem <b>' + outroTurno + '</b> OS ' + (D.length > 1 ? 'nesses dias' : 'neste dia') + ', mas em outro turno \u2014 tire o filtro de turno para ver.' : ''}${outroTurno > 0 ? '' : ' A parada foi apontada mas n\u00e3o virou ordem de servi\u00e7o \u2014 vale conferir com a manuten\u00e7\u00e3o.'}</p>`
     + (perto.length
       ? `<p style="margin:0 0 6px;color:var(--fraco-2)">As mais pr\u00f3ximas dessa m\u00e1quina:</p>`
         + tabSimples(['OS \u00b7 abertura', 'Motivo', 'Situa\u00e7\u00e3o'], perto.map(o => linha(o, `<div style="font-size:10.5px;color:#B26B00;font-weight:700">${nd(dist(o))}</div>`)).join(''))
