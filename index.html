@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.619.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.620.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.619.0';
+const APP_VER = '3.620.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -18221,7 +18221,7 @@ function cardCarteira196(rows) {
     return `<div style="margin-top:12px"><div style="font-weight:800;color:${cor};font-size:13px">${tit} · ${L.length} item(ns) · ${kg(t(L))}</div>`
       + (nota ? `<div class="desc" style="margin:1px 0 5px">${nota}</div>` : '')
       + tabSimples(['Item', 'Roda em', 'Pendente', 'Estoque', 'Entrega'], ord.map(([k, a, e]) =>
-        `<tr><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 40))}`
+        `<tr onclick="detItem('${escapeHtml(k)}')" style="cursor:pointer"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 40))} 🔎`
         + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.cli.size} cliente(s)${a.atraso > 0 ? ' · <b style="color:var(--critico)">' + a.atraso + 'd de atraso</b>' : ''}</div></td>`
         + `<td class="nome" style="min-width:96px">${badgesMaq(k)}</td>`
         + `<td><span class="cel cel-tot">${kg(a.kg)}</span></td>`
@@ -18772,6 +18772,75 @@ function cardOpSaiuFila() {
    foi apontado, o refugo, as paradas da maquina enquanto ela rodava e como a
    previsao andou entre uma foto da fila e outra. Serve para qualquer card da
    Programacao que liste OP — em vez de um detalhe por card. */
+/* ===== FICHA DO ITEM — 04/08/2026 =====
+   Equivalente a detOP, mas do lado do produto: quem esta esperando, quanto tem
+   em estoque, onde ele roda, o que esta na fila agora e o que ele ja produziu.
+   Serve para qualquer card que liste item. */
+async function detItem(item) {
+  item = String(item);
+  abreDet('Item ' + item, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
+  let ped = [], fila = [], prod = [], est = 0, desc = '';
+  try {
+    const { data: fot } = await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const dfo = fot && fot[0] && fot[0].dia_foto;
+    const { data: ffo } = await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const dfi = ffo && ffo[0] && ffo[0].dia_foto;
+    const [a, b, c, d] = await Promise.all([
+      dfo ? sb.from('rest196_pendente').select('pedido,cliente,entrega,dias,qtd_pendente,peso_pendente,un,item_desc').eq('dia_foto', dfo).eq('item_cod', item).limit(400) : { data: [] },
+      dfi ? sb.from('fila_producao').select('recurso_cod,recurso_nome,op,peso,quantidade,termino,ordem,cliente').eq('dia_foto', dfi).eq('item_cod', item).limit(200) : { data: [] },
+      sb.from('producao').select('dia,recurso_cod,op,quantidade,unidade,peso,item_desc').eq('item_cod', item).order('dia', { ascending: false }).limit(400),
+      dfo ? sb.from('rest196_estoque').select('qtd,peso').eq('dia_foto', dfo).eq('item_cod', item).limit(50) : { data: [] }
+    ]);
+    ped = a.data || []; fila = b.data || []; prod = c.data || [];
+    est = (d.data || []).reduce((x, r) => x + (+r.peso || 0), 0);
+    desc = (ped[0] && ped[0].item_desc) || (prod[0] && prod[0].item_desc) || '';
+  } catch (e) {
+    abreDet('Item ' + item, `<p class="vazio-painel">Não consegui buscar: ${escapeHtml((e && e.message) || String(e))}</p>`);
+    return;
+  }
+  const hoje = hojeISO();
+  const kgPend = ped.reduce((a, r) => a + (+r.peso_pendente || 0), 0);
+  const nCli = new Set(ped.map(r => r.cliente)).size;
+  const venc = ped.filter(r => r.entrega && r.entrega < hoje);
+  const kgFila = fila.reduce((a, r) => a + (+r.peso || 0), 0);
+
+  let h = `<p class="idet-desc"><b>${escapeHtml(item)}</b> ${escapeHtml(String(desc).slice(0, 46))}</p>`
+    + `<div style="display:flex;gap:7px;margin:8px 0 12px">`
+    + `<div style="flex:1;background:var(--leve-5);border:1px solid var(--borda);border-radius:10px;padding:7px 4px;text-align:center"><div style="font-size:9.5px;color:var(--fraco);text-transform:uppercase">Pendente</div><div style="font-size:15px;font-weight:800">${fmtKg(kgPend)}</div><div style="font-size:9.5px;color:var(--fraco-2)">${ped.length} pedido(s) · ${nCli} cliente(s)</div></div>`
+    + `<div style="flex:1;background:${est > 0 ? 'var(--leve-5)' : '#FDECEC'};border:1px solid ${est > 0 ? 'var(--borda)' : '#E5A3A3'};border-radius:10px;padding:7px 4px;text-align:center"><div style="font-size:9.5px;color:var(--fraco);text-transform:uppercase">Estoque</div><div style="font-size:15px;font-weight:800;color:${est > 0 ? 'var(--navy)' : '#8A2B2B'}">${fmtKg(est)}</div></div>`
+    + `<div style="flex:1;background:${kgFila > 0 ? '#EAF7EF' : '#FFF6E5'};border:1px solid ${kgFila > 0 ? '#A5D6A7' : '#EBCB8B'};border-radius:10px;padding:7px 4px;text-align:center"><div style="font-size:9.5px;color:var(--fraco);text-transform:uppercase">Na fila</div><div style="font-size:15px;font-weight:800;color:${kgFila > 0 ? '#1E7B45' : '#7A5A10'}">${kgFila > 0 ? fmtKg(kgFila) : 'nada'}</div><div style="font-size:9.5px;color:var(--fraco-2)">${fila.length} OP(s)</div></div>`
+    + `</div>`;
+  if (!kgFila && kgPend > 0 && est <= 0) h += '<div style="background:#FDECEC;border:1px solid #E5A3A3;color:#8A2B2B;border-radius:10px;padding:8px 10px;font-size:11.5px;line-height:1.5;margin-bottom:10px">🚨 <b>Pedido esperando, sem estoque e sem OP na fila.</b> Ninguém programou este item — é onde o atraso nasce.</div>';
+
+  if (fila.length) {
+    h += '<div style="font-weight:800;font-size:12px;margin:4px 0 4px">Na fila agora</div>'
+      + tabSimples(['Máquina · OP', 'Peso', 'Término previsto'], fila.sort((a, b) => (a.termino || '') < (b.termino || '') ? -1 : 1).map(f =>
+        `<tr onclick="detOP('${escapeHtml(String(f.op))}','${escapeHtml(String(f.recurso_cod))}')" style="cursor:pointer"><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(f.recurso_cod))}</span> OP ${escapeHtml(String(f.op))} 🔎${f.ordem ? `<div style="font-size:9.5px;color:var(--fraco-2)">${f.ordem}ª da fila</div>` : ''}</td>`
+        + `<td><span class="cel cel-tot">${fmtKg(+f.peso || 0)}</span></td>`
+        + `<td><span class="cel neutra" style="font-size:11px">${f.termino ? fmtData(String(f.termino).slice(0, 10)) : '—'}</span></td></tr>`).join(''));
+  }
+
+  if (ped.length) {
+    const ord = ped.slice().sort((a, b) => (a.entrega || '9') < (b.entrega || '9') ? -1 : 1).slice(0, 15);
+    h += `<div style="font-weight:800;font-size:12px;margin:12px 0 4px">Quem está esperando${venc.length ? ` · <span style="color:var(--critico)">${venc.length} vencido(s)</span>` : ''}</div>`
+      + tabSimples(['Pedido · cliente', 'Pendente', 'Entrega'], ord.map(r =>
+        `<tr><td class="nome" style="font-size:11.5px">${escapeHtml(String(r.pedido || ''))}<div style="font-size:9.5px;color:var(--fraco-2)">${escapeHtml(String(r.cliente || '').replace(/\s*\(.*$/, '').slice(0, 30))}</div></td>`
+        + `<td><span class="cel cel-tot">${fmtKg(+r.peso_pendente || 0)}</span></td>`
+        + `<td><span class="cel ${r.entrega && r.entrega < hoje ? 'baixo' : 'neutra'}" style="font-size:11px">${r.entrega ? fmtData(r.entrega) : '—'}</span></td></tr>`).join(''))
+      + (ped.length > 15 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando 15 de ${ped.length} pedidos</p>` : '');
+  }
+
+  if (prod.length) {
+    const pm = {};
+    prod.forEach(r => { const k = String(r.recurso_cod); const o = (pm[k] = pm[k] || { kg: 0, ult: '', n: 0 }); o.kg += (+r.peso || 0); o.n++; if (r.dia > o.ult) o.ult = r.dia; });
+    h += '<div style="font-weight:800;font-size:12px;margin:12px 0 4px">Onde já rodou</div>'
+      + tabSimples(['Máquina', 'Produzido', 'Último dia'], Object.entries(pm).sort((a, b) => b[1].kg - a[1].kg).map(([k, v]) =>
+        `<tr><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(nomeDe(k) || '').slice(0, 20))}<div style="font-size:9.5px;color:var(--fraco-2)">${v.n} apontamento(s)</div></td>`
+        + `<td><span class="cel cel-tot">${fmtKg(v.kg)}</span></td>`
+        + `<td><span class="cel neutra" style="font-size:11px">${fmtData(v.ult)}</span></td></tr>`).join(''));
+  } else h += '<p class="desc" style="margin:12px 0 0">Este item nunca foi produzido no período importado.</p>';
+  abreDet('Item ' + item, h);
+}
 async function detOP(op, cod) {
   op = String(op); cod = cod ? String(cod) : null;
   abreDet('OP ' + op, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
