@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.636.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.637.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2543,7 +2543,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.636.0';
+const APP_VER = '3.637.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6329,6 +6329,88 @@ const EST_CAT = {
 const estCat = c => EST_CAT[c] || { nome: 'Sem categoria', cor: '#8A97A6', grupo: 'Disponível' };
 let _estCache = null;
 
+/* ---------- ITEM FORA DO LUGAR ----------
+   Um KIT 500ML dentro do depósito CORES FORMULADAS. Não é erro de leitura do
+   PDF: é lançamento errado no ERP, e some no meio de 600 itens.
+
+   Como o desvio é encontrado, em duas camadas:
+     1) o NOME do depósito, quando ele declara o que guarda ("CORES FORMULADAS",
+        "DEPOSITO PERDAS", "DEPOSITO - CENTRAL"/"PATIO" = resina);
+     2) quando o nome não diz nada (os "DI 3º - CLIENTE" são a maioria), vale a
+        FAMÍLIA DOMINANTE dos próprios itens — mas só se o depósito tiver ao
+        menos 4 itens e a dominante passar de 70%. Abaixo disso não há maioria,
+        há acaso, e apontar desvio seria chutar.
+
+   'outro' nunca vira expectativa: dizer que um depósito "deveria guardar coisas
+   não classificadas" e acusar todo o resto seria inverter o alarme.
+
+   Medido em 05/08/2026: 30 itens fora do lugar, R$ 782 mil — entre eles R$ 536
+   mil de produto acabado dentro do depósito de resina. Se a régua estivesse
+   frouxa isso viraria uma lista de 600 linhas que ninguém lê. */
+const EST_FAM = { bobina: 'Bobina', apara: 'Apara / refugo', cor: 'Cor / pigmento', acabado: 'Produto acabado', resina: 'Resina', outro: 'Outro' };
+const _estNorm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+function estFamItem(desc) {
+  const d = _estNorm(desc);
+  if (/BOBINA/.test(d)) return 'bobina';
+  if (/APARA|VARREDURA|BORRA|MOIDO|REFUGO/.test(d)) return 'apara';
+  if (/CORANTE|PIGMENTO|FORMULAD|MASTER ?BATCH/.test(d)) return 'cor';
+  // acabado ANTES de resina: "COPO CPPM", "TAMPA TPPM" têm sigla parecida com resina
+  if (/POTE|COPO|TAMPA|BANDEJA|KIT|EMBALAGEM|COLHER|GARFO|FACA|SLEEVE|ROTULAD|CANECA|MARMITA|BALDE/.test(d)) return 'acabado';
+  if (/POLIPROPILENO|POLIETILENO|BLENDA|HOMOPOLIMERO|COPOLIMERO|RANDOM|RESINA|PEAD|PEBD|HDPE|LDPE|GPPS|\bPP\b|\bPS\b|\bPE\b/.test(d)) return 'resina';
+  return 'outro';
+}
+function estFamDepNome(nome) {
+  const d = _estNorm(nome);
+  if (/COR|PIGMENTO|FORMULAD/.test(d)) return 'cor';
+  if (/BOBINA/.test(d)) return 'bobina';
+  if (/PERDA|APARA|SUCATA/.test(d)) return 'apara';
+  if (/CENTRAL|PATIO|RESINA|MATERIA.?PRIMA/.test(d)) return 'resina';
+  return null;
+}
+
+function estDesvios(rows) {
+  const dep = {};
+  rows.forEach(r => {
+    const c = String(r.deposito_cod);
+    const o = (dep[c] = dep[c] || { cod: c, nome: r.deposito_nome, fam: {}, n: 0 });
+    const f = estFamItem(r.item_desc);
+    o.fam[f] = (o.fam[f] || 0) + 1; o.n++;
+  });
+  Object.values(dep).forEach(o => {
+    const decl = estFamDepNome(o.nome);
+    if (decl) { o.esperado = decl; o.origem = 'nome'; return; }
+    const par = Object.entries(o.fam).sort((a, b) => b[1] - a[1])[0];
+    // sem maioria clara, ou maioria de 'outro', não há expectativa
+    o.esperado = (par && o.n >= 4 && par[1] / o.n >= 0.7 && par[0] !== 'outro') ? par[0] : null;
+    o.origem = o.esperado ? 'maioria' : null;
+  });
+  return rows.filter(r => {
+    const o = dep[String(r.deposito_cod)];
+    return o && o.esperado && estFamItem(r.item_desc) !== o.esperado;
+  }).map(r => {
+    const o = dep[String(r.deposito_cod)];
+    return Object.assign({}, r, { _esperado: o.esperado, _achado: estFamItem(r.item_desc), _origem: o.origem });
+  }).sort((a, b) => (+b.valor || 0) - (+a.valor || 0));
+}
+
+function cardDesviosEstoque(rows) {
+  const d = estDesvios(rows);
+  if (!d.length) return '';
+  const rs = d.reduce((a, r) => a + (+r.valor || 0), 0);
+  const linhas = d.slice(0, 60).map(r => `<tr onclick="detItem('${escapeHtml(String(r.item_cod))}')" style="cursor:pointer">
+    <td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(r.item_cod))}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(String(r.item_desc || '').slice(0, 42))}</span> 🔎
+      <div style="font-size:10px;color:var(--fraco-2);font-weight:700">depósito ${escapeHtml(String(r.deposito_cod))} · ${escapeHtml(String(r.deposito_nome || '').slice(0, 30))}</div></td>
+    <td style="font-size:10.5px;text-align:left;white-space:nowrap"><span style="color:var(--fraco-2)">esperado</span> <b>${EST_FAM[r._esperado] || r._esperado}</b><br><span style="color:var(--critico)">achado</span> <b style="color:var(--critico)">${EST_FAM[r._achado] || r._achado}</b></td>
+    <td><span class="cel baixo">${_estRS(r.valor)}</span></td></tr>`).join('');
+  return `<div class="card" style="border-left:4px solid var(--critico)">
+    <div class="titulo-sec">⚠️ Item fora do lugar<button class="i-info" onclick="abreInfo('estdesvio')" title="Como este número é feito" aria-label="Como este número é feito">i</button></div>
+    <p class="desc"><b>${d.length}</b> item(ns) num depósito que não é o deles · <b>${_estRS(rs)}</b> parado no lugar errado</p>
+    ${tabSimples(['Item · depósito', 'Família', 'Valor'], linhas)}
+    ${d.length > 60 ? `<p class="desc">mostrando os 60 maiores de ${d.length}</p>` : ''}
+  </div>`;
+}
+
 async function carregarEstoque(force) {
   const box = $('estoqueBox'); if (!box) return;
   if (_estCache && !force) { renderEstoque(); return; }
@@ -6409,7 +6491,7 @@ function renderEstoque() {
       <td><span class="cel neutra">${rsTot > 0 ? (d.rs / rsTot * 100).toFixed(1).replace('.', ',') : '0'}%</span></td></tr>`;
   };
 
-  box.innerHTML = `
+  box.innerHTML = cardDesviosEstoque(todas) + `
     <div style="font-size:11.5px;color:var(--fraco-2);font-weight:600;margin-bottom:8px">📸 Foto de <b>${fmtData(_estCache.dia)}</b>${_estCache.hora ? ' às ' + escapeHtml(_estCache.hora) : ''} · ${todas.length} item(ns) com saldo</div>
     <div class="idet-grid">
       <div><b>${_estRS(rsTot)}</b><span>valor total</span></div>
@@ -10224,6 +10306,7 @@ function abreDet(titulo, corpoHtml) {
    (v3.479) mexia no DOM durante a renderizacao de todas as abas e esta na
    janela em que o Painel parou de abrir. */
 const INFOS = {
+  estdesvio: { t: 'Item fora do lugar', d: "Aponta item guardado num dep\u00f3sito que n\u00e3o \u00e9 o dele \u2014 um <b>KIT 500ML dentro de CORES FORMULADAS</b>, por exemplo. N\u00e3o \u00e9 erro de leitura do PDF: \u00e9 lan\u00e7amento no ERP.<br><br>A fam\u00edlia esperada do dep\u00f3sito sai de duas fontes:<br>\u2022 <b>o nome</b>, quando ele declara o que guarda (CORES FORMULADAS, DEPOSITO PERDAS, CENTRAL/P\u00c1TIO = resina);<br>\u2022 <b>a maioria dos pr\u00f3prios itens</b>, quando o nome n\u00e3o diz nada \u2014 caso dos dep\u00f3sitos <i>DI 3\u00ba</i> de cliente. S\u00f3 vale com <b>4 itens ou mais</b> e maioria acima de <b>70%</b>: abaixo disso n\u00e3o h\u00e1 maioria, h\u00e1 acaso.<br><br>A fam\u00edlia do item sai da descri\u00e7\u00e3o: bobina, apara/refugo, cor/pigmento, produto acabado e resina. <b>Outro</b> nunca vira expectativa \u2014 sen\u00e3o o alarme se inverteria.<br><br>Item apontado aqui n\u00e3o est\u00e1 necessariamente errado: pode ser sobra de produ\u00e7\u00e3o guardada em lugar de passagem. O que ele diz \u00e9 <b>vale a pena olhar</b>." },
   setups: { t: 'Setups por máquina', d: "A barra é o <b>tempo médio por setup</b> da máquina no período, não o total. A <b>linha azul</b> é a meta de <b>1h30</b>.<br><br>Um setup é toda parada apontada como SETUP. Toque numa barra para ver as paradas que formaram a média." },
   oee: { t: 'Como o OEE é calculado', d: "OEE = <b>Disponibilidade</b> (horas − paradas) × <b>Performance</b> (produção ÷ capacidade teórica) × <b>Qualidade</b> (boa ÷ total). Capacidade = meta ÷ fator do setor.<br><br><b>Por que passa de 100%?</b> A capacidade teórica sai da meta cadastrada. Se a meta estiver defasada para baixo, a Performance estoura e leva o OEE junto — 130% não significa que a máquina rendeu além do físico, significa que a meta está velha." },
   ganho: { t: 'O que é o "Ganho"', d: "É <b>quantos quilos de pedido saem para cada quilo produzido</b>: o valor da coluna <i>Libera sozinho</i> dividido pelo <i>Falta produzir</i>.<br><br><b>1,7×</b> quer dizer que produzir 1 t desse item destrava 1,7 t de pedido. Isso acontece porque o pedido também tem outras linhas que <b>já estão em estoque</b> e saem junto assim que a última faltante chega.<br><br>Quanto maior, mais faturamento por quilo de máquina. É por isso que a ordem do card não é por peso a produzir.<br><br><b>Divide bloqueio</b> aparece quando o item nunca é o único obstáculo — resolver só ele não libera pedido nenhum, e por isso não há ganho a calcular." },
