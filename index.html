@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.628.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.629.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2382,7 +2382,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.628.0';
+const APP_VER = '3.629.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10269,11 +10269,43 @@ async function detParadasMaqDia(cod, dia, bloco) {
   rows.forEach(r => { const k = (r.motivo_desc || '—'); const o = (porMot[k] = porMot[k] || { h: 0, n: 0, itens: [] }); o.h += (+r.tempo_horas || 0); o.n++; o.itens.push(r); });
   const mot = Object.entries(porMot).sort((a, b) => b[1].h - a[1].h);
   const totH = mot.reduce((a, x) => a + x[1].h, 0);
-  _apontParadas = { nome, tit, porMot, dia };
+  _apontParadas = { cod, nome, tit, porMot, dia };
   abreDet(tit, `<p class="idet-desc">${escapeHtml(nome)} · ${mot.length} motivo(s) · ${_amH(totH)} · toque num motivo para ver os horários</p>` +
     tabSimples(['Motivo', 'Horas', 'Qtd'], mot.map(([k, v]) => `<tr onclick="detApontamentosParada('${escapeHtml(k).replace(/'/g, '&#39;')}')" style="cursor:pointer"><td class="nome">${escapeHtml(k)} ›</td><td><span class="cel cel-tot">${_amH(v.h)}</span></td><td>${v.n}</td></tr>`).join('')));
 }
 let _apontParadas = null;
+
+/* ---------- OP CLICAVEL DENTRO DOS MODAIS DE PARADA ----------
+   O modal de paradas mostrava "07:25 → 09:04 · OP 262514" como texto morto: a
+   OP e' justamente o que responde POR QUE a maquina parou (que item rodava,
+   quanto ja saiu, se ela esta atrasada na fila) e obrigava a sair da tela e
+   procurar na Programacao.
+   abreDet e' MODAL UNICO — trocar o conteudo perde a tela anterior. Por isso
+   cada atalho guarda antes o proprio caminho de volta em _detVoltar, que o X /
+   fecharItemDet chama. Os modais de origem sao reconstruiveis so com os
+   argumentos, entao a volta e' uma chamada direta e nao um snapshot de HTML. */
+function detOPdeAponts(op, cod, motivo) {
+  _detVoltar = () => detApontamentosParada(motivo);
+  detOP(op, cod || null);
+}
+function detOPdeMotivoMaq(op, cod, dia, motivo) {
+  _detVoltar = () => detApontMotivoMaq(cod, dia || null, motivo);
+  detOP(op, cod || null);
+}
+function detOPdeDesempenho(op, cod) {
+  _detVoltar = () => detDesempenhoMaq(cod);
+  detOP(op, cod || null);
+}
+/* Argumento dentro de onclick="". O padrao antigo trocava ' por &#39;, mas o
+   HTML decodifica a entidade ANTES do JS rodar: um motivo com apostrofo
+   fecharia a string e quebraria a chamada. Hoje nenhum dos 200 motivos tem
+   apostrofo, mas "TF LAKATO's" mostra que o ERP aceita. \u0027 atravessa o HTML
+   intacto e o parser JS resolve para ' dentro da string. */
+const _jsAttr = (v) => escapeHtml(String(v == null ? '' : v)).replace(/'/g, '\\u0027');
+// selo azul sublinhado + lupa: mesma convencao de clicavel do resto do app
+function _opChip(op, chamada) {
+  return ` <span onclick="event.stopPropagation();${chamada}" style="color:var(--azul-2);font-weight:700;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px" title="Abrir a ficha da OP">· OP ${escapeHtml(String(op))} 🔎</span>`;
+}
 // horários de cada apontamento de um motivo de parada
 function detApontamentosParada(motivo) {
   try {
@@ -10309,10 +10341,10 @@ function detApontamentosParada(motivo) {
       const durMostra = r.tempo_horas || 0;
       totFiltro += durMostra;
       const cruzou = r._totOrig != null && durMostra < r._totOrig - 0.001;
-      return `<tr><td class="nome">${ini}${fim ? ' <span style="color:var(--fraco)">→</span> ' + fim : ''}${r.op ? ` <span style="color:var(--fraco-2)">· OP ${escapeHtml(String(r.op))}</span>` : ''}<div style="font-size:11px;margin-top:2px">${turnoTxt}</div></td><td><span class="cel cel-tot">${dur(durMostra)}${cruzou ? '<div style="font-size:9px;color:var(--fraco);font-weight:400">de ' + dur(r._totOrig) + '</div>' : ''}</span></td></tr>`;
+      return `<tr><td class="nome">${ini}${fim ? ' <span style="color:var(--fraco)">→</span> ' + fim : ''}${r.op ? _opChip(r.op, `detOPdeAponts('${_jsAttr(r.op)}','${_jsAttr((_apontParadas && _apontParadas.cod) || '')}','${_jsAttr(motivo)}')`) : ''}<div style="font-size:11px;margin-top:2px">${turnoTxt}</div></td><td><span class="cel cel-tot">${dur(durMostra)}${cruzou ? '<div style="font-size:9px;color:var(--fraco);font-weight:400">de ' + dur(r._totOrig) + '</div>' : ''}</span></td></tr>`;
     }).join('');
     const subTot = _turFiltro ? `${dur(totFiltro)} no turno ${_turFiltro}` : _amH(o.h);
-    abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(_apontParadas.nome)} · ${itens.length} apontamento(s) · ${subTot}</p>` +
+    abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(_apontParadas.nome)} · ${itens.length} apontamento(s) · ${subTot}${itens.some(x => x.op) ? ' · <span style="color:var(--fraco-2)">toque na OP para abrir a ficha</span>' : ''}</p>` +
       tabSimples(['Horário · turno', _turFiltro ? 'No turno' : 'Duração'], linhas));
   } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
 }
@@ -10404,10 +10436,10 @@ function detApontMotivoMaq(cod, dia, motivo) {
       totMostra += durMostra;
       const cruzou = _turFiltro && durMostra < (p.tempo_horas || 0) - 0.001;
       const ini = fmtHora(p.inicio), fim = fmtFim(p.inicio, p.tempo_horas);
-      return `<tr><td class="nome">${ini}${fim ? ' <span style="color:var(--fraco)">→</span> ' + fim : ''}${p.op ? ` <span style="color:var(--fraco-2)">· OP ${escapeHtml(String(p.op))}</span>` : ''}<div style="font-size:11px;margin-top:2px">${turnoTxt}</div></td><td><span class="cel cel-tot">${dur(durMostra)}${cruzou ? '<div style="font-size:9px;color:var(--fraco);font-weight:400">de ' + dur(p.tempo_horas) + '</div>' : ''}</span></td></tr>`;
+      return `<tr><td class="nome">${ini}${fim ? ' <span style="color:var(--fraco)">→</span> ' + fim : ''}${p.op ? _opChip(p.op, `detOPdeMotivoMaq('${_jsAttr(p.op)}','${_jsAttr(cod)}','${_jsAttr(dia)}','${_jsAttr(motivo)}')`) : ''}<div style="font-size:11px;margin-top:2px">${turnoTxt}</div></td><td><span class="cel cel-tot">${dur(durMostra)}${cruzou ? '<div style="font-size:9px;color:var(--fraco);font-weight:400">de ' + dur(p.tempo_horas) + '</div>' : ''}</span></td></tr>`;
     }).filter(Boolean).join('');
     const subTot = _turFiltro ? `${dur(totMostra)} no turno ${_turFiltro}` : `${par.reduce((a, p) => a + (p.tempo_horas || 0), 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h`;
-    abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(String(nome))}${_turFiltro ? ' · <b style="color:var(--azul-2)">Turno ' + _turFiltro + '</b>' : ''} · ${subTot}</p>` +
+    abreDet('⏱ ' + motivo, `<p class="idet-desc">${escapeHtml(String(nome))}${_turFiltro ? ' · <b style="color:var(--azul-2)">Turno ' + _turFiltro + '</b>' : ''} · ${subTot}${par.some(x => x.op) ? ' · <span style="color:var(--fraco-2)">toque na OP para abrir a ficha</span>' : ''}</p>` +
       tabSimples(['Horário · turno', _turFiltro ? 'No turno' : 'Duração'], linhas));
   } catch (e) { try { toast('Erro: ' + e.message); } catch (_) {} }
 }
@@ -11807,7 +11839,7 @@ async function detDesempenhoMaq(cod, focarMotivo) {
       <td class="nome" style="font-size:11.5px;white-space:nowrap">${dIni ? fmtData(dIni) : '—'} ${hIni}
         <div style="font-size:11px;color:var(--fraco-2);font-weight:600">${p.fim ? ('→ ' + (virou ? fmtData(dFim) + ' ' : '') + hFim) : '→ em aberto'}</div></td>
       <td style="text-align:left;font-size:12px">${escapeHtml(p.motivo_desc || '—')}
-        ${p.op ? `<div style="font-size:11px;color:#8A97A6;font-weight:600">OP ${escapeHtml(String(p.op))}</div>` : ''}
+        ${p.op ? `<div style="font-size:11px;font-weight:600">${_opChip(p.op, `detOPdeDesempenho('${_jsAttr(p.op)}','${_jsAttr(cod)}')`)}</div>` : ''}
         ${p.item_desc ? `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(String(p.item_desc).slice(0, 46))}</div>` : ''}</td>
       <td><span class="cel ${(+p.tempo_horas || 0) >= 8 ? 'baixo' : 'neutra'}">${fmtH(p.tempo_horas)}</span></td>
     </tr>`;
