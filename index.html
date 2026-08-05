@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.614.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.615.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.614.0';
+const APP_VER = '3.615.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8617,8 +8617,45 @@ async function getVelNom() {
   } catch (_) { }
   return velNomData;
 }
+/* realizado em MILHEIRO da Impressao, por maquina e dia. Vem do 622 porque o
+   621 nao tem item — e sem item nao da para saber a embalagem para converter
+   caixa em peca. */
+let _milImpr = null, _milImprKey = '';
+async function carregarMilImpressao() {
+  try {
+    const de = periodoSel && periodoSel.de, ate = periodoSel && periodoSel.ate;
+    if (!de || !ate) return;
+    const k = de + '|' + ate;
+    if (_milImprKey === k && _milImpr) return;
+    const dep = new Date(ate + 'T12:00:00'); dep.setDate(dep.getDate() + 1);
+    const { data, error } = await sb.from('producao')
+      .select('dia,data_inicio,turno,recurso_cod,item_desc,quantidade,unidade')
+      .gte('dia', de).lte('dia', dep.toISOString().slice(0, 10))
+      .in('recurso_cod', (SETOR_MAQ['Impressão'] || []).map(String)).limit(8000);
+    if (error) throw error;
+    const rows = data || [];
+    rows.forEach(r => { if (r.data_inicio) r.dia = String(r.data_inicio).slice(0, 10); });
+    try { aplicarDiaOperacional(rows, 'turno'); } catch (_) { }
+    const agg = {};
+    rows.filter(r => r.dia >= de && r.dia <= ate).forEach(r => {
+      const cx = caixasDe(r);
+      const mil = milDeLinha(r, cx);
+      if (!(mil > 0)) return;
+      const k2 = r.recurso_cod + '|' + r.dia;
+      agg[k2] = agg[k2] || { recurso_cod: String(r.recurso_cod), dia: r.dia, mil: 0 };
+      agg[k2].mil += mil;
+    });
+    _milImpr = Object.values(agg); _milImprKey = k;
+  } catch (e) { _milImpr = null; console.warn('milImpressao:', e && e.message); }
+}
+let _metaSetorRender = null;   // setor que a tabela de metas está mostrando agora
 async function salvarVelNom(silencioso) {
-  const setor = $('metaSetor').value || SETORES_AVAL[0];
+  /* 04/08/2026: usava o valor do select metaSetor, que vive escondido desde que
+     o filtro passou para a barra do topo. Se ele estivesse vazio, o salvamento
+     procurava os campos do setor errado, nao achava nenhum e saia com
+     "return true" — sem gravar e sem avisar. As velocidades da Impressao se
+     perderam assim. Agora usa o setor que a tabela desenhou. */
+  const setor = _metaSetorRender || $('metaSetor').value || SETORES_AVAL[0];
   const arr = [];
   (SETOR_MAQ[setor] || []).forEach(c => {
     const cod = String(c), el = $('vel_' + cod);
@@ -8628,13 +8665,14 @@ async function salvarVelNom(silencioso) {
     if (t !== '' && (isNaN(v) || v < 0)) return;
     arr.push({ recurso_cod: cod, vel: v, unidade: VEL_UNID(setor), atualizado_em: new Date().toISOString() });
   });
-  if (!arr.length) return true;
+  if (!arr.length) { if (!silencioso) toast('Nenhum campo de velocidade na tela para salvar'); return true; }
+  const preenchidos = arr.filter(r => r.vel != null).length;
   try {
     const { error } = await sb.from('maquina_vel').upsert(arr, { onConflict: 'recurso_cod' });
     if (error) throw error;
     velNomData = velNomData || {};
     arr.forEach(r => { if (r.vel == null) delete velNomData[r.recurso_cod]; else velNomData[r.recurso_cod] = r.vel; });
-    if (!silencioso) toast('Velocidades salvas');
+    if (!silencioso) toast(`✅ ${preenchidos} velocidade(s) salva(s) · ${escapeHtml(setor)}`);
     return true;
   } catch (e) {
     const msg = (e && e.message) || String(e);
@@ -8646,6 +8684,7 @@ async function salvarVelNom(silencioso) {
 }
 function renderMetas() {
   const setor = $('metaSetor').value || SETORES_AVAL[0];
+  _metaSetorRender = setor;
   const cods = SETOR_MAQ[setor] || [];
   const nomes = (dadosPainel && dadosPainel.nomeMaq) || {};
   const ro = metasEditavel ? '' : 'readonly';
@@ -8722,6 +8761,7 @@ function renderMetas() {
         style="width:80px;padding:5px 6px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${metasEditavel ? '' : ';background:var(--leve-3);color:#7a8794'}"></td></tr>`;
   });
   html += `</tbody></table></div>`;
+  if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarVelNom()">💾 Salvar velocidades nominais</button>`;
   if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:10px" onclick="salvarPerdaCfg()">💾 Salvar metas de perda</button>
     <p class="desc" style="margin-top:6px;text-align:center">também é salvo pelo botão “Salvar metas do setor”, no fim da tela</p>`;
   html += `</div>`;
@@ -9348,6 +9388,7 @@ async function carregarPainel() {
       return;
     }
   }
+  try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await carregarMilImpressao(); } } catch (_) { }
   /* FALHA SILENCIOSA: se renderPainel estourava, ninguem escrevia no
      painelConteudo e a tela ficava em "Carregando dados..." para sempre, sem
      erro nenhum. Agora o erro aparece na tela, com a linha que quebrou. */
@@ -9655,6 +9696,7 @@ const INFOS = {
   saudeImp: { t: 'Saúde da importação', d: "Os números são <b>dias com dado no mês</b> em cada relatório. Diferença de poucos dias entre eles é normal — pode haver parada em dia sem produção.<br><br>⭐ <b>O 621 RESUMO é a tabela que o Painel lê.</b> Se ela estiver vazia num mês, o Painel inteiro fica cego naquele mês, mesmo com o 622 completo.<br><br>O 054 CLI (perdas de cliente) é raro por natureza: fica cinza e não conta como falta." },
   farolRH: { t: 'Como o farol é decidido', d: "Cada pessoa é comparada com a <b>mediana do próprio setor</b> em faltas e atestados.<br><br><b>Verde</b> até 10% abaixo da mediana · <b>vermelho</b> a partir de 10% acima. Quem está zerado é sempre verde.<br><br><b>Só entram faltas e atestados.</b> Meta e perda ficaram de fora de propósito: são da máquina, não da pessoa — o mesmo operador mudando de máquina mudaria de cor sem ter mudado nada no trabalho dele." },
   seqSug: { t: 'Sequência sugerida', d: "Duas coisas puxam para lados opostos: o <b>prazo</b> pede ordem por entrega, a <b>produtividade</b> pede o mesmo item junto.<br><br>A sugestão agrupa por <b>semana de entrega</b> e, dentro da semana, junta as ordens do mesmo item — ganha setup sem empurrar prazo.<br><br>O tempo de troca é o <b>SETUP real medido</b> em cada máquina nos últimos 60 dias." },
+  metaMil: { t: 'Meta em milheiro · Impressão', d: "<b>Capacidade nominal</b> = velocidade cadastrada (peças/min) × 60 × <b>23,91 h</b> do dia útil, dividido por mil. É o que a máquina faria girando o dia inteiro <b>sem parar, sem trocar item e sem refugo</b> — não é meta negociada.<br><br><b>Realizado</b> vem do 622, convertido para milheiro: quem aponta em MIL entra direto; quem aponta em caixa vira peça pela embalagem da descrição (caixas × unidades por caixa ÷ 1000).<br><br>A média é sobre os <b>dias em que a máquina rodou</b>, não sobre os dias do calendário — máquina parada a semana toda não é diluída.<br><br>Por isso o percentual é baixo por natureza: ele já embute setup, parada, refugo e o tempo em que a máquina não estava programada. Serve para <b>comparar máquinas entre si</b> e para achar meta desalinhada, não como cobrança direta.<br><br>Só a Impressão por enquanto — é o setor com velocidade cadastrada em peças/min." },
   progReal: { t: 'Programado × realizado', d: "<b>Programado</b> é o peso das OPs da fila rateado pelos dias entre o início e o término previstos — a OP não sai toda no dia em que termina, então distribuir é mais fiel do que jogar tudo no último dia.<br><br>O plano usado é o da <b>véspera</b>: é o compromisso que estava valendo antes de o dia começar. Usar a foto do próprio dia daria número inflado, porque ela já nasce sem o que a fábrica produziu de manhã.<br><br><b>Realizado</b> vem do 621, só das máquinas que estavam no plano. O que saiu em máquina fora do plano aparece à parte, como “fora do plano”.<br><br>Dia futuro mostra só o programado, marcado como <b>a fazer</b>. O percentual grande do topo considera apenas os dias já fechados." },
   filaDesvio: { t: 'Atraso × adiantamento da fila', d: "O <b>RPCP264</b> traz a data e a <b>hora prevista de término</b> de cada OP. Comparando a foto de um dia com a do dia anterior, a diferença nesse término é o quanto a produção andou <b>mais devagar</b> (positivo, atrasou) ou <b>mais rápido</b> (negativo, adiantou) do que o ERP previa.<br><br>Só entram as OPs presentes nas <b>duas fotos</b>: OP nova não tem com o que comparar, e OP que saiu da fila está no card acima.<br><br><b>Desvio médio</b> é o atraso típico de cada OP daquele grupo. <b>Acumulado</b> é a soma — mostra onde o atraso pesa no total, mesmo que cada OP atrase pouco.<br><br>O agrupamento por <b>turno, dia e semana</b> usa o término <b>previsto na foto anterior</b>: é o compromisso que estava valendo, não o novo.<br><br>Medido em 04/08/2026: de 991 OPs, 643 não mexeram, 254 empurraram e 94 adiantaram.<br><br><b>Extrusão, Injeção, Embaladeiras, Rotulagem e Compressão ficam de fora</b> — o ERP não recalcula a previsão delas, o desvio vem sempre zero e contá-las como “em dia” daria média falsa." },
   opSaiu: { t: 'OP que saiu da fila sem terminar', d: "Compara a <b>foto da fila</b> de um dia com a do dia anterior e lista a OP que sumiu, com o que faltava produzir: <b>programado − apontado (622) − refugado (624)</b>.<br><br><b>Nem tudo aqui é problema.</b> No teste de 03/08 → 04/08, de 39 OPs que sumiram, <b>24 estavam rodando</b> naquele momento e <b>11 apenas mudaram de máquina</b> (a 704 passou 7 OPs para a 703 e a 709). Essas ficam nas etiquetas do topo, fora da lista.<br><br>A ordem é por <b>pedido preso</b>, não por peso — a bobina de 5.900 kg da 501 não segura cliente nenhum, e duas OPs de 120 kg da 710 seguram 9 pedidos cada.<br><br><b>Parou sem explicação</b> é a linha que merece pergunta: saiu da fila, não apontou nada e não tem parada registrada.<br><br>Enquanto o resumo (621) do dia da foto nova não chega, o card avisa que é <b>prévia</b>: OP que entrou na máquina de madrugada ainda não está no relatório." },
@@ -14883,6 +14925,69 @@ function imprimirModal() {
   window.print();
   setTimeout(() => { document.body.classList.remove('imprimindo'); box.innerHTML = ''; }, 1000);
 }
+/* ===== META EM MILHEIRO PELA VELOCIDADE NOMINAL — 04/08/2026 =====
+   Só Impressão por enquanto, a pedido do João: é o único setor com velocidade
+   cadastrada em peças/min (copos por minuto) e que aponta em caixa, o que
+   permite converter o realizado para milheiro pela embalagem da descrição.
+   Capacidade nominal do dia = peças/min × 60 × horas do dia útil (23,91 h),
+   dividido por mil. Não é meta negociada: é o que a máquina faria girando o dia
+   inteiro sem parar. Por isso o card chama de "nominal" e mostra o quanto do
+   nominal a máquina realmente entrega. */
+function cardMetaMilheiro() {
+  const SET = 'Impressão';
+  if (!velNomData) return '';
+  const cods = (SETOR_MAQ[SET] || []).map(String).filter(c => velNomData[c] > 0);
+  if (!cods.length) return '';
+  const D = dadosPainelFull || dadosPainel;
+  const jorDia = 23.91;
+
+  // realizado em milheiro, por máquina, no período que está na tela
+  const real = {}, diasMaq = {};
+  try {
+    (_milImpr || []).forEach(r => {
+      const c = String(r.recurso_cod); if (!cods.includes(c)) return;
+      real[c] = (real[c] || 0) + (+r.mil || 0);
+      (diasMaq[c] = diasMaq[c] || new Set()).add(r.dia);
+    });
+  } catch (_) { }
+
+  const linhas = cods.map(c => {
+    const vel = +velNomData[c];
+    const nomDia = vel * 60 * jorDia / 1000;              // milheiro por dia cheio
+    const nd = (diasMaq[c] && diasMaq[c].size) || 0;
+    const feitoDia = nd > 0 ? (real[c] || 0) / nd : 0;
+    return { c, vel, nomDia, feitoDia, nd, pct: nomDia > 0 ? feitoDia / nomDia * 100 : 0 };
+  }).sort((a, b) => b.pct - a.pct);
+
+  const fm = v => v.toLocaleString('pt-BR', { maximumFractionDigits: v >= 100 ? 0 : 1 });
+  const cor = p2 => p2 >= 60 ? 'var(--verde)' : p2 >= 35 ? 'var(--laranja)' : 'var(--critico)';
+  const maxN = Math.max(1, ...linhas.map(l => l.nomDia));
+
+  let corpo = '<div style="display:flex;gap:10px;font-size:10.5px;color:var(--fraco);margin-bottom:8px;flex-wrap:wrap">'
+    + '<span><span style="display:inline-block;width:10px;height:10px;background:var(--leve);border:1px solid var(--borda);border-radius:2px;vertical-align:-1px"></span> capacidade nominal</span>'
+    + '<span><span style="display:inline-block;width:10px;height:10px;background:var(--verde);border-radius:2px;vertical-align:-1px"></span> média realizada por dia</span></div>';
+
+  linhas.forEach(l => {
+    const pN = l.nomDia / maxN * 100, pF = l.feitoDia / maxN * 100;
+    corpo += `<div style="margin-bottom:9px">`
+      + `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;margin-bottom:3px">`
+      + `<span><b>${l.c}</b> <span style="color:var(--fraco-2)">${fm(l.vel)} pç/min</span></span>`
+      + `<span style="font-weight:800;color:${cor(l.pct)}">${fm(l.pct)}% do nominal</span></div>`
+      + `<div style="position:relative;height:19px;background:var(--leve);border-radius:5px;overflow:hidden">`
+      + `<div style="position:absolute;left:0;top:0;bottom:0;width:${pN}%;background:var(--leve);border-right:2px dashed var(--fraco-3)"></div>`
+      + `<div style="position:absolute;left:0;top:0;bottom:0;width:${pF}%;background:${cor(l.pct)};border-radius:5px"></div>`
+      + `<div style="position:absolute;right:6px;top:0;bottom:0;display:flex;align-items:center;font-size:10.5px;font-weight:700;color:var(--fraco)">${fm(l.feitoDia)} / ${fm(l.nomDia)} mil/dia</div>`
+      + `</div>`
+      + `<div style="font-size:9.5px;color:var(--fraco-2);margin-top:2px">${l.nd} dia(s) com apontamento no período</div></div>`;
+  });
+
+  const totN = linhas.reduce((a, l) => a + l.nomDia, 0), totF = linhas.reduce((a, l) => a + l.feitoDia, 0);
+  corpo += `<div style="border-top:2px solid var(--navy);margin-top:6px;padding-top:7px;display:flex;justify-content:space-between;font-size:12.5px;font-weight:800">`
+    + `<span>SETOR</span><span style="color:${cor(totN > 0 ? totF / totN * 100 : 0)}">${fm(totF)} de ${fm(totN)} mil/dia · ${fm(totN > 0 ? totF / totN * 100 : 0)}%</span></div>`;
+
+  return card('Meta em milheiro · Impressão' + ico('metaMil'),
+    'capacidade nominal pela velocidade cadastrada × realizado por dia', corpo);
+}
 function renderPainel() {
   if (!dadosPainel) return;
   aprovReg = [];
@@ -15275,6 +15380,7 @@ function renderPainel() {
     if (t) html += card('Aproveitamento de bobina por máquina e turno · período', 'meta ' + META_APROV.toLocaleString('pt-BR') + '% (verde ≥ meta) · por turno é estimado pela hora do consumo — rolo carregado no fim de um turno pode contar no seguinte; o TOTAL é o valor confiável', t);
   }
   // OEE do período (resumo do setor)
+  try { if (setor === 'Impressão') { const mm = cardMetaMilheiro(); if (mm) html += mm; } } catch (e) { console.warn('metaMil:', e); }
   { const R = computeOEE(setor);
     /* 04/08/2026: este card mostrava sempre o OEE do PERIODO INTEIRO, mesmo com
        um turno selecionado na barra — Manha, Tarde e Noite davam o mesmo 49,8%,
