@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.613.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.614.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.613.0';
+const APP_VER = '3.614.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14141,28 +14141,62 @@ function detPerdaMaqTurno(cod, bloco, setor) {
     + (dias.length > 1 ? '<div style="font-weight:800;font-size:12px;margin:10px 0 4px">Por dia</div>'
       + tabSimples(['Dia', 'Kg'], dias.map(([d, v]) => `<tr><td class="nome" style="font-size:11.5px">${diaSemana(d)}, ${fmtData(d)}</td><td><span class="cel neutra">${fmtKg(v)}</span></td></tr>`).join('')) : ''));
 }
-function detProdMaqTurno(cod, bloco) {
-  const D = dadosPainel; if (!D || !D.producao) return;
-  const rows = D.producao.filter(r => String(r.recurso_cod) === String(cod) && (!bloco || blocoTurno(r.turno, r.dia) === bloco));
-  if (!rows.length) { toast('Sem produção neste recorte'); return; }
+/* APONTAMENTOS DE UMA MAQUINA NUM TURNO — 04/08/2026.
+   A versao anterior lia dadosPainel.producao, que e o 621 RESUMIDO: tem dia,
+   turno, recurso e peso, mas NAO tem item nem OP. O bloco "por item" saia com
+   uma linha "—" so. Agora busca o 622 (tabela producao) na hora do toque, que e
+   onde vive o apontamento de verdade.
+   Busca ate o dia seguinte porque o turno da noite e lancado no ERP com a data
+   do dia seguinte; aplicarDiaOperacional devolve para o dia certo. */
+async function detProdMaqTurno(cod, bloco) {
+  const de = periodoSel && periodoSel.de, ate = periodoSel && periodoSel.ate;
+  if (!de || !ate) return;
+  const dep = new Date(ate + 'T12:00:00'); dep.setDate(dep.getDate() + 1);
+  const ate1 = dep.toISOString().slice(0, 10);
+  abreDet(cod + ' · Apontamentos' + (bloco ? ' · ' + bloco : ''), '<p class="idet-desc"><span class="spin"></span> buscando no relatório 622…</p>');
+  let rows = [];
+  try {
+    const { data, error } = await sb.from('producao')
+      .select('dia,data_inicio,turno,op,item_cod,item_desc,quantidade,peso,unidade')
+      .eq('recurso_cod', String(cod)).gte('dia', de).lte('dia', ate1).limit(3000);
+    if (error) throw error;
+    rows = data || [];
+  } catch (e) {
+    abreDet(cod + ' · Apontamentos', `<p class="vazio-painel">Não consegui buscar: ${escapeHtml((e && e.message) || String(e))}</p>`);
+    return;
+  }
+  rows.forEach(r => { if (r.data_inicio) r.dia = String(r.data_inicio).slice(0, 10); });
+  try { aplicarDiaOperacional(rows, 'turno'); } catch (_) { }
+  rows = rows.filter(r => r.dia >= de && r.dia <= ate && (!bloco || blocoTurno(r.turno, r.dia) === bloco));
+  if (!rows.length) { abreDet(cod + ' · Apontamentos' + (bloco ? ' · ' + bloco : ''), '<p class="vazio-painel">Nenhum apontamento do 622 neste recorte.</p>'); return; }
+
   const emCx = (typeof setorEmCx === 'function') ? setorEmCx(setorDe(String(cod))) : false;
-  const val = r => emCx ? (+r.quantidade || 0) : (+r.peso || 0);
-  const uni = emCx ? 'cxs' : 'kg';
   const nv = v => Math.round(v).toLocaleString('pt-BR');
-  const tot = rows.reduce((a, r) => a + val(r), 0);
+  const totKg = rows.reduce((a, r) => a + (+r.peso || 0), 0);
+  const totCx = rows.reduce((a, r) => a + (semCaixa(setorDe(String(cod))) ? 0 : caixasDe(r)), 0);
+  const totMil = rows.reduce((a, r) => a + milDeLinha(r, semCaixa(setorDe(String(cod))) ? 0 : caixasDe(r)), 0);
+
   const porItem = {};
-  rows.forEach(r => { const k = r.item_cod || r.item_desc || '—'; const o = (porItem[k] = porItem[k] || { desc: r.item_desc || k, v: 0, ops: new Set() }); o.v += val(r); if (r.op) o.ops.add(String(r.op)); });
-  const itens = Object.entries(porItem).sort((a, b) => b[1].v - a[1].v);
-  const porDia = {};
-  rows.forEach(r => { porDia[r.dia] = (porDia[r.dia] || 0) + val(r); });
-  const dias = Object.entries(porDia).sort();
-  abreDet(cod + ' · Produção' + (bloco ? ' · ' + bloco : ''),
-    `<p class="idet-desc"><b>${nv(tot)} ${uni}</b> · ${itens.length} item(ns) · ${rows.length} apontamento(s)${bloco ? ' · turno ' + escapeHtml(bloco) : ' · período inteiro'}</p>`
+  rows.forEach(r => {
+    const k = r.item_cod || r.item_desc || '—';
+    const o = (porItem[k] = porItem[k] || { desc: r.item_desc || k, kg: 0, cx: 0, ops: new Set(), n: 0 });
+    o.kg += (+r.peso || 0); o.cx += semCaixa(setorDe(String(cod))) ? 0 : caixasDe(r); o.n++;
+    if (r.op) o.ops.add(String(r.op));
+  });
+  const itens = Object.entries(porItem).sort((a, b) => b[1].kg - a[1].kg);
+
+  const T = { 1: 'T1', 2: 'T2', 3: 'T3', 4: 'T4', 5: 'T5' };
+  rows.sort((a, b) => (a.dia + String(a.turno)) < (b.dia + String(b.turno)) ? -1 : 1);
+
+  abreDet(cod + ' · Apontamentos' + (bloco ? ' · ' + bloco : ''),
+    `<p class="idet-desc"><b>${fmtKg(totKg)}</b>${totCx ? ' · <b>' + nv(totCx) + '</b> cxs' : ''}${totMil ? ' · <b>' + fmtMil(totMil) + '</b> mil' : ''} · ${rows.length} apontamento(s) · ${itens.length} item(ns)${bloco ? ' · turno ' + escapeHtml(bloco) : ''}</p>`
     + '<div style="font-weight:800;font-size:12px;margin:8px 0 4px">Por item</div>'
-    + tabSimples(['Item', uni], itens.map(([k, v]) => `<tr><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc).slice(0, 30))}${v.ops.size ? `<div style="font-size:9.5px;color:var(--fraco-2)">OP ${escapeHtml([...v.ops].slice(0, 3).join(', '))}${v.ops.size > 3 ? ' +' + (v.ops.size - 3) : ''}</div>` : ''}</td><td><span class="cel cel-tot">${nv(v.v)}</span></td></tr>`).join(''))
-    + (dias.length > 1 ? '<div style="font-weight:800;font-size:12px;margin:10px 0 4px">Por dia</div>'
-      + tabSimples(['Dia', uni], dias.map(([d, v]) => `<tr><td class="nome" style="font-size:11.5px">${diaSemana(d)}, ${fmtData(d)}</td><td><span class="cel neutra">${nv(v)}</span></td></tr>`).join('')) : ''));
+    + tabSimples(['Item', 'Peso', 'Cxs'], itens.map(([k, v]) => `<tr><td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(k))}</span> ${escapeHtml(String(v.desc).slice(0, 30))}${v.ops.size ? `<div style="font-size:9.5px;color:var(--fraco-2)">OP ${escapeHtml([...v.ops].sort().slice(0, 4).join(', '))}${v.ops.size > 4 ? ' +' + (v.ops.size - 4) : ''} · ${v.n} apont.</div>` : ''}</td><td><span class="cel cel-tot">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nv(v.cx) : '—'}</span></td></tr>`).join(''))
+    + '<div style="font-weight:800;font-size:12px;margin:11px 0 4px">Apontamento a apontamento</div>'
+    + tabSimples(['Dia · turno · OP', 'Peso', 'Qtd'], rows.slice(0, 120).map(r => `<tr><td class="nome" style="font-size:11px">${fmtData(r.dia)} <span style="color:var(--fraco-2)">${T[+r.turno] || r.turno}</span>${r.op ? ' · OP ' + escapeHtml(String(r.op)) : ''}<div style="font-size:9.5px;color:var(--fraco-2)">${escapeHtml(String(r.item_desc || r.item_cod || '').slice(0, 32))}</div></td><td><span class="cel cel-tot">${fmtKg(+r.peso || 0)}</span></td><td><span class="cel neutra">${nv(+r.quantidade || 0)} <span style="font-size:9px;opacity:.8">${escapeHtml(String(r.unidade || ''))}</span></span></td></tr>`).join(''))
+    + (rows.length > 120 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando 120 de ${rows.length} apontamentos</p>` : ''));
 }
+
 function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes, clickCel }) {
   const cel = {}, nome = {};
   const ini = c => { c = String(c); if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
