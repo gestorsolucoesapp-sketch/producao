@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.615.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.616.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2207,7 +2207,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.615.0';
+const APP_VER = '3.616.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8620,6 +8620,44 @@ async function getVelNom() {
 /* realizado em MILHEIRO da Impressao, por maquina e dia. Vem do 622 porque o
    621 nao tem item — e sem item nao da para saber a embalagem para converter
    caixa em peca. */
+/* FATOR DE VELOCIDADE POR BOCA — 04/08/2026 (regra do Joao).
+   A velocidade nominal cadastrada vale para a boca padrao. Boca maior usa menos
+   pistas e a maquina rende menos: na boca 150 a Impressao faz METADE.
+   Fica em app_config.boca_fator para o Joao ajustar sem depender de deploy.
+   Boca sem fator cadastrado vale 1 (velocidade cheia). */
+let bocaFator = null;
+async function getBocaFator() {
+  if (bocaFator) return bocaFator;
+  bocaFator = { '150': 0.5 };
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'boca_fator').maybeSingle();
+    if (data && data.valor) bocaFator = JSON.parse(data.valor);
+  } catch (_) { }
+  return bocaFator;
+}
+/* bocas que a Impressao rodou no periodo, com o milheiro de cada — alimenta a
+   tela de cadastro do fator, para o Joao so ver boca que existe de verdade. */
+function bocasDaImpressao() {
+  const m = {};
+  (_milImpr || []).forEach(r => Object.entries(r.bocas || {}).forEach(([b, v]) => { if (b) m[b] = (m[b] || 0) + v; }));
+  return Object.entries(m).sort((a, b) => b[1] - a[1]);
+}
+const fatorDaBoca = b => { const f = bocaFator && bocaFator[String(b)]; return (f > 0) ? +f : 1; };
+async function salvarBocaFator() {
+  const novo = {};
+  document.querySelectorAll('[id^="bf_"]').forEach(el => {
+    const b = el.id.slice(3), t = String(el.value).replace(',', '.').trim();
+    const v = parseFloat(t);
+    if (t !== '' && !isNaN(v) && v > 0 && v !== 1) novo[b] = v;
+  });
+  try {
+    const { error } = await sb.from('app_config').upsert({ chave: 'boca_fator', valor: JSON.stringify(novo) }, { onConflict: 'chave' });
+    if (error) throw error;
+    bocaFator = novo;
+    toast('✅ Fator por boca salvo');
+    try { dadosPainel = dadosPainelFull = null; renderMetas(); } catch (_) { }
+  } catch (e) { toast('❌ Não salvou: ' + ((e && e.message) || e)); }
+}
 let _milImpr = null, _milImprKey = '';
 async function carregarMilImpressao() {
   try {
@@ -8641,9 +8679,13 @@ async function carregarMilImpressao() {
       const cx = caixasDe(r);
       const mil = milDeLinha(r, cx);
       if (!(mil > 0)) return;
+      /* guarda por BOCA: o nominal do dia e ponderado pelo fator de cada boca
+         que a maquina rodou, na proporcao do que ela produziu em cada uma. */
+      const bo = String(bocaDe(r.item_desc) || '');
       const k2 = r.recurso_cod + '|' + r.dia;
-      agg[k2] = agg[k2] || { recurso_cod: String(r.recurso_cod), dia: r.dia, mil: 0 };
+      agg[k2] = agg[k2] || { recurso_cod: String(r.recurso_cod), dia: r.dia, mil: 0, bocas: {} };
       agg[k2].mil += mil;
+      agg[k2].bocas[bo] = (agg[k2].bocas[bo] || 0) + mil;
     });
     _milImpr = Object.values(agg); _milImprKey = k;
   } catch (e) { _milImpr = null; console.warn('milImpressao:', e && e.message); }
@@ -8762,6 +8804,21 @@ function renderMetas() {
   });
   html += `</tbody></table></div>`;
   if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarVelNom()">💾 Salvar velocidades nominais</button>`;
+  if (setor === 'Impressão') {
+    const bs = bocasDaImpressao();
+    if (bs.length) {
+      const totB = bs.reduce((a, x) => a + x[1], 0);
+      html += `<div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">`
+        + `<div style="font-weight:800;font-size:12.5px;margin-bottom:2px">Fator de velocidade por boca</div>`
+        + `<p class="desc" style="margin:0 0 7px;font-size:11px">a velocidade cadastrada vale para a boca padrão · boca maior usa menos pistas e rende menos. <b>1 = velocidade cheia · 0,5 = metade</b></p>`
+        + tabSimples(['Boca', 'Peso no período', 'Fator'], bs.map(([b, v]) =>
+          `<tr><td class="nome" style="font-size:12px">boca <b>${escapeHtml(b)}</b></td>`
+          + `<td><span class="cel neutra">${Math.round(v / totB * 100)}%</span></td>`
+          + `<td><input type="number" inputmode="decimal" min="0.1" max="1" step="0.05" id="bf_${escapeHtml(b)}" value="${fatorDaBoca(b)}" ${ro} style="width:100%;max-width:70px;padding:5px 3px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${roStyle}"></td></tr>`).join(''));
+      if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="salvarBocaFator()">💾 Salvar fator por boca</button>`;
+      html += `</div>`;
+    }
+  }
   if (metasEditavel) html += `<button class="btn btn-verde" style="width:100%;margin-top:10px" onclick="salvarPerdaCfg()">💾 Salvar metas de perda</button>
     <p class="desc" style="margin-top:6px;text-align:center">também é salvo pelo botão “Salvar metas do setor”, no fim da tela</p>`;
   html += `</div>`;
@@ -9388,7 +9445,7 @@ async function carregarPainel() {
       return;
     }
   }
-  try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await carregarMilImpressao(); } } catch (_) { }
+  try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await getBocaFator(); await carregarMilImpressao(); } } catch (_) { }
   /* FALHA SILENCIOSA: se renderPainel estourava, ninguem escrevia no
      painelConteudo e a tela ficava em "Carregando dados..." para sempre, sem
      erro nenhum. Agora o erro aparece na tela, com a linha que quebrou. */
@@ -14953,10 +15010,26 @@ function cardMetaMilheiro() {
 
   const linhas = cods.map(c => {
     const vel = +velNomData[c];
-    const nomDia = vel * 60 * jorDia / 1000;              // milheiro por dia cheio
+    const nomCheio = vel * 60 * jorDia / 1000;           // milheiro num dia cheio, boca padrão
+    /* fator medio da maquina: media dos fatores das bocas que ela rodou,
+       ponderada pelo milheiro produzido em cada uma. Sem isso, maquina que so
+       roda boca 150 apareceria com metade do desempenho que realmente tem. */
+    let somaMil = 0, somaFat = 0, bocasMaq = {};
+    (_milImpr || []).forEach(r => {
+      if (String(r.recurso_cod) !== c) return;
+      Object.entries(r.bocas || {}).forEach(([b, v]) => {
+        if (!b) return;
+        somaMil += v; somaFat += v * fatorDaBoca(b);
+        bocasMaq[b] = (bocasMaq[b] || 0) + v;
+      });
+    });
+    const fat = somaMil > 0 ? somaFat / somaMil : 1;
+    const nomDia = nomCheio * fat;
     const nd = (diasMaq[c] && diasMaq[c].size) || 0;
     const feitoDia = nd > 0 ? (real[c] || 0) / nd : 0;
-    return { c, vel, nomDia, feitoDia, nd, pct: nomDia > 0 ? feitoDia / nomDia * 100 : 0 };
+    const bocaTxt = Object.entries(bocasMaq).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([b, v]) => b + (fatorDaBoca(b) !== 1 ? '·' + Math.round(fatorDaBoca(b) * 100) + '%' : '') + ' (' + Math.round(v / somaMil * 100) + '%)').join(' · ');
+    return { c, vel, nomDia, nomCheio, fat, feitoDia, nd, bocaTxt, pct: nomDia > 0 ? feitoDia / nomDia * 100 : 0 };
   }).sort((a, b) => b.pct - a.pct);
 
   const fm = v => v.toLocaleString('pt-BR', { maximumFractionDigits: v >= 100 ? 0 : 1 });
@@ -14978,7 +15051,7 @@ function cardMetaMilheiro() {
       + `<div style="position:absolute;left:0;top:0;bottom:0;width:${pF}%;background:${cor(l.pct)};border-radius:5px"></div>`
       + `<div style="position:absolute;right:6px;top:0;bottom:0;display:flex;align-items:center;font-size:10.5px;font-weight:700;color:var(--fraco)">${fm(l.feitoDia)} / ${fm(l.nomDia)} mil/dia</div>`
       + `</div>`
-      + `<div style="font-size:9.5px;color:var(--fraco-2);margin-top:2px">${l.nd} dia(s) com apontamento no período</div></div>`;
+      + `<div style="font-size:9.5px;color:var(--fraco-2);margin-top:2px">${l.nd} dia(s) com apontamento${l.bocaTxt ? ' · boca ' + escapeHtml(l.bocaTxt) : ''}${l.fat !== 1 ? ` · nominal ajustado para ${Math.round(l.fat * 100)}% (${fm(l.nomCheio)} na boca padrão)` : ''}</div></div>`;
   });
 
   const totN = linhas.reduce((a, l) => a + l.nomDia, 0), totF = linhas.reduce((a, l) => a + l.feitoDia, 0);
