@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.650.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.651.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2557,7 +2557,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.650.0';
+const APP_VER = '3.651.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19702,7 +19702,13 @@ function cardDestrava() {
 function cardCarteira196(rows) {
   if (!_cart196 || !_cart196.pend.length) return '';
   const C = _cart196;
-  const naFila = new Set((rows || []).map(r => String(r.item_cod || '')).filter(Boolean));
+  /* A FILA INTEIRA, NAO O RECORTE. rows ja vem filtrado por setor e maquina;
+     usando ele, um item que esta na fila da Impressao aparecia como "FORA da
+     fila" enquanto o filtro estivesse na Termoformagem. O item 1605563 era
+     assim: a ficha dizia "na fila, 704, OP 263514" e o card dizia que ninguem
+     tinha programado. O recorte serve para MOSTRAR, nao para CONCLUIR. */
+  const filaTudo = Array.isArray(_progDados) ? _progDados : (rows || []);
+  const naFila = new Set(filaTudo.map(r => String(r.item_cod || '')).filter(Boolean));
   const estoque = {}, estoqueCx = {};
   C.est.forEach(e => { const k = String(e.item_cod); estoque[k] = +e.peso || 0; estoqueCx[k] = +e.qtd || 0; });
   const A = _alocarEstoque();
@@ -19711,22 +19717,37 @@ function cardCarteira196(rows) {
   const ag = {};
   C.pend.forEach(p => {
     const k = String(p.item_cod);
-    const a = ag[k] || (ag[k] = { kg: 0, cx: 0, desc: p.item_desc || '', cli: new Set(), atraso: 0, ent: null });
+    const a = ag[k] || (ag[k] = { kg: 0, cx: 0, desc: p.item_desc || '', cli: new Set(), ent: null });
     a.kg += (+p.peso_pendente || 0);
     a.cx += _ehCx(p.un) ? (+p.qtd_pendente || 0) : 0;      // mesma regra do palete
     a.cli.add(p.cliente);
-    if ((p.dias || 0) > a.atraso) a.atraso = p.dias;         // negativo = reprogramacao, nao atraso
+    /* O CAMPO "dias" DO REST196 NAO E ATRASO. Medido em 05/08/2026: correlacao
+       de -0,06 com o atraso real, 764 das 843 linhas com dias>0 tinham entrega
+       no FUTURO, e o maximo era 8.806. Era ele que fazia um item com entrega
+       para 21/09 aparecer com "17d de atraso". O atraso de verdade e a distancia
+       entre a entrega e a foto — e so isso e usado agora. */
     if (p.entrega && (!a.ent || p.entrega < a.ent)) a.ent = p.entrega;
   });
   /* usa a FALTA depois da alocacao, nao "estoque >= pendente" item a item —
      senao o mesmo material conta uma vez por cliente. */
-  const G = { fat: [], fila: [], risco: [] };
+  /* JANELA DE 7 DIAS — regra do Joao, 06/08/2026.
+     Item sem estoque e fora da fila com entrega para setembro NAO e atraso: e
+     pedido com prazo. A programacao entra na fila perto da data, e alarmar dois
+     meses antes so ensina a ignorar o alarme. So vira risco de verdade quando
+     faltam 7 dias ou menos para a entrega — ou quando ela ja passou. */
+  const DIAS_ALERTA = 7;
+  const hojeC = C.dia;
+  const diasAte = ent => ent ? Math.round((new Date(ent + 'T00:00:00') - new Date(hojeC + 'T00:00:00')) / 86400000) : null;
+  const G = { fat: [], fila: [], risco: [], prazo: [] };
   Object.keys(ag).forEach(k => {
     const a = ag[k], e = estoque[k] || 0, falta = faltaItem[k] || 0;
     a.cxEst = estoqueCx[k] || 0;
+    a.dAte = diasAte(a.ent);              // negativo = entrega vencida
+    a.urgente = (a.dAte == null) || a.dAte <= DIAS_ALERTA;
     if (falta <= 0.001) G.fat.push([k, a, e]);
     else if (naFila.has(k)) G.fila.push([k, a, e]);
-    else G.risco.push([k, a, e]);
+    else if (a.urgente) G.risco.push([k, a, e]);
+    else G.prazo.push([k, a, e]);
   });
   const t = L => L.reduce((s, x) => s + x[1].kg, 0);
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
@@ -19751,7 +19772,7 @@ function cardCarteira196(rows) {
       + (nota ? `<div class="desc" style="margin:1px 0 5px">${nota}</div>` : '')
       + tabSimples(['Item', 'Roda em', 'Pendente', 'Estoque', 'Entrega'], ord.map(([k, a, e]) =>
         `<tr onclick="detItem('${escapeHtml(k)}')" style="cursor:pointer"><td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(k)}</span> ${escapeHtml(String(a.desc).slice(0, 40))} 🔎`
-        + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.cli.size} cliente(s)${a.atraso > 0 ? ' · <b style="color:var(--critico)">' + a.atraso + 'd de atraso</b>' : ''}</div></td>`
+        + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.cli.size} cliente(s)${a.dAte == null ? '' : a.dAte < 0 ? ' · <b style="color:var(--critico)">entrega vencida há ' + Math.abs(a.dAte) + 'd</b>' : a.dAte <= DIAS_ALERTA ? ' · <b style="color:#B26A00">entrega em ' + a.dAte + 'd</b>' : ' · <span style="color:var(--fraco-2)">entrega em ' + a.dAte + 'd</span>'}</div></td>`
         + `<td class="nome" style="min-width:96px">${badgesMaq(k)}</td>`
         + `<td><span class="cel cel-tot">${kg(a.kg)}${a.cx > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${Math.round(a.cx).toLocaleString('pt-BR')} cx</div>` : ''}</span></td>`
         + `<td><span class="cel ${e > 0 ? 'neutra' : 'baixo'}">${kg(e)}${a.cxEst > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.9">${Math.round(a.cxEst).toLocaleString('pt-BR')} cx</div>` : ''}</span></td>`
@@ -19763,8 +19784,9 @@ function cardCarteira196(rows) {
   const kgSem = semPedido.reduce((s, r) => s + (+r.peso || 0), 0);
   return card('📦 Carteira × fila' + ico('carteira'),
     'REST196 de ' + fmtDataSem(C.dia) + ' · ' + C.pend.length + ' linha(s) de pedido · ' + kg(C.pend.reduce((s, p) => s + (+p.peso_pendente || 0), 0)) + ' pendentes',
-    bloco('🚨 Falta estoque e está FORA da fila', G.risco, 'var(--critico)', 'Ninguém programou e não há material. É onde o atraso nasce.')
+    bloco('🚨 Sem estoque, fora da fila e a entrega é em até ' + DIAS_ALERTA + ' dias', G.risco, 'var(--critico)', 'Ninguém programou, não há material e o prazo acabou. É onde o atraso nasce.')
     + bloco('🕐 Falta estoque, mas está na fila', G.fila, 'var(--laranja)', 'Vai ser produzido — confira se a data da fila cobre a entrega.')
+    + bloco('🗓️ Sem estoque e fora da fila, mas ainda há prazo', G.prazo, 'var(--fraco)', 'Entrega a mais de ' + DIAS_ALERTA + ' dias. Normal não estar na fila ainda — a programação entra perto da data. Fica aqui só para não sumir do radar.')
     + bloco('✅ Já tem estoque — é só faturar', G.fat, 'var(--verde)', 'Material pronto. Se está atrasado, o gargalo não é produção.')
     + (semPedido.length ? `<div style="margin-top:12px"><div style="font-weight:800;color:var(--fraco);font-size:13px">📋 Na fila sem pedido pendente · ${semPedido.length} ordem(ns) · ${kg(kgSem)}</div><div class="desc">Produção para estoque. Pode ser certo, pode ser fila mal montada.</div></div>` : ''),
     'Carteira × fila');
