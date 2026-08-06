@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.649.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.650.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1026,7 +1026,10 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       <div class="card">
         <div class="titulo-sec">Mapa de demanda</div>
         <p class="desc">Pedidos novos, pedidos vencidos e a carteira dividida por <b>boca</b> e por <b>setor</b> — contra o que a fábrica já provou que faz.</p>
-        <div style="margin-bottom:8px"><button class="btn btn-borda" style="width:auto;padding:8px 14px;font-size:13px" onclick="carregarDemanda(true)">🔄 Atualizar</button></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <select id="demBocaSel" onchange="detDemandaBoca(this.value)" style="flex:1;min-width:170px;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:16px;font-weight:700"><option value="">consultar uma boca…</option></select>
+          <button class="btn btn-borda" style="width:auto;padding:8px 14px;font-size:13px" onclick="carregarDemanda(true)">🔄 Atualizar</button>
+        </div>
         <div id="demandaBox"></div>
       </div>
     </section>
@@ -2554,7 +2557,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.649.0';
+const APP_VER = '3.650.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6687,6 +6690,81 @@ function renderDemanda() {
     <div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Mapa mensal · demanda × recorde do ano${ico('demmapa')}</div>
     <p class="desc" style="margin:0 0 6px">O que está vencido entra no mês corrente — é para agora. A cor compara a demanda do mês com o <b>melhor mês que aquela boca já teve no ano</b>.</p>
     ${mapa}`;
+
+  /* o seletor vive FORA da caixa que e redesenhada, entao e populado a parte */
+  const sel = $('demBocaSel');
+  if (sel) sel.innerHTML = '<option value="">consultar uma boca…</option>'
+    + bocasMapa.map(b2 => `<option value="${escapeHtml(b2)}">boca ${escapeHtml(b2)}${porBoca[b2] ? ' · ' + _demT(porBoca[b2]) + ' na carteira' : ' · sem demanda'}</option>`).join('');
+}
+
+/* ---------- CONSULTA DE UMA BOCA: O ANO INTEIRO NUM GRAFICO ----------
+   Colunas por mes, janeiro a dezembro, com duas leituras na mesma linha do
+   tempo: o que a fabrica JA PRODUZIU daquela boca (meses passados) e o que a
+   carteira PEDE (meses futuros). A linha tracejada e o recorde do ano.
+
+   Por que passado e futuro no mesmo eixo: a pergunta "cabe mais pedido desta
+   boca em outubro?" so se responde comparando o pedido de outubro com o que a
+   fabrica costuma fazer num mes. Dois graficos separados obrigariam a fazer
+   essa conta de cabeca.
+
+   O mes corrente aparece com as duas coisas — ja produziu parte e ainda tem
+   pendente — e por isso e o unico que soma as duas cores. Ele tambem nao entra
+   no calculo do recorde, porque esta pela metade. */
+function _demGraficoAno(b) {
+  if (!_demCache) return '';
+  const { dia, pend, hist } = _demCache;
+  const ano = dia.slice(0, 4), hoje = dia.slice(0, 7);
+  const meses = [];
+  for (let i = 1; i <= 12; i++) meses.push(ano + '-' + String(i).padStart(2, '0'));
+
+  const prod = {}, dem = {};
+  hist.forEach(r => { if (bocaDe(r.item_desc) === String(b)) prod[r.mes] = (prod[r.mes] || 0) + (+r.kg || 0); });
+  pend.forEach(r => {
+    if (bocaDe(r.item_desc) !== String(b)) return;
+    const kg = +r.peso_pendente || 0; if (!kg) return;
+    let m = r.entrega ? String(r.entrega).slice(0, 7) : hoje;
+    if (m < hoje) m = hoje;                       // vencido é para agora
+    if (m.slice(0, 4) !== ano) m = ano + '-12';   // entrega fora do ano cai em dezembro
+    dem[m] = (dem[m] || 0) + kg;
+  });
+  const rec = Math.max.apply(null, meses.filter(m => m < hoje).map(m => prod[m] || 0).concat([0]));
+  const mx = Math.max.apply(null, meses.map(m => (prod[m] || 0) + (dem[m] || 0)).concat([rec, 1]));
+  const H = 108;
+
+  const cols = meses.map(m => {
+    const p = prod[m] || 0, d = dem[m] || 0;
+    const hp = Math.round(p / mx * H), hd = Math.round(d / mx * H);
+    const futuro = m > hoje;
+    return `<div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px" title="${_demMesNome(m)} — produzido ${_demT(p)} · demanda ${_demT(d)}">
+      <div style="font-size:8.5px;font-weight:800;color:var(--fraco-2);height:11px">${(p + d) > 0 ? _demT(p + d).replace(' ', '') : ''}</div>
+      <div style="height:${H}px;display:flex;flex-direction:column;justify-content:flex-end;width:100%;padding:0 1px;box-sizing:border-box">
+        ${hd ? `<div style="height:${hd}px;background:var(--laranja);border-radius:3px 3px 0 0"></div>` : ''}
+        ${hp ? `<div style="height:${hp}px;background:var(--navy);border-radius:${hd ? '0' : '3px 3px 0 0'} 0 0 0"></div>` : ''}
+      </div>
+      <div style="font-size:8.5px;font-weight:${m === hoje ? '800' : '600'};color:${m === hoje ? 'var(--navy)' : 'var(--fraco-2)'}">${_demMesNome(m).slice(0, 3)}</div>
+      ${futuro ? '' : ''}</div>`;
+  }).join('');
+
+  const yRec = rec > 0 ? Math.round(rec / mx * H) : 0;
+  const demTot = Object.keys(dem).reduce((a, m) => a + dem[m], 0);
+  const prodTot = Object.keys(prod).reduce((a, m) => a + prod[m], 0);
+  const mesesProd = meses.filter(m => m < hoje && (prod[m] || 0) > 0).length;
+  const media = mesesProd ? prodTot / mesesProd : 0;
+
+  return `<div class="idet-grid">
+      <div><b>${_demT(rec)}</b><span>recorde do ano · melhor mês</span></div>
+      <div><b>${_demT(media)}</b><span>média mensal produzida (${mesesProd} meses)</span></div>
+      <div><b style="color:var(--laranja)">${_demT(demTot)}</b><span>demanda pendente no ano</span></div>
+      <div><b>${media > 0 ? (demTot / media).toFixed(1).replace('.', ',') : '—'}</b><span>meses de trabalho na carteira</span></div>
+    </div>
+    <div style="height:10px"></div>
+    <div style="position:relative">
+      ${yRec ? `<div style="position:absolute;left:0;right:0;bottom:${yRec + 15}px;border-top:2px dashed var(--critico);z-index:2"><span style="position:absolute;right:0;top:-13px;font-size:9px;font-weight:800;color:var(--critico);background:#fff;padding:0 3px">recorde ${_demT(rec)}</span></div>` : ''}
+      <div style="display:flex;gap:2px;align-items:flex-end">${cols}</div>
+    </div>
+    <div style="margin-top:6px;font-size:10.5px;color:var(--fraco)">
+      <span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px"><span style="width:9px;height:9px;border-radius:2px;background:var(--navy);display:inline-block"></span>produzido</span>
+      <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:2px;background:var(--laranja);display:inline-block"></span>pendente na carteira</span></div>`;
 }
 
 /* Itens de uma boca: o que a carteira pede e o que a fábrica já fez no ano. */
@@ -6711,11 +6789,8 @@ function detDemandaBoca(b) {
 
   abreDet('◎ Boca ' + b,
     `<p class="idet-desc"><b>${_demT(kgTot)}</b> na carteira · <b>${L.length}</b> item(ns)</p>
-     <div style="font-size:11px;color:#8A97A6;margin:10px 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Produzido no ano</div>
-     ${ms.map(m => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-        <div style="width:48px;flex:none;text-align:right;font-size:10.5px;font-weight:700;color:var(--fraco-2)">${_demMesNome(m)}</div>
-        <div style="flex:1;min-width:0"><div style="width:${(mesKg[m] / mx * 100).toFixed(1)}%;height:16px;background:var(--navy);border-radius:4px;min-width:3px"></div></div>
-        <div style="width:70px;flex:none;text-align:right;font-size:10.5px;font-weight:700;color:var(--fraco)">${_demT(mesKg[m])}</div></div>`).join('')}
+     <div style="font-size:11px;color:#8A97A6;margin:10px 0 6px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">O ano inteiro${ico('demboca')}</div>
+     ${_demGraficoAno(b)}
      <div style="height:12px"></div>
      <div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Itens pendentes</div>`
     + tabSimples(['Item', 'Pendente', '1ª entrega'], L.slice(0, 100).map(o => `<tr onclick="detItem('${_jsAttr(o.cod)}')" style="cursor:pointer">
@@ -10654,6 +10729,7 @@ function abreDet(titulo, corpoHtml) {
    janela em que o Painel parou de abrir. */
 const INFOS = {
   demnovo: { t: 'Pedidos novos', d: "Linha que aparece na foto de hoje e n\u00e3o existia na foto anterior. Como o REST196 \u00e9 uma foto do pendente, \u201cnovo\u201d significa <b>entrou na carteira desde a \u00faltima importa\u00e7\u00e3o</b> \u2014 se voc\u00ea pulou um dia, o que entrou nesse dia aparece junto." },
+  demboca: { t: 'O ano da boca', d: "Doze colunas, janeiro a dezembro, com duas leituras na mesma linha do tempo: <b>azul</b> \u00e9 o que a f\u00e1brica j\u00e1 produziu daquela boca, <b>laranja</b> \u00e9 o que a carteira pede.<br><br>Passado e futuro no mesmo eixo de prop\u00f3sito: \u201ccabe mais pedido desta boca em outubro?\u201d s\u00f3 se responde comparando o pedido de outubro com o que a f\u00e1brica costuma fazer num m\u00eas. Dois gr\u00e1ficos separados obrigariam a fazer essa conta de cabe\u00e7a.<br><br>A linha tracejada vermelha \u00e9 o <b>recorde do ano</b>. O m\u00eas corrente aparece com as duas cores \u2014 j\u00e1 produziu parte e ainda tem pendente \u2014 e n\u00e3o entra no c\u00e1lculo do recorde, porque est\u00e1 pela metade.<br><br><b>Meses de trabalho na carteira</b> divide a demanda pendente pela m\u00e9dia mensal produzida: quantos meses de f\u00e1brica aquela boca j\u00e1 tem vendidos.<br><br>Entrega marcada para o ano que vem cai em dezembro, para n\u00e3o sumir do gr\u00e1fico." },
   demmapa: { t: 'Mapa de demanda \u00d7 capacidade', d: "Cada linha \u00e9 uma <b>boca</b>. As colunas s\u00e3o os pr\u00f3ximos meses, pela data de entrega do pedido. <b>O que est\u00e1 vencido entra no m\u00eas corrente</b>, porque \u00e9 para agora.<br><br><b>Recorde do ano</b> \u00e9 o melhor m\u00eas que aquela boca j\u00e1 teve desde janeiro. Uso isso como r\u00e9gua de capacidade em vez de c\u00e1lculo te\u00f3rico de ciclo \u00d7 horas porque n\u00e3o depende de suposi\u00e7\u00e3o nenhuma: a f\u00e1brica <b>j\u00e1 entregou aquilo uma vez</b>. \u00c9 uma r\u00e9gua conservadora \u2014 a capacidade real pode ser maior, nunca menor. O m\u00eas corrente n\u00e3o conta para o recorde, porque est\u00e1 pela metade.<br><br>A cor compara a demanda do m\u00eas com esse recorde: verde at\u00e9 70%, laranja acima disso, vermelho quando passa de 100% \u2014 a\u00ed a boca est\u00e1 pedindo mais do que a f\u00e1brica j\u00e1 fez.<br><br><b>Ainda cabe</b> \u00e9 recorde menos a demanda do m\u00eas corrente: \u00e9 a resposta para \u201cposso aceitar mais pedido desta boca?\u201d.<br><br>Bobina, bandeja e kit n\u00e3o t\u00eam boca e ficam fora do mapa em vez de virar um balde \u201coutros\u201d." },
   cartfluxo: { t: 'Saiu \u00d7 entrou por dia', d: "N\u00e3o existe campo de faturamento no REST196 \u2014 existem <b>fotos</b>. Comparando linha a linha (pedido + item) duas fotos vizinhas: o que o pendente <b>caiu</b> \u00e9 sa\u00edda, o que <b>subiu</b> \u00e9 entrada.<br><br>A conta fecha ao quilo: em 05/08 saiu 66,7 t e entrou 39,2 t, saldo \u221227.502 kg \u2014 e a carteira caiu exatamente isso.<br><br><b>Aten\u00e7\u00e3o ao que \u201csaiu\u201d significa.</b> N\u00e3o \u00e9 necessariamente faturado: pedido <b>cancelado</b>, <b>corte de quantidade</b> e <b>reprograma\u00e7\u00e3o</b> caem no mesmo balde, porque no relat\u00f3rio os tr\u00eas t\u00eam a mesma cara \u2014 o pendente diminuiu. Por isso o r\u00f3tulo \u00e9 <i>saiu da carteira</i>, e n\u00e3o <i>faturado</i>.<br><br>A linha marcada como <b>parcial</b> \u00e9 a que continua na carteira com quantidade menor \u2014 embarque parcial. As outras sumiram por completo.<br><br>A <b>primeira compara\u00e7\u00e3o da s\u00e9rie fica de fora</b>: a foto mais antiga guardada costuma ser parcial, e o resto do relat\u00f3rio aparecendo no dia seguinte seria lido como pedido novo. Em 02/08 a foto tinha 746,8 t contra 1.087 t no dia seguinte \u2014 os \u201c+392 t\u201d n\u00e3o eram venda, era o relat\u00f3rio completando.<br><br>Toque em qualquer barra para ver os maiores pedidos que sa\u00edram e que entraram." },
   cartmov: { t: 'Evolu\u00e7\u00e3o da carteira', d: "Cada barra \u00e9 uma <b>foto do REST196</b>. A <b>largura</b> \u00e9 o tamanho da carteira em pedidos; a <b>divis\u00e3o interna</b> \u00e9 a dificuldade dela \u2014 quanto j\u00e1 d\u00e1 para faturar e quanto est\u00e1 travado por 1, 2 ou 3+ itens.<br><br>Os n\u00fameros de cima comparam a foto mais recente com a anterior. A varia\u00e7\u00e3o de <b>pedidos</b> fica sem cor de prop\u00f3sito: a carteira cair pode ser faturamento saindo ou venda fraca, e o card n\u00e3o tem como distinguir os dois. Completos em alta \u00e9 verde; travados em alta \u00e9 vermelho.<br><br>A conta \u00e9 refeita no banco para cada foto guardada, com a <b>mesma regra das barras acima</b>: o estoque \u00e9 alocado na ordem da entrega mais antiga antes de decidir o que falta. Fazer isso no navegador exigiria baixar as 3.700 linhas de cada dia.<br><br>Por serem duas implementa\u00e7\u00f5es da mesma regra, pode haver <b>1 pedido de diferen\u00e7a</b> entre este bloco e as barras, por arredondamento." },
