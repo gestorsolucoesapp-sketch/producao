@@ -740,7 +740,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.654.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.655.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2557,7 +2557,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.654.0';
+const APP_VER = '3.655.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6583,7 +6583,27 @@ function _demSetorPorItem(hist) {
 function renderDemanda() {
   const box = $('demandaBox'); if (!box || !_demCache) return;
   const { dia, pend, novos, hist } = _demCache;
-  const setorItem = _demSetorPorItem(hist);
+  /* DESTINO da demanda da TF. A carteira é toda semi-acabado da Termoformagem:
+     todo pedido vira blank nela antes de seguir. O impresso/embalado é gravado
+     no ERP com CÓDIGO PRÓPRIO, que só roda nas máquinas do setor que consome —
+     por isso "ter máquina de TF no histórico" == fica cru na TF (o impresso não
+     loga TF). Aqui não classificamos por setor dominante e sim por até onde o
+     item segue: fica na TF, vai p/ impressão, vai p/ acabamento, ou é novo. */
+  const _maqSetItem = {};
+  hist.forEach(r => {
+    const ms = Array.isArray(r.maquinas) ? r.maquinas : [];
+    if (!ms.length) return;
+    const st = (_maqSetItem[r.item_cod] = _maqSetItem[r.item_cod] || new Set());
+    ms.forEach(c => { const s = setorDe(c); if (s && s !== 'Outros') st.add(s); });
+  });
+  const _demDestino = ic => {
+    const st = _maqSetItem[ic];
+    if (!st || !st.size) return 'novo';
+    if (st.has('Extrusão') && !st.has('Termoformagem') && !st.has('Impressão') && !st.has('Embaladeiras') && !st.has('Sleeve') && !st.has('Rotulagem')) return 'bobina';
+    if (st.has('Termoformagem')) return 'tf';
+    if (st.has('Impressão')) return 'imp';
+    return 'acab';
+  };
   const boca = d => bocaDe(d) || null;
 
   // ---------- 1. pedidos novos ----------
@@ -6610,16 +6630,16 @@ function renderDemanda() {
   const atrKg = atrL.reduce((a, o) => a + o.kg, 0);
 
   // ---------- 3. demanda por boca e por setor ----------
-  const porBoca = {}, porSetor = {}, cxBoca = {}, milBoca = {};
+  const porBoca = {}, cxBoca = {}, milBoca = {};
+  const dest = { tf: 0, imp: 0, acab: 0, novo: 0, bobina: 0 };
   pend.forEach(r => {
     const kg = +r.peso_pendente || 0; if (!kg) return;
     const b = boca(r.item_desc);
     if (b) { porBoca[b] = (porBoca[b] || 0) + kg; cxBoca[b] = (cxBoca[b] || 0) + _demCx(r); milBoca[b] = (milBoca[b] || 0) + _demMil(r); }
-    const s = setorItem[r.item_cod] || 'sem histórico';
-    porSetor[s] = (porSetor[s] || 0) + kg;
+    dest[_demDestino(r.item_cod)] += kg;
   });
   const bocaL = Object.entries(porBoca).sort((a, b) => b[1] - a[1]);
-  const setorL = Object.entries(porSetor).sort((a, b) => b[1] - a[1]);
+  const _tfBase = dest.tf + dest.imp + dest.acab + dest.novo;   // tudo que passa pela TF (carteira menos bobina pura)
   const semBoca = pend.reduce((a, r) => a + (boca(r.item_desc) ? 0 : (+r.peso_pendente || 0)), 0);
 
   const barrasDe = (lista, cor, clique) => {
@@ -6690,6 +6710,33 @@ function renderDemanda() {
     <td><span class="cel cel-tot">${_demT(o.kg)}</span></td>
     <td><span class="cel ${o.d ? 'baixo' : 'neutra'}" style="font-size:11px">${o.entrega ? fmtData(o.entrega) : '—'}${o.d ? `<div style="font-size:9px;font-weight:400">${o.d}d</div>` : ''}</span></td></tr>`;
 
+  /* BLOCO "demanda por setor" repaginado: a TF vira a BASE (100% do que passa
+     por ela) e os setores viram o DESTINO dessa mesma demanda, não fatias
+     paralelas competindo com a TF. */
+  const _demBarra = (rot, v, cor) => {
+    const pct = _tfBase > 0 ? (v / _tfBase * 100) : 0;
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;font-weight:700;color:var(--fraco);margin-bottom:3px">
+        <span>${rot}</span><span style="flex:none;white-space:nowrap">${_demT(v)} <span style="font-size:9.5px;color:var(--fraco-2)">· ${pct.toFixed(0)}%</span></span></div>
+      <div style="background:var(--leve-3);border-radius:5px;height:15px;overflow:hidden"><div style="width:${pct.toFixed(1)}%;height:15px;background:${cor};border-radius:5px;min-width:3px"></div></div>
+    </div>`;
+  };
+  const _destinos = [
+    ['🔵 Fica na TF · copo cru (não segue p/ impressão)', dest.tf, 'var(--navy)'],
+    ['🖨️ Segue p/ Impressão', dest.imp, '#4682b4'],
+    ['📦 Segue p/ Embalagem · Sleeve · Rotulagem', dest.acab, '#70AD47'],
+    ['🆕 Item novo · sem produção no ano', dest.novo, '#9AA5B1']
+  ].filter(d => d[1] > 0).sort((a, b) => b[1] - a[1]);
+  const setorBloco = `
+    <div style="background:var(--leve-2,#eef2f6);border:1px solid var(--borda);border-radius:14px;padding:13px 15px;margin-bottom:12px">
+      <div style="font-size:10.5px;font-weight:800;color:#4682b4;text-transform:uppercase;letter-spacing:.5px">🏭 Termoformagem · a base de tudo</div>
+      <div style="font-size:26px;font-weight:900;color:var(--navy);line-height:1.05;margin:3px 0">${_demT(_tfBase)}</div>
+      <div style="font-size:11px;color:var(--fraco-2);font-weight:600;line-height:1.35">Toda a carteira passa pela TF pra virar blank antes de seguir. Ela é o coração — os setores abaixo são o <b>destino</b> dessa mesma demanda, não fatias que competem com a TF.</div>
+    </div>
+    <div style="font-size:10.5px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:6px">Para onde essa demanda segue depois</div>
+    ${_destinos.map(d => _demBarra(d[0], d[1], d[2])).join('')}
+    ${dest.bobina > 0 ? `<p class="desc" style="margin-top:7px">+ ${_demT(dest.bobina)} de bobina/filme (Extrusão) que <b>não</b> passa pela TF — fora da base, contado à parte.</p>` : ''}`;
+
   box.innerHTML = `
     <div style="font-size:11.5px;color:var(--fraco-2);font-weight:600;margin-bottom:10px">📸 Carteira de <b>${fmtData(dia)}</b> · ${pend.length} linha(s) · histórico de produção desde janeiro</div>
 
@@ -6714,8 +6761,8 @@ function renderDemanda() {
     ${semBoca > 0 ? `<p class="desc" style="margin-top:4px">${_demT(semBoca)} sem boca na descrição — bobina, bandeja e kit não têm boca.</p>` : ''}
 
     <div style="height:14px"></div>
-    <div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Demanda por setor${_confBadge(4, 'O setor <b>n\u00e3o vem da carteira</b>: cada item \u00e9 ligado \u00e0s m\u00e1quinas que realmente o produziram este ano, e o setor sai da\u00ed. \u00c9 dado, n\u00e3o palpite. Perde um ponto porque item que nunca rodou no per\u00edodo importado cai em \u201csem hist\u00f3rico\u201d e n\u00e3o entra em setor nenhum.')}</div>
-    ${barrasDe(setorL, 'var(--navy)', null)}
+    <div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Demanda por setor · a Termoformagem é a base${_confBadge(4, 'A carteira não traz setor. A Termoformagem é a base porque TODO item vira blank nela antes de seguir. O impresso e o embalado são gravados no ERP com código próprio, que só roda nas máquinas do setor que consome o semi-acabado — então a divisão abaixo mostra para ONDE a demanda da TF segue depois (impressão, embalagem), e não setores paralelos disputando com a TF. Sai das máquinas que produziram o item no ano; item sem produção no ano entra como novo. Bobina de Extrusão fica fora da base porque é insumo da TF, não saída dela.')}</div>
+    ${setorBloco}
 
     <div style="height:16px"></div>
     <div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Mapa mensal · demanda × recorde do ano${ico('demmapa')}${_confBadge(3, 'Duas fragilidades somadas. A <b>boca</b> vem da descri\u00e7\u00e3o (mesma ressalva de cima) e a <b>capacidade</b> \u00e9 o melhor m\u00eas do ano, n\u00e3o um c\u00e1lculo de ciclo \u00d7 horas. O recorde \u00e9 uma r\u00e9gua conservadora e honesta \u2014 a f\u00e1brica j\u00e1 provou que faz aquilo \u2014 mas a capacidade real pode ser bem maior se aquele m\u00eas teve parada, falta de material ou pouca demanda. Use como <b>piso</b>, nunca como teto.')}</div>
