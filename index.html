@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.672.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.673.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2560,7 +2560,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.672.0';
+const APP_VER = '3.673.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15676,10 +15676,42 @@ function detPerdaMaqTurno(cod, bloco, setor) {
   abreDet(cod + ' · Perdas' + (bloco ? ' · ' + bloco : ''),
     aviso
     + `<p class="idet-desc"><b>${fmtKg(tot)}</b>${totCx > 0 ? ' · <b>' + nvx(totCx) + '</b> cxs' : ''} em ${rows.length} apontamento(s)${bloco ? ' · turno ' + escapeHtml(bloco) : ' · período inteiro'}${setor ? ' · contando para ' + escapeHtml(setor) : ''}</p>`
-    + '<div style="font-weight:800;font-size:12px;margin:8px 0 4px">Por tipo de perda</div>'
-    + tabSimples(['Tipo', 'Kg', 'Cxs'], tipos.map(([k, v]) => `<tr><td class="nome" style="font-size:11.5px">${escapeHtml(k)}<div style="font-size:9.5px;color:var(--fraco-2)">${v.n}× · ${(v.kg / tot * 100).toFixed(0)}%</div></td><td><span class="cel ${v.kg >= tot * 0.4 ? 'baixo' : 'neutra'}">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nvx(v.cx) : '—'}</span></td></tr>`).join(''))
+    + '<div style="font-weight:800;font-size:12px;margin:8px 0 4px">Por tipo de perda <span style="font-weight:600;color:var(--fraco-2);font-size:10px">· toque para ver os apontamentos</span></div>'
+    + tabSimples(['Tipo', 'Kg', 'Cxs'], tipos.map(([k, v]) => `<tr onclick="detPerdaApont('${cod}','${bloco || ''}','${setor || ''}','${encodeURIComponent(k)}')" style="cursor:pointer"><td class="nome" style="font-size:11.5px">${escapeHtml(k)}<div style="font-size:9.5px;color:var(--fraco-2)">${v.n}× · ${(v.kg / tot * 100).toFixed(0)}% <span style="color:var(--azul-2);font-weight:800">›</span></div></td><td><span class="cel ${v.kg >= tot * 0.4 ? 'baixo' : 'neutra'}">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nvx(v.cx) : '—'}</span></td></tr>`).join(''))
     + (dias.length > 1 ? '<div style="font-weight:800;font-size:12px;margin:10px 0 4px">Por dia</div>'
       + tabSimples(['Dia', 'Kg', 'Cxs'], dias.map(([d, v]) => `<tr><td class="nome" style="font-size:11.5px">${diaSemana(d)}, ${fmtData(d)}</td><td><span class="cel neutra">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nvx(v.cx) : '—'}</span></td></tr>`).join('')) : ''));
+}
+// Lista os apontamentos individuais de UM tipo de perda (drill-in do modal de perda).
+function detPerdaApont(cod, bloco, setor, tipoEnc) {
+  const D = dadosPainel; if (!D || !D.perdas) return;
+  let tipo = tipoEnc; try { tipo = decodeURIComponent(tipoEnc); } catch (_) {}
+  const _cx = r => (String(r.unidade || '').toUpperCase() === 'CX') ? (+r.quantidade || 0) : 0;
+  const rows = D.perdas.filter(r => String(r.recurso_cod) === String(cod)
+    && (!setor || setorPerda(r) === setor)
+    && perdaVisivel(r)
+    && (!bloco || blocoTurno(r.turno, r.dia) === bloco)
+    && (r.tipo_perda_desc || '\u2014') === tipo);
+  if (!rows.length) { toast('Sem apontamento'); return; }
+  rows.sort((a, b) => (String(a.dia) + String(a.turno)) < (String(b.dia) + String(b.turno)) ? 1 : -1);
+  const nvx = v => Math.round(v).toLocaleString('pt-BR');
+  const tot = rows.reduce((a, r) => a + (+r.peso || 0), 0);
+  const totCx = rows.reduce((a, r) => a + _cx(r), 0);
+  const volta = '<div style="margin-bottom:8px"><span onclick="detPerdaMaqTurno(\'' + cod + '\',\'' + (bloco || '') + '\',\'' + (setor || '') + '\')" style="cursor:pointer;color:var(--azul-2);font-weight:700;font-size:12px">\u2190 voltar</span></div>';
+  const lista = rows.map(r => {
+    const cx = _cx(r);
+    const op = r.op ? '<span onclick="event.stopPropagation();detOP(\'' + escapeHtml(String(r.op)) + '\',\'' + cod + '\')" style="cursor:pointer;color:var(--azul-2);font-weight:800;text-decoration:underline">OP ' + escapeHtml(String(r.op)) + '</span>' : '<span style="color:var(--fraco-2)">sem OP</span>';
+    const item = r.item_desc || r.item_cod || '';
+    return '<div style="border:1px solid var(--linha-s);border-radius:10px;padding:9px 11px;margin-bottom:7px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      + '<div style="font-size:12px">' + op + '<div style="font-size:10px;color:var(--fraco-2);margin-top:2px">' + diaSemana(r.dia) + ', ' + fmtData(r.dia) + ' \u00b7 T' + escapeHtml(String(r.turno)) + '</div></div>'
+      + '<div style="text-align:right;white-space:nowrap"><b style="color:var(--critico-s)">' + fmtKg(+r.peso || 0) + '</b>' + (cx > 0 ? ' \u00b7 <b>' + nvx(cx) + '</b> cx' : '') + '</div>'
+      + '</div>'
+      + (item ? '<div style="font-size:11px;color:var(--fraco);margin-top:5px">' + escapeHtml(String(item)) + (r.item_cod && r.item_desc ? ' <span style="color:var(--fraco-2)">(' + escapeHtml(String(r.item_cod)) + ')</span>' : '') + '</div>' : '')
+      + '</div>';
+  }).join('');
+  abreDet(cod + ' \u00b7 ' + tipo, volta
+    + '<p class="idet-desc"><b>' + fmtKg(tot) + '</b>' + (totCx > 0 ? ' \u00b7 <b>' + nvx(totCx) + '</b> cxs' : '') + ' em ' + rows.length + ' apontamento(s)' + (bloco ? ' \u00b7 turno ' + escapeHtml(bloco) : '') + '</p>'
+    + lista);
 }
 /* APONTAMENTOS DE UMA MAQUINA NUM TURNO — 04/08/2026.
    A versao anterior lia dadosPainel.producao, que e o 621 RESUMIDO: tem dia,
