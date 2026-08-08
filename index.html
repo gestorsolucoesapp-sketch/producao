@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.670.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.671.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2560,7 +2560,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.670.0';
+const APP_VER = '3.671.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5206,6 +5206,7 @@ function cardMaquinaTurno(E) {
     const b = blocoTurno(r.turno, r.dia); if (!b) return;
     const c = String(r.recurso_cod || ''); if (!c) return;
     const a = ini(c, b); a.v += val(r, c); if (r.dia) a.dias.add(String(r.dia).slice(0, 10));
+    const _cx = semCaixa(setorDe(c)) ? 0 : caixasDe(r); a.vcx = (a.vcx || 0) + _cx; a.vmil = (a.vmil || 0) + milDeLinha(r, _cx);
   });
   // TURNO PARADO: se o turno rodou na fabrica e a maquina nao produziu nele, o
   // bloco simplesmente nao existia e o turno sumia do card — parecia que nao
@@ -5313,7 +5314,8 @@ function cardMaquinaTurno(E) {
       g.cs.forEach(c => {
         const o = _mtBloco && _mtBloco[c];
         const un = emCx(c) ? 'cx' : 'kg';
-        let totM = 0; Object.keys(M[c]).forEach(bb => totM += M[c][bb].v);
+        let totM = 0, totMcx = 0, totMmil = 0; Object.keys(M[c]).forEach(bb => { totM += M[c][bb].v; totMcx += (M[c][bb].vcx || 0); totMmil += (M[c][bb].vmil || 0); });
+        const _extraU = emCx(c) ? '' : ((totMcx > 0 ? ' \u00b7 ' + fmtNum(Math.round(totMcx)) + ' cx' : '') + (totMmil > 0 ? ' \u00b7 ' + totMmil.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : ''));
         blocoHtml += '<div style="background:var(--leve-4,#eef2f7);border-radius:12px;padding:11px;margin-bottom:9px">' +
           '<div style="display:flex;align-items:center;flex-wrap:wrap;margin-bottom:8px"><b style="font-size:18px">' + escapeHtml(c) + '</b>' +
           (function () {
@@ -5322,7 +5324,7 @@ function cardMaquinaTurno(E) {
               escapeHtml(bo.boca) + ' · ' + Math.round(bo.pct) + '%' + (bo.n > 1 ? ' <span style="font-weight:600;color:var(--fraco)">de ' + bo.n + '</span>' : '') + ' ›</span>';
           })() +
           (o && o.desativada ? '<span style="font-size:9px;font-weight:800;background:rgba(214,69,69,.16);color:#B23B3B;padding:2px 6px;border-radius:5px;margin-left:7px">desativada</span>' : '') +
-          '<span style="margin-left:auto;font-size:12px;color:var(--fraco);white-space:nowrap">' + fV(totM, c) + selo(totM, c) + '</span></div>';
+          '<span style="margin-left:auto;font-size:12px;color:var(--fraco);white-space:nowrap">' + fV(totM, c) + _extraU + selo(totM, c) + '</span></div>';
         Object.keys(M[c]).sort((x, y) => MT_ORD[x] - MT_ORD[y]).forEach(bb => {
           // recorte do chip TURNO da tarja: os blocos daqui SAO os turnos, entao
           // filtrar e so nao desenhar os que ficaram de fora.
@@ -10436,7 +10438,17 @@ function filtraPeriodoOperacional(rows, de, ate) {
   if (!de && !ate) return rows;
   return rows.filter(r => { const d = String(r.dia || '').slice(0, 10); return (!de || d >= de) && (!ate || d <= ate); });
 }
+/* Correção de nomes de máquina errados no ERP (recurso_nome). O ERP manda a
+   1805 como "EMBALADEIRA OK!04" (a 1804 não existe). Corrigimos na LEITURA, num
+   ponto só (saída do fetchTudo), então vale pra todas as abas e o próximo import
+   não desfaz. Para adicionar outra correção, é só pôr no mapa. */
+const NOME_MAQ_FIX = { '1805': 'EMBALADEIRA OK! 05' };
+const _fixNomeMaq = arr => { try { if (Array.isArray(arr)) arr.forEach(r => { if (r && r.recurso_cod != null) { const f = NOME_MAQ_FIX[String(r.recurso_cod)]; if (f) r.recurso_nome = f; } }); } catch (_) {} return arr; };
 async function fetchTudo(tabela, colunas, de, ate) {
+  const arr = await _fetchTudoRaw(tabela, colunas, de, ate);
+  return (typeof colunas === 'string' && colunas.indexOf('recurso_nome') >= 0) ? _fixNomeMaq(arr) : arr;
+}
+async function _fetchTudoRaw(tabela, colunas, de, ate) {
   const TETO = 200000;
   const passo = 1000;
   const monta = (desde, ateAqui) => {
