@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.725.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.726.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2587,7 +2587,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.725.0';
+const APP_VER = '3.726.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26941,30 +26941,85 @@ function bhRender() {
   box.innerHTML = h;
 }
 
-/* monta o texto e abre o WhatsApp. Só entra quem está visível. */
+/* 12/08/2026 (João): relatório de WhatsApp elaborado — resumo, faixas de
+   gravidade, destaques e lista. Sem emoji colorido: no print dele o 🔴 saiu
+   como quadrado vazio, então os marcadores são caracteres simples. */
 function bhWhatsapp(qual) {
   const regs = _bhRegs || [];
   const colabIdx = {}; orgDados.colab.forEach(c => colabIdx[c.matricula] = c);
-  let lista = regs.filter(r => { const c = colabIdx[r.matricula]; return c && orgEhSetor(c.setor); })
-                  .filter(r => !_bhOcultos.has(r.matricula));
-  if (qual === 'neg') lista = lista.filter(r => r.saldo_atual < 0);
-  if (qual === 'pos') lista = lista.filter(r => r.saldo_atual > 0);
-  if (!lista.length) { toast('Nada para enviar neste filtro'); return; }
+  const base = regs.filter(r => { const c = colabIdx[r.matricula]; return c && orgEhSetor(c.setor); })
+                   .filter(r => !_bhOcultos.has(r.matricula));
+  if (!base.length) { toast('Nada para enviar neste filtro'); return; }
 
   const emiss = regs.map(r => r.emissao).sort();
   const emissTxt = emiss.length ? fmtDataSem(emiss[emiss.length - 1]) : '';
   const nome = r => orgPrimeiro(r.nome) || r.nome || r.matricula;
+  const H = m => bhFmt(m);
+  const hh = m => (Math.abs(m) / 60).toFixed(1).replace('.', ',') + 'h';
 
-  let t = '*Banco de Horas · ' + orgSetorLabel() + '*' + (emissTxt ? '\n_posição de ' + emissTxt + '_' : '') + '\n';
-  const secao = (arr, tit) => {
-    if (!arr.length) return '';
-    let x = '\n' + tit + '\n';
-    arr.forEach(r => { x += nome(r) + ' — ' + bhFmt(r.saldo_atual) + '\n'; });
-    return x;
-  };
-  if (qual !== 'pos') t += secao(lista.filter(r => r.saldo_atual < 0).sort((a, b) => a.saldo_atual - b.saldo_atual), '🔴 *Negativas*');
-  if (qual !== 'neg') t += secao(lista.filter(r => r.saldo_atual > 0).sort((a, b) => b.saldo_atual - a.saldo_atual), '🟢 *Positivas*');
-  t += '\n_Saldo do que está acima: ' + bhFmt(lista.reduce((n, r) => n + r.saldo_atual, 0)) + '_';
+  const neg = base.filter(r => r.saldo_atual < 0).sort((a, b) => a.saldo_atual - b.saldo_atual);
+  const pos = base.filter(r => r.saldo_atual > 0).sort((a, b) => b.saldo_atual - a.saldo_atual);
+  const zer = base.filter(r => r.saldo_atual === 0);
+  const somaNeg = neg.reduce((n, r) => n + r.saldo_atual, 0);
+  const somaPos = pos.reduce((n, r) => n + r.saldo_atual, 0);
+  const total = somaNeg + somaPos;
+
+  let t = '*BANCO DE HORAS · ' + String(orgSetorLabel()).toUpperCase() + '*\n';
+  t += '_Posição de ' + emissTxt + ' · fonte: Saturno_\n';
+  t += '--------------------------------\n';
+
+  // ---- panorama ----
+  if (qual === 'tudo') {
+    t += '*PANORAMA*\n';
+    t += 'Pessoas no relatório: ' + base.length + '\n';
+    t += 'A compensar (negativas): ' + neg.length + ' · ' + hh(somaNeg) + '\n';
+    t += 'A receber (positivas): ' + pos.length + ' · ' + hh(somaPos) + '\n';
+    if (zer.length) t += 'Zeradas: ' + zer.length + '\n';
+    t += 'Saldo líquido: *' + H(total) + '*\n';
+    if (neg.length) t += 'Média das negativas: ' + hh(somaNeg / neg.length) + ' por pessoa\n';
+    // concentração: quantas pessoas fazem metade do passivo
+    if (neg.length > 2) {
+      let acc = 0, q = 0;
+      for (const r of neg) { acc += r.saldo_atual; q++; if (acc <= somaNeg / 2) break; }
+      t += 'Concentração: ' + q + ' pessoa(s) respondem por metade do saldo negativo\n';
+    }
+    t += '--------------------------------\n';
+  }
+
+  // ---- negativas por faixa de gravidade ----
+  if (qual !== 'pos' && neg.length) {
+    const critico = neg.filter(r => r.saldo_atual <= -1200);              // pior que -20h
+    const atencao = neg.filter(r => r.saldo_atual <= -480 && r.saldo_atual > -1200);
+    const leve    = neg.filter(r => r.saldo_atual > -480);
+    t += '*NEGATIVAS · ' + neg.length + ' pessoa(s) · ' + hh(somaNeg) + ' a compensar*\n';
+    const faixa = (arr, tit) => {
+      if (!arr.length) return '';
+      let x = '\n' + tit + ' (' + arr.length + ')\n';
+      arr.forEach(r => { x += '  • ' + nome(r) + ' — ' + H(r.saldo_atual) + '\n'; });
+      return x;
+    };
+    t += faixa(critico, '*Crítico* — acima de 20h');
+    t += faixa(atencao, '*Atenção* — de 8h a 20h');
+    t += faixa(leve, '*Leve* — até 8h');
+    if (qual !== 'neg') t += '--------------------------------\n';
+  }
+
+  // ---- positivas ----
+  if (qual !== 'neg' && pos.length) {
+    t += '*POSITIVAS · ' + pos.length + ' pessoa(s) · ' + hh(somaPos) + ' acumuladas*\n';
+    if (qual === 'tudo' && pos.length > 12) {
+      t += '\nMaiores saldos:\n';
+      pos.slice(0, 10).forEach(r => { t += '  • ' + nome(r) + ' — ' + H(r.saldo_atual) + '\n'; });
+      t += '  _(e mais ' + (pos.length - 10) + ' com saldo menor)_\n';
+    } else {
+      t += '\n';
+      pos.forEach(r => { t += '  • ' + nome(r) + ' — ' + H(r.saldo_atual) + '\n'; });
+    }
+  }
+
+  t += '--------------------------------\n';
+  if (_bhOcultos.size) t += '_' + _bhOcultos.size + ' colaborador(es) omitido(s) deste envio._\n';
+  t += '_Gerado pelo app de Produção em ' + fmtDataSem(hojeISO()) + '._';
 
   window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
 }
