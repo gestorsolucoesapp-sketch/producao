@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.712.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.713.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.712.0';
+const APP_VER = '3.713.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24615,6 +24615,35 @@ function semFarolContra(valor, mediana) {   // menor é melhor
    por numero de OCORRENCIAS no ano: ate 1 verde · 2 laranja · 3 ou mais vermelho. */
 const semFarolOcor = n => (n >= 3 ? 'r' : n === 2 ? 'l' : 'v');
 
+/* jornada base do apontamento do ponto: 7h20 = 7,3333h = um dia cheio */
+const JORNADA_H = 7.3333;
+const semH = h => { const v = Math.round((Number(h) || 0) * 10) / 10;
+  return (Number.isInteger(v) ? String(v) : v.toFixed(1).replace('.', ',')) + 'h'; };
+
+/* barras horizontais de horas perdidas por setor. SVG na mao mesmo: sao poucas
+   barras e nao vale carregar lib so pra isso. */
+function semGrafico(grupos, titulo) {
+  if (!grupos.length) return '';
+  const max = Math.max.apply(null, grupos.map(g => g.horas)) || 1;
+  const linha = 30, padT = 6, W = 700, rotW = 168, valW = 74;
+  const barW = W - rotW - valW;
+  const H = padT * 2 + grupos.length * linha;
+  let sv = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" preserveAspectRatio="xMidYMid meet" style="display:block">';
+  grupos.forEach((g, i) => {
+    const y = padT + i * linha, w = Math.max(2, g.horas / max * barW);
+    const cor = g.horas / max > .66 ? 'var(--critico-s)' : g.horas / max > .33 ? 'var(--laranja-3)' : 'var(--azul-marca)';
+    sv += '<text x="0" y="' + (y + 15) + '" font-size="12" font-weight="700" fill="var(--tinta)">' +
+          escapeHtml(String(g.rot).slice(0, 22)) + '</text>';
+    sv += '<rect x="' + rotW + '" y="' + (y + 4) + '" width="' + w.toFixed(1) + '" height="15" rx="4" fill="' + cor + '"/>';
+    sv += '<text x="' + (rotW + w + 7).toFixed(1) + '" y="' + (y + 16) + '" font-size="11.5" font-weight="800" fill="var(--fraco)">' +
+          semH(g.horas) + (g.pes ? ' · ' + g.pes + 'p' : '') + '</text>';
+  });
+  sv += '</svg>';
+  return '<div class="card grafico"><div class="titulo-sec">' + titulo + '</div>' +
+         '<p class="desc" style="margin-bottom:8px">horas de jornada perdidas com falta e atestado no ano · 7h20 = 1 dia</p>' +
+         sv + '</div>';
+}
+
 /* dia EQUIVALENTE: a planilha do RH manda as horas justificadas e 7h20 (7,3333h)
    e o dia cheio, entao 3h16 de atestado pesa 0,45 e nao 1. Lancamento sem fator
    (apontado na mao, antes da planilha) continua valendo 1. Inteiro fica inteiro,
@@ -24655,7 +24684,7 @@ async function renderOrgSemaforo() {
   const fim = hojeISO(), ini = fim.slice(0, 4) + '-01-01';
   let AF = [];
   try {
-    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data,fator').gte('data', ini).lte('data', fim);
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data,fator,horas').gte('data', ini).lte('data', fim);
     AF = r.data || [];
   } catch (e) {
     wrap.innerHTML = '<div class="card"><p class="vazio-painel">Erro: ' + escapeHtml(String(e.message || e)) + '</p></div>'; return;
@@ -24664,7 +24693,8 @@ async function renderOrgSemaforo() {
   /* todo mundo escalado no setor — operador e auxiliar */
   const pessoas = {};
   orgDados.aloc.filter(a => orgEhSetor(a.setor) && a.matricula).forEach(a => {
-    if (!pessoas[a.matricula]) pessoas[a.matricula] = { mat: a.matricula, funcoes: new Set(), turnos: new Set(), maqs: new Set() };
+    if (!pessoas[a.matricula]) pessoas[a.matricula] = { mat: a.matricula, funcoes: new Set(), turnos: new Set(), maqs: new Set(), setores: new Set() };
+    if (a.setor) pessoas[a.matricula].setores.add(a.setor);
     pessoas[a.matricula].funcoes.add(a.funcao);
     pessoas[a.matricula].turnos.add(a.turno);
     if (a.maquina_codigo) pessoas[a.matricula].maqs.add(String(a.maquina_codigo));
@@ -24676,14 +24706,23 @@ async function renderOrgSemaforo() {
     const diasEq = t => meus.filter(a => (a.tipo || '') === t)
       .reduce((n, a) => n + (a.fator == null ? 1 : Number(a.fator)) * (a.dias || 1), 0);
     const vezes = t => meus.filter(a => (a.tipo || '') === t).length;
+    /* HORAS PERDIDAS: a planilha do RH manda as horas justificadas de verdade.
+       Lancamento apontado na mao, sem horas, vira dia cheio (JORNADA_H). */
+    const horasDe = t => meus.filter(a => (a.tipo || '') === t).reduce((n, a) =>
+      n + (a.horas != null && Number(a.horas) > 0
+             ? Number(a.horas) * (a.dias || 1)
+             : JORNADA_H * (a.fator == null ? 1 : Number(a.fator)) * (a.dias || 1)), 0);
     return {
       mat: p.mat, nome: orgNome(p.mat) || p.mat,
       oper: p.funcoes.has('operador'),
       turnos: [...p.turnos].join('/'), maqs: [...p.maqs].sort(),
+      setor: [...p.setores][0] || 'Sem setor',
       dFalta: dias('falta'), nFalta: vezes('falta'), eFalta: diasEq('falta'),
       dAtest: dias('atestado'), nAtest: vezes('atestado'), eAtest: diasEq('atestado'),
       total: dias('falta') + dias('atestado'),
-      totalEq: diasEq('falta') + diasEq('atestado')
+      totalEq: diasEq('falta') + diasEq('atestado'),
+      horas: horasDe('falta') + horasDe('atestado'),
+      hFalta: horasDe('falta'), hAtest: horasDe('atestado')
     };
   });
 
@@ -24695,7 +24734,7 @@ async function renderOrgSemaforo() {
     const peso = { v: 0, l: 1, r: 2, x: 0 };
     l.score = peso[l.fFalta] + peso[l.fAtest];
   });
-  linhas.sort((a, b) => b.totalEq - a.totalEq || b.score - a.score);
+  linhas.sort((a, b) => (a.setor || '').localeCompare(b.setor || '') || b.totalEq - a.totalEq || b.score - a.score);
 
   const bolinha = f => '<span title="' + SEM_ROT[f] + '" style="display:inline-block;width:13px;height:13px;border-radius:50%;background:' + SEM_COR[f] + '"></span>';
   const comAlgo = linhas.filter(l => l.total > 0);
@@ -24707,9 +24746,52 @@ async function renderOrgSemaforo() {
   h += '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--fraco);margin-bottom:10px">' +
     bolinha('v') + ' bom &nbsp;' + bolinha('l') + ' atenção &nbsp;' + bolinha('r') + ' crítico</div>';
 
-  h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
-    '<th style="text-align:left">Pessoa</th><th>Faltas</th><th>Atestados</th><th>Dias fora</th><th>Equiv.</th></tr></thead><tbody>';
+  /* total do topo: horas perdidas e o equivalente em dias de gente parada */
+  const hTot = linhas.reduce((n, l) => n + l.horas, 0);
+  h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">' +
+    '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Horas perdidas</div>' +
+    '<b style="font-size:18px;color:var(--critico-s)">' + semH(hTot) + '</b></div>' +
+    '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Equivale a</div>' +
+    '<b style="font-size:18px;color:var(--laranja-3)">' + semEq(hTot / JORNADA_H) + ' dias</b></div>' +
+    '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Pessoas</div>' +
+    '<b style="font-size:18px">' + comAlgo.length + '</b></div></div>';
+  h += '</div>';
+
+  /* separado por setor: com o filtro global em "Todos" o grafico compara os
+     setores; com um setor so, compara os turnos daquele setor. */
+  const porSetor = {};
   linhas.forEach(l => {
+    const k = l.setor || 'Sem setor';
+    if (!porSetor[k]) porSetor[k] = { rot: k, horas: 0, pes: 0 };
+    porSetor[k].horas += l.horas; if (l.horas > 0) porSetor[k].pes++;
+  });
+  const gs = Object.values(porSetor).filter(g => g.horas > 0).sort((a, b) => b.horas - a.horas);
+  if (gs.length > 1) {
+    h += semGrafico(gs, '📊 Horas perdidas por setor');
+  } else {
+    const porTurno = {};
+    linhas.forEach(l => {
+      const k = l.turnos || '—';
+      if (!porTurno[k]) porTurno[k] = { rot: k, horas: 0, pes: 0 };
+      porTurno[k].horas += l.horas; if (l.horas > 0) porTurno[k].pes++;
+    });
+    h += semGrafico(Object.values(porTurno).filter(g => g.horas > 0).sort((a, b) => b.horas - a.horas),
+                    '📊 Horas perdidas por turno');
+  }
+
+  h += '<div class="card"><div class="titulo-sec">Pessoa a pessoa</div>';
+  h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
+    '<th style="text-align:left">Pessoa</th><th>Faltas</th><th>Atestados</th><th>Dias fora</th><th>Equiv.</th><th>Horas</th></tr></thead><tbody>';
+  let _setAtual = null;
+  const _multi = gs.length > 1;
+  linhas.forEach(l => {
+    if (_multi && l.setor !== _setAtual) {
+      _setAtual = l.setor;
+      const g = porSetor[_setAtual] || { horas: 0 };
+      h += '<tr><td colspan="6" style="text-align:left;background:var(--leve);font-size:11px;font-weight:800;' +
+        'text-transform:uppercase;letter-spacing:.5px;color:var(--navy);padding:6px 8px">' +
+        escapeHtml(_setAtual) + ' · ' + semH(g.horas) + '</td></tr>';
+    }
     h += '<tr onclick="orgHistPessoa(\'' + l.mat + '\')" style="cursor:pointer">' +
       '<td class="nome" style="text-align:left"><b>' + escapeHtml(orgPrimeiro(l.nome) || l.nome) + '</b>' +
       '<div style="font-size:10px;color:var(--fraco)">' + (l.oper ? 'operador · ' : '') + escapeHtml(l.turnos) +
@@ -24717,7 +24799,8 @@ async function renderOrgSemaforo() {
       '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + semEq(l.eFalta, l.dFalta) + 'd' + (l.nFalta > 1 ? ' · ' + l.nFalta + '×' : '') + '</div></td>' +
       '<td>' + bolinha(l.fAtest) + '<div style="font-size:10.5px;color:var(--fraco)">' + semEq(l.eAtest, l.dAtest) + 'd' + (l.nAtest > 1 ? ' · ' + l.nAtest + '×' : '') + '</div></td>' +
       '<td style="text-align:right;font-weight:800;color:' + (l.total ? 'var(--critico)' : 'var(--fraco-2)') + '">' + l.total + '</td>' +
-      '<td style="text-align:right;font-weight:800;color:' + (l.totalEq ? 'var(--laranja-3)' : 'var(--fraco-2)') + '">' + semEq(l.totalEq) + '</td></tr>';
+      '<td style="text-align:right;font-weight:800;color:' + (l.totalEq ? 'var(--laranja-3)' : 'var(--fraco-2)') + '">' + semEq(l.totalEq) + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:' + (l.horas ? 'var(--critico-s)' : 'var(--fraco-2)') + '">' + (l.horas ? semH(l.horas) : '—') + '</td></tr>';
   });
   h += '</tbody></table></div>';
   h += '<p class="desc" style="font-size:11px;margin-top:10px;display:flex;align-items:center;gap:6px"><span>farol por ocorrências no ano: ' +
