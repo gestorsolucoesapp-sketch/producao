@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.722.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.723.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2587,7 +2587,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.722.0';
+const APP_VER = '3.723.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26830,58 +26830,138 @@ async function bhImportar(fExterno) {
   }
 }
 
+let _bhRegs = null;                 // último resultado carregado
+let _bhOcultos = new Set();         // quem o João escondeu antes de mandar
+
 async function bhCarregaResumo() {
   const box = $('bhResumoBox'); if (!box) return;
   try {
     const { data, error } = await sb.from('v_banco_horas_atual').select('*');
     if (error) throw error;
-    const regs = data || [];
-    if (!regs.length) { box.innerHTML = ''; return; }
-
-    const emiss = regs.map(r => r.emissao).sort();
-    const emissTxt = emiss.length ? fmtDataSem(emiss[emiss.length - 1]) : '';
-    const colabIdx = {}; orgDados.colab.forEach(c => colabIdx[c.matricula] = c);
-    const doSetor = [], foraSetor = [];
-    regs.forEach(r => {
-      const c = colabIdx[r.matricula];
-      (c && orgEhSetor(c.setor) ? doSetor : foraSetor).push(Object.assign({}, r, { setor: c ? c.setor : null }));
-    });
-
-    const bloco = (lista, titulo, sub) => {
-      if (!lista.length) return '';
-      lista.sort((a, b) => a.saldo_atual - b.saldo_atual);       // mais negativo no topo
-      const neg = lista.filter(l => l.saldo_atual < 0), pos = lista.filter(l => l.saldo_atual > 0);
-      const tot = lista.reduce((n, l) => n + l.saldo_atual, 0);
-      let h = '<div class="card"><div class="titulo-sec">' + titulo + '</div>';
-      h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">' +
-        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Negativas</div>' +
-        '<b style="font-size:18px;color:var(--critico-s)">' + neg.length + '</b></div>' +
-        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Positivas</div>' +
-        '<b style="font-size:18px;color:var(--verde-4,#2e7d32)">' + pos.length + '</b></div>' +
-        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Saldo geral</div>' +
-        '<b style="font-size:18px;color:' + (tot < 0 ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + bhFmt(tot) + '</b></div></div>';
-      if (sub) h += '<p class="desc" style="margin:-4px 0 8px">' + sub + '</p>';
-      h += '<div style="max-height:46vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px"><table class="aprov-tab" style="width:100%">' +
-        '<thead><tr><th style="text-align:left">Pessoa</th><th style="text-align:right">Saldo</th></tr></thead><tbody>';
-      lista.forEach(l => {
-        const cor = l.saldo_atual < 0 ? 'var(--critico-s)' : l.saldo_atual > 0 ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2)';
-        h += '<tr><td style="text-align:left"><b>' + escapeHtml(orgPrimeiro(l.nome) || l.nome || l.matricula) + '</b>' +
-          '<div style="font-size:10px;color:var(--fraco)">' + escapeHtml(l.matricula) + (l.setor ? ' · ' + escapeHtml(l.setor) : '') + '</div></td>' +
-          '<td style="text-align:right;font-weight:800;color:' + cor + '">' + bhFmt(l.saldo_atual) + '</td></tr>';
-      });
-      h += '</tbody></table></div></div>';
-      return h;
-    };
-
-    let h = '';
-    h += bloco(doSetor, '⏱️ Banco de Horas · ' + escapeHtml(orgSetorLabel()) + (emissTxt ? ' · ' + emissTxt : ''),
-               'saldo acumulado · mais negativo no topo · toque na pessoa para ver o histórico');
-    h += bloco(foraSetor, '⏱️ Banco de Horas · sem cadastro ou de outro setor',
-               'vieram no relatório do Saturno mas não são deste setor (ou não estão em colaboradores) — separados para não misturar');
-    box.innerHTML = h;
+    _bhRegs = data || [];
+    bhRender();
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui montar o banco de horas: ' + escapeHtml(String(e.message || e)) + '</p></div>';
   }
+}
+
+function bhToggleOculto(mat) {
+  if (_bhOcultos.has(mat)) _bhOcultos.delete(mat); else _bhOcultos.add(mat);
+  bhRender();
+}
+function bhMostrarTodos() { _bhOcultos = new Set(); bhRender(); }
+
+/* 12/08/2026 (João): positivas e negativas em quadros separados, cada pessoa
+   com um olho pra esconder antes de mandar, e o envio pelo WhatsApp levando só
+   quem sobrou visível. */
+function bhRender() {
+  const box = $('bhResumoBox'); if (!box) return;
+  const regs = _bhRegs || [];
+  if (!regs.length) { box.innerHTML = ''; return; }
+
+  const emiss = regs.map(r => r.emissao).sort();
+  const emissTxt = emiss.length ? fmtDataSem(emiss[emiss.length - 1]) : '';
+  const colabIdx = {}; orgDados.colab.forEach(c => colabIdx[c.matricula] = c);
+  const doSetor = [], foraSetor = [];
+  regs.forEach(r => {
+    const c = colabIdx[r.matricula];
+    (c && orgEhSetor(c.setor) ? doSetor : foraSetor).push(Object.assign({}, r, { setor: c ? c.setor : null }));
+  });
+
+  const linha = l => {
+    const oculto = _bhOcultos.has(l.matricula);
+    const cor = l.saldo_atual < 0 ? 'var(--critico-s)' : l.saldo_atual > 0 ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2)';
+    return '<tr style="' + (oculto ? 'opacity:.38' : '') + '">' +
+      '<td style="width:34px;text-align:center"><button class="btn" title="' + (oculto ? 'mostrar' : 'esconder do envio') + '" ' +
+      'style="width:auto;padding:2px 6px;font-size:13px;background:transparent;border:0" ' +
+      'onclick="bhToggleOculto(\'' + escapeHtml(l.matricula) + '\')">' + (oculto ? '🙈' : '👁️') + '</button></td>' +
+      '<td style="text-align:left"><b style="' + (oculto ? 'text-decoration:line-through' : '') + '">' +
+      escapeHtml(orgPrimeiro(l.nome) || l.nome || l.matricula) + '</b>' +
+      '<div style="font-size:10px;color:var(--fraco)">' + escapeHtml(l.matricula) + (l.setor ? ' · ' + escapeHtml(l.setor) : '') + '</div></td>' +
+      '<td style="text-align:right;font-weight:800;color:' + cor + '">' + bhFmt(l.saldo_atual) + '</td></tr>';
+  };
+
+  const tabela = (lista, titulo, cor) => {
+    if (!lista.length) return '';
+    const vis = lista.filter(l => !_bhOcultos.has(l.matricula));
+    const tot = vis.reduce((n, l) => n + l.saldo_atual, 0);
+    let h = '<div style="display:flex;align-items:baseline;gap:8px;margin:12px 0 6px">' +
+      '<b style="font-size:13px;color:' + cor + '">' + titulo + ' · ' + vis.length + '</b>' +
+      '<span class="desc" style="margin-left:auto;font-weight:800;color:' + cor + '">' + bhFmt(tot) + '</span></div>';
+    h += '<div style="max-height:40vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px"><table class="aprov-tab" style="width:100%"><tbody>';
+    h += lista.map(linha).join('');
+    h += '</tbody></table></div>';
+    return h;
+  };
+
+  const bloco = (lista, titulo, sub, comEnvio) => {
+    if (!lista.length) return '';
+    const neg = lista.filter(l => l.saldo_atual < 0).sort((a, b) => a.saldo_atual - b.saldo_atual);
+    const pos = lista.filter(l => l.saldo_atual > 0).sort((a, b) => b.saldo_atual - a.saldo_atual);
+    const zero = lista.filter(l => l.saldo_atual === 0);
+    const vis = lista.filter(l => !_bhOcultos.has(l.matricula));
+    const tot = vis.reduce((n, l) => n + l.saldo_atual, 0);
+    let h = '<div class="card"><div class="titulo-sec">' + titulo + '</div>';
+    h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:4px">' +
+      '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Negativas</div>' +
+      '<b style="font-size:18px;color:var(--critico-s)">' + neg.filter(l => !_bhOcultos.has(l.matricula)).length + '</b></div>' +
+      '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Positivas</div>' +
+      '<b style="font-size:18px;color:var(--verde-4,#2e7d32)">' + pos.filter(l => !_bhOcultos.has(l.matricula)).length + '</b></div>' +
+      '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Saldo geral</div>' +
+      '<b style="font-size:18px;color:' + (tot < 0 ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + bhFmt(tot) + '</b></div></div>';
+    if (sub) h += '<p class="desc" style="margin:6px 0 0">' + sub + '</p>';
+    if (comEnvio) {
+      h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:9px">' +
+        '<button class="btn" style="width:auto;padding:7px 14px;font-size:13px;background:#25D366;color:#fff;border-color:#25D366" ' +
+        'onclick="bhWhatsapp(\'neg\')">📲 Enviar negativas</button>' +
+        '<button class="btn" style="width:auto;padding:7px 14px;font-size:13px;background:#25D366;color:#fff;border-color:#25D366" ' +
+        'onclick="bhWhatsapp(\'pos\')">📲 Enviar positivas</button>' +
+        '<button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:13px" onclick="bhWhatsapp(\'tudo\')">📲 Enviar tudo</button>' +
+        (_bhOcultos.size ? '<button class="btn btn-borda" style="width:auto;padding:7px 12px;font-size:12px" onclick="bhMostrarTodos()">mostrar os ' + _bhOcultos.size + ' escondidos</button>' : '') +
+        '</div>';
+      h += '<p class="desc" style="font-size:11px;margin-top:6px">👁️ esconde a pessoa do envio — ela some da mensagem e do total.</p>';
+    }
+    h += tabela(neg, '🔴 Negativas', 'var(--critico-s)');
+    h += tabela(pos, '🟢 Positivas', 'var(--verde-4,#2e7d32)');
+    h += tabela(zero, '⚪ Zeradas', 'var(--fraco)');
+    h += '</div>';
+    return h;
+  };
+
+  let h = '';
+  h += bloco(doSetor, '⏱️ Banco de Horas · ' + escapeHtml(orgSetorLabel()) + (emissTxt ? ' · ' + emissTxt : ''),
+             'saldo acumulado · mais negativo no topo', true);
+  h += bloco(foraSetor, '⏱️ Banco de Horas · sem cadastro ou de outro setor',
+             'vieram no relatório do Saturno mas não são deste setor (ou não estão em colaboradores) — separados para não misturar', false);
+  box.innerHTML = h;
+}
+
+/* monta o texto e abre o WhatsApp. Só entra quem está visível. */
+function bhWhatsapp(qual) {
+  const regs = _bhRegs || [];
+  const colabIdx = {}; orgDados.colab.forEach(c => colabIdx[c.matricula] = c);
+  let lista = regs.filter(r => { const c = colabIdx[r.matricula]; return c && orgEhSetor(c.setor); })
+                  .filter(r => !_bhOcultos.has(r.matricula));
+  if (qual === 'neg') lista = lista.filter(r => r.saldo_atual < 0);
+  if (qual === 'pos') lista = lista.filter(r => r.saldo_atual > 0);
+  if (!lista.length) { toast('Nada para enviar neste filtro'); return; }
+
+  const emiss = regs.map(r => r.emissao).sort();
+  const emissTxt = emiss.length ? fmtDataSem(emiss[emiss.length - 1]) : '';
+  const nome = r => orgPrimeiro(r.nome) || r.nome || r.matricula;
+
+  let t = '*Banco de Horas · ' + orgSetorLabel() + '*' + (emissTxt ? '\n_posição de ' + emissTxt + '_' : '') + '\n';
+  const secao = (arr, tit) => {
+    if (!arr.length) return '';
+    let x = '\n' + tit + '\n';
+    arr.forEach(r => { x += nome(r) + ' — ' + bhFmt(r.saldo_atual) + '\n'; });
+    return x;
+  };
+  if (qual !== 'pos') t += secao(lista.filter(r => r.saldo_atual < 0).sort((a, b) => a.saldo_atual - b.saldo_atual), '🔴 *Negativas*');
+  if (qual !== 'neg') t += secao(lista.filter(r => r.saldo_atual > 0).sort((a, b) => b.saldo_atual - a.saldo_atual), '🟢 *Positivas*');
+  t += '\n_Saldo do que está acima: ' + bhFmt(lista.reduce((n, r) => n + r.saldo_atual, 0)) + '_';
+
+  window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
 }
 
 function faCorpoImportRH() {
