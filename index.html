@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.716.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.717.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.716.0';
+const APP_VER = '3.717.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26549,9 +26549,11 @@ async function renderOrgFaltas() {
   }
 
   h += faCardImportRH();
+  h += bhCardImport();
 
   wrap.innerHTML = h;
   faCarregaPendentes();
+  bhCarregaResumo();
   faAtualizaFim();
 }
 
@@ -26606,6 +26608,137 @@ async function faCarregaPendentes() {
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui listar os pendentes: ' +
       escapeHtml(String(e.message || e)) + '</p></div>';
+  }
+}
+
+/* ============ BANCO DE HORAS (espelho Saturno) ============
+   12/08/2026 (João): lançar o espelho do "Banco de Horas" e ver quem está
+   positivo e quem está negativo. O relatório é da empresa inteira e traz SALDO
+   ACUMULADO (não movimento do dia): Saldo Inicial, Crédito, Débito, Saldo Atual.
+   Guarda cada emissão com data, para acompanhar a evolução. Quem não é do setor
+   filtrado aparece separado, num quadro à parte. */
+const _bhMin = t => {                   // "hh:mm" ou "-hh:mm" -> minutos (int, com sinal)
+  const s = String(t == null ? '' : t).trim(); if (!s) return 0;
+  const neg = s[0] === '-'; const m = s.replace('-', '').match(/^(\d{1,4}):(\d{2})$/);
+  if (!m) { const n = parseInt(s.replace(/\D/g, ''), 10) || 0; return neg ? -n : n; }
+  const v = (+m[1]) * 60 + (+m[2]); return neg ? -v : v;
+};
+const bhFmt = min => {                   // minutos -> "+7h08" / "-4h45"
+  const n = Math.round(Number(min) || 0), sg = n < 0 ? '-' : '+', a = Math.abs(n);
+  return sg + Math.floor(a / 60) + 'h' + String(a % 60).padStart(2, '0');
+};
+
+function bhCardImport() {
+  let h = '<div class="card"><div class="titulo-sec">⏱️ Importar Banco de Horas</div>';
+  h += '<p class="desc" style="margin-bottom:8px">espelho do Saturno (.pdf). Lê o saldo de cada pessoa e acusa quem está ' +
+       '<b style="color:var(--verde-4,#2e7d32)">positivo</b> e quem está <b style="color:var(--critico-s)">negativo</b>. ' +
+       'Cada emissão fica guardada com a data — reimportar a mesma não duplica.</p>';
+  h += '<input type="file" id="bhFile" accept=".pdf,application/pdf" onchange="bhImportar()" style="font-size:13px;width:100%">';
+  h += '<div id="bhImpPrev"></div></div>';
+  h += '<div id="bhResumoBox"></div>';
+  return h;
+}
+
+async function bhImportar() {
+  const f = ($('bhFile').files || [])[0]; if (!f) return;
+  const prev = $('bhImpPrev');
+  const msg = t => { prev.innerHTML = '<div class="desc" style="margin-top:10px">' + t + '</div>'; };
+  msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> lendo o PDF…');
+  try {
+    if (!window.pdfjsLib) throw new Error('leitor de PDF não carregou');
+    const buf = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+
+    let emissao = null; const linhas = [];
+    for (let pg = 1; pg <= pdf.numPages; pg++) {
+      const page = await pdf.getPage(pg);
+      const tc = await page.getTextContent();
+      // reagrupa os fragmentos por linha (mesma coordenada Y, tolerância 3px)
+      const porY = {};
+      tc.items.forEach(it => {
+        const y = Math.round(it.transform[5] / 3) * 3;
+        (porY[y] = porY[y] || []).push({ x: it.transform[4], s: it.str });
+      });
+      Object.keys(porY).sort((a, b) => b - a).forEach(y => {
+        const txt = porY[y].sort((a, b) => a.x - b.x).map(o => o.s).join(' ').replace(/\s+/g, ' ').trim();
+        if (!emissao) { const e = txt.match(/Emitido:\s*(\d{2})\/(\d{2})\/(\d{4})/); if (e) emissao = e[3] + '-' + e[2] + '-' + e[1]; }
+        // linha de pessoa: matrícula, nome, e 4 tempos hh:mm (com sinal opcional)
+        const m = txt.match(/^(\d{3,8})\s+(.+?)\s+(-?\d{1,4}:\d{2})\s+(-?\d{1,4}:\d{2})\s+(-?\d{1,4}:\d{2})\s+(-?\d{1,4}:\d{2})\b/);
+        if (m) linhas.push({ m: m[1], nome: m[2].trim(), si: _bhMin(m[3]), cr: _bhMin(m[4]), db: _bhMin(m[5]), sa: _bhMin(m[6]) });
+      });
+    }
+    if (!linhas.length) throw new Error('não achei as linhas de saldo — é o relatório do Banco de Horas?');
+    if (!emissao) emissao = hojeISO();
+
+    msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> gravando ' + linhas.length + ' pessoa(s)…');
+    const { data, error } = await sb.rpc('importar_banco_horas', { p_emissao: emissao, p_linhas: linhas });
+    if (error) throw error;
+
+    const pos = linhas.filter(l => l.sa > 0).length, neg = linhas.filter(l => l.sa < 0).length;
+    const tot = linhas.reduce((n, l) => n + l.sa, 0);
+    prev.innerHTML = '<div style="margin-top:10px;font-size:13px;line-height:1.7"><b>' + linhas.length + '</b> pessoa(s) · emissão ' +
+      fmtDataSem(emissao) + '<br><b style="color:var(--verde-4,#2e7d32)">' + pos + ' positivas</b> · ' +
+      '<b style="color:var(--critico-s)">' + neg + ' negativas</b> · saldo geral <b>' + bhFmt(tot) + '</b></div>';
+    $('bhFile').value = '';
+    bhCarregaResumo();
+  } catch (e) {
+    msg('<span style="color:var(--critico-s)">Não deu pra importar: ' + escapeHtml(String(e.message || e)) + '</span>');
+  }
+}
+
+async function bhCarregaResumo() {
+  const box = $('bhResumoBox'); if (!box) return;
+  try {
+    const { data, error } = await sb.from('v_banco_horas_atual').select('*');
+    if (error) throw error;
+    const regs = data || [];
+    if (!regs.length) { box.innerHTML = ''; return; }
+
+    const emiss = regs.map(r => r.emissao).sort();
+    const emissTxt = emiss.length ? fmtDataSem(emiss[emiss.length - 1]) : '';
+    const colabIdx = {}; orgDados.colab.forEach(c => colabIdx[c.matricula] = c);
+    const doSetor = [], foraSetor = [];
+    regs.forEach(r => {
+      const c = colabIdx[r.matricula];
+      (c && orgEhSetor(c.setor) ? doSetor : foraSetor).push(Object.assign({}, r, { setor: c ? c.setor : null }));
+    });
+
+    const bloco = (lista, titulo, sub) => {
+      if (!lista.length) return '';
+      lista.sort((a, b) => a.saldo_atual - b.saldo_atual);       // mais negativo no topo
+      const neg = lista.filter(l => l.saldo_atual < 0), pos = lista.filter(l => l.saldo_atual > 0);
+      const tot = lista.reduce((n, l) => n + l.saldo_atual, 0);
+      let h = '<div class="card"><div class="titulo-sec">' + titulo + '</div>';
+      h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">' +
+        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Negativas</div>' +
+        '<b style="font-size:18px;color:var(--critico-s)">' + neg.length + '</b></div>' +
+        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Positivas</div>' +
+        '<b style="font-size:18px;color:var(--verde-4,#2e7d32)">' + pos.length + '</b></div>' +
+        '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Saldo geral</div>' +
+        '<b style="font-size:18px;color:' + (tot < 0 ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + bhFmt(tot) + '</b></div></div>';
+      if (sub) h += '<p class="desc" style="margin:-4px 0 8px">' + sub + '</p>';
+      h += '<div style="max-height:46vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px"><table class="aprov-tab" style="width:100%">' +
+        '<thead><tr><th style="text-align:left">Pessoa</th><th style="text-align:right">Crédito</th><th style="text-align:right">Débito</th><th style="text-align:right">Saldo</th></tr></thead><tbody>';
+      lista.forEach(l => {
+        const cor = l.saldo_atual < 0 ? 'var(--critico-s)' : l.saldo_atual > 0 ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2)';
+        h += '<tr><td style="text-align:left"><b>' + escapeHtml(orgPrimeiro(l.nome) || l.nome || l.matricula) + '</b>' +
+          '<div style="font-size:10px;color:var(--fraco)">' + escapeHtml(l.matricula) + (l.setor ? ' · ' + escapeHtml(l.setor) : '') + '</div></td>' +
+          '<td style="text-align:right;color:var(--fraco)">' + (l.credito ? bhFmt(l.credito).replace('+', '') : '—') + '</td>' +
+          '<td style="text-align:right;color:var(--fraco)">' + (l.debito ? bhFmt(l.debito) : '—') + '</td>' +
+          '<td style="text-align:right;font-weight:800;color:' + cor + '">' + bhFmt(l.saldo_atual) + '</td></tr>';
+      });
+      h += '</tbody></table></div></div>';
+      return h;
+    };
+
+    let h = '';
+    h += bloco(doSetor, '⏱️ Banco de Horas · ' + escapeHtml(orgSetorLabel()) + (emissTxt ? ' · ' + emissTxt : ''),
+               'saldo acumulado · mais negativo no topo · toque na pessoa para ver o histórico');
+    h += bloco(foraSetor, '⏱️ Banco de Horas · fora de ' + escapeHtml(orgSetorLabel()),
+               'estão no relatório mas não são deste setor — separados para não misturar');
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui montar o banco de horas: ' + escapeHtml(String(e.message || e)) + '</p></div>';
   }
 }
 
