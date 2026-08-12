@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.713.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.714.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.713.0';
+const APP_VER = '3.714.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24625,23 +24625,63 @@ const semH = h => { const v = Math.round((Number(h) || 0) * 10) / 10;
 function semGrafico(grupos, titulo) {
   if (!grupos.length) return '';
   const max = Math.max.apply(null, grupos.map(g => g.horas)) || 1;
-  const linha = 30, padT = 6, W = 700, rotW = 168, valW = 74;
+  const linha = 32, padT = 6, W = 700, rotW = 168, valW = 150;
   const barW = W - rotW - valW;
   const H = padT * 2 + grupos.length * linha;
   let sv = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" preserveAspectRatio="xMidYMid meet" style="display:block">';
   grupos.forEach((g, i) => {
     const y = padT + i * linha, w = Math.max(2, g.horas / max * barW);
     const cor = g.horas / max > .66 ? 'var(--critico-s)' : g.horas / max > .33 ? 'var(--laranja-3)' : 'var(--azul-marca)';
+    const clique = ' onclick="semAbrirGrupo(\'' + escapeHtml(String(g.rot)).replace(/'/g, '&#39;') + '\')" style="cursor:pointer"';
+    sv += '<g' + clique + '>';
+    // faixa invisivel: area de toque do dedo cobre a linha inteira, nao so a barra
+    sv += '<rect x="0" y="' + y + '" width="' + W + '" height="' + linha + '" fill="transparent"/>';
     sv += '<text x="0" y="' + (y + 15) + '" font-size="12" font-weight="700" fill="var(--tinta)">' +
           escapeHtml(String(g.rot).slice(0, 22)) + '</text>';
     sv += '<rect x="' + rotW + '" y="' + (y + 4) + '" width="' + w.toFixed(1) + '" height="15" rx="4" fill="' + cor + '"/>';
     sv += '<text x="' + (rotW + w + 7).toFixed(1) + '" y="' + (y + 16) + '" font-size="11.5" font-weight="800" fill="var(--fraco)">' +
-          semH(g.horas) + (g.pes ? ' · ' + g.pes + 'p' : '') + '</text>';
+          semH(g.horas) + (g.pes ? ' · ' + g.pes + (g.pes > 1 ? ' pessoas' : ' pessoa') : '') + '</text>';
+    sv += '</g>';
   });
   sv += '</svg>';
   return '<div class="card grafico"><div class="titulo-sec">' + titulo + '</div>' +
-         '<p class="desc" style="margin-bottom:8px">horas de jornada perdidas com falta e atestado no ano · 7h20 = 1 dia</p>' +
-         sv + '</div>';
+         '<p class="desc" style="margin-bottom:8px">horas de jornada perdidas com falta e atestado no ano · 7h20 = 1 dia · <b>toque numa barra para ver quem é</b></p>' +
+         sv + '<div id="semDetBox"></div></div>';
+}
+
+/* detalhe da barra: quem compõe aquele setor/turno, do pior para o melhor */
+let _semTodas = [], _semAgrupPor = 'setor', _semGrupoAberto = null;
+function semAbrirGrupo(rot) {
+  const box = $('semDetBox'); if (!box) return;
+  if (_semGrupoAberto === rot) { _semGrupoAberto = null; box.innerHTML = ''; return; }
+  _semGrupoAberto = rot;
+  const dele = _semTodas.filter(l => String(_semAgrupPor === 'setor' ? l.setor : l.turnos) === rot && l.horas > 0)
+                        .sort((a, b) => b.horas - a.horas);
+  const tot = dele.reduce((n, l) => n + l.horas, 0);
+  let h = '<div style="margin-top:10px;border:1px solid var(--linha-s);border-radius:10px;overflow:hidden">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 11px;background:var(--leve)">' +
+    '<b style="font-size:13px;color:var(--navy)">' + escapeHtml(rot) + ' · ' + semH(tot) + ' · ' + dele.length + (dele.length > 1 ? ' pessoas' : ' pessoa') + '</b>' +
+    '<button class="btn btn-borda" style="width:auto;padding:3px 10px;font-size:11px" onclick="semAbrirGrupo(\'' + escapeHtml(rot).replace(/'/g, '&#39;') + '\')">fechar</button></div>';
+  if (!dele.length) {
+    h += '<p class="desc" style="padding:10px">ninguém com ocorrência aqui.</p>';
+  } else {
+    h += '<div style="max-height:44vh;overflow:auto">';
+    dele.forEach(l => {
+      const part = [];
+      if (l.nFalta) part.push(l.nFalta + '× falta (' + semH(l.hFalta) + ')');
+      if (l.nAtest) part.push(l.nAtest + '× atestado (' + semH(l.hAtest) + ')');
+      h += '<div onclick="orgHistPessoa(\'' + l.mat + '\')" style="cursor:pointer;display:flex;gap:8px;align-items:baseline;' +
+        'padding:7px 11px;border-top:1px solid var(--leve-2s);font-size:13px">' +
+        '<div style="flex:1;min-width:0"><b>' + escapeHtml(l.nome) + '</b>' +
+        '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(part.join(' · ') || '—') +
+        (l.maqs.length ? ' · ' + escapeHtml(l.maqs.slice(0, 3).join(', ')) : '') + '</div></div>' +
+        '<b style="color:var(--critico-s);white-space:nowrap">' + semH(l.horas) + '</b>' +
+        '<span style="font-size:11px;color:var(--fraco-2s);white-space:nowrap">' + semEq(l.totalEq) + 'd</span></div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  box.innerHTML = h;
 }
 
 /* dia EQUIVALENTE: a planilha do RH manda as horas justificadas e 7h20 (7,3333h)
@@ -24766,9 +24806,12 @@ async function renderOrgSemaforo() {
     porSetor[k].horas += l.horas; if (l.horas > 0) porSetor[k].pes++;
   });
   const gs = Object.values(porSetor).filter(g => g.horas > 0).sort((a, b) => b.horas - a.horas);
+  _semTodas = linhas; _semGrupoAberto = null;
   if (gs.length > 1) {
+    _semAgrupPor = 'setor';
     h += semGrafico(gs, '📊 Horas perdidas por setor');
   } else {
+    _semAgrupPor = 'turno';
     const porTurno = {};
     linhas.forEach(l => {
       const k = l.turnos || '—';
