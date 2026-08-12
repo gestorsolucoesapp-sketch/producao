@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.703.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.704.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2584,7 +2584,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.703.0';
+const APP_VER = '3.704.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13430,6 +13430,26 @@ function areaMontanha(labels, series, opts) {
     + `<line x1="${padL}" y1="${(padT + plotH).toFixed(1)}" x2="${W - padR}" y2="${(padT + plotH).toFixed(1)}" stroke="#DEE6ED"/>`
     + `${areas}${trend}${linhaMedia}${picos}${xlab}</svg></div>`;
 }
+let _estratItemRows = [], _estratMetricaAtual = 'peso', _estratPorMes = false;
+function detItemEstrat(key) {
+  const alvo = String(key).replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+  const rows = (_estratItemRows || []).filter(r => (String(r.item_cod || '').trim() || (r.item_desc || '—')) === alvo);
+  if (!rows.length) { abreDet(alvo.slice(0, 44), '<p class="desc">Sem produção deste item no período.</p>'); return; }
+  const met = _estratMetricaAtual;
+  const val = r => met === 'peso' ? (r.peso || 0) : met === 'milheiro' ? milDeLinha(r, semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r)) : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
+  const fmtV = met === 'peso' ? fmtKg : met === 'milheiro' ? (x => fmtNum(Math.round(x)) + ' mi') : (x => fmtNum(Math.round(x)) + ' cx');
+  const r0 = rows[0], _cd = String(r0.item_cod || '').trim(), _ds = String(r0.item_desc || '').trim();
+  const titulo = ((_cd ? _cd + ' · ' : '') + _ds).slice(0, 50) || alvo;
+  const tot = rows.reduce((a, r) => a + val(r), 0);
+  const boca = bocaDe(r0.item_desc) || '—';
+  const porMaq = {}, porDia = {};
+  rows.forEach(r => { const c = String(r.recurso_cod || '—'); porMaq[c] = (porMaq[c] || 0) + val(r); const d = String(r.dia).slice(0, 10); const dk = _estratPorMes ? d.slice(0, 7) : d; porDia[dk] = (porDia[dk] || 0) + val(r); });
+  const linMaq = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(setorDe(c) || ''))}</td><td><span class="cel cel-tot">${fmtV(v)}</span></td></tr>`).join('');
+  const linDia = Object.keys(porDia).sort().map(d => `<tr><td class="nome" style="font-size:12px">${escapeHtml(_estratPorMes ? d : fmtDataSem(d))}</td><td><span class="cel neutra">${fmtV(porDia[d])}</span></td></tr>`).join('');
+  abreDet(titulo, `<p class="idet-desc">produção total <b>${fmtV(tot)}</b> · boca <b>${escapeHtml(String(boca))}</b> · ${rows.length} apontamento(s)</p>`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:6px 0 4px">Por máquina</div>${tabSimples(['Máquina', 'Produção'], linMaq)}`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Por ${_estratPorMes ? 'mês' : 'dia'}</div>${tabSimples([_estratPorMes ? 'Mês' : 'Dia', 'Produção'], linDia)}`);
+}
 function mudarPeriodoEstrat() {
   const sel = $('estratPeriodo'); if (!sel) return;
   aplicarPeriodo(sel.value);
@@ -13492,10 +13512,11 @@ function renderEstrategia() {
   const totGeral = bocas.filter(b => !_estratBocaOff[b]).reduce((a, b) => a + totalBoca[b], 0);
   const _bocasVis = new Set(bocas.filter(b => !_estratBocaOff[b]));
   const _itAgg = {};
-  rows.forEach(r => { const b = bocaR(r); if (!_bocasVis.has(b)) return; const k = (r.item_cod || '') + '|' + (r.item_desc || ''); if (!_itAgg[k]) _itAgg[k] = { desc: r.item_desc || r.item_cod || '—', boca: b, v: 0 }; _itAgg[k].v += val(r); });
+  rows.forEach(r => { const b = bocaR(r); if (!_bocasVis.has(b)) return; const cod = String(r.item_cod || '').trim(); const k = cod || (r.item_desc || '—'); if (!_itAgg[k]) _itAgg[k] = { key: k, cod, desc: r.item_desc || r.item_cod || '—', boca: b, v: 0 }; _itAgg[k].v += val(r); });
   const _itens = Object.values(_itAgg).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
   const _maxIt = _itens.length ? _itens[0].v : 1;
-  const _listaItens = _itens.slice(0, 30).map((it, i) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7)"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${it.boca === 's/ boca' ? '—' : 'b' + it.boca}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)}</span></div>`).join('');
+  _estratItemRows = rows; _estratMetricaAtual = metrica; _estratPorMes = _porMes;
+  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${it.boca === 's/ boca' ? '—' : 'b' + it.boca}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
   const periodoLbl = periodoSel ? periodoSel.label : '';
   box.innerHTML = `<div class="card">
       <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por boca · histórico</div>
