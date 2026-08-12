@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.700.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.701.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2584,7 +2584,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.700.0';
+const APP_VER = '3.701.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5600,12 +5600,13 @@ function renderAnaliseMais(cache) {
   const itArr = Object.entries(itemKg).sort((a, b) => b[1] - a[1]);
   const totIt = itArr.reduce((a, x) => a + x[1], 0) || 1;
   let acc = 0;
-  const abc = itArr.map(([nome, kg]) => { acc += kg; const pct = acc / totIt * 100; const cls = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C'; return { nome, kg, cls }; });
+  const abc = itArr.map(([nome, kg]) => { acc += kg; const pct = acc / totIt * 100; const cls = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C'; return { nome, kg, cls, accPct: pct }; });
   const corABC = { A: 'var(--critico)', B: 'var(--laranja)', C: 'var(--ok-4)' };
   const nA = abc.filter(x => x.cls === 'A').length;
-  const linABC = abc.slice(0, 15).map(x => `<tr><td class="nome">${escapeHtml(String(x.nome).slice(0, 26))}</td><td><span class="cel" style="background:${corABC[x.cls]};color:#fff">${x.cls}</span></td><td><span class="cel cel-tot">${fmtKg(x.kg)}</span></td></tr>`).join('');
-  html += card('🔠 Curva ABC de itens (refugo)', `${nA} itens classe A concentram ~80% do refugo · foco aqui`,
-    itArr.length ? tabSimples(['Item', 'Classe', 'Refugo'], linABC) : '<p class="desc">Sem refugo por item no período.</p>');
+  _abcPerd = E.perd;
+  const linABC = abc.slice(0, 15).map(x => { const nm = String(x.nome).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<tr onclick="detItemRefugo('${nm}')" style="cursor:pointer"><td class="nome">${escapeHtml(String(x.nome).slice(0, 26))}</td><td><span class="cel" style="background:${corABC[x.cls]};color:#fff">${x.cls}</span></td><td><span class="cel cel-tot">${fmtKg(x.kg)} ›</span></td></tr>`; }).join('');
+  html += card('🔠 Curva ABC de itens (refugo)', `${nA} itens classe A concentram ~80% do refugo · toque numa barra/linha pra ver o detalhe`,
+    itArr.length ? (graficoABC(abc, fmtKg) + '<div style="height:10px"></div>' + tabSimples(['Item', 'Classe', 'Refugo'], linABC)) : '<p class="desc">Sem refugo por item no período.</p>');
 
   // ===== 6) MATRIZ IMPACTO × ESFORÇO (onde atacar primeiro) =====
   const ofensores = [];
@@ -13505,6 +13506,48 @@ function renderEstrategia() {
       ${_listaItens || '<p class="desc">sem itens no filtro</p>'}
     </div>
     <div class="card" style="margin-top:12px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de produção</div><p class="desc">Espaço reservado para o plano — a próxima etapa. Me diga o formato (meta por boca, por período?) e eu monto aqui.</p></div>`;
+}
+// ===== Curva ABC (Pareto) de itens por refugo — barras A/B/C + curva acumulada =====
+let _abcPerd = [];
+function graficoABC(abc, fmtV) {
+  const n = Math.min(abc.length, 40), arr = abc.slice(0, n);
+  if (!n) return '<p class="desc">Sem dados.</p>';
+  const H = 262, padL = 26, padR = 8, padT = 14, padB = 34;
+  const W = Math.max(680, n * 26), plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxKg = Math.max(1, ...arr.map(x => x.kg));
+  const xAt = i => padL + (i + 0.5) / n * plotW;
+  const bw = Math.min(18, plotW / n * 0.66);
+  const yBar = v => padT + plotH - (v / maxKg) * plotH;
+  const yPct = p => padT + plotH - (p / 100) * plotH;
+  const CLS = { A: '#D64545', B: '#E8A13D', C: '#1F9D55' };
+  let bars = '', pts = [];
+  arr.forEach((x, i) => {
+    const cx = xAt(i), yb = yBar(x.kg);
+    const nm = String(x.nome).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    bars += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${yb.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, padT + plotH - yb).toFixed(1)}" rx="2" fill="${CLS[x.cls]}" fill-opacity="0.9" style="cursor:pointer" onclick="detItemRefugo('${nm}')"><title>${escapeHtml(String(x.nome).slice(0, 40))} · ${fmtV(x.kg)} · ${x.accPct.toFixed(0)}% acum.</title></rect>`;
+    pts.push(`${cx.toFixed(1)},${yPct(x.accPct).toFixed(1)}`);
+  });
+  const areaD = `M${padL},${(padT + plotH).toFixed(1)} L` + pts.join(' L') + ` L${xAt(n - 1).toFixed(1)},${(padT + plotH).toFixed(1)} Z`;
+  const ref = [80, 95].map(p => `<line x1="${padL}" y1="${yPct(p).toFixed(1)}" x2="${W - padR}" y2="${yPct(p).toFixed(1)}" stroke="#8FA6C0" stroke-width="1" stroke-dasharray="4 4"/><text x="${padL + 2}" y="${(yPct(p) - 3).toFixed(1)}" font-size="9" font-weight="700" fill="#5C7186">${p}%</text>`).join('');
+  const passo = Math.max(1, Math.ceil(n / 12));
+  let xlab = ''; arr.forEach((x, i) => { if (i % passo === 0 || i === n - 1) { const lb = /^(\d{4,})\b/.test(String(x.nome)) ? String(x.nome).match(/^(\d{4,})/)[1] : String(x.nome).slice(0, 9); xlab += `<text x="${xAt(i).toFixed(1)}" y="${H - 20}" text-anchor="middle" font-size="8" fill="#8FA6C0">${escapeHtml(lb)}</text>`; } });
+  return `<div class="svg-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`
+    + `<defs><linearGradient id="gABCmt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2F6FED" stop-opacity="0.26"/><stop offset="1" stop-color="#2F6FED" stop-opacity="0.04"/></linearGradient></defs>`
+    + `<path d="${areaD}" fill="url(#gABCmt)"/>${ref}${bars}<polyline points="${pts.join(' ')}" fill="none" stroke="#2F6FED" stroke-width="2"/>${xlab}`
+    + `</svg></div><div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--fraco);margin-top:4px"><span><b style="color:#D64545">■</b> A</span><span><b style="color:#E8A13D">■</b> B</span><span><b style="color:#1F9D55">■</b> C</span><span><span style="color:#2F6FED">━</span> % acumulado</span><span style="margin-left:auto">barra = refugo do item · toque pra detalhar</span></div>`;
+}
+function detItemRefugo(nome) {
+  const alvo = String(nome).replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+  const rows = (_abcPerd || []).filter(r => (r.item_desc || r.item_cod || '—') === alvo);
+  if (!rows.length) { abreDet(alvo.slice(0, 40), '<p class="desc">Sem refugo deste item no período.</p>'); return; }
+  const tot = rows.reduce((a, r) => a + (+r.peso || 0), 0);
+  const porMaq = {}, porTipo = {};
+  rows.forEach(r => { const c = String(r.recurso_cod || '—'); porMaq[c] = (porMaq[c] || 0) + (+r.peso || 0); const t = r.tipo_perda_desc || '—'; porTipo[t] = (porTipo[t] || 0) + (+r.peso || 0); });
+  const linMaq = Object.entries(porMaq).sort((a, b) => b[1] - a[1]).map(([c, kg]) => `<tr><td class="nome"><span class="cod">${escapeHtml(c)}</span> ${escapeHtml(String(setorDe(c) || ''))}</td><td><span class="cel baixo">${fmtKg(kg)}</span></td></tr>`).join('');
+  const linTipo = Object.entries(porTipo).sort((a, b) => b[1] - a[1]).map(([t, kg]) => `<tr><td class="nome" style="font-size:12px">${escapeHtml(t)}</td><td><span class="cel neutra">${fmtKg(kg)}</span></td></tr>`).join('');
+  abreDet(alvo.slice(0, 44), `<p class="idet-desc">refugo total <b>${fmtKg(tot)}</b> · ${rows.length} apontamento(s)</p>`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:6px 0 4px">Por máquina</div>${tabSimples(['Máquina', 'Refugo'], linMaq)}`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Por tipo de perda</div>${tabSimples(['Tipo', 'Refugo'], linTipo)}`);
 }
 function bocaDe(desc) {
   const s = String(desc || '');
