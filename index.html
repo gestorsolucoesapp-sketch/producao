@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.686.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.687.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -917,7 +917,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <option value="Sleeve">Sleeve</option>
         <option value="Rotulagem">Rotulagem</option>
       </select>
-      <select id="estratMetrica" onchange="renderEstrategia()" aria-label="Métrica" style="display:none"><option value="peso">Peso (kg)</option><option value="quantidade">Caixas</option></select>
+      <select id="estratMetrica" onchange="renderEstrategia()" aria-label="Métrica" style="display:none"><option value="peso">Toneladas</option><option value="quantidade">Caixas</option><option value="milheiro">Milheiros</option></select>
       <div id="estratConteudo"></div>
     </section>
     <section id="abaImportar" class="oculto">
@@ -2575,7 +2575,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.686.0';
+const APP_VER = '3.687.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13351,9 +13351,20 @@ function areaMontanha(labels, series, opts) {
   const passo = Math.max(1, Math.ceil(n / 9));
   let xlab = '';
   labels.forEach((l, i) => { if (i % passo === 0 || i === n - 1) xlab += `<text x="${xAt(i).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="#8FA6C0">${escapeHtml(String(l))}</text>`; });
+  let picos = '';
+  for (let i = 0; i < n; i++) {
+    const pv = i > 0 ? totais[i - 1] : totais[i], nx = i < n - 1 ? totais[i + 1] : totais[i];
+    const isMax = totais[i] >= pv && totais[i] >= nx && totais[i] > 0 && (totais[i] > pv || totais[i] > nx);
+    const isMin = totais[i] <= pv && totais[i] <= nx && (totais[i] < pv || totais[i] < nx);
+    if (isMax || isMin) {
+      const yy = yAt(totais[i]);
+      const py = isMax ? Math.max(10, yy - 6) : Math.min(padT + plotH - 2, yy + 12);
+      picos += `<text x="${xAt(i).toFixed(1)}" y="${py.toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="700" fill="${isMax ? '#16283A' : '#9C6B1E'}">${opts.fmt ? opts.fmt(totais[i]) : Math.round(totais[i])}</text>`;
+    }
+  }
   return `<div class="svg-scroll" data-fim="1"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><defs>${defs}</defs>`
     + `<line x1="${padL}" y1="${(padT + plotH).toFixed(1)}" x2="${W - padR}" y2="${(padT + plotH).toFixed(1)}" stroke="#DEE6ED"/>`
-    + `${areas}${trend}${linhaMedia}${xlab}</svg></div>`;
+    + `${areas}${trend}${linhaMedia}${picos}${xlab}</svg></div>`;
 }
 function mudarPeriodoEstrat() {
   const sel = $('estratPeriodo'); if (!sel) return;
@@ -13363,7 +13374,7 @@ function mudarPeriodoEstrat() {
 }
 async function carregarEstrategia() {
   const box = $('estratConteudo'); if (!box) return;
-  try { montarSeletorPeriodo(infoImports, 'estratPeriodo'); } catch (_) {}
+  try { montarSeletorPeriodo(infoImports, 'estratPeriodo'); sincSetorGlobal(); } catch (_) {}
   box.innerHTML = '<div class="card"><p class="vazio-painel">Carregando histórico do 622…</p></div>';
   try {
     const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
@@ -13384,15 +13395,20 @@ function renderEstrategia() {
   let rows = _estratRows;
   if (setor) rows = rows.filter(r => setorDe(r.recurso_cod) === setor);
   if (_tur) rows = rows.filter(r => blocoTurno(r.turno, r.dia) === _tur);
-  const val = r => metrica === 'peso' ? (r.peso || 0) : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
+  const val = r => metrica === 'peso' ? (r.peso || 0)
+    : metrica === 'milheiro' ? (String(r.unidade).toUpperCase() === 'MIL' ? (r.quantidade || 0) : 0)
+    : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
   const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
-  const dias = [...new Set(rows.map(r => String(r.dia).slice(0, 10)))].sort();
+  const _tipoP = (periodoSel && periodoSel.tipo) || 'mes';
+  const _porMes = _tipoP === 'ano';
+  const chaveB = r => { const d = String(r.dia).slice(0, 10); return _porMes ? d.slice(0, 7) : d; };
+  const dias = [...new Set(rows.map(chaveB))].sort();
   const idxDia = {}; dias.forEach((d, i) => idxDia[d] = i);
   const bocas = [...new Set(rows.map(bocaR))].sort((a, b) => (parseInt(a) || 99999) - (parseInt(b) || 99999));
   const serie = {}; bocas.forEach(b => serie[b] = dias.map(() => 0));
-  rows.forEach(r => { const di = idxDia[String(r.dia).slice(0, 10)]; if (di != null) serie[bocaR(r)][di] += val(r); });
+  rows.forEach(r => { const di = idxDia[chaveB(r)]; if (di != null) serie[bocaR(r)][di] += val(r); });
   const totalBoca = {}; bocas.forEach(b => totalBoca[b] = serie[b].reduce((a, x) => a + x, 0));
-  const fmtV = metrica === 'peso' ? fmtKg : (x => fmtNum(Math.round(x)) + ' cx');
+  const fmtV = metrica === 'peso' ? fmtKg : metrica === 'milheiro' ? (x => fmtNum(Math.round(x)) + ' mi') : (x => fmtNum(Math.round(x)) + ' cx');
   const CORES = ['#2F6FED', '#00964D', '#E8A13D', '#7B4FA8', '#D64545', '#3CA9C4', '#C86A2E', '#6C7BD1', '#28348E', '#9AA6B2'];
   const chips = bocas.map((b, i) => {
     const off = !!_estratBocaOff[b], cor = CORES[i % CORES.length];
@@ -13400,7 +13416,8 @@ function renderEstrategia() {
     return `<button onclick="_estratBocaOff['${bk}']=!_estratBocaOff['${bk}'];renderEstrategia()" style="border:1.5px solid ${cor};background:${off ? '#fff' : cor};color:${off ? cor : '#fff'};opacity:${off ? '.55' : '1'};border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">${escapeHtml(b === 's/ boca' ? 's/ boca' : 'boca ' + b)} · ${fmtV(totalBoca[b])}</button>`;
   }).join('');
   const series = bocas.filter(b => !_estratBocaOff[b]).map((b, i) => ({ nome: b, vals: serie[b], cor: CORES[bocas.indexOf(b) % CORES.length] }));
-  const lbls = dias.map(d => d.slice(8, 10) + '/' + d.slice(5, 7));
+  const _MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const lbls = dias.map(d => _porMes ? (_MES3[+d.slice(5, 7) - 1] + '/' + d.slice(2, 4)) : (d.slice(8, 10) + '/' + d.slice(5, 7)));
   const totGeral = bocas.filter(b => !_estratBocaOff[b]).reduce((a, b) => a + totalBoca[b], 0);
   const _bocasVis = new Set(bocas.filter(b => !_estratBocaOff[b]));
   const _itAgg = {};
@@ -13416,7 +13433,7 @@ function renderEstrategia() {
       ${areaMontanha(lbls, series, { fmt: fmtV })}
       <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--fraco);margin-top:8px">
         <span>■ área = boca &nbsp; <span style="color:#D64545">┄ média</span> &nbsp; <span style="color:#16283A">━ tendência</span></span>
-        <span style="margin-left:auto">total visível: <b style="color:var(--txt-2)">${fmtV(totGeral)}</b> · ${dias.length} dia(s)</span>
+        <span style="margin-left:auto">total visível: <b style="color:var(--txt-2)">${fmtV(totGeral)}</b> · eixo em ${_porMes ? 'meses' : 'dias'} · ${dias.length} ${_porMes ? 'mês(es)' : 'dia(s)'}</span>
       </div>
     </div>
     <div class="card" style="margin-top:12px">
