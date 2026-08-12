@@ -743,7 +743,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.679.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.680.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2560,7 +2560,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.679.0';
+const APP_VER = '3.680.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13324,6 +13324,31 @@ function ferramentalDe(desc) {
     + (hm ? ' h' + hm[1] : '') + (fu === 'F' ? ' c/furo' : fu === 'N' ? ' s/furo' : '');
   return { k1: cl + '|' + (b || '?') + '|' + (vm ? vm[1] : '?') + '|' + fu, h: hm ? hm[1] : null, nome: nome };
 }
+// conciliação da aba Itens (622) × total do Painel (621): os dois relatórios do ERP
+// divergem na origem. Puxa o total do 621 pro MESMO recorte e mostra a diferença.
+async function preencherConcilia621(setor, metrica, total622) {
+  const el = document.getElementById('concilia621'); if (!el) return;
+  try {
+    if (!periodoSel || !periodoSel.de) { el.innerHTML = ''; return; }
+    const maq = (typeof maqSelAtual === 'function') ? maqSelAtual() : '';
+    if (maq) { el.innerHTML = ''; return; }        // com máquina filtrada os totais não são comparáveis a nível de setor
+    const turno = (typeof turnoSelAtual === 'function') ? turnoSelAtual() : '';
+    const rows = await fetchTudo('producao_resumo', 'dia,turno,recurso_cod,quantidade,peso', periodoSel.de, periodoSel.ate || periodoSel.de);
+    if (document.getElementById('concilia621') !== el) return;   // trocou de recorte no meio
+    let base = rows;
+    if (setor) base = base.filter(r => setorDe(r.recurso_cod) === setor);
+    if (turno) base = base.filter(r => blocoTurno(r.turno, r.dia) === turno);
+    const val = r => metrica === 'peso' ? (r.peso || 0) : (semCaixa(setorDe(r.recurso_cod)) ? 0 : (r.quantidade || 0));
+    const total621 = base.reduce((a, r) => a + val(r), 0);
+    if (total621 <= 0) { el.innerHTML = ''; return; }
+    const dif = total621 - total622, pct = Math.abs(dif) / total621 * 100;
+    if (pct < 1) { el.innerHTML = ''; return; }     // só mostra quando diverge mais de 1%
+    const fmtV = metrica === 'peso' ? fmtKg : (n => fmtNum(Math.round(n)) + ' cxs');
+    el.innerHTML = '<div style="background:#FFF7E6;border:1px solid #F0D68A;border-radius:10px;padding:8px 11px;margin:2px 0 10px;font-size:11.5px;line-height:1.5;color:#7A5B00">'
+      + '\u24D8 detalhado por item (622) <b>' + fmtV(total622) + '</b> \u00b7 total do Painel (621) <b>' + fmtV(total621) + '</b> \u00b7 diferença <b>' + fmtV(Math.abs(dif)) + '</b> (' + pct.toFixed(1).replace('.', ',') + '%).<br>'
+      + 'Os dois relatórios do ERP divergem na origem \u2014 o <b>Painel (621)</b> é o total oficial; a aba Itens sai do <b>622</b>, o único que traz o item.</div>';
+  } catch (_) { el.innerHTML = ''; }
+}
 function renderAnalise() {
   { const r = $('anResumo'); if (r) {
       const s = $('anSetor').value, m = $('anMetrica') ? $('anMetrica').value : 'peso';
@@ -13511,6 +13536,7 @@ async function preencherMediaItensMes(ym, setor) {
     <div class="kpi"><div class="v">${itens.length ? Math.round(repetem.length / itens.length * 100) : 0}%</div><div class="l">Taxa de repetição</div></div>
     ${totReent ? `<div class="kpi abaixo" style="grid-column:1/-1"><div class="v">${comReent.length} itens · ${totReent} re-entrada(s)${setupInfo ? ` · ≈ ${(totReent * setupInfo.media).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} h` : ''}</div><div class="l">Saíram e voltaram — nova regulagem${setupInfo ? ` · estimativa: ${totReent} setups extras × ${setupInfo.media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h (setup médio do 643)` : ''}</div></div>` : ''}
   </div>`;
+  html += '<div id="concilia621"></div>';
 
   // itens que saíram e voltaram (regulagem extra)
   if (comReent.length) {
@@ -13756,6 +13782,7 @@ async function preencherMediaItensMes(ym, setor) {
     const _t = document.createElement('div'); _t.innerHTML = html;
     while (_t.firstChild) box.appendChild(_t.firstChild);
     setTimeout(() => preencherRelItensOps(anSetor), 0);
+    setTimeout(() => preencherConcilia621(anSetor, metrica, totalV), 0);
     setTimeout(() => scrollGraficosFim(box), 60); setTimeout(() => scrollGraficosFim(box), 350);
   };
   (window.requestAnimationFrame ? requestAnimationFrame(_injPesado) : setTimeout(_injPesado, 0));
