@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.733.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.734.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1222,6 +1222,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="ferias" onclick="orgVer('ferias')">🏖️ F&eacute;rias</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="semaforo" onclick="orgVer('semaforo')">🚦 Sem&aacute;foro</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="importar" onclick="orgVer('importar')">📦 Importar</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="inspecao" onclick="orgVer('inspecao')">🦺 Inspe&ccedil;&otilde;es</button>
           <button class="btn" id="orgLayBtn" onclick="orgTrocaLayout()" title="Alternar layout" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px;margin-left:auto">📱 Coluna</button>
           <button class="btn" id="orgApresBtn" onclick="orgApresentar()" title="Modo apresentação" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⛶ Apresentar</button>
         </div>
@@ -2587,7 +2588,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.733.0';
+const APP_VER = '3.734.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23105,6 +23106,7 @@ function renderOrgVista() {
   if (orgVista === 'ferias') return renderOrgFerias();
   if (orgVista === 'semaforo') return renderOrgSemaforo();
   if (orgVista === 'importar') return renderOrgImportar();
+  if (orgVista === 'inspecao') return renderOrgInspecoes();
 }
 
 /* 12/08/2026 (João): "não dá pra reconhecer automaticamente?" — dá. Em vez de
@@ -23180,6 +23182,122 @@ async function impAuto() {
       orgImpAnalisa(r.tipo);
     }
   }
+}
+
+/* 12/08/2026 (João): painel das inspeções de segurança preenchidas no app —
+   quem fez, quando, e onde estão os desvios. O ranking por tipo de desvio é o
+   que interessa: mostra onde a segurança tem que atuar, não só quem cumpriu. */
+let _inspRegs = null;
+async function renderOrgInspecoes() {
+  const wrap = $('orgWrap');
+  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
+  try {
+    const { data, error } = await sb.from('inspecao_seguranca').select('*')
+      .order('data_inspecao', { ascending: false }).limit(500);
+    if (error) throw error;
+    _inspRegs = data || [];
+  } catch (e) {
+    wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui ler as inspeções: ' + escapeHtml(String(e.message || e)) + '</p></div>';
+    return;
+  }
+  const regs = _inspRegs;
+  let h = '<div class="orgv2">';
+
+  if (!regs.length) {
+    h += '<div class="card"><div class="titulo-sec">🦺 Inspeções de segurança</div>' +
+      '<p class="desc">Nenhuma inspeção preenchida ainda. Ela é preenchida pela tarefa fixa, no botão <b>🦺 Preencher o check list</b>.</p></div></div>';
+    wrap.innerHTML = h; return;
+  }
+
+  const nPess = regs.reduce((n, r) => n + (r.pessoas_obs || 0), 0);
+  const nDesv = regs.reduce((n, r) => n + (r.total_desvios || 0), 0);
+  const ultima = regs[0].data_inspecao;
+  const quemFez = new Set(regs.map(r => r.user_id)).size;
+
+  h += '<div class="card"><div class="titulo-sec">🦺 Inspeções de segurança</div>';
+  h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px">' +
+    ['Inspeções|' + regs.length + '|var(--navy)',
+     'Pessoas observadas|' + nPess + '|var(--navy)',
+     'Desvios|' + nDesv + '|var(--critico-s)',
+     'Desvios por pessoa|' + (nPess ? (nDesv / nPess).toFixed(2).replace('.', ',') : '—') + '|var(--laranja-3)',
+     'Inspetores|' + quemFez + '|var(--navy)'].map(x => { const [t, v, c] = x.split('|');
+      return '<div><div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">' + t + '</div>' +
+             '<b style="font-size:18px;color:' + c + '">' + v + '</b></div>'; }).join('');
+  h += '</div><p class="desc" style="margin-top:7px">última inspeção em ' + fmtDataSem(ultima) + '</p></div>';
+
+  // ranking dos desvios (soma os 3 blocos)
+  const porItem = {};
+  regs.forEach(r => ['epi', 'posicao', 'gestores'].forEach(g => {
+    const o = r[g] || {};
+    Object.keys(o).forEach(k => { const v = Number(o[k]) || 0; if (v > 0) porItem[k] = (porItem[k] || 0) + v; });
+  }));
+  const rank = Object.entries(porItem).sort((a, b) => b[1] - a[1]);
+  if (rank.length) {
+    const max = rank[0][1];
+    h += '<div class="card"><div class="titulo-sec">📊 Onde estão os desvios</div>';
+    h += '<p class="desc" style="margin-bottom:8px">somando todas as inspeções · maior primeiro</p>';
+    rank.forEach(([k, v]) => {
+      const pc = Math.round(v / max * 100);
+      h += '<div style="margin-bottom:7px"><div style="display:flex;gap:8px;font-size:12.5px">' +
+        '<span style="flex:1;min-width:0">' + escapeHtml(k) + '</span><b>' + v + '</b></div>' +
+        '<div style="height:9px;background:var(--leve);border-radius:5px;overflow:hidden;margin-top:2px">' +
+        '<div style="height:100%;width:' + pc + '%;background:' + (pc > 66 ? 'var(--critico-s)' : pc > 33 ? 'var(--laranja-3)' : 'var(--azul-marca)') + '"></div></div></div>';
+    });
+    h += '</div>';
+  }
+
+  // por setor
+  const porSetor = {};
+  regs.forEach(r => {
+    const k = r.setor || '—';
+    if (!porSetor[k]) porSetor[k] = { n: 0, d: 0, p: 0 };
+    porSetor[k].n++; porSetor[k].d += r.total_desvios || 0; porSetor[k].p += r.pessoas_obs || 0;
+  });
+  h += '<div class="card"><div class="titulo-sec">Por setor</div>';
+  h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
+    '<th style="text-align:left">Setor</th><th style="text-align:right">Inspeções</th><th style="text-align:right">Pessoas</th>' +
+    '<th style="text-align:right">Desvios</th><th style="text-align:right">Por pessoa</th></tr></thead><tbody>';
+  Object.entries(porSetor).sort((a, b) => b[1].d - a[1].d).forEach(([k, g]) => {
+    h += '<tr><td style="text-align:left"><b>' + escapeHtml(k) + '</b></td>' +
+      '<td style="text-align:right">' + g.n + '</td><td style="text-align:right">' + g.p + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:var(--critico-s)">' + g.d + '</td>' +
+      '<td style="text-align:right">' + (g.p ? (g.d / g.p).toFixed(2).replace('.', ',') : '—') + '</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+
+  // lista das inspeções
+  h += '<div class="card"><div class="titulo-sec">Inspeções registradas</div>';
+  h += '<div style="max-height:50vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
+  regs.forEach(r => {
+    h += '<div onclick="inspDetalhe(' + r.id + ')" style="cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:8px 11px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+      '<div style="flex:1;min-width:0"><b>' + escapeHtml(r.user_nome || '—') + '</b>' +
+      '<div style="font-size:10.5px;color:var(--fraco)">' + fmtDataSem(r.data_inspecao) + ' · ' +
+      escapeHtml(r.unidade || '') + ' · ' + escapeHtml(r.setor || '') + ' · ' + (r.pessoas_obs || 0) + ' pessoa(s)</div></div>' +
+      '<b style="color:' + ((r.total_desvios || 0) > 0 ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' +
+      (r.total_desvios || 0) + '</b><span style="font-size:11px;color:var(--fraco-2s)">desvios</span></div>';
+  });
+  h += '</div></div></div>';
+  wrap.innerHTML = h;
+}
+
+function inspDetalhe(id) {
+  const r = (_inspRegs || []).find(x => x.id === id); if (!r) return;
+  const bloco = (tit, o) => {
+    const its = Object.entries(o || {}).filter(([, v]) => Number(v) > 0);
+    if (!its.length) return '<p class="idet-desc" style="margin-top:8px"><b>' + tit + '</b> — nenhum desvio</p>';
+    return '<p class="idet-desc" style="font-weight:700;color:var(--navy);margin-top:10px">' + tit + '</p>' +
+      its.sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+        '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+        '<span style="flex:1">' + escapeHtml(k) + '</span><b style="color:var(--critico-s)">' + v + '</b></div>').join('');
+  };
+  let h = '<p class="idet-desc">' + escapeHtml(r.user_nome || '') + ' · ' + fmtDataSem(r.data_inspecao) +
+    '<br>' + escapeHtml(r.unidade || '') + ' · ' + escapeHtml(r.setor || '') +
+    ' · ' + (r.pessoas_obs || 0) + ' pessoa(s) observada(s) · <b>' + (r.total_desvios || 0) + ' desvio(s)</b></p>';
+  h += bloco('Ausência de EPI', r.epi);
+  h += bloco('Posição das pessoas', r.posicao);
+  h += bloco('Ações dos gestores', r.gestores);
+  if (r.obs) h += '<p class="idet-desc" style="margin-top:10px"><b>Observações:</b> ' + escapeHtml(r.obs) + '</p>';
+  abreDet('🦺 Inspeção', h);
 }
 
 /* 12/08/2026 (João): toda importação passou a viver numa vista própria dentro
