@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.721.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.722.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2587,7 +2587,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.721.0';
+const APP_VER = '3.722.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22851,6 +22851,81 @@ function renderOrgVista() {
   if (orgVista === 'importar') return renderOrgImportar();
 }
 
+/* 12/08/2026 (João): "não dá pra reconhecer automaticamente?" — dá. Em vez de
+   obrigar a escolher a aba antes, o arquivo é farejado pelo CONTEÚDO (cabeçalho
+   da planilha, texto do PDF) e cai sozinho no importador certo. As abas viraram
+   plano B, escondidas atrás do "escolher na mão". */
+async function impFarejar(f) {
+  const nome = (f.name || '').toLowerCase();
+
+  if (/\.xlsx?$/.test(nome)) {
+    await garantirXlsx();
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const abas = wb.SheetNames.map(n => n.toLowerCase()).join(' ');
+    if (/program|ferias|férias/.test(abas)) return { tipo: 'ferias', rot: 'programação de férias' };
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const cab = (XLSX.utils.sheet_to_json(ws, { header: 1, raw: false })[0] || []).join(' ').toUpperCase();
+    if (/JUSTIFICAT|CRACHA|APONTAMENTO_DATA/.test(cab)) return { tipo: 'rh', rot: 'justificativas do RH' };
+    return { tipo: null, rot: 'planilha não reconhecida' };
+  }
+
+  if (/\.pdf$/.test(nome)) {
+    await garantirPdfJs();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    const tc = await (await pdf.getPage(1)).getTextContent();
+    const t = tc.items.map(i => i.str).join(' ');
+    if (/banco de horas|saldo atual/i.test(t)) return { tipo: 'banco', rot: 'espelho do Banco de Horas' };
+    if (/cargo|admiss|funcion/i.test(t)) return { tipo: 'colab', rot: 'relatório de colaboradores' };
+    return { tipo: null, rot: 'PDF não reconhecido' };
+  }
+
+  const txt = await f.text();
+  if (/banco de horas|saldo atual/i.test(txt)) return { tipo: 'banco', rot: 'espelho do Banco de Horas', txt: txt };
+  if (/\b(falta|atestado|ferias|folga|afastamento)\b/i.test(txt) && /\d{2}[\/-]\d{2}/.test(txt))
+    return { tipo: 'faltas', rot: 'lançamentos de falta', txt: txt };
+  return { tipo: 'colab', rot: 'lista de colaboradores', txt: txt };
+}
+
+async function impAuto() {
+  const f = ($('impAutoFile').files || [])[0]; if (!f) return;
+  const box = $('impAutoMsg');
+  const msg = (t, cor) => { box.innerHTML = '<div class="desc" style="margin-top:9px;font-size:12.5px' +
+    (cor ? ';color:' + cor : '') + '">' + t + '</div>'; };
+  msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> vendo o que é…');
+  let r;
+  try { r = await impFarejar(f); }
+  catch (e) { msg('Não consegui ler o arquivo: ' + escapeHtml(String(e.message || e)), 'var(--critico-s)'); return; }
+
+  if (r.tipo === 'ferias') {
+    msg('Isso é a <b>programação de férias</b> — ela entra pela aba 🏖️ Férias. ' +
+      '<button class="btn" style="width:auto;padding:3px 10px;font-size:11.5px;margin-left:4px" onclick="orgVer(\'ferias\')">ir para Férias</button>');
+    return;
+  }
+  if (!r.tipo) { msg('Não reconheci este arquivo (' + escapeHtml(r.rot) + '). Use o "escolher na mão" abaixo.', 'var(--critico-s)'); return; }
+
+  const arq = f;
+  _impAba = r.tipo;
+  renderOrgImportar();
+  const box2 = $('impAutoMsg');
+  if (box2) box2.innerHTML = '<div class="desc" style="margin-top:9px;font-size:12.5px;color:var(--verde-4,#2e7d32)">' +
+    'Reconheci: <b>' + escapeHtml(r.rot) + '</b> — importando…</div>';
+
+  if (r.tipo === 'rh') { await faImportarRH(arq); }
+  else if (r.tipo === 'banco') { await bhImportar(arq); }
+  else {
+    const alvo = $('impTxt_' + r.tipo);
+    if (!alvo) return;
+    if (r.txt != null) { alvo.value = r.txt; orgImpAnalisa(r.tipo); }
+    else {
+      await garantirPdfJs();
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await arq.arrayBuffer()) }).promise;
+      const linhas = await RioParsers.extrairLinhas(pdf);
+      alvo.value = linhas.map(l => l.texto).join('\n');
+      orgImpAnalisa(r.tipo);
+    }
+  }
+}
+
 /* 12/08/2026 (João): toda importação passou a viver numa vista própria dentro
    da Gestão de Pessoas. Faltas, Organograma e Banco de Horas voltaram a ser
    telas só de consulta e edição do dia a dia. */
@@ -23593,14 +23668,21 @@ function orgImpCentral(inicial) {
     ['faltas', '✍️ Falta avulsa']
   ];
   let h = '<div class="card"><div class="titulo-sec">📦 Central de importação</div>';
-  h += '<p class="desc" style="margin:-2px 0 10px">tudo que entra no RH num lugar só — escolha o que vai importar</p>';
-  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
+  h += '<p class="desc" style="margin:-2px 0 10px">jogue o arquivo aqui — eu reconheço sozinho o que é</p>';
+  h += '<div style="border:2px dashed var(--linha);border-radius:12px;padding:12px;text-align:center;margin-bottom:10px">' +
+    '<div style="font-size:26px;line-height:1">📥</div>' +
+    '<div style="font-size:13px;font-weight:700;color:var(--navy);margin:3px 0 2px">Solte aqui qualquer arquivo do RH</div>' +
+    '<div class="desc" style="font-size:11.5px;margin-bottom:8px">planilha de justificativas · espelho do Banco de Horas · relatório de colaboradores</div>' +
+    '<input type="file" id="impAutoFile" accept=".xlsx,.xls,.pdf,.csv,.txt,.tsv" onchange="impAuto()" style="font-size:13px;max-width:100%">' +
+    '<div id="impAutoMsg"></div></div>';
+  h += '<details style="margin-bottom:10px"><summary class="desc" style="cursor:pointer;font-size:12px">não reconheceu? escolher na mão</summary>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 0">';
   abas.forEach(([k, r]) => {
     h += '<button class="btn" style="width:auto;font-size:12.5px;padding:6px 12px;' +
       (_impAba === k ? 'background:var(--navy);color:#fff;border-color:var(--navy)' : 'background:var(--leve);color:var(--txt-2)') +
       '" onclick="_impAba=\'' + k + '\';renderOrgImportar()">' + r + '</button>';
   });
-  h += '</div><div>';
+  h += '</div></details><div>';
   if (_impAba === 'colab') h += orgImpCorpo('colab');
   else if (_impAba === 'rh') h += faCorpoImportRH();
   else if (_impAba === 'banco') h += bhCorpoImport();
@@ -26698,8 +26780,8 @@ function bhCorpoImport() {
   return h;
 }
 
-async function bhImportar() {
-  const f = ($('bhFile').files || [])[0]; if (!f) return;
+async function bhImportar(fExterno) {
+  const f = fExterno || ($('bhFile').files || [])[0]; if (!f) return;
   const prev = $('bhImpPrev');
   const msg = t => { prev.innerHTML = '<div class="desc" style="margin-top:10px">' + t + '</div>'; };
   msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> lendo o PDF…');
@@ -26836,8 +26918,8 @@ function _faData(v) {
   return null;
 }
 
-async function faImportarRH() {
-  const f = ($('faRHFile').files || [])[0]; if (!f) return;
+async function faImportarRH(fExterno) {
+  const f = fExterno || ($('faRHFile').files || [])[0]; if (!f) return;
   const prev = $('faRHPrev');
   const msg = t => { prev.innerHTML = '<div class="desc" style="margin-top:10px">' + t + '</div>'; };
   msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> lendo planilha…');
