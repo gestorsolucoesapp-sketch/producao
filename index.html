@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.715.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.716.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.715.0';
+const APP_VER = '3.716.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24129,6 +24129,46 @@ function orgCardCobertura() {
 }
 
 /* ---------- auditoria da escala ---------- */
+/* 12/08/2026 (João): "Cargo x função" acusava a Impressão inteira porque o
+   cargo "Impressor Jr./Pl./Sr." não casa com o regex de operador — só que
+   impressor É a operação. Em vez de eu chumbar mais palavras no regex e errar
+   no próximo setor, o próprio João confirma o aviso e ele para de aparecer.
+   As confirmações vivem em org_auditoria_ok e valem para todos os aparelhos. */
+const orgAudNorm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+let _orgAudOk = null;   // Set de chaves já confirmadas (null = ainda não carregou)
+
+async function orgAudCarregarOk(rerender) {
+  try {
+    const { data, error } = await sb.from('org_auditoria_ok').select('chave');
+    if (error) throw error;
+    _orgAudOk = new Set((data || []).map(r => r.chave));
+  } catch (_) { _orgAudOk = new Set(); }
+  if (rerender && orgVista === 'analise') renderOrgAnalise();
+}
+
+async function orgAudConfirmar(chave, rotulo) {
+  if (!chave) return;
+  if (!confirm('Confirmar que está certo e parar de avisar sobre ' + rotulo + '?')) return;
+  try {
+    const { error } = await sb.from('org_auditoria_ok')
+      .upsert({ chave: chave, tipo: chave.split(':')[0], rotulo: rotulo }, { onConflict: 'chave' });
+    if (error) throw error;
+    if (_orgAudOk) _orgAudOk.add(chave);
+    if (orgVista === 'analise') renderOrgAnalise();
+  } catch (e) { alert('Não consegui confirmar: ' + (e.message || e)); }
+}
+
+async function orgAudReabrir() {
+  if (!confirm('Trazer de volta todos os avisos que você já confirmou?')) return;
+  try {
+    const { error } = await sb.from('org_auditoria_ok').delete().neq('chave', '');
+    if (error) throw error;
+    _orgAudOk = new Set();
+    if (orgVista === 'analise') renderOrgAnalise();
+  } catch (e) { alert('Não consegui reabrir: ' + (e.message || e)); }
+}
+
 function orgAuditoria() {
   const al = orgDados.aloc.filter(a => orgEhSetor(a.setor) && (!orgTurnoSel || a.turno === orgTurnoSel));
   const colab = orgColabSetor();
@@ -24191,7 +24231,8 @@ function orgAuditoria() {
   al.filter(a => a.funcao === 'operador' && a.matricula && !a.aprendiz).forEach(a => {
     const c = colab.find(x => x.matricula === a.matricula); if (!c || !c.cargo) return;
     if (!/operador|oficial|lider/i.test(c.cargo)) av.push({ g: 'atencao', t: 'Cargo x função',
-      d: c.nome + ' opera a ' + a.maquina_codigo + ' (' + a.turno + ') mas o cargo é ' + c.cargo, id: a.id });
+      d: c.nome + ' opera a ' + a.maquina_codigo + ' (' + a.turno + ') mas o cargo é ' + c.cargo, id: a.id,
+      ok: 'cargo:' + orgAudNorm(c.cargo), okRot: 'cargo ' + c.cargo, okTudo: 'todo mundo com o cargo ' + c.cargo });
   });
 
   /* 5b. pessoa de outro setor ocupando posto aqui.
@@ -24225,7 +24266,9 @@ function orgAuditoria() {
     });
   });
 
-  return av;
+  // tira o que o João já conferiu e confirmou (por cargo ou linha a linha)
+  const ok = _orgAudOk || new Set();
+  return av.filter(x => !(x.ok && ok.has(x.ok)) && !(x.okLinha && ok.has(x.okLinha)));
 }
 
 // classifica o cargo em famílias que fazem sentido no chão de fábrica
@@ -24403,10 +24446,17 @@ function orgCardAuditoria() {
       h += '<div' + clk + 'display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
         '<span style="width:8px;height:8px;border-radius:50%;background:' + G[g].c + ';flex:none;align-self:center"></span>' +
         '<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:' + G[g].c + ';min-width:112px">' + escapeHtml(x.t) + '</span>' +
-        '<span style="flex:1;min-width:0;color:var(--txt-2s)">' + escapeHtml(x.d) + '</span></div>';
+        '<span style="flex:1;min-width:0;color:var(--txt-2s)">' + escapeHtml(x.d) + '</span>' +
+        (x.ok ? '<button class="btn btn-borda" style="width:auto;flex:none;padding:3px 10px;font-size:11px;font-weight:800" ' +
+                'title="Está certo — parar de avisar" onclick="event.stopPropagation();orgAudConfirmar(\'' +
+                escapeHtml(x.ok).replace(/'/g, '&#39;') + '\',\'' + escapeHtml(x.okTudo || x.okRot || 'este aviso').replace(/'/g, '&#39;') + '\')">✓ está certo</button>' : '') +
+        '</div>';
     });
   });
-  h += '</div><div class="desc" style="font-size:11px;margin-top:7px">Toque numa linha com pessoa para corrigir o vínculo.</div></div>';
+  h += '</div><div class="desc" style="font-size:11px;margin-top:7px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+    '<span style="flex:1;min-width:180px">Toque numa linha com pessoa para corrigir o vínculo · <b>✓ está certo</b> confirma e some com o aviso.</span>' +
+    ((_orgAudOk && _orgAudOk.size) ? '<button class="btn btn-borda" style="width:auto;padding:3px 10px;font-size:11px" onclick="orgAudReabrir()">reabrir ' + _orgAudOk.size + ' confirmado(s)</button>' : '') +
+    '</div></div>';
   return h;
 }
 
@@ -26856,6 +26906,7 @@ async function renderOrgAnalise() {
       '<span>' + escapeHtml(orgPrimeiro(orgNome(a.matricula))) + ' <b style="color:var(--critico-3)">' + escapeHtml(t ? t.tipo : '') + '</b></span></div>';
   }).join('') : '<div class="desc">nenhum posto descoberto hoje ✔</div>';
   h += '</div>';
+  if (_orgAudOk === null) orgAudCarregarOk(true);
   h += orgCardAuditoria();
   h += orgCardForaRH();
   h += orgCardCargoTurno();
