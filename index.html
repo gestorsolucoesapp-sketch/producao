@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.732.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.733.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2587,7 +2587,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.732.0';
+const APP_VER = '3.733.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4203,6 +4203,7 @@ function renderTarefas() {
             <span style="background:var(--leve);color:var(--txt-2);padding:2px 8px;border-radius:6px;font-weight:600">${alvo}</span>
             ${t.recorrente ? '<span style="background:#EAF3EE;color:#1F7A46;padding:2px 8px;border-radius:6px;font-weight:600">🔁 recorrente</span>' : ''}
             ${t.fixa ? '<span style="background:#EAF0FB;color:#28348E;padding:2px 8px;border-radius:6px;font-weight:600" title="não sai da lista ao ser concluída">📌 fixa</span>' : ''}
+            ${t.form_app === 'inspecao_seguranca' ? `<button onclick="abrirInspecaoSeguranca('${t.id}')" class="btn btn-verde" style="width:auto;padding:3px 12px;font-size:12px;font-weight:700">🦺 Preencher no app</button>` : ''}
             ${t.so_gestor ? '<span style="background:#F4ECFB;color:#6B3FA0;padding:2px 8px;border-radius:6px;font-weight:600" title="só gestores enxergam">🔒 só gestor</span>' : ''}
             ${t.fixa && t.ultima_conclusao ? `<span style="color:var(--fraco);font-size:11px">última: ${fmtDataSem(String(t.ultima_conclusao).slice(0,10))}</span>` : ''}
             ${seloPrazo(t)}
@@ -4522,8 +4523,11 @@ function abrirNotificacoes(jaRecarregado) {
           return `<div style="border-left:5px solid #28348E;background:#F5F7FD;border-radius:10px;padding:10px;margin-bottom:8px">
             <div onclick="irParaTarefas()" style="cursor:pointer;font-size:13px;color:#2C3E50;font-weight:600">${x.txt}</div>
             ${x.tarefa.descricao ? `<div style="font-size:12px;color:var(--fraco);margin-top:3px">${escapeHtml(String(x.tarefa.descricao).slice(0, 140))}</div>` : ''}
-            <button onclick="darCienciaTarefa('${x.tarefa.id}')" class="btn btn-borda" style="width:100%;padding:7px;font-size:12.5px;margin-top:8px">
-              ✓ Ok, vi — some por ${cada > 1 ? cada + ' dias' : '1 dia'}</button>
+            ${x.tarefa.form_app === 'inspecao_seguranca'
+              ? `<button onclick="document.getElementById('notifOv').remove();abrirInspecaoSeguranca('${x.tarefa.id}')" class="btn btn-verde" style="width:100%;padding:8px;font-size:13px;margin-top:8px">🦺 Preencher o check list</button>
+                 <div class="desc" style="font-size:11px;margin-top:4px;text-align:center">só sai do sino depois de preencher</div>`
+              : `<button onclick="darCienciaTarefa('${x.tarefa.id}')" class="btn btn-borda" style="width:100%;padding:7px;font-size:12.5px;margin-top:8px">
+              ✓ Ok, vi — some por ${cada > 1 ? cada + ' dias' : '1 dia'}</button>`}
           </div>`;
         }
         const lidaT = notifLidas.includes(x.id);
@@ -11160,6 +11164,108 @@ function detOSKpi(tipo) {
     (lst.length > 200 ? '<p class="idet-desc">mostrando as 200 primeiras</p>' : '') +
     tabSimples(['OS / máquina', 'Abertura', 'Situação'], linhas));
 }
+
+/* ============ CHECK LIST DE SEGURANÇA (Inspeção Comportamental) ============
+   12/08/2026 (João): "permita clicar no link e só ver não adianta, tem que
+   fazer". O formulário do Google virou tela do app: sem preencher e salvar, a
+   tarefa não é dada por cumprida. Fica gravado com usuário e data.
+   Escala 0 a 10 por item — o form do Google parava em 8. */
+const INSP_UNIDADES = ['Flexivel', 'Rigido', 'Laminado', 'Injeção', 'Rioflex'];
+const INSP_SETORES = ['Impressão', 'Extrusão', 'Manutenção', 'Corte e Solda', 'Laminação',
+  'Rebobinadeira', 'Recuperadora', 'Mistura', 'Expedição', 'Injeção', 'Termoformagem',
+  'Embaladeira', 'Moagem / Mistura', 'Semi Acabado', 'Outro'];
+const INSP_EPI = ['Protetor auricular', 'Óculos de proteção', 'Luvas / creme (mãos)',
+  'Máscara / respirador', 'Avental (corpo)', 'Cinto de segurança (empilhadeira / altura)', 'Outros'];
+const INSP_POS = ['Transitando fora do caminho seguro', 'Utilizando adornos',
+  'Não utilizando o corrimão', 'Risco de queda', 'Contato com alta temperatura',
+  'Contato com corrente elétrica', 'Bater em objetos ou ser atingido', 'Postura inadequada'];
+const INSP_GEST = ['Ausência de EPI obrigatório', 'Transitando fora do caminho seguro',
+  'Utilizando adornos', 'Descumprindo outra norma de segurança'];
+let _inspTarefaId = null;
+
+// stepper 0–10: no celular é muito mais rápido que 11 bolinhas em linha
+function inspLinha(grupo, i, rot) {
+  const id = 'insp_' + grupo + '_' + i;
+  return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--leve-2s)">' +
+    '<span style="flex:1;min-width:0;font-size:13px">' + escapeHtml(rot) + '</span>' +
+    '<button type="button" class="btn btn-borda" style="width:34px;padding:4px 0;font-size:16px;flex:none" onclick="inspSoma(\'' + id + '\',-1)">−</button>' +
+    '<input id="' + id + '" type="number" inputmode="numeric" min="0" max="10" value="0" ' +
+    'onchange="inspClamp(this)" style="width:52px;text-align:center;font-size:16px;font-weight:800;padding:5px;border:1px solid var(--borda);border-radius:8px">' +
+    '<button type="button" class="btn btn-borda" style="width:34px;padding:4px 0;font-size:16px;flex:none" onclick="inspSoma(\'' + id + '\',1)">+</button></div>';
+}
+function inspClamp(el) { let v = parseInt(el.value, 10); if (!isFinite(v)) v = 0; el.value = Math.max(0, Math.min(10, v)); inspTotal(); }
+function inspSoma(id, d) { const el = $(id); if (!el) return; el.value = Math.max(0, Math.min(10, (parseInt(el.value, 10) || 0) + d)); inspTotal(); }
+function inspTotal() {
+  let t = 0;
+  document.querySelectorAll('[id^="insp_"]').forEach(el => { if (el.tagName === 'INPUT' && /^insp_(epi|pos|gest)_/.test(el.id)) t += parseInt(el.value, 10) || 0; });
+  const b = $('inspTotal'); if (b) b.textContent = t;
+}
+
+function abrirInspecaoSeguranca(tarefaId) {
+  _inspTarefaId = tarefaId || null;
+  const bloco = (tit, grupo, arr) =>
+    '<div style="margin-top:14px"><div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);margin-bottom:2px">' + tit + '</div>' +
+    arr.map((r, i) => inspLinha(grupo, i, r)).join('') + '</div>';
+
+  let h = '<p class="idet-desc">Preencha a quantidade de desvios encontrados em cada item (0 a 10). ' +
+    'Item não encontrado fica em zero.</p>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">';
+  h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Unidade *<select id="inspUnidade" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px">' +
+    '<option value="">— escolher —</option>' + INSP_UNIDADES.map(u => '<option>' + u + '</option>').join('') + '</select></label>';
+  h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Setor *<select id="inspSetor" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px">' +
+    '<option value="">— escolher —</option>' + INSP_SETORES.map(u => '<option>' + u + '</option>').join('') + '</select></label>';
+  h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Data da inspeção *<input id="inspData" type="date" value="' + hojeISO() + '" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></label>';
+  h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Nº de pessoas observadas *<input id="inspPessoas" type="number" inputmode="numeric" min="1" placeholder="ex.: 12" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></label>';
+  h += '</div>';
+  h += bloco('Ausência de EPI', 'epi', INSP_EPI);
+  h += bloco('Posição das pessoas', 'pos', INSP_POS);
+  h += bloco('Ações dos gestores', 'gest', INSP_GEST);
+  h += '<label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-top:14px">Observações (opcional)' +
+    '<textarea id="inspObs" rows="2" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></textarea></label>';
+  h += '<div style="position:sticky;bottom:0;background:#fff;padding-top:10px;margin-top:12px;border-top:1px solid var(--linha-s)">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:8px">' +
+    '<span class="desc">Total de desvios</span><b id="inspTotal" style="font-size:20px;color:var(--critico-s)">0</b></div>' +
+    '<button class="btn btn-verde" style="width:100%;padding:12px;font-size:15px" onclick="salvarInspecao()">✓ Concluir inspeção</button></div>';
+
+  abreDet('🦺 Check list de Segurança', h);
+}
+
+async function salvarInspecao() {
+  const unidade = ($('inspUnidade') || {}).value || '';
+  const setor = ($('inspSetor') || {}).value || '';
+  const data = ($('inspData') || {}).value || '';
+  const pessoas = parseInt(($('inspPessoas') || {}).value, 10) || 0;
+  if (!unidade) { toast('Escolha a unidade'); return; }
+  if (!setor) { toast('Escolha o setor'); return; }
+  if (!data) { toast('Informe a data da inspeção'); return; }
+  if (pessoas < 1) { toast('Informe quantas pessoas foram observadas'); return; }
+
+  const pega = (grupo, arr) => { const o = {}; arr.forEach((r, i) => { o[r] = parseInt(($('insp_' + grupo + '_' + i) || {}).value, 10) || 0; }); return o; };
+  const epi = pega('epi', INSP_EPI), pos = pega('pos', INSP_POS), gest = pega('gest', INSP_GEST);
+  const soma = o => Object.values(o).reduce((a, b) => a + b, 0);
+  const total = soma(epi) + soma(pos) + soma(gest);
+
+  try {
+    const { error } = await sb.from('inspecao_seguranca').insert({
+      tarefa_id: _inspTarefaId, user_id: (perfil && perfil.id) || null,
+      user_nome: (perfil && perfil.nome) || null,
+      unidade: unidade, setor: setor, data_inspecao: data, pessoas_obs: pessoas,
+      epi: epi, posicao: pos, gestores: gest, total_desvios: total,
+      obs: (($('inspObs') || {}).value || '').trim() || null
+    });
+    if (error) throw error;
+  } catch (e) { toast('❌ ' + (e.message || e)); return; }
+
+  // só agora a tarefa é dada por cumprida no ciclo
+  if (_inspTarefaId) {
+    const t = (tarefasData || []).find(x => x.id === _inspTarefaId);
+    if (t) { await registrarConclusaoRecorrente(t); }
+    await darCienciaTarefa(_inspTarefaId);
+  }
+  const ov = $('itemDetOverlay'); if (ov) ov.classList.add('oculto');
+  toast('✓ Inspeção registrada · ' + total + ' desvio(s)');
+}
+
 function abreDet(titulo, corpoHtml) {
   $('itemDetTitulo').textContent = titulo;
   $('itemDetCorpo').innerHTML = corpoHtml;
