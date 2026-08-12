@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.711.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.712.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.711.0';
+const APP_VER = '3.712.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26359,6 +26359,7 @@ async function renderOrgFaltas() {
   h += faCardImportRH();
 
   wrap.innerHTML = h;
+  faCarregaPendentes();
   faAtualizaFim();
 }
 
@@ -26374,12 +26375,55 @@ async function renderOrgFaltas() {
    Reimportar a mesma planilha atualiza, não duplica: a RPC é idempotente.
    As colunas são achadas pelo NOME do cabeçalho, não pela posição, porque o
    RH pode reordenar o relatório sem avisar. */
+/* 12/08/2026 (João): a planilha do ponto e da empresa inteira, o organograma so
+   tem quem foi escalado. Quem nao esta em colaboradores cai na quarentena
+   org_faltas_pendentes — decisao foi NAO cadastrar essas pessoas por enquanto,
+   so deixar visivel que existem e que estao fora de qualquer setor. */
+async function faCarregaPendentes() {
+  const box = $('faPendBox'); if (!box) return;
+  try {
+    const { data, error } = await sb.from('org_faltas_pendentes')
+      .select('matricula,nome,tipo,data,horas').order('matricula');
+    if (error) throw error;
+    const regs = data || [];
+    if (!regs.length) { box.innerHTML = ''; return; }
+
+    const por = {};
+    regs.forEach(r => {
+      if (!por[r.matricula]) por[r.matricula] = { nome: r.nome || '', n: 0, tipos: {} };
+      por[r.matricula].n++;
+      por[r.matricula].tipos[r.tipo] = (por[r.matricula].tipos[r.tipo] || 0) + 1;
+    });
+    const gente = Object.entries(por).sort((a, b) => b[1].n - a[1].n);
+
+    let h = '<div class="card" style="border-left:5px solid var(--laranja)">';
+    h += '<div class="titulo-sec">👤 Fora do organograma</div>';
+    h += '<p class="desc" style="margin-bottom:9px"><b>' + gente.length + ' pessoa(s)</b> e <b>' + regs.length +
+         ' lançamento(s)</b> vieram na planilha do RH mas <b>não estão cadastradas em nenhum setor por enquanto</b>. ' +
+         'Ficam guardados aqui, fora das contagens e do semáforo, até serem cadastrados.</p>';
+    h += '<div style="max-height:40vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
+    gente.forEach(([mat, g]) => {
+      const det = Object.entries(g.tipos).map(([t, n]) => n + '× ' + t).join(' · ');
+      h += '<div style="display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+        '<b style="flex:1;min-width:0">' + escapeHtml(g.nome || '(sem nome)') + '</b>' +
+        '<span style="font-size:11px;color:var(--fraco-2s)">' + escapeHtml(mat) + '</span>' +
+        '<span style="font-size:11px;color:var(--fraco)">' + escapeHtml(det) + '</span></div>';
+    });
+    h += '</div></div>';
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui listar os pendentes: ' +
+      escapeHtml(String(e.message || e)) + '</p></div>';
+  }
+}
+
 function faCardImportRH() {
   let h = '<div class="card"><div class="titulo-sec">📥 Importar justificativas do RH</div>';
   h += '<p class="desc" style="margin-bottom:8px">planilha .xlsx do ponto (atestado, falta, luto, licença). ' +
        'Pode ser o mês inteiro ou só o dia — reimportar não duplica. O RH sobrescreve o que foi apontado no app.</p>';
   h += '<input type="file" id="faRHFile" accept=".xlsx,.xls" onchange="faImportarRH()" style="font-size:13px;width:100%">';
   h += '<div id="faRHPrev"></div></div>';
+  h += '<div id="faPendBox"></div>';
   return h;
 }
 
@@ -26453,13 +26497,9 @@ async function faImportarRH() {
     if (r.divergencias) out += ' · <b style="color:var(--critico-s)">' + r.divergencias + '</b> divergência(s) com o apontamento do app';
     out += '</div>';
     if (r.pendentes_qtd) {
-      const nomes = {};
-      (r.pendentes || []).forEach(p => { if (!nomes[p.matricula]) nomes[p.matricula] = p.nome || ''; });
-      const ks = Object.keys(nomes);
       out += '<div style="margin-top:8px;padding:8px 10px;border-left:4px solid var(--laranja);background:var(--leve);border-radius:8px;font-size:12.5px">' +
-        '<b>' + r.pendentes_qtd + ' lançamento(s) não entraram</b> — ' + ks.length + ' matrícula(s) fora do cadastro:<br>' +
-        ks.slice(0, 30).map(k => escapeHtml(k + (nomes[k] ? ' · ' + nomes[k] : ''))).join('<br>') +
-        (ks.length > 30 ? '<br>…' : '') + '</div>';
+        '<b>' + r.pendentes_qtd + ' lançamento(s)</b> são de gente que não está cadastrada em nenhum setor. ' +
+        'Ficaram guardados no quadro <b>Fora do organograma</b>, logo abaixo.</div>';
     }
     prev.innerHTML = out;
     $('faRHFile').value = '';
