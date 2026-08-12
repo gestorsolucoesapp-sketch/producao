@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.730.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.731.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2587,7 +2587,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.730.0';
+const APP_VER = '3.731.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4374,10 +4374,14 @@ async function darCienciaTarefa(id) {
   _cienciaTar[id] = new Date().toISOString();
   atualizarSino();
   const ov = $('notifOv'); if (ov) { ov.remove(); abrirNotificacoes(true); }
+  const nome = (perfil && perfil.nome) || null;
   try {
     await sb.from('tarefas_ciencia').upsert(
       { tarefa_id: id, user_id: (perfil && perfil.id) || null, visto_em: _cienciaTar[id] },
       { onConflict: 'tarefa_id,user_id' });
+    // trilha completa para o gestor auditar na aba Usuários
+    await sb.from('tarefas_ciencia_log').insert(
+      { tarefa_id: id, user_id: (perfil && perfil.id) || null, user_nome: nome, visto_em: _cienciaTar[id] });
   } catch (e) { toast('❌ ' + (e.message || e)); }
 }
 
@@ -17644,6 +17648,60 @@ async function rmSetor(nome) {
     renderTelasSetor(); carregarUsuarios();
   });
 }
+/* 12/08/2026 (João): trilha de quem deu ciência nas tarefas fixas, por usuário,
+   dentro da aba Usuários. Mostra também as conclusões registradas — as duas
+   coisas são diferentes: ciência é "vi o aviso", conclusão é "fiz a tarefa". */
+async function verHistCiencia(userId, nome) {
+  abreDet('📌 Tarefas fixas · ' + (nome || ''), '<p class="vazio-painel">Carregando…</p>');
+  try {
+    const [{ data: cien }, { data: conc }] = await Promise.all([
+      sb.from('tarefas_ciencia_log').select('tarefa_id,visto_em').eq('user_id', userId)
+        .order('visto_em', { ascending: false }).limit(200),
+      sb.from('tarefas_conclusoes').select('tarefa_id,concluida_em').eq('concluida_por_id', userId)
+        .order('concluida_em', { ascending: false }).limit(200)
+    ]);
+    const tit = {}; (tarefasData || []).forEach(t => tit[t.id] = t.titulo);
+    const nomeTar = id => escapeHtml(tit[id] || '(tarefa removida)');
+    const quando = d => { const x = new Date(d); return fmtDataSem(String(d).slice(0, 10)) + ' ' +
+      String(x.getHours()).padStart(2, '0') + ':' + String(x.getMinutes()).padStart(2, '0'); };
+
+    let h = '';
+    // resumo por tarefa: quantas vezes deu ciência e quando foi a última
+    const porTar = {};
+    (cien || []).forEach(r => {
+      if (!porTar[r.tarefa_id]) porTar[r.tarefa_id] = { n: 0, ult: r.visto_em };
+      porTar[r.tarefa_id].n++;
+    });
+    const chaves = Object.keys(porTar);
+    if (chaves.length) {
+      h += '<p class="idet-desc" style="font-weight:700;color:var(--navy)">Resumo</p>';
+      chaves.sort((a, b) => porTar[b].n - porTar[a].n).forEach(k => {
+        h += '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+          '<span style="flex:1">' + nomeTar(k) + '</span>' +
+          '<b>' + porTar[k].n + '×</b>' +
+          '<span style="color:var(--fraco);font-size:11.5px">última ' + quando(porTar[k].ult) + '</span></div>';
+      });
+    }
+    h += '<p class="idet-desc" style="font-weight:700;color:var(--navy);margin-top:12px">Ciências (tocou em "Ok, vi")</p>';
+    h += (cien || []).length
+      ? (cien || []).map(r => '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+          '<span style="flex:1">' + nomeTar(r.tarefa_id) + '</span>' +
+          '<span style="color:var(--fraco)">' + quando(r.visto_em) + '</span></div>').join('')
+      : '<p class="idet-desc">Nenhuma ciência registrada.</p>';
+
+    h += '<p class="idet-desc" style="font-weight:700;color:var(--navy);margin-top:12px">Conclusões registradas</p>';
+    h += (conc || []).length
+      ? (conc || []).map(r => '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+          '<span style="flex:1">✓ ' + nomeTar(r.tarefa_id) + '</span>' +
+          '<span style="color:var(--fraco)">' + quando(r.concluida_em) + '</span></div>').join('')
+      : '<p class="idet-desc">Nenhuma conclusão registrada.</p>';
+
+    $('itemDetCorpo').innerHTML = h;
+  } catch (e) {
+    $('itemDetCorpo').innerHTML = '<p class="idet-desc" style="color:var(--critico)">Erro: ' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
 async function carregarUsuarios() {
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
   try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; const sv = $('rngLetVel'); if (sv) sv.value = String(_fatorToVel(_letVelFator)); } catch (_) {}
@@ -17772,6 +17830,7 @@ async function carregarUsuarios() {
           : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`);
     const setorSel = `<div class="usr-telas"><span class="tl-tit">Setor:</span><select onchange="usrSetor('${u.id}', this.value)" style="padding:4px 8px;border:1px solid var(--borda);border-radius:10px;font-size:13px"><option value="">— definir —</option>${(setoresLista || []).map(s => `<option ${s === u.setor ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select></div>`;
     const metasTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Metas:</span><label><input type="checkbox" ${u.metas_edit ? 'checked' : ''} onchange="usrMetasEdit('${u.id}',this.checked)"> Pode editar metas</label></div>`;
+    acoes.push(`<button onclick="verHistCiencia('${u.id}','${escapeHtml(u.nome || '').replace(/'/g, "&#39;")}')">📌 Histórico de tarefas fixas</button>`);
     const presTog = `<div class="usr-telas"><span class="tl-tit">Presença:</span><label><input type="checkbox" ${u.ver_presenca ? 'checked' : ''} onchange="usrVerPresenca('${u.id}',this.checked)"> Pode ver quem está online</label></div>`;
     return `<div class="usr" data-uid="${u.id}">
       <div class="usr-topo">
