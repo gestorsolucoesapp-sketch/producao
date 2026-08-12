@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.710.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.711.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2586,7 +2586,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.710.0';
+const APP_VER = '3.711.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24609,11 +24609,27 @@ function semFarolContra(valor, mediana) {   // menor é melhor
   return r <= 0.9 ? 'v' : r <= 1.1 ? 'l' : 'r';
 }
 
+/* 12/08/2026 (João): o farol comparava cada pessoa contra a MEDIANA do setor.
+   Como quase todo mundo tem zero, a mediana dava 0, ninguem passava do corte e a
+   coluna virava um mar de bolinha — o semaforo nao semaforava. Regra nova, absoluta,
+   por numero de OCORRENCIAS no ano: ate 1 verde · 2 laranja · 3 ou mais vermelho. */
+const semFarolOcor = n => (n >= 3 ? 'r' : n === 2 ? 'l' : 'v');
+
+/* dia EQUIVALENTE: a planilha do RH manda as horas justificadas e 7h20 (7,3333h)
+   e o dia cheio, entao 3h16 de atestado pesa 0,45 e nao 1. Lancamento sem fator
+   (apontado na mao, antes da planilha) continua valendo 1. Inteiro fica inteiro,
+   quebrado ganha 1 casa; se bruto e equivalente batem, nao repete o numero. */
+function semEq(eq, bruto) {
+  const v = Math.round((Number(eq) || 0) * 10) / 10;
+  if (bruto != null && Math.abs(v - bruto) < 0.05) return String(bruto);
+  return (Number.isInteger(v) ? String(v) : v.toFixed(1).replace('.', ','));
+}
+
 /* roda o mesmo cálculo do semáforo sem desenhar nada, só para o selo do organograma */
 async function calcSemaforoSilencioso() {
   try {
     const fim = hojeISO(), ini = fim.slice(0, 4) + '-01-01';
-    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini).lte('data', fim);
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data,fator').gte('data', ini).lte('data', fim);
     const AF = r.data || [];
     const mats = [...new Set(orgDados.aloc.filter(a => orgEhSetor(a.setor) && a.matricula).map(a => a.matricula))];
     const L = mats.map(m => {
@@ -24622,11 +24638,10 @@ async function calcSemaforoSilencioso() {
       const vezes = t => meus.filter(a => (a.tipo || '') === t).length;
       return { mat: m, dFalta: dias('falta'), dAtest: dias('atestado'), nFalta: vezes('falta'), nAtest: vezes('atestado'), total: dias('falta') + dias('atestado') };
     });
-    const mF = semMediana(L.map(x => x.dFalta)), mA = semMediana(L.map(x => x.dAtest));
     _semLinhas = {};
     L.forEach(l => {
-      l.fFalta = l.dFalta ? semFarolContra(l.dFalta, mF) : 'v';
-      l.fAtest = l.dAtest ? semFarolContra(l.dAtest, mA) : 'v';
+      l.fFalta = semFarolOcor(l.nFalta);
+      l.fAtest = semFarolOcor(l.nAtest);
       _semLinhas[l.mat] = l;
     });
     if (orgVista === 'org') renderOrgVista();
@@ -24640,7 +24655,7 @@ async function renderOrgSemaforo() {
   const fim = hojeISO(), ini = fim.slice(0, 4) + '-01-01';
   let AF = [];
   try {
-    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data').gte('data', ini).lte('data', fim);
+    const r = await sb.from('org_afastamentos').select('matricula,tipo,dias,data,fator').gte('data', ini).lte('data', fim);
     AF = r.data || [];
   } catch (e) {
     wrap.innerHTML = '<div class="card"><p class="vazio-painel">Erro: ' + escapeHtml(String(e.message || e)) + '</p></div>'; return;
@@ -24658,31 +24673,29 @@ async function renderOrgSemaforo() {
   const linhas = Object.values(pessoas).map(p => {
     const meus = AF.filter(a => a.matricula === p.mat);
     const dias = t => meus.filter(a => (a.tipo || '') === t).reduce((n, a) => n + (a.dias || 1), 0);
+    const diasEq = t => meus.filter(a => (a.tipo || '') === t)
+      .reduce((n, a) => n + (a.fator == null ? 1 : Number(a.fator)) * (a.dias || 1), 0);
     const vezes = t => meus.filter(a => (a.tipo || '') === t).length;
     return {
       mat: p.mat, nome: orgNome(p.mat) || p.mat,
       oper: p.funcoes.has('operador'),
       turnos: [...p.turnos].join('/'), maqs: [...p.maqs].sort(),
-      dFalta: dias('falta'), nFalta: vezes('falta'),
-      dAtest: dias('atestado'), nAtest: vezes('atestado'),
-      total: dias('falta') + dias('atestado')
+      dFalta: dias('falta'), nFalta: vezes('falta'), eFalta: diasEq('falta'),
+      dAtest: dias('atestado'), nAtest: vezes('atestado'), eAtest: diasEq('atestado'),
+      total: dias('falta') + dias('atestado'),
+      totalEq: diasEq('falta') + diasEq('atestado')
     };
   });
 
   if (!linhas.length) { wrap.innerHTML = '<div class="card"><p class="vazio-painel">Ninguém escalado em ' + escapeHtml(orgSetorLabel()) + '.</p></div>'; return; }
 
-  const medF = semMediana(linhas.map(l => l.dFalta));
-  const medA = semMediana(linhas.map(l => l.dAtest));
   linhas.forEach(l => {
-    l.fFalta = semFarolContra(l.dFalta, medF);
-    l.fAtest = semFarolContra(l.dAtest, medA);
-    // ninguém com zero deve ficar laranja por mediana zero
-    if (!l.dFalta) l.fFalta = 'v';
-    if (!l.dAtest) l.fAtest = 'v';
+    l.fFalta = semFarolOcor(l.nFalta);
+    l.fAtest = semFarolOcor(l.nAtest);
     const peso = { v: 0, l: 1, r: 2, x: 0 };
     l.score = peso[l.fFalta] + peso[l.fAtest];
   });
-  linhas.sort((a, b) => b.total - a.total || b.score - a.score);
+  linhas.sort((a, b) => b.totalEq - a.totalEq || b.score - a.score);
 
   const bolinha = f => '<span title="' + SEM_ROT[f] + '" style="display:inline-block;width:13px;height:13px;border-radius:50%;background:' + SEM_COR[f] + '"></span>';
   const comAlgo = linhas.filter(l => l.total > 0);
@@ -24695,19 +24708,20 @@ async function renderOrgSemaforo() {
     bolinha('v') + ' bom &nbsp;' + bolinha('l') + ' atenção &nbsp;' + bolinha('r') + ' crítico</div>';
 
   h += '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>' +
-    '<th style="text-align:left">Pessoa</th><th>Faltas</th><th>Atestados</th><th>Dias fora</th></tr></thead><tbody>';
+    '<th style="text-align:left">Pessoa</th><th>Faltas</th><th>Atestados</th><th>Dias fora</th><th>Equiv.</th></tr></thead><tbody>';
   linhas.forEach(l => {
     h += '<tr onclick="orgHistPessoa(\'' + l.mat + '\')" style="cursor:pointer">' +
       '<td class="nome" style="text-align:left"><b>' + escapeHtml(orgPrimeiro(l.nome) || l.nome) + '</b>' +
       '<div style="font-size:10px;color:var(--fraco)">' + (l.oper ? 'operador · ' : '') + escapeHtml(l.turnos) +
       (l.maqs.length ? ' · ' + l.maqs.slice(0, 3).join(', ') : '') + '</div></td>' +
-      '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + l.dFalta + 'd' + (l.nFalta > 1 ? ' · ' + l.nFalta + '×' : '') + '</div></td>' +
-      '<td>' + bolinha(l.fAtest) + '<div style="font-size:10.5px;color:var(--fraco)">' + l.dAtest + 'd' + (l.nAtest > 1 ? ' · ' + l.nAtest + '×' : '') + '</div></td>' +
-      '<td style="text-align:right;font-weight:800;color:' + (l.total ? 'var(--critico)' : 'var(--fraco-2)') + '">' + l.total + '</td></tr>';
+      '<td>' + bolinha(l.fFalta) + '<div style="font-size:10.5px;color:var(--fraco)">' + semEq(l.eFalta, l.dFalta) + 'd' + (l.nFalta > 1 ? ' · ' + l.nFalta + '×' : '') + '</div></td>' +
+      '<td>' + bolinha(l.fAtest) + '<div style="font-size:10.5px;color:var(--fraco)">' + semEq(l.eAtest, l.dAtest) + 'd' + (l.nAtest > 1 ? ' · ' + l.nAtest + '×' : '') + '</div></td>' +
+      '<td style="text-align:right;font-weight:800;color:' + (l.total ? 'var(--critico)' : 'var(--fraco-2)') + '">' + l.total + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:' + (l.totalEq ? 'var(--laranja-3)' : 'var(--fraco-2)') + '">' + semEq(l.totalEq) + '</td></tr>';
   });
   h += '</tbody></table></div>';
-  h += '<p class="desc" style="font-size:11px;margin-top:10px;display:flex;align-items:center;gap:6px"><span>mediana do setor · faltas ' +
-    (medF == null ? '—' : medF.toFixed(1).replace('.', ',') + 'd') + ' · atestados ' + (medA == null ? '—' : medA.toFixed(1).replace('.', ',') + 'd') +
+  h += '<p class="desc" style="font-size:11px;margin-top:10px;display:flex;align-items:center;gap:6px"><span>farol por ocorrências no ano: ' +
+    'até 1 verde · 2 laranja · 3 ou mais vermelho &nbsp;·&nbsp; <b>Equiv.</b> = dias proporcionais às horas justificadas (7h20 = 1 dia)' +
     '</span>' + icoBtn('farolRH') + '</p>' + icoBox('farolRH');
   h += '</div></div>';
 
