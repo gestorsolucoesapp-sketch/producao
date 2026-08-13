@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.747.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.748.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -1022,6 +1022,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <div class="titulo-sec">Presen&ccedil;a no app</div>
         <div class="usr-telas"><label><input type="checkbox" id="chkPresenca" onchange="togPresencaOnline(this.checked)"> Registrar quem est&aacute; online (vis&iacute;vel s&oacute; para o gestor)</label></div>
         <p class="desc" style="margin-top:4px">A bolinha e o aviso de quem entrou aparecem <b>s&oacute; para gestores</b>. Desmarcado, ningu&eacute;m v&ecirc; nada e nada &eacute; registrado.</p>
+      </div>
+      <div class="card">
+        <div class="titulo-sec">Link do formul&aacute;rio nas tarefas</div>
+        <div class="usr-telas"><label><input type="checkbox" id="chkLinkForm" onchange="togLinkForm(this.checked)"> Mostrar o link do Google Forms nas tarefas que t&ecirc;m formul&aacute;rio no app</label></div>
+        <p class="desc" style="margin-top:4px">Desmarcado, s&oacute; aparece o bot&atilde;o <b>Preencher no app</b> &mdash; evita que a pessoa abra o link, olhe e ache que cumpriu. Vale para todos os aparelhos.</p>
       </div>
       <div class="card">
         <div class="titulo-sec">Letreiro de produ&ccedil;&atilde;o</div>
@@ -2588,7 +2593,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.747.0';
+const APP_VER = '3.748.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4086,6 +4091,7 @@ async function getTarefas() {
     tarefasData = data || [];
     // as ciências das fixas vêm junto: o sino precisa delas já no boot
     if (tarefasData.some(t => t.fixa)) await carregarCiencias();
+    if (tarefasData.some(t => t.form_app)) await getLinkFormCfg();
   } catch (e) { tarefasData = null; return e.message || false; }
   return true;
 }
@@ -4120,6 +4126,34 @@ async function carregarTarefas() {
   renderTarefas(); atualizarSino(); marcarVistas();
 }
 // transforma URLs do texto em links clicáveis (mantém o resto escapado)
+/* 12/08/2026 (João): a tarefa tem o formulário dentro do app, então o link do
+   Google Forms só confundia (a pessoa clicava, olhava e achava que cumpriu).
+   Fica oculto por padrão; o gestor libera em Config./Acesso → Usuários.
+   O texto do link continua no banco — isto é só exibição. */
+let _mostrarLinkForm = false;
+async function getLinkFormCfg() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'mostrar_link_form').maybeSingle();
+    _mostrarLinkForm = !!(data && String(data.valor) === 'true');
+  } catch (_) { _mostrarLinkForm = false; }
+  const c = $('chkLinkForm'); if (c) c.checked = _mostrarLinkForm;
+}
+async function togLinkForm(on) {
+  _mostrarLinkForm = !!on;
+  if (!(await salvarCfg('mostrar_link_form', _mostrarLinkForm))) { toast('❌ Não consegui salvar.'); return; }
+  toast(_mostrarLinkForm ? '🔗 Link do formulário visível.' : '🙈 Link do formulário oculto.');
+  try { if (typeof renderTarefas === 'function') renderTarefas(); } catch (_) {}
+}
+// descrição da tarefa: some com a URL quando ela tem formulário próprio no app
+function tarDescVisivel(t) {
+  const d = String(t.descricao || '');
+  if (t.form_app && !_mostrarLinkForm) {
+    const limpo = d.replace(/https?:\/\/[^\s]+/g, '').replace(/[ \t]{2,}/g, ' ').trim();
+    return limpo ? linkificar(limpo) : '';
+  }
+  return linkificar(d);
+}
+
 function linkificar(txt) {
   if (!txt) return '';
   return escapeHtml(txt).replace(/(https?:\/\/[^\s]+)/g,
@@ -4204,7 +4238,7 @@ function renderTarefas() {
         </label>
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;color:var(--navy);word-break:break-word;${t.concluida ? 'text-decoration:line-through' : ''}">${linkificar(t.titulo)}</div>
-          ${t.descricao ? `<div style="font-size:13px;color:var(--fraco);margin-top:2px;word-break:break-word">${linkificar(t.descricao)}</div>` : ''}
+          ${t.descricao ? `<div style="font-size:13px;color:var(--fraco);margin-top:2px;word-break:break-word">${tarDescVisivel(t)}</div>` : ''}
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:12px">
             <span style="background:var(--leve);color:var(--txt-2);padding:2px 8px;border-radius:6px;font-weight:600">${alvo}</span>
             ${t.recorrente ? '<span style="background:#EAF3EE;color:#1F7A46;padding:2px 8px;border-radius:6px;font-weight:600">🔁 recorrente</span>' : ''}
@@ -17966,6 +18000,7 @@ async function verHistCiencia(userId, nome) {
 
 async function carregarUsuarios() {
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
+  try { await getLinkFormCfg(); } catch (_) {}
   try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; const sv = $('rngLetVel'); if (sv) sv.value = String(_fatorToVel(_letVelFator)); } catch (_) {}
   if (!souAdmin) return;
   // direcionamento automático (Manutenção) — agora mora nesta aba
