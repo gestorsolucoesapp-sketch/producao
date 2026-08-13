@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.754.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.755.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2593,7 +2593,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.754.0';
+const APP_VER = '3.755.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13902,6 +13902,109 @@ function bocas_nenhuma() {
   renderEstrategia();
 }
 
+
+/* ======= PESO DA PEÇA x PRODUÇÃO REAL (13/08/2026, João) =======
+   O problema: "um dia rodo pote de 29 g, no outro de 6 g, mesmo tempo, e a
+   tonelagem despenca". Tonelada mede MASSA, não trabalho — quando a peça
+   emagrece, a máquina faz os mesmos ciclos e a balança acusa queda.
+   Caso real da 707 em agosto:
+       04/08 · 2,52 t · 126 mi ·  20 g   -> parece dia fraco em peças
+       07/08 · 3,53 t · 588 mi ·   6 g   -> 4,7x mais peças, só +40% de kg
+   Por isso o card traz as DUAS coisas: barra = milheiros (o que a máquina fez)
+   e linha = g/peça (o mix). Só o peso explicaria a queda sem provar a produção. */
+let _ppDados = null, _ppChave = '';
+
+function cardPesoPeca() {
+  return '<div class="card" id="ppCard"><div class="titulo-sec">⚖️ Peso da peça × produção real</div>' +
+    '<p class="desc" style="margin:-2px 0 8px">tonelada mede massa, não trabalho · <b>barra</b> = milheiros produzidos · ' +
+    '<b style="color:#B8860B">linha</b> = peso médio da peça no dia</p>' +
+    '<div id="ppCorpo"><p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> carregando…</p></div></div>';
+}
+
+async function ppCarregar(setor, de, ate) {
+  const box = document.getElementById('ppCorpo'); if (!box) return;
+  const chave = [setor, de, ate].join('|');
+  if (_ppChave === chave && _ppDados) { ppRender(); return; }
+  try {
+    const maqs = (SETOR_MAQ[setor] || []).map(String);
+    let q = sb.from('v_peso_peca_dia').select('*').gte('dia', de).lte('dia', ate);
+    if (maqs.length) q = q.in('recurso_cod', maqs);
+    const { data, error } = await q;
+    if (error) throw error;
+    // agrega o setor por dia: g/peça do dia é kg total ÷ peças totais, não média de médias
+    const porDia = {};
+    (data || []).forEach(r => {
+      const d = r.dia; if (!porDia[d]) porDia[d] = { dia: d, kg: 0, mi: 0 };
+      porDia[d].kg += +r.kg || 0; porDia[d].mi += +r.milheiros || 0;
+    });
+    _ppDados = Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1)
+      .map(x => Object.assign(x, { g: x.mi > 0 ? (x.kg / x.mi) : null }));
+    _ppChave = chave;
+    ppRender();
+  } catch (e) {
+    box.innerHTML = '<p class="desc" style="color:var(--critico-s)">Não consegui montar: ' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
+function ppRender() {
+  const box = document.getElementById('ppCorpo'); if (!box) return;
+  const D = (_ppDados || []).filter(x => x.mi > 0);
+  if (D.length < 2) { box.innerHTML = '<p class="vazio-painel">Sem dados suficientes no período.</p>'; return; }
+
+  const n = D.length, W = Math.max(700, n * 34), H = 210;
+  const padL = 8, padR = 40, padT = 24, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxMi = Math.max.apply(null, D.map(x => x.mi)) || 1;
+  const gs = D.map(x => x.g).filter(v => v != null);
+  const maxG = Math.max.apply(null, gs) || 1, minG = Math.min.apply(null, gs);
+  const xAt = i => padL + (n === 1 ? plotW / 2 : plotW * i / (n - 1));
+  const yMi = v => padT + plotH - (v / maxMi) * plotH;
+  const yG = v => padT + plotH - ((v - minG * 0.9) / ((maxG - minG * 0.9) || 1)) * plotH;
+  const bw = Math.min(20, plotW / n * 0.62);
+
+  let barras = '', linha = '', pts = '', xlab = '';
+  D.forEach((x, i) => {
+    const cx = xAt(i), y = yMi(x.mi);
+    barras += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${(padT + plotH - y).toFixed(1)}" rx="3" fill="#4C7DF0" fill-opacity=".85"/>`;
+    if (x.g != null) {
+      const gy = yG(x.g);
+      pts += `${i ? 'L' : 'M'}${cx.toFixed(1)},${gy.toFixed(1)}`;
+      linha += `<circle cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" r="3" fill="#fff" stroke="#B8860B" stroke-width="2"/>`;
+    }
+  });
+  const passo = Math.max(1, Math.ceil(n / 8));
+  D.forEach((x, i) => {
+    if (i % passo && i !== n - 1) return;
+    xlab += `<text x="${xAt(i).toFixed(1)}" y="${(H - 16).toFixed(1)}" text-anchor="middle" font-size="9.5" fill="#8A97A6">${String(x.dia).slice(8, 10)}/${String(x.dia).slice(5, 7)}</text>`;
+  });
+  // extremos do peso, que é o que conta a história
+  const iMaxG = D.reduce((b, x, i) => (x.g != null && (D[b].g == null || x.g > D[b].g)) ? i : b, 0);
+  const iMinG = D.reduce((b, x, i) => (x.g != null && (D[b].g == null || x.g < D[b].g)) ? i : b, 0);
+  let selos = '';
+  [[iMaxG, '#B8860B'], [iMinG, '#1F7A46']].forEach(([i, c]) => {
+    const x = D[i]; if (!x || x.g == null) return;
+    selos += `<text x="${xAt(i).toFixed(1)}" y="${(yG(x.g) - 8).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="800" fill="${c}" stroke="#fff" stroke-width="2.6" paint-order="stroke">${x.g.toFixed(1).replace('.', ',')} g</text>`;
+  });
+
+  let h = `<div class="svg-scroll" data-fim="1"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`
+    + barras
+    + `<path d="${pts}" fill="none" stroke="#B8860B" stroke-width="2"/>` + linha + selos + xlab
+    + `<text x="${W - padR + 5}" y="${(padT + 4).toFixed(1)}" font-size="9" font-weight="800" fill="#B8860B">g/pç</text>`
+    + `</svg></div>`;
+
+  // leitura pronta: compara o dia mais pesado com o mais leve
+  const a = D[iMaxG], b = D[iMinG];
+  if (a && b && a !== b && a.g && b.g) {
+    const vezes = b.mi / (a.mi || 1);
+    h += '<div style="margin-top:10px;padding:9px 11px;background:var(--leve);border-radius:10px;font-size:12.5px;line-height:1.55">'
+      + '<b>' + fmtDataSem(a.dia) + '</b> · peça de ' + a.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(a.mi)) + ' mi · ' + fmtKg(a.kg) + '<br>'
+      + '<b>' + fmtDataSem(b.dia) + '</b> · peça de ' + b.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(b.mi)) + ' mi · ' + fmtKg(b.kg) + '<br>'
+      + '<span style="color:var(--fraco)">No dia da peça leve saíram <b>' + vezes.toFixed(1).replace('.', ',') + '×</b> mais peças'
+      + (b.kg < a.kg ? ', mesmo com <b>menos tonelada</b> — a queda em kg foi mix, não desempenho.' : '.') + '</span></div>';
+  }
+  box.innerHTML = h;
+}
+
 function renderEstrategia() {
   const box = $('estratConteudo'); if (!box) return;
   if (!_estratRows) { carregarEstrategia(); return; }
@@ -13989,12 +14092,17 @@ function renderEstrategia() {
         <span style="margin-left:auto">total visível: <b style="color:var(--txt-2)">${fmtV(totGeral)}</b> · eixo em ${_porMes ? 'meses' : 'dias'} · ${dias.length} ${_porMes ? 'mês(es)' : 'dia(s)'}</span>
       </div>
     </div>
+    ${['Termoformagem', 'Impressão', 'Rotulagem', 'Sleeve'].includes(setor) ? cardPesoPeca() : ''}
     <div class="card" style="margin-top:12px">
       <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🏆 Itens por ordem de grandeza</div>
       <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) nas bocas visíveis${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
       ${_listaItens || '<p class="desc">sem itens no filtro</p>'}
     </div>
     <div class="card" style="margin-top:12px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de produção</div><p class="desc">Espaço reservado para o plano — a próxima etapa. Me diga o formato (meta por boca, por período?) e eu monto aqui.</p></div>`;
+  if (['Termoformagem', 'Impressão', 'Rotulagem', 'Sleeve'].includes(setor)) {
+    const _de = (periodoSel && periodoSel.de) || dias[0], _ate = (periodoSel && periodoSel.ate) || dias[dias.length - 1];
+    ppCarregar(setor, _de, _ate);
+  }
 }
 // ===== Curva ABC (Pareto) de itens por refugo — barras A/B/C + curva acumulada =====
 let _abcPerd = [];
