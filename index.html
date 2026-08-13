@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.750.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.751.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2593,7 +2593,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.750.0';
+const APP_VER = '3.751.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10721,7 +10721,15 @@ async function fetchTudo(tabela, colunas, de, ate) {
 }
 async function _fetchTudoRaw(tabela, colunas, de, ate) {
   const TETO = 200000;
-  const passo = 1000;
+  /* 12/08/2026 (João, "a análise demora muito para abrir"): a paginação era fixa
+     em 1.000 linhas. Um mês do Análise+ são ~13.800 linhas (só paradas dá 9.136)
+     = 14 idas ao servidor; no modo anual passa de 200 mil linhas.
+     Agora pede um lote GRANDE e descobre o teto real do servidor pela 1ª resposta:
+     se o PostgREST devolver menos do que foi pedido mas ainda "cheio", esse vira o
+     passo. Auto-ajustável — se um dia o limite mudar, o código acompanha sozinho
+     em vez de pular linhas. */
+  const PEDIDO = 5000;
+  let passo = PEDIDO;
   const monta = (desde, ateAqui) => {
     let q = sb.from(tabela).select(colunas);
     if (de) q = q.gte('dia', de);
@@ -10734,10 +10742,14 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
 
   // 1ª página serve de amostra: se couber tudo nela, acabou em uma ida só.
   let r0;
-  try { r0 = await monta(0, passo - 1); } catch (e) { r0 = { error: e }; }
+  try { r0 = await monta(0, PEDIDO - 1); } catch (e) { r0 = { error: e }; }
   if (r0.error) throw r0.error;
   const p0 = r0.data || [];
-  if (p0.length < passo) return p0;
+  // veio menos do que o pedido: ou acabou, ou o servidor tem teto próprio por página
+  if (p0.length < PEDIDO) {
+    if (p0.length === 0 || p0.length % 1000 !== 0) return p0;   // acabou de verdade
+    passo = p0.length;                                          // teto do servidor
+  }
 
   // Ainda tem mais. Descobre o total e busca as páginas restantes EM PARALELO.
   // Antes isso era um while sequencial: 20 mil linhas de paradas viravam 21 idas
