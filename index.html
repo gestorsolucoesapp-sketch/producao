@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.786.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.787.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2611,7 +2611,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.786.0';
+const APP_VER = '3.787.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9406,13 +9406,11 @@ function manutDet(tipo) {
 }
 
 /* ===== PARADAS DE ENGENHARIA / FERRAMENTARIA (13/08/2026, João) =====
-   Subgrupo pedido: o que a máquina fica parada esperando ferramental, e não
-   manutenção. São três motivos do ERP, definidos com o João:
-     394 AGUARDANDO ENGENHARIA\FERRAMENTARIA
-     294 AGUARDANDO TROCA DE MOLDE
-     295 AGUARDANDO TROCA DE POSTIÇO/CANECA
-   Ficam fora dos "AGUARDANDO MANUTENÇÃO" de propósito: a conta é de outra área. */
-const MNT_FERR_COD = ['394', '294', '295'];
+   Subgrupo pedido: SÓ o motivo 394 AGUARDANDO ENGENHARIA\FERRAMENTARIA.
+   Troca de molde (294) e postiço/caneca (295) saíram — o João confirmou que
+   essas são manutenção normal e já entram na conta dela; contar aqui seria
+   dobrar o mesmo tempo em duas áreas. */
+const MNT_FERR_COD = ['394'];
 let _mntFerrCache = null, _mntFerrAberto = null;
 
 async function mntFerrCarregar() {
@@ -9454,7 +9452,7 @@ function mntFerrRender() {
   const maxH = Math.max.apply(null, M.map(x => x.h)) || 1;
 
   let h = '<div class="card"><div class="titulo-sec">🔧 Parado por engenharia / ferramentaria</div>';
-  h += '<p class="desc" style="margin:-2px 0 9px">molde, postiço e ferramental — separado de "aguardando manutenção" · toque no motivo para as máquinas</p>';
+  h += '<p class="desc" style="margin:-2px 0 9px">motivo <b>394</b> · separado de "aguardando manutenção", que é outra conta</p>';
   h += '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">'
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Horas paradas</div>'
     + '<b style="font-size:18px;color:var(--critico-s)">' + fh(tot) + '</b></div>'
@@ -9465,32 +9463,37 @@ function mntFerrRender() {
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Média por parada</div>'
     + '<b style="font-size:18px">' + fh(tot / R.length) + '</b></div></div>';
 
-  M.forEach(x => {
-    const pc = Math.round(x.h / maxH * 100), ab = _mntFerrAberto === x.cod;
-    h += '<div onclick="mntFerrToggle(\'' + x.cod + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid var(--leve-2s)">'
+  /* um motivo só: a lista vai direto para MÁQUINA e TEMPO, que é o que o João
+     pediu. Cada máquina abre as paradas dela, com data, OP e duração. */
+  const porMaq = {};
+  R.forEach(r => {
+    const c = String(r.recurso_cod);
+    if (!porMaq[c]) porMaq[c] = { cod: c, nome: r.recurso_nome || c, n: 0, h: 0, ult: r.dia, itens: [] };
+    porMaq[c].n++; porMaq[c].h += (+r.tempo_horas || 0);
+    if (r.dia > porMaq[c].ult) porMaq[c].ult = r.dia;
+    porMaq[c].itens.push(r);
+  });
+  const LM = Object.values(porMaq).sort((a, b) => b.h - a.h);
+  const maxM = Math.max.apply(null, LM.map(x => x.h)) || 1;
+  LM.forEach(m => {
+    const pc = Math.round(m.h / maxM * 100), ab = _mntFerrAberto === m.cod;
+    h += '<div onclick="mntFerrToggle(\'' + escapeHtml(m.cod) + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid var(--leve-2s)">'
       + '<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px">'
-      + '<span class="cod">' + escapeHtml(x.cod) + '</span>'
-      + '<span style="flex:1;min-width:0">' + escapeHtml(x.desc) + '</span>'
-      + '<b>' + x.n + '×</b>'
-      + '<b style="color:var(--critico-s)">' + fh(x.h) + '</b>'
+      + '<span class="cod">' + escapeHtml(m.cod) + '</span>'
+      + '<span style="flex:1;min-width:0">' + escapeHtml(String(m.nome).slice(0, 26)) + '</span>'
+      + '<b>' + m.n + '×</b>'
+      + '<b style="color:var(--critico-s)">' + fh(m.h) + '</b>'
       + '<span style="color:var(--fraco);font-size:12px">' + (ab ? '▾' : '›') + '</span></div>'
       + '<div style="height:8px;background:var(--leve);border-radius:4px;overflow:hidden;margin-top:3px">'
       + '<div style="height:100%;width:' + pc + '%;background:var(--critico-s)"></div></div></div>';
     if (ab) {
-      const porMaq = {};
-      R.filter(r => r.motivo_cod === x.cod).forEach(r => {
-        const c = String(r.recurso_cod);
-        if (!porMaq[c]) porMaq[c] = { cod: c, nome: r.recurso_nome || c, n: 0, h: 0, ult: r.dia };
-        porMaq[c].n++; porMaq[c].h += (+r.tempo_horas || 0);
-        if (r.dia > porMaq[c].ult) porMaq[c].ult = r.dia;
-      });
       h += '<div style="background:var(--leve);border-radius:8px;margin:4px 0 10px;overflow:hidden">';
-      Object.values(porMaq).sort((a, b) => b.h - a.h).forEach(m => {
+      m.itens.slice().sort((a, b) => (a.dia < b.dia ? 1 : -1)).forEach(r => {
         h += '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--leve-2s);font-size:12px">'
-          + '<span class="cod">' + escapeHtml(m.cod) + '</span>'
-          + '<span style="flex:1;min-width:0">' + escapeHtml(String(m.nome).slice(0, 24)) + '</span>'
-          + '<span style="font-size:10.5px;color:var(--fraco)">última ' + fmtDataSem(String(m.ult).slice(0, 10)).slice(0, 10) + '</span>'
-          + '<b>' + m.n + '×</b><b style="color:var(--critico-s)">' + fh(m.h) + '</b></div>';
+          + '<span style="width:64px;color:var(--fraco)">' + fmtDataSem(String(r.dia).slice(0, 10)).slice(0, 10) + '</span>'
+          + '<span style="flex:1;min-width:0">' + (r.op ? '<b>OP ' + escapeHtml(String(r.op)) + '</b> · ' : '')
+          + escapeHtml(String(r.item_desc || '').slice(0, 26)) + '</span>'
+          + '<b style="color:var(--critico-s)">' + fh(+r.tempo_horas || 0) + '</b></div>';
       });
       h += '</div>';
     }
