@@ -754,7 +754,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.765.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.766.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2602,7 +2602,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.765.0';
+const APP_VER = '3.766.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13990,7 +13990,7 @@ function cardPesoPeca(st, de, ate) {
      Assim herda de graça o que os outros já têm: a setinha ❯ para recolher, o
      arrastar para reordenar e a gravação do padrão para todos pelo gestor. */
   return card('⚖️ Peso da peça × produção real' + (st ? ' · ' + escapeHtml(st) : ''),
-    'tonelada mede massa, não trabalho · <b>barra</b> = milheiros produzidos · <b style="color:#B8860B">linha</b> = peso médio da peça no dia',
+    'só dias úteis (seg–sex) · <b>barra</b> = milheiros produzidos · <b style="color:#B8860B">linha</b> = peso médio da peça no dia',
     '<div id="' + id + '"><p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> carregando…</p></div>',
     'peso-peca' + (st ? '-' + st : ''));
 }
@@ -14027,7 +14027,11 @@ async function ppCarregar(setor, de, ate, alvo) {
 
 function ppRender(alvo, dados) {
   const box = document.getElementById(alvo || 'ppCorpo'); if (!box) return;
-  const D = (dados || []).filter(x => x.mi > 0);
+  /* 13/08/2026 (João): "considere para análise só dias de semana". O resumo
+     estava comparando uma quarta-feira com um DOMINGO — dia de hora extra, com
+     uma fração da equipe. Sábado e domingo saem do gráfico e da comparação;
+     equivDia() já sabe distinguir (dia útil cheio = 1). */
+  const D = (dados || []).filter(x => x.mi > 0 && (typeof equivDia !== 'function' || equivDia(x.dia) >= 0.99));
   if (D.length < 2) { box.innerHTML = '<p class="vazio-painel">Sem dados suficientes no período.</p>'; return; }
 
   const n = D.length, W = Math.max(700, n * 44), H = 220;
@@ -14077,12 +14081,25 @@ function ppRender(alvo, dados) {
   // leitura pronta: compara o dia mais pesado com o mais leve
   const a = D[iMaxG], b = D[iMinG];
   if (a && b && a !== b && a.g && b.g) {
-    const vezes = b.mi / (a.mi || 1);
+    /* a frase tem que valer nos DOIS sentidos. Antes dizia sempre "saíram N×
+       mais peças" e, quando o dia leve produzia menos, saía "0,3× mais peças". */
+    const rel = b.mi / (a.mi || 1);
+    const maisLeve = Math.round((1 - b.g / a.g) * 100);
+    let veredito;
+    if (rel >= 1.05) {
+      veredito = 'peça <b>' + maisLeve + '% mais leve</b> e <b>' + rel.toFixed(1).replace('.', ',') + '× mais peças</b>'
+        + (b.kg < a.kg ? ' — a queda em tonelada foi <b>mix</b>, não desempenho.' : '.');
+    } else if (rel <= 0.95) {
+      veredito = 'peça <b>' + maisLeve + '% mais leve</b>, mas saíram <b>' + Math.round((1 - rel) * 100) + '% menos peças</b>'
+        + ' — aqui a queda <b>não</b> se explica só pelo mix.';
+    } else {
+      veredito = 'peça <b>' + maisLeve + '% mais leve</b> com praticamente as <b>mesmas peças</b>'
+        + ' — a diferença em tonelada é mix puro.';
+    }
     h += '<div style="margin-top:10px;padding:9px 11px;background:var(--leve);border-radius:10px;font-size:12.5px;line-height:1.55">'
       + '<b>' + fmtDataSem(a.dia) + '</b> · peça de ' + a.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(a.mi)) + ' mi · ' + fmtKg(a.kg) + '<br>'
       + '<b>' + fmtDataSem(b.dia) + '</b> · peça de ' + b.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(b.mi)) + ' mi · ' + fmtKg(b.kg) + '<br>'
-      + '<span style="color:var(--fraco)">No dia da peça leve saíram <b>' + vezes.toFixed(1).replace('.', ',') + '×</b> mais peças'
-      + (b.kg < a.kg ? ', mesmo com <b>menos tonelada</b> — a queda em kg foi mix, não desempenho.' : '.') + '</span></div>';
+      + '<span style="color:var(--fraco)">' + veredito + '</span></div>';
   }
   box.innerHTML = h;
 }
