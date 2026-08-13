@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.784.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.785.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2610,7 +2610,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.784.0';
+const APP_VER = '3.785.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22197,7 +22197,7 @@ let _fsAberto = null, _fsRows = null;
 function cardFilaSetor(rows) {
   _fsRows = rows || [];
   return '<div class="card" id="fsCard"><h3 style="margin:0 0 4px">🏭 Fila por setor</h3>'
-    + '<p class="desc" style="margin:0 0 8px">o que está na fila agora · toque num setor para ver as máquinas</p>'
+    + '<p class="desc" style="margin:0 0 8px">o que está na fila agora · toque no setor para as máquinas, e na máquina para a <b>sequência</b></p>'
     + '<div id="fsCorpo">' + fsRender() + '</div></div>';
 }
 
@@ -22213,9 +22213,10 @@ function fsRender() {
     g.ops++; g.kg += (+r.peso || 0); g.cx += (+r.quantidade || 0);
     if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.atras++;
     const m = String(r.recurso_cod);
-    if (!g.maqs[m]) g.maqs[m] = { cod: m, nome: r.recurso_nome || m, ops: 0, kg: 0, atras: 0 };
+    if (!g.maqs[m]) g.maqs[m] = { cod: m, nome: r.recurso_nome || m, ops: 0, kg: 0, atras: 0, fila: [] };
     g.maqs[m].ops++; g.maqs[m].kg += (+r.peso || 0);
     if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.maqs[m].atras++;
+    g.maqs[m].fila.push(r);   // 13/08/2026 (João): guarda a OP para mostrar a SEQUÊNCIA
   });
   const L = Object.values(porSetor).sort((a, b) => b.kg - a.kg);
   const maxKg = Math.max.apply(null, L.map(x => x.kg)) || 1;
@@ -22245,17 +22246,54 @@ function fsRender() {
       const M = Object.values(g.maqs).sort((a, b) => b.kg - a.kg);
       h += '<div style="margin:4px 0 10px;border:1px solid var(--linha-s);border-radius:10px;overflow:hidden">';
       M.forEach(m => {
-        h += '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">'
+        const abM = _fsMaq === m.cod;
+        h += '<div onclick="event.stopPropagation();fsToggleMaq(\'' + escapeHtml(m.cod) + '\')" style="cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">'
           + '<span class="cod">' + escapeHtml(m.cod) + '</span>'
           + '<span style="flex:1;min-width:0">' + escapeHtml(String(m.nome).slice(0, 26)) + '</span>'
           + (m.atras ? '<span style="color:var(--critico-s);font-weight:800;font-size:11px">' + m.atras + ' venc.</span>' : '')
           + '<b>' + m.ops + '</b><span style="font-size:10.5px;color:var(--fraco)">OPs</span>'
-          + '<b style="color:var(--azul-marca);white-space:nowrap">' + fmtKg(m.kg) + '</b></div>';
+          + '<b style="color:var(--azul-marca);white-space:nowrap">' + fmtKg(m.kg) + '</b>'
+          + '<span style="color:var(--fraco)">' + (abM ? '▾' : '›') + '</span></div>';
+        if (abM) h += fsSequencia(m);
       });
       h += '</div>';
     }
   });
   return h;
+}
+
+/* sequência da fila daquela máquina: a ordem em que o PCP programou, com o
+   início previsto de cada OP. É a lista que o líder confere no chão. */
+function fsSequencia(m) {
+  const L = (m.fila || []).slice().sort((a, b) => (+a.ordem || 999) - (+b.ordem || 999));
+  if (!L.length) return '';
+  const hoje = hojeISO();
+  let h = '<div style="background:var(--leve);padding:6px 10px">'
+    + '<div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase;margin-bottom:4px">Sequência da fila · ' + escapeHtml(m.cod) + '</div>';
+  L.forEach((r, i) => {
+    const venc = r.entrega && String(r.entrega).slice(0, 10) < hoje;
+    const ini = r.inicio ? new Date(r.inicio) : null;
+    const iniTxt = ini ? (String(ini.getDate()).padStart(2, '0') + '/' + String(ini.getMonth() + 1).padStart(2, '0') + ' ' +
+      String(ini.getHours()).padStart(2, '0') + ':' + String(ini.getMinutes()).padStart(2, '0')) : '';
+    h += '<div onclick="event.stopPropagation();detOP(\'' + escapeHtml(String(r.op || '')) + '\')" style="cursor:pointer;display:flex;gap:7px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:12px">'
+      + '<b style="width:20px;color:' + (i === 0 ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2s)') + '">' + (r.ordem || i + 1) + '</b>'
+      + '<div style="flex:1;min-width:0">'
+      + '<b>OP ' + escapeHtml(String(r.op || '—')) + '</b>'
+      + (i === 0 ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">EM 1º</span>' : '')
+      + '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(String(r.item_desc || r.item_cod || '').slice(0, 34))
+      + (iniTxt ? ' · início ' + iniTxt : '') + '</div></div>'
+      + '<span style="white-space:nowrap;font-size:10.5px;color:' + (venc ? 'var(--critico-s)' : 'var(--fraco)') + ';font-weight:' + (venc ? '800' : '600') + '">'
+      + (r.entrega ? fmtDataSem(String(r.entrega).slice(0, 10)).slice(0, 10) : '—') + '</span>'
+      + '<b style="white-space:nowrap;color:var(--azul-marca)">' + fmtKg(+r.peso || 0) + '</b></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+let _fsMaq = null;
+function fsToggleMaq(cod) {
+  _fsMaq = (_fsMaq === cod) ? null : cod;
+  const b = document.getElementById('fsCorpo'); if (b) b.innerHTML = fsRender();
 }
 
 function fsToggle(st) {
