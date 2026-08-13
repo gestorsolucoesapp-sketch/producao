@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.779.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.780.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2610,7 +2610,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.779.0';
+const APP_VER = '3.780.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11427,7 +11427,7 @@ const _hhmm = t => String(t || '').slice(0, 5);
    que o registro foi gravado, que é fato: o app salva no fim do preenchimento. */
 function _inspHora(r) {
   if (r.hora_inicio) return _hhmm(r.hora_inicio) + (r.hora_fim ? '→' + _hhmm(r.hora_fim) : '') + _inspDur(r);
-  if (r.hora_fim) return 'até ' + _hhmm(r.hora_fim);
+  if (r.hora_fim) return 'até ' + _hhmm(r.hora_fim) + _inspDur(r);
   if (r.criado_em) {
     const d = new Date(r.criado_em);
     return 'registrada ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
@@ -11436,17 +11436,24 @@ function _inspHora(r) {
 }
 /* duração só aparece quando faz sentido: fim depois do início e dentro do dia.
    Inspeção lançada no dia seguinte, com horas trocadas, não vira "-8h". */
+function _fmtMin(d) {
+  return d >= 60 ? Math.floor(d / 60) + 'h' + String(d % 60).padStart(2, '0') : d + ' min';
+}
 function _inspDur(r) {
+  // 1º a duração cronometrada; só se não houver, calcula pelas horas informadas
+  if (r.duracao_min > 0) return ' <b>(' + _fmtMin(r.duracao_min) + ')</b>';
   if (!r.hora_inicio || !r.hora_fim) return '';
   const p = t => { const [h2, m2] = _hhmm(t).split(':').map(Number); return h2 * 60 + m2; };
   const d = p(r.hora_fim) - p(r.hora_inicio);
   if (d <= 0 || d > 600) return '';
-  return ' <b>(' + (d >= 60 ? Math.floor(d / 60) + 'h' + String(d % 60).padStart(2, '0') : d + ' min') + ')</b>';
+  return ' <b>(' + _fmtMin(d) + ')</b>';
 }
 
+let _inspT0 = null;   // instante em que o formulário foi aberto (cronômetro)
 function abrirInspecaoSeguranca(tarefaId) {
   _inspTarefaId = tarefaId || null;
   _inspNA = new Set();
+  _inspT0 = Date.now();   // 13/08/2026 (João): começa a contar aqui, não no input
   const bloco = (tit, grupo, arr) =>
     '<div style="margin-top:14px"><div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);margin-bottom:2px">' + tit + '</div>' +
     arr.map((r, i) => inspLinha(grupo, i, r)).join('') + '</div>';
@@ -11510,6 +11517,10 @@ async function salvarInspecao() {
       unidade: unidade, setor: setor, data_inspecao: data, pessoas_obs: pessoas,
       hora_inicio: (($('inspHi') || {}).value || null),
       hora_fim: (($('inspHf') || {}).value || _inspAgora()),   // em branco = agora, que é quando concluiu
+      /* duração cronometrada: da abertura da tela até este clique. Não depende
+         dos campos de hora (que o usuário pode mexer) nem de subtrair times —
+         o que quebraria numa inspeção que vira o dia. */
+      duracao_min: _inspT0 ? Math.max(1, Math.round((Date.now() - _inspT0) / 60000)) : null,
       epi: epi, posicao: pos, gestores: gest, total_desvios: total,
       obs: (($('inspObs') || {}).value || '').trim() || null
     });
@@ -11525,7 +11536,9 @@ async function salvarInspecao() {
   if (_inspTarefaId) delete _fxCache[_inspTarefaId];
   try { if (typeof _abaAtual !== 'undefined' && _abaAtual === 'tarefas') renderTarefas(); } catch (_) {}
   const ov = $('itemDetOverlay'); if (ov) ov.classList.add('oculto');
-  toast('✓ Inspeção registrada · ' + total + ' desvio(s)');
+  toast('✓ Inspeção registrada · ' + total + ' desvio(s)' +
+    (_inspT0 ? ' · ' + _fmtMin(Math.max(1, Math.round((Date.now() - _inspT0) / 60000))) : ''));
+  _inspT0 = null;
 }
 
 function abreDet(titulo, corpoHtml) {
