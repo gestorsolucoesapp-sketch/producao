@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.796.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.797.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2611,7 +2611,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.796.0';
+const APP_VER = '3.797.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5452,7 +5452,41 @@ function mtDetPerdas(cod, bl) {
     _mtLista('Por tipo de perda', a.peT, a.pe, un) +
     _mtLista('Por item', a.peI, a.pe, un) +
     _mtLista('Por OP / pedido', a.peOp, a.pe, un) +
+    mtPerdaLancamentos(cod, bl) +
     blocoFora);
+}
+
+/* lançamento a lançamento: dia, turno, OP e item. É aqui que dá para ver que a
+   perda da madrugada de 13/08 pertence ao dia operacional 12/08 — e conferir
+   se alguma linha é de bobina, que a regra manda para a Extrusão. */
+function mtPerdaLancamentos(cod, bl) {
+  const S = _mtSnap; if (!S || !S.perdas || !S.perdas.length) return '';
+  const un = v => S.fV(v, cod);
+  const L = S.perdas.filter(r => String(r.recurso_cod) === String(cod) && blocoTurno(r.turno, r.dia) === bl)
+    .slice().sort((a, b) => (b.peso || 0) - (a.peso || 0));
+  if (!L.length) return '';
+  const diasDif = new Set(L.map(r => String(r.diaOp || r.dia).slice(0, 10)));
+  let h = '<div style="margin-top:12px"><div style="font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--navy);text-transform:uppercase;margin-bottom:4px">Lançamento a lançamento</div>'
+    + '<p class="desc" style="margin:0 0 6px;font-size:11px">dia operacional 06:00 → 05:59 · a madrugada do dia seguinte pertence a este dia</p>'
+    + '<div style="border:1px solid var(--linha-s);border-radius:10px;overflow:hidden">';
+  L.forEach(r => {
+    const dOrig = String(r.dia).slice(0, 10), dOp = String(r.diaOp || r.dia).slice(0, 10);
+    const madruga = dOrig !== dOp;
+    h += '<div' + (r.op ? ' onclick="detOP(\'' + escapeHtml(String(r.op)) + '\',\'' + escapeHtml(String(cod)) + '\')" style="cursor:pointer"' : '') +
+      ' style="display:flex;gap:8px;align-items:baseline;padding:6px 9px;border-bottom:1px solid var(--leve-2s);font-size:12px' + (r.op ? ';cursor:pointer' : '') + '">'
+      + '<span style="width:78px;color:' + (madruga ? 'var(--laranja-3)' : 'var(--fraco)') + ';white-space:nowrap">'
+      + dOrig.slice(8, 10) + '/' + dOrig.slice(5, 7) + ' T' + (r.turno || '?') + (madruga ? ' *' : '') + '</span>'
+      + '<div style="flex:1;min-width:0">'
+      + (r.op ? '<b>OP ' + escapeHtml(String(r.op)) + '</b> · ' : '')
+      + escapeHtml(String(r.tipo_perda_desc || '—').slice(0, 30))
+      + '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(String(r.item_desc || r.item_cod || '').slice(0, 34)) + '</div></div>'
+      + '<b style="white-space:nowrap">' + un(+r.peso || 0) + '</b></div>';
+  });
+  h += '</div>';
+  if (diasDif.size > 1 || L.some(r => String(r.dia).slice(0, 10) !== String(r.diaOp || r.dia).slice(0, 10)))
+    h += '<p class="desc" style="font-size:10.5px;margin-top:4px"><span style="color:var(--laranja-3)">*</span> apontado na madrugada seguinte — conta neste dia operacional</p>';
+  h += '</div>';
+  return h;
 }
 
 // popover "ⓘ": compara o refugo do app com o BRUTO (como o RP/PPCP130 mostra) e os %
@@ -5553,7 +5587,11 @@ function cardMaquinaTurno(E) {
     if (_op) { (M[c][b].motOp[_mo] = M[c][b].motOp[_mo] || {})[_op] = (M[c][b].motOp[_mo][_op] || 0) + _h; }
   });
   const cods = Object.keys(M); if (!cods.length) return '';
-  _mtSnap = { M: M, rotulo: E.rotulo, de: E.de, ate: E.ate, emCx: emCx, fV: fV, grupos: null };
+  /* 13/08/2026 (João): "permita clicar para ver o período e a OP". Guarda as
+     LINHAS de perda (com dia, turno e OP) além dos totais — sem isso o modal
+     só conseguia mostrar somatório, e não dava para conferir se o lançamento
+     é da madrugada seguinte (que pertence a este dia operacional) nem qual OP. */
+  _mtSnap = { M: M, rotulo: E.rotulo, de: E.de, ate: E.ate, emCx: emCx, fV: fV, grupos: null, perdas: (E.perd || []) };   // o campo é E.perd (não E.perdas)
   const totSetor = {}, totMaq = {};
   cods.forEach(c => {
     let t = 0; Object.keys(M[c]).forEach(bb => t += M[c][bb].v);
