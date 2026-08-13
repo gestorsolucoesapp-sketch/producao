@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.782.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.783.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2610,7 +2610,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.782.0';
+const APP_VER = '3.783.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23861,7 +23861,9 @@ function orgTrocaSetor() {
 function orgTrocaTurno() { orgTurnoSel = $('orgTurno').value; renderOrgVista(); window.scrollTo(0, 0); }
 const ORG_VISTAS_RH = ['faltas', 'semaforo'];
 function orgVer(v) {
-  if (ORG_VISTAS_RH.includes(v) && !vePessoal) { toast('Faltas e atestados: só gestor e RH.'); return; }
+  // o líder abre o Semáforo (versão sem nomes); a vista Faltas segue só p/ gestor e RH
+  if (v === 'semaforo' && !vePessoal && !ehLider) { toast('Faltas e atestados: só gestor, RH e líderes.'); return; }
+  if (v !== 'semaforo' && ORG_VISTAS_RH.includes(v) && !vePessoal) { toast('Faltas e atestados: só gestor e RH.'); return; }
   orgVista = v; renderOrgVista(); window.scrollTo(0, 0);
 }
 
@@ -23881,8 +23883,12 @@ function orgGuardaScroll() {
 
 function renderOrgVista() {
   // botões de faltas/semáforo só existem para gestor e RH
-  document.querySelectorAll('.so-rh').forEach(b => b.classList.toggle('oculto', !vePessoal));
-  if (ORG_VISTAS_RH.includes(orgVista) && !vePessoal) orgVista = 'organograma';
+  document.querySelectorAll('.so-rh').forEach(b => {
+    const soSemaforo = b.getAttribute('data-v') === 'semaforo';
+    b.classList.toggle('oculto', soSemaforo ? !(vePessoal || ehLider) : !vePessoal);
+  });
+  if (orgVista === 'semaforo' && !vePessoal && !ehLider) orgVista = 'organograma';
+  if (orgVista !== 'semaforo' && ORG_VISTAS_RH.includes(orgVista) && !vePessoal) orgVista = 'organograma';
   orgGuardaScroll();
   document.body.classList.toggle('org-full', orgVista === 'org');
   document.querySelectorAll('.org-vbtn').forEach(b => b.classList.toggle('ativa', b.dataset.v === orgVista));
@@ -26248,7 +26254,50 @@ async function calcSemaforoSilencioso() {
   } catch (_) {}
 }
 
+/* 13/08/2026 (João): "para ele pode aparecer o semáforo de faltas, mas esconda
+   o nome e mostre um indicador por turno". O líder precisa enxergar onde dói,
+   não quem faltou. Esta versão nunca carrega matrícula nem nome: lê a view
+   agregada v_faltas_turno, que só devolve setor × turno. */
+async function renderOrgSemaforoTurno() {
+  const wrap = $('orgWrap');
+  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
+  let R = [];
+  try {
+    const { data, error } = await sb.from('v_faltas_turno').select('*');
+    if (error) throw error;
+    R = (data || []).filter(x => !orgSetorSel || x.setor === orgSetorSel);
+  } catch (e) {
+    wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui ler: ' + escapeHtml(String(e.message || e)) + '</p></div>';
+    return;
+  }
+  if (!R.length) { wrap.innerHTML = '<div class="card"><p class="vazio-painel">Sem dados de falta no período.</p></div>'; return; }
+
+  const ordT = { 'Manhã': 1, 'Tarde': 2, 'Noite': 3 };
+  R.sort((a, b) => (a.setor || '').localeCompare(b.setor || '') || (ordT[a.turno] || 9) - (ordT[b.turno] || 9));
+  const maxH = Math.max.apply(null, R.map(x => +x.horas || 0)) || 1;
+
+  let h = '<div class="orgv2"><div class="card"><div class="titulo-sec">🚦 Faltas e atestados por turno</div>';
+  h += '<p class="desc" style="margin-bottom:10px">indicador do time, sem identificação individual · ano corrente</p>';
+  R.forEach(x => {
+    const hr = +x.horas || 0, pc = Math.round(hr / maxH * 100);
+    const inc = x.pessoas ? (x.pessoas_com_ocorrencia / x.pessoas * 100) : 0;
+    const cor = inc >= 50 ? 'var(--critico-s)' : inc >= 30 ? 'var(--laranja-3)' : 'var(--verde-4,#2e7d32)';
+    h += '<div style="padding:8px 0;border-bottom:1px solid var(--leve-2s)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;font-size:13px">'
+      + '<b style="flex:1;min-width:0">' + escapeHtml(x.setor || '—') + ' · ' + semTurnoChip(x.turno || '—') + '</b>'
+      + '<b style="color:' + cor + '">' + hr.toFixed(1).replace('.', ',') + ' h</b></div>'
+      + '<div style="height:8px;border-radius:4px;background:var(--leve);overflow:hidden;margin-top:3px">'
+      + '<div style="height:100%;width:' + pc + '%;background:' + cor + '"></div></div>'
+      + '<div style="font-size:11px;color:var(--fraco);margin-top:3px">'
+      + x.pessoas_com_ocorrencia + ' de ' + x.pessoas + ' pessoas (' + Math.round(inc) + '%) · '
+      + (x.n_faltas || 0) + ' falta(s) · ' + (x.n_atestados || 0) + ' atestado(s)</div></div>';
+  });
+  h += '<p class="desc" style="font-size:11px;margin-top:8px">Os nomes ficam com o RH e a gestão.</p></div></div>';
+  wrap.innerHTML = h;
+}
+
 async function renderOrgSemaforo() {
+  if (!vePessoal) return renderOrgSemaforoTurno();   // líder: versão sem nomes
   const wrap = $('orgWrap');
   wrap.innerHTML = '<div class="desc" style="text-align:center;padding:20px"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> somando o ano…</div>';
 
