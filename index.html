@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.783.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.784.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2610,7 +2610,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.783.0';
+const APP_VER = '3.784.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22188,6 +22188,81 @@ function detVencidasSetor(setor) {
   _vencCausas('vencCausaBox', setor);
 }
 
+/* ---- CARD: a fila vista por SETOR (13/08/2026, João) ----
+   A Programação mostrava a fila por OP, por item e por máquina, mas nunca o
+   total de cada setor — que é a pergunta do dia a dia: onde está o volume e
+   quem tem OP vencida. Uma linha por setor, clicável até as máquinas. */
+let _fsAberto = null, _fsRows = null;
+
+function cardFilaSetor(rows) {
+  _fsRows = rows || [];
+  return '<div class="card" id="fsCard"><h3 style="margin:0 0 4px">🏭 Fila por setor</h3>'
+    + '<p class="desc" style="margin:0 0 8px">o que está na fila agora · toque num setor para ver as máquinas</p>'
+    + '<div id="fsCorpo">' + fsRender() + '</div></div>';
+}
+
+function fsRender() {
+  const R = _fsRows || [];
+  if (!R.length) return '<p class="vazio-painel">Fila vazia.</p>';
+  const hoje = hojeISO();
+  const porSetor = {};
+  R.forEach(r => {
+    const st = setorDe(r.recurso_cod) || '—';
+    if (!porSetor[st]) porSetor[st] = { st, ops: 0, kg: 0, cx: 0, atras: 0, maqs: {} };
+    const g = porSetor[st];
+    g.ops++; g.kg += (+r.peso || 0); g.cx += (+r.quantidade || 0);
+    if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.atras++;
+    const m = String(r.recurso_cod);
+    if (!g.maqs[m]) g.maqs[m] = { cod: m, nome: r.recurso_nome || m, ops: 0, kg: 0, atras: 0 };
+    g.maqs[m].ops++; g.maqs[m].kg += (+r.peso || 0);
+    if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.maqs[m].atras++;
+  });
+  const L = Object.values(porSetor).sort((a, b) => b.kg - a.kg);
+  const maxKg = Math.max.apply(null, L.map(x => x.kg)) || 1;
+  const totKg = L.reduce((n, x) => n + x.kg, 0), totOps = L.reduce((n, x) => n + x.ops, 0);
+  const totAtr = L.reduce((n, x) => n + x.atras, 0);
+
+  let h = '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Na fila</div>'
+    + '<b style="font-size:17px">' + fmtNum(totOps) + '</b> <span style="font-size:11px;color:var(--fraco)">OPs</span></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Peso</div>'
+    + '<b style="font-size:17px;color:var(--azul-marca)">' + fmtKg(totKg) + '</b></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Entrega vencida</div>'
+    + '<b style="font-size:17px;color:' + (totAtr ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + totAtr + '</b></div></div>';
+
+  L.forEach(g => {
+    const pc = Math.round(g.kg / maxKg * 100), ab = _fsAberto === g.st;
+    h += '<div onclick="fsToggle(\'' + escapeHtml(g.st).replace(/'/g, '&#39;') + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid var(--leve-2s)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;font-size:13px">'
+      + '<b style="flex:1;min-width:0">' + escapeHtml(g.st) + '</b>'
+      + (g.atras ? '<span style="background:#FDE8E8;color:#B3261E;border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:800">' + g.atras + ' vencida(s)</span>' : '')
+      + '<b>' + g.ops + '</b><span style="font-size:11px;color:var(--fraco)">OPs</span>'
+      + '<b style="color:var(--azul-marca)">' + fmtKg(g.kg) + '</b>'
+      + '<span style="color:var(--fraco);font-size:12px">' + (ab ? '▾' : '›') + '</span></div>'
+      + '<div style="height:8px;background:var(--leve);border-radius:4px;overflow:hidden;margin-top:3px">'
+      + '<div style="height:100%;width:' + pc + '%;background:' + (g.atras ? 'var(--critico-s)' : 'var(--azul-marca)') + '"></div></div></div>';
+    if (ab) {
+      const M = Object.values(g.maqs).sort((a, b) => b.kg - a.kg);
+      h += '<div style="margin:4px 0 10px;border:1px solid var(--linha-s);border-radius:10px;overflow:hidden">';
+      M.forEach(m => {
+        h += '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">'
+          + '<span class="cod">' + escapeHtml(m.cod) + '</span>'
+          + '<span style="flex:1;min-width:0">' + escapeHtml(String(m.nome).slice(0, 26)) + '</span>'
+          + (m.atras ? '<span style="color:var(--critico-s);font-weight:800;font-size:11px">' + m.atras + ' venc.</span>' : '')
+          + '<b>' + m.ops + '</b><span style="font-size:10.5px;color:var(--fraco)">OPs</span>'
+          + '<b style="color:var(--azul-marca);white-space:nowrap">' + fmtKg(m.kg) + '</b></div>';
+      });
+      h += '</div>';
+    }
+  });
+  return h;
+}
+
+function fsToggle(st) {
+  _fsAberto = (_fsAberto === st) ? null : st;
+  const b = document.getElementById('fsCorpo'); if (b) b.innerHTML = fsRender();
+}
+
 /* ---- CARD: saída da fila por dia + contador até faturar (12/08/2026, João) ----
    Compara fotos consecutivas da fila: OP que estava ontem e não está hoje saiu.
    Fotos PARCIAIS ficam fora da comparação (11/08 veio com 424 linhas contra
@@ -22617,6 +22692,7 @@ function renderProgramacao() {
   try { partes.push('prazos', cardProgReal()); } catch (e) { console.warn('progReal:', e); }
   try { partes.push('prazos', cardFilaDesvio()); } catch (e) { console.warn('filaDesvio:', e); }
   try { partes.push('prazos', cardOpSaiuFila()); } catch (e) { console.warn('opSaiu:', e); }
+  try { partes.push('setores', cardFilaSetor(rows)); } catch (e) { console.warn('filaSetor:', e); }
   try { partes.push('fila', cardSaiuFilaDia()); } catch (e) { console.warn('saiuFilaDia:', e); }
   try { partes.push('fila', cardOpAndamento(rows)); } catch (e) { console.warn('opAndamento:', e); }
   try { partes.push('carga', cardCargaMaquina(rows)); } catch (e) { console.warn('cargaMaquina:', e); }
@@ -22938,7 +23014,8 @@ function renderProgramacao() {
     ['prazos', 'Prazos'],
     ['carga', 'Carga'],
     ['carteira', 'Carteira'],
-    ['fila', 'Fila']
+    ['fila', 'Fila'],
+    ['setores', 'Setores']
   ];
   const _comCard = _defG.filter(([k]) => (_grupos[k] || []).length);
   if (!_comCard.length) { alvo.innerHTML = '<div class="card"><p class="desc" style="margin:0">Sem análises para a fila atual.</p></div>'; return; }
