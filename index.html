@@ -754,7 +754,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.771.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.772.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2602,7 +2602,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.771.0';
+const APP_VER = '3.772.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11405,6 +11405,18 @@ function inspTotal() {
   const n = $('inspNAcont'); if (n) n.textContent = na ? na + ' item(ns) N/A' : '';
 }
 
+const _inspAgora = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const _hhmm = t => String(t || '').slice(0, 5);
+/* duração só aparece quando faz sentido: fim depois do início e dentro do dia.
+   Inspeção lançada no dia seguinte, com horas trocadas, não vira "-8h". */
+function _inspDur(r) {
+  if (!r.hora_inicio || !r.hora_fim) return '';
+  const p = t => { const [h2, m2] = _hhmm(t).split(':').map(Number); return h2 * 60 + m2; };
+  const d = p(r.hora_fim) - p(r.hora_inicio);
+  if (d <= 0 || d > 600) return '';
+  return ' <b>(' + (d >= 60 ? Math.floor(d / 60) + 'h' + String(d % 60).padStart(2, '0') : d + ' min') + ')</b>';
+}
+
 function abrirInspecaoSeguranca(tarefaId) {
   _inspTarefaId = tarefaId || null;
   _inspNA = new Set();
@@ -11420,6 +11432,10 @@ function abrirInspecaoSeguranca(tarefaId) {
   h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Setor *<select id="inspSetor" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px">' +
     '<option value="">— escolher —</option>' + INSP_SETORES.map(u => '<option>' + u + '</option>').join('') + '</select></label>';
   h += '<label style="font-size:12px;font-weight:700;color:var(--navy)">Data da inspeção *<input id="inspData" type="date" value="' + hojeISO() + '" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></label>';
+  h += '<div style="display:flex;gap:8px">'
+    + '<label style="flex:1;font-size:12px;font-weight:700;color:var(--navy)">Início<input id="inspHi" type="time" value="' + _inspAgora() + '" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></label>'
+    + '<label style="flex:1;font-size:12px;font-weight:700;color:var(--navy)">Fim<input id="inspHf" type="time" style="width:100%;padding:9px;border:1px solid var(--borda);border-radius:10px;font-size:15px;margin-top:3px"></label>'
+    + '</div>';
   h += '</div>';
   h += bloco('Ausência de EPI', 'epi', INSP_EPI);
   h += bloco('Posição das pessoas', 'pos', INSP_POS);
@@ -11465,6 +11481,8 @@ async function salvarInspecao() {
       tarefa_id: _inspTarefaId, user_id: (perfil && perfil.id) || null,
       user_nome: (perfil && perfil.nome) || null,
       unidade: unidade, setor: setor, data_inspecao: data, pessoas_obs: pessoas,
+      hora_inicio: (($('inspHi') || {}).value || null),
+      hora_fim: (($('inspHf') || {}).value || _inspAgora()),   // em branco = agora, que é quando concluiu
       epi: epi, posicao: pos, gestores: gest, total_desvios: total,
       obs: (($('inspObs') || {}).value || '').trim() || null
     });
@@ -23933,7 +23951,8 @@ async function renderOrgInspecoes() {
   regs.forEach(r => {
     h += '<div onclick="inspDetalhe(' + r.id + ')" style="cursor:pointer;display:flex;gap:8px;align-items:baseline;padding:8px 11px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
       '<div style="flex:1;min-width:0"><b>' + escapeHtml(r.user_nome || '—') + '</b>' +
-      '<div style="font-size:10.5px;color:var(--fraco)">' + fmtDataSem(r.data_inspecao) + ' · ' +
+      '<div style="font-size:10.5px;color:var(--fraco)">' + fmtDataSem(r.data_inspecao) +
+      (r.hora_inicio ? ' · ' + _hhmm(r.hora_inicio) + (r.hora_fim ? '→' + _hhmm(r.hora_fim) : '') + _inspDur(r) : '') + ' · ' +
       escapeHtml(r.unidade || '') + ' · ' + escapeHtml(r.setor || '') + ' · ' + (r.pessoas_obs || 0) + ' pessoa(s)</div></div>' +
       (r.obs ? '<button title="ver observação" onclick="event.stopPropagation();inspVerObs(' + r.id + ')" ' +
         'style="flex:none;background:#FFF6E5;border:1px solid #E8C98A;color:#8A6516;border-radius:8px;' +
@@ -24080,6 +24099,7 @@ function inspDetalhe(id) {
         '<span style="flex:1">' + escapeHtml(k) + '</span><b style="color:var(--critico-s)">' + v + '</b></div>').join('');
   };
   let h = '<p class="idet-desc">' + escapeHtml(r.user_nome || '') + ' · ' + fmtDataSem(r.data_inspecao) +
+    (r.hora_inicio ? ' · ' + _hhmm(r.hora_inicio) + (r.hora_fim ? ' → ' + _hhmm(r.hora_fim) : '') + _inspDur(r) : '') +
     '<br>' + escapeHtml(r.unidade || '') + ' · ' + escapeHtml(r.setor || '') +
     ' · ' + (r.pessoas_obs || 0) + ' pessoa(s) observada(s) · <b>' + (r.total_desvios || 0) + ' desvio(s)</b></p>';
   h += bloco('Ausência de EPI', r.epi);
