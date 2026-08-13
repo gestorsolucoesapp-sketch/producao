@@ -745,7 +745,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.743.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.744.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2588,7 +2588,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.743.0';
+const APP_VER = '3.744.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -21626,6 +21626,102 @@ function detVencidasSetor(setor) {
   _vencCausas('vencCausaBox', setor);
 }
 
+/* ---- CARD: saída da fila por dia + contador até faturar (12/08/2026, João) ----
+   Compara fotos consecutivas da fila: OP que estava ontem e não está hoje saiu.
+   Fotos PARCIAIS ficam fora da comparação (11/08 veio com 424 linhas contra
+   ~1.100 das outras; entrando na conta, acusaria ~700 saídas que não houve).
+   O contador até faturar usa o PEDIDO como elo: quando a linha some da carteira,
+   conta como faturado. A carteira grava "226334/1" e a fila "226334" — daí o
+   corte na barra. OP de foto antiga não tem pedido preenchido e fica "sem vínculo". */
+let _sfdDados = null, _sfdAberto = null;
+
+function cardSaiuFilaDia() {
+  const h = '<div class="card" id="sfdCard"><h3 style="margin:0 0 4px">📤 O que saiu da fila por dia</h3>'
+    + '<p class="desc" style="margin:0 0 8px">OP que estava na fila e não está mais · toque num dia para ver as OPs</p>'
+    + '<div id="sfdCorpo"><p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> carregando…</p></div></div>';
+  setTimeout(sfdCarregar, 30);
+  return h;
+}
+
+async function sfdCarregar() {
+  const box = document.getElementById('sfdCorpo'); if (!box) return;
+  try {
+    const [{ data: dias, error: e1 }, { data: ops, error: e2 }] = await Promise.all([
+      sb.from('v_fila_saidas_dia').select('*'),
+      sb.from('v_fila_ate_faturar').select('*')
+    ]);
+    if (e1) throw e1; if (e2) throw e2;
+    _sfdDados = { dias: dias || [], ops: ops || [] };
+    sfdRender();
+  } catch (e) {
+    box.innerHTML = '<p class="desc" style="color:var(--critico)">Não consegui ler as saídas: ' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
+function sfdRender() {
+  const box = document.getElementById('sfdCorpo'); if (!box || !_sfdDados) return;
+  const { dias, ops } = _sfdDados;
+  if (!dias.length) { box.innerHTML = '<p class="vazio-painel">Ainda não há duas fotos completas da fila para comparar.</p>'; return; }
+
+  const fat = ops.filter(o => o.situacao === 'faturado');
+  const agu = ops.filter(o => o.situacao === 'aguardando');
+  const medFat = fat.length ? (fat.reduce((n, o) => n + Number(o.dias || 0), 0) / fat.length) : null;
+
+  let h = '<div style="display:flex;gap:14px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:10px">'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Saíram (total)</div>'
+    + '<b style="font-size:17px">' + ops.length + '</b> <span style="font-size:11px;color:var(--fraco)">OPs</span></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Já faturadas</div>'
+    + '<b style="font-size:17px;color:var(--verde-4,#2e7d32)">' + fat.length + '</b></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Aguardando</div>'
+    + '<b style="font-size:17px;color:var(--laranja-3)">' + agu.length + '</b></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Fila → faturado</div>'
+    + '<b style="font-size:17px">' + (medFat == null ? '—' : medFat.toFixed(1).replace('.', ',') + ' dias') + '</b></div></div>';
+
+  const maxKg = Math.max.apply(null, dias.map(d => Number(d.kg) || 0)) || 1;
+  dias.forEach(d => {
+    const kg = Number(d.kg) || 0, pc = Math.round(kg / maxKg * 100);
+    const ab = _sfdAberto === d.dia_saida;
+    h += '<div onclick="sfdToggle(\'' + d.dia_saida + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid var(--leve-2s)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;font-size:13px">'
+      + '<b style="flex:1;min-width:0">' + fmtDataSem(d.dia_saida) + (String(d.foto_ant) !== String(d.dia_saida) ? ' <span style="font-size:10.5px;color:var(--fraco-2s);font-weight:400">desde ' + fmtDataSem(d.foto_ant) + '</span>' : '') + '</b>'
+      + '<b>' + d.ops + '</b><span style="font-size:11px;color:var(--fraco)">OPs</span>'
+      + '<b style="color:var(--azul-marca)">' + fmtKg(kg) + '</b>'
+      + '<span style="color:var(--fraco);font-size:12px">' + (ab ? '▾' : '›') + '</span></div>'
+      + '<div style="height:8px;background:var(--leve);border-radius:4px;overflow:hidden;margin-top:3px">'
+      + '<div style="height:100%;width:' + pc + '%;background:var(--azul-marca)"></div></div></div>';
+    if (ab) h += sfdDetalhe(d.dia_saida);
+  });
+  box.innerHTML = h;
+}
+
+function sfdToggle(dia) { _sfdAberto = (_sfdAberto === dia) ? null : dia; sfdRender(); }
+
+function sfdDetalhe(dia) {
+  const lista = (_sfdDados.ops || []).filter(o => String(o.dia_saida) === String(dia))
+    .sort((a, b) => Number(b.prog_kg || 0) - Number(a.prog_kg || 0));
+  if (!lista.length) return '<p class="desc" style="padding:8px 0">sem detalhe</p>';
+  const selo = o => o.situacao === 'faturado'
+    ? '<span style="background:#E8F5EC;color:#1F7A46;border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:800">✓ faturado em ' + o.dias + 'd</span>'
+    : o.situacao === 'aguardando'
+      ? '<span style="background:#FFF4E5;color:#A35C00;border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:800">⏳ ' + o.dias + 'd aguardando</span>'
+      : '<span style="background:var(--leve);color:var(--fraco);border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:700">sem pedido vinculado</span>';
+  let h = '<div style="max-height:44vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px;margin:6px 0 10px">';
+  lista.forEach(o => {
+    h += '<div style="padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:12.5px">'
+      + '<div style="display:flex;gap:8px;align-items:baseline">'
+      + '<b style="flex:1;min-width:0">OP ' + escapeHtml(o.op || '—') + '</b>'
+      + '<span style="color:var(--fraco);font-size:11px">' + escapeHtml(o.recurso_cod || '') + '</span>'
+      + '<b style="color:var(--azul-marca);white-space:nowrap">' + fmtKg(Number(o.prog_kg) || 0) + '</b></div>'
+      + '<div style="color:var(--fraco);font-size:11px;margin:1px 0 3px">' + escapeHtml(String(o.item_desc || o.item_cod || '').slice(0, 60))
+      + (o.prog_cx ? ' · ' + fmtNum(Math.round(o.prog_cx)) + ' cxs' : '')
+      + (o.cliente ? ' · ' + escapeHtml(String(o.cliente).slice(0, 28)) : '')
+      + (o.pedido ? ' · ped ' + escapeHtml(o.pedido) : '') + '</div>'
+      + selo(o) + '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
 /* ---- CARD: OP que saiu da fila sem terminar ---- */
 const _OS_FAIXA = {
   parou_sem_motivo: { t: 'Parou sem explicação', c: 'var(--critico)', d: 'saiu da fila, não apontou e não tem parada registrada' },
@@ -21955,6 +22051,7 @@ function renderProgramacao() {
   try { partes.push('prazos', cardProgReal()); } catch (e) { console.warn('progReal:', e); }
   try { partes.push('prazos', cardFilaDesvio()); } catch (e) { console.warn('filaDesvio:', e); }
   try { partes.push('prazos', cardOpSaiuFila()); } catch (e) { console.warn('opSaiu:', e); }
+  try { partes.push('fila', cardSaiuFilaDia()); } catch (e) { console.warn('saiuFilaDia:', e); }
   try { partes.push('fila', cardOpAndamento(rows)); } catch (e) { console.warn('opAndamento:', e); }
   try { partes.push('carga', cardCargaMaquina(rows)); } catch (e) { console.warn('cargaMaquina:', e); }
   try { partes.push('fila', cardMatrizItemMaquina(rows)); } catch (e) { console.warn('matriz:', e); }
