@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.795.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.796.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2611,7 +2611,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.795.0';
+const APP_VER = '3.796.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16850,11 +16850,29 @@ function corGrafTurno(orig) { const t = turnoSelAtual(); return (t && COR_TURNO[
 function gTurnoPeso(rows, valFn, fmtBar, setor, dia, comMeta) {
   const b = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
   const diasB = { 'Manhã': new Set(), 'Tarde': new Set(), 'Noite': new Set() };
+  /* 13/08/2026 (João): "põe a produção em cx e milheiros também, por turno, no
+     mesmo indicador". A barra continua na métrica escolhida (senão a escala
+     muda de significado), mas o rótulo passa a trazer as três leituras — é a
+     mesma produção vista de três jeitos, e trocar o filtro só para conferir
+     caixa era perda de tempo. */
+  const bKg = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+  const bCx = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+  const bMi = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+  const _sc = semCaixa(setor);
   rows.forEach(r => {
     const k = blocoTurno(r.turno, r.dia);
     b[k] += (valFn(r) || 0);
+    bKg[k] += (+r.peso || 0);
+    if (!_sc) { const cx = caixasDe(r); bCx[k] += (cx || 0); bMi[k] += (milDeLinha(r, cx) || 0); }
     if (r.dia) diasB[k].add(String(r.dia).slice(0, 10));
   });
+  const _outras = k => {
+    const p = [];
+    if (bKg[k] > 0) p.push(fmtKg(bKg[k]));
+    if (!_sc && bCx[k] > 0) p.push(fmtNum(Math.round(bCx[k])) + ' cxs');
+    if (!_sc && bMi[k] > 0) p.push(fmtNum(Math.round(bMi[k])) + ' mi');
+    return p.join(' · ');
+  };
   /* META POR BLOCO — a meta e cadastrada por maquina x bloco, entao cada barra
      tem a meta DELA, nao um terco da meta do dia. Multiplica pelos dias
      EQUIVALENTES: no sabado a Manha vale 0,7285 (5,50 h de 7,55 h) e a Tarde
@@ -16869,10 +16887,24 @@ function gTurnoPeso(rows, valFn, fmtBar, setor, dia, comMeta) {
     return s > 0 ? s * _diasEqBloco(diasB[k], k) : 0;
   };
   const _tg = ($('turnoGlobal') && $('turnoGlobal').value) || '';
-  return barrasVertical((_tg ? [_tg] : ['Manhã', 'Tarde', 'Noite']).map(k => {
+  /* as três unidades saem numa faixa ABAIXO do gráfico: o sublabel da barra
+     corta texto longo (foi feito para "Seg"/"Ter") e "1.234 cxs · 456 mi" não
+     caberia — ficaria "1.2…" e não serviria para nada. */
+  const _blocos = (_tg ? [_tg] : ['Manhã', 'Tarde', 'Noite']);
+  const _faixa = () => {
+    const cels = _blocos.filter(k => b[k] > 0 || bKg[k] > 0).map(k =>
+      '<div style="flex:1;min-width:96px;padding:5px 7px;background:var(--leve);border-radius:8px">'
+      + '<div style="font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:' + (COR_TURNO[k] || 'var(--fraco)') + '">' + escapeHtml(k) + '</div>'
+      + '<div style="font-size:11.5px;color:var(--txt-2s);line-height:1.5">' + (_outras(k) || '—') + '</div></div>'
+    ).join('');
+    return cels ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + cels + '</div>' : '';
+  };
+
+  return barrasVertical(_blocos.map(k => {
     const mb = metaBloco(k);
-    return { l: k, v: b[k], meta: mb, metaRot: mb > 0 ? fmtBar(mb) : '', rot: fmtBar(b[k]), click: `detTurno('${setor || ''}','${k}','${dia || ''}')` };
-  }), d => COR_TURNO[d.l] || 'var(--verde)');
+    return { l: k, v: b[k], meta: mb, metaRot: mb > 0 ? fmtBar(mb) : '', rot: fmtBar(b[k]),
+             click: `detTurno('${setor || ''}','${k}','${dia || ''}')` };
+  }), d => COR_TURNO[d.l] || 'var(--verde)') + _faixa();
 }
 // top máquinas (horizontal) — com código; pode incluir todas as máquinas do setor
 function gMaqPeso(rows, valFn, uni, incluirCods, nomes, dia) {
