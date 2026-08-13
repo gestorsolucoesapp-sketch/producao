@@ -761,7 +761,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.775.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.776.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2608,7 +2608,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.775.0';
+const APP_VER = '3.776.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14101,13 +14101,21 @@ async function ppCarregar(setor, de, ate, alvo) {
     const { data, error } = await q;
     if (error) throw error;
     // agrega o setor por dia: g/peça do dia é kg total ÷ peças totais, não média de médias
+    /* cobertura: quanto do peso do dia tem a conversão caixa→peça na descrição.
+       Abaixo de 100% o g/peça é estimado sobre parte do dia, e a tela avisa —
+       foi assim que o 11/08 da Rotulagem apareceu com 47,9 g (o certo era 12 g). */
     const porDia = {};
     (data || []).forEach(r => {
-      const d = r.dia; if (!porDia[d]) porDia[d] = { dia: d, kg: 0, mi: 0 };
+      const d = r.dia; if (!porDia[d]) porDia[d] = { dia: d, kg: 0, mi: 0, kgOk: 0 };
       porDia[d].kg += +r.kg || 0; porDia[d].mi += +r.milheiros || 0;
+      porDia[d].kgOk += (+r.kg || 0) * ((+r.cobertura_pct || 0) / 100);
     });
     _ppCache[chave] = Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1)
-      .map(x => Object.assign(x, { g: x.mi > 0 ? (x.kg / x.mi) : null }));
+      .map(x => Object.assign(x, {
+        // g/peça usa só o peso coberto, igual à view — dividir o peso todo inflava o número
+        g: x.mi > 0 ? (x.kgOk / x.mi) : null,
+        cob: x.kg > 0 ? Math.round(x.kgOk / x.kg * 100) : 100
+      }));
     ppRender(alvo, _ppCache[chave]);
   } catch (e) {
     box.innerHTML = '<p class="desc" style="color:var(--critico-s)">Não consegui montar: ' + escapeHtml(String(e.message || e)) + '</p>';
@@ -14144,7 +14152,8 @@ function ppRender(alvo, dados) {
       const gy = yG(x.g);
       pts += `${i ? 'L' : 'M'}${cx.toFixed(1)},${gy.toFixed(1)}`;
       linha += `<circle cx="${cx.toFixed(1)}" cy="${gy.toFixed(1)}" r="3" fill="#fff" stroke="#B8860B" stroke-width="2"/>`;
-      rot += `<text x="${cx.toFixed(1)}" y="${(gy + 14).toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="800" fill="#B8860B" stroke="#fff" stroke-width="2.4" paint-order="stroke">${x.g.toFixed(1).replace('.', ',')}g</text>`;
+      const _par = (x.cob != null && x.cob < 90);
+      rot += `<text x="${cx.toFixed(1)}" y="${(gy + 14).toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="800" fill="${_par ? '#8A97A6' : '#B8860B'}" stroke="#fff" stroke-width="2.4" paint-order="stroke">${x.g.toFixed(1).replace('.', ',')}g${_par ? '*' : ''}</text>`;
     }
   });
   const passo = Math.max(1, Math.ceil(n / 8));
@@ -14189,6 +14198,9 @@ function ppRender(alvo, dados) {
       + '<b>' + fmtDataSem(a.dia) + '</b> · peça de ' + a.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(a.mi)) + ' mi · ' + fmtKg(a.kg) + '<br>'
       + '<b>' + fmtDataSem(b.dia) + '</b> · peça de ' + b.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(b.mi)) + ' mi · ' + fmtKg(b.kg) + '<br>'
       + '<span style="color:var(--fraco)">' + veredito + '</span></div>';
+  }
+  if (D.some(x => x.cob != null && x.cob < 90)) {
+    h += '<p class="desc" style="font-size:11px;margin-top:6px">* dia em que parte dos itens não traz a conversão caixa→peça na descrição — o peso da peça vale só para a parte identificada.</p>';
   }
   box.innerHTML = h;
 }
