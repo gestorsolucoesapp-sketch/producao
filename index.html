@@ -754,7 +754,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.772.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.773.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
@@ -2602,7 +2602,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.772.0';
+const APP_VER = '3.773.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20830,7 +20830,8 @@ function _alocarEstoque() {
   const peds = {};
   linhas.forEach(p => {
     const num = String(p.pedido).split('/')[0];
-    const a = peds[num] || (peds[num] = { num, kg: 0, cx: 0, blq: new Set(), cli: p.cliente, ent: null, atr: 0, linhas: 0 });
+    const a = peds[num] || (peds[num] = { num, kg: 0, cx: 0, blq: new Set(), itens: new Set(), cli: p.cliente, ent: null, atr: 0, linhas: 0 });
+    a.itens.add(String(p.item_cod));   // todos os itens do pedido (para saber por quais setores ele passa)
     a.kg += (+p.peso_pendente || 0); a.linhas++;
     /* 04/08/2026: caixas por pedido, com a MESMA regra do palete — só entra
        linha apontada em CX. Linha em MIL, UN ou PC (54 linhas no relatório de 04/08)
@@ -21218,10 +21219,28 @@ function cardDestrava() {
       + `<td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(k)}</span> falta ${kg(a.falta || 0)}</td></tr>`;
   }).join('');
 
+  /* 13/08/2026 (João): "dá para separar o que foi feito na Impressão do resto?".
+     Cada faixa ganha uma segunda barra, mais fina, com a parcela que passa pela
+     IMPRESSÃO. Para os travados, "impresso" = o item que trava é da Impressão;
+     para os completos, = o pedido tem item que roda lá. O setor do item sai de
+     _setorDoItem (histórico de máquina + fila), o mesmo critério do resto do card. */
+  const _ehImp = k => _setorDoItem(k) === 'Impressão';
+  const _fatiaImp = (L, travado) => travado
+    ? L.filter(p => [...p.blq].some(_ehImp))
+    : L.filter(p => (p.itens ? [...p.itens] : []).some(_ehImp));
+
   const barra = (rot, L, cor, gid) => {
     const pct = A.peds.length ? (L.length / A.peds.length * 100) : 0;
-    return `<div style="margin-bottom:6px;cursor:pointer" onclick="detGrupoTravado(${gid})"><div style="display:flex;font-size:11.5px"><span style="flex:1;color:var(--fraco)">${rot} ›</span><b style="color:${cor}">${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</b></div>`
-      + `<div style="height:8px;border-radius:4px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:${cor}"></div></div></div>`;
+    const imp = _fatiaImp(L, gid > 0);
+    const pctImp = L.length ? (imp.length / L.length * 100) : 0;
+    return `<div style="margin-bottom:9px;cursor:pointer" onclick="detGrupoTravado(${gid})"><div style="display:flex;font-size:11.5px"><span style="flex:1;color:var(--fraco)">${rot} ›</span><b style="color:${cor}">${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</b></div>`
+      + `<div style="height:8px;border-radius:4px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:${cor}"></div></div>`
+      + (imp.length
+          ? `<div style="display:flex;align-items:center;gap:6px;margin-top:2px">`
+            + `<div style="flex:1;height:5px;border-radius:3px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${(pct * pctImp / 100).toFixed(1)}%;background:var(--azul-marca)"></div></div>`
+            + `<span style="font-size:10px;font-weight:800;color:var(--azul-marca);white-space:nowrap">🖨️ ${imp.length} ped · ${kg(S(imp))} <span style="opacity:.7;font-weight:600">(${Math.round(pctImp)}%)</span></span></div>`
+          : '')
+      + `</div>`;
   };
 
   return card('🚚 O que destrava faturamento' + ico('destrava'),
@@ -21242,7 +21261,8 @@ function cardDestrava() {
         + (dif > 0 ? ` <span title="Palete = teto(caixas ÷ ${CX_POR_PALETE}) por item. Um item que aparece em mais de uma faixa arredonda pra cima em cada uma, por isso a soma das faixas passa do total em ${dif} palete(s). O total é o número correto." style="color:var(--fraco)">(faixas somam +${dif} pal · arredondamento)</span>` : '')
         + (semUn ? ` · <span style="color:var(--laranja)">${semUn} linha(s) sem unidade ficaram fora da conta de paletes</span>` : '');
     })(),
-    barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)', 0)
+    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:6px"><span style="display:inline-block;width:10px;height:5px;border-radius:3px;background:var(--azul-marca);vertical-align:middle;margin-right:4px"></span>a barra fina azul é a parte que passa pela <b>Impressão</b></div>'
+    + barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)', 0)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
     + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
