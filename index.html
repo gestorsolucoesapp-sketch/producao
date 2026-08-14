@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.802.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.803.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1683,6 +1683,19 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   }
 
   // ---------- RPCP622: produção detalhada Turno x OP x Item x Recurso ----------
+  /* DIA OPERACIONAL NA IMPORTACAO — descoberto em 14/08/2026 com o RPCP624 de um
+     dia so. O ERP FILTRA pelo dia operacional (06:00 -> 05:59 do dia seguinte),
+     mas a coluna Data de cada linha traz o RELOGIO. Por isso, num relatorio do
+     dia 11, os turnos 1 a 4 saem todos com data 11/08 e o turno 5 sai com data
+     11/08 (das 20:51 as 23:59) E 12/08 (a madrugada) misturadas — as duas
+     pertencem a noite que abriu no dia 11.
+     Logo: se o relatorio cobre UM dia so, esse dia manda em todas as linhas e a
+     coluna Data e ignorada. Fica exato, sem estimar hora.
+     Se o relatorio cobre um periodo, nao da para saber a qual noite cada linha de
+     T5 pertence — ai a data da linha continua mandando, como antes. Por isso o
+     ideal e importar dia a dia. */
+  const _diaUnico = periodo => (periodo && periodo.de && periodo.de === periodo.ate) ? periodo.de : null;
+
   function parse622(linhas, periodo) {
     const out = [];
     let turno = null, op = null, item = null;
@@ -1695,7 +1708,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       if (!turno || !op || !item) continue;
       if ((m = rx.exec(l.texto))) {
         out.push({
-          dia: dataBR(m[1]) || periodo.de, turno, op,
+          dia: _diaUnico(periodo) || dataBR(m[1]) || periodo.de, turno, op,
           item_cod: item.cod, item_desc: item.desc,
           data_inicio: dataBR(m[1]), data_fim: dataBR(m[2]),
           ident: m[4] || null, ...splitRecurso(m[5], m[6]),
@@ -1768,7 +1781,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       return {
         // a data da PRÓPRIA linha manda; periodo.de é só reserva pra linha sem
         // data. Invertido, todo o mês colapsava no primeiro dia do relatório.
-        dia: dataBR(v.data) || periodo.de, turno: c.turno,
+        dia: _diaUnico(periodo) || dataBR(v.data) || periodo.de, turno: c.turno,
         op: c.op, item_cod: c.item ? c.item.cod : (mi ? mi[1] : null),
         item_desc: c.item ? c.item.desc : (mi ? mi[3] : null),
         item_versao: mi ? mi[2] : null,
@@ -1798,8 +1811,8 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       t => /^(Totais:|Resumo por|OP Data)/.test(t) || /Rioplastic|ROTINA|PÁGINA|DATA:|HORA:/.test(t)
     );
     return regs.map(v => ({
-      // a data da PRÓPRIA linha manda; periodo.de é só reserva (ver parse624)
-      dia: dataBR(v.data) || periodo.de,
+      // relatório de um dia só: o dia do relatório manda (ver _diaUnico)
+      dia: _diaUnico(periodo) || dataBR(v.data) || periodo.de,
       op: (v.op || '').replace(/^0+/, ''), data: dataBR(v.data),
       tipo_perda_desc: v.tipo_perda || null, etapa: v.etapa || null,
       cliente: v.cliente || null, acessorio: v.acessorio || null,
@@ -2616,7 +2629,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.802.0';
+const APP_VER = '3.803.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
