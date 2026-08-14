@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.801.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.802.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2616,7 +2616,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.801.0';
+const APP_VER = '3.802.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5420,13 +5420,64 @@ async function mtDetProducao(cod, bl) {
       `<td class="nome" style="font-size:12px">${escapeHtml(String(r.item_cod || '—'))}</td>` +
       `<td><span class="cel cel-tot">${fmtKg(+r.peso || 0)}</span></td></tr>`).join('');
 
+    /* OS DE MANUTENCAO da mesma maquina, no mesmo turno e periodo. O vinculo e por
+       recurso_cod + dia operacional + bloco de turno. O timestamp do banco e LOCAL
+       apesar de carregar o marcador UTC — por isso a hora sai por regex, nunca por
+       new Date(), que deslocaria o fuso e jogaria a OS para o turno errado.
+       Dia operacional: antes das 06:00 a OS pertence ao dia que ABRIU o turno. */
+    let secOS = '';
+    try {
+      const _osHH = ts => { const m = String(ts || '').match(/[T ](\d{2}):(\d{2})/); return m ? m[1] + ':' + m[2] : null; };
+      const _osDia = ts => {
+        const s = String(ts || ''), d = s.slice(0, 10), m = s.match(/[T ](\d{2}):(\d{2})/);
+        if (!d || d.length !== 10) return null;
+        return (m && (+m[1]) < 6) ? addDiasISO(d, -1) : d;
+      };
+      const { data: osd } = await sb.from('manutencao_os')
+        .select('os_num,data_abertura,data_parada,data_reinicio,motivo,submotivo,urgencia,situacao,maquina_parada,horas_parada')
+        .eq('recurso_cod', String(cod))
+        .gte('data_abertura', addDiasISO(String(S.de), -1) + 'T00:00:00')
+        .lte('data_abertura', addDiasISO(String(S.ate), 1) + 'T23:59:59')
+        .order('data_abertura', { ascending: false }).limit(300);
+      const osRows = (osd || []).filter(o => {
+        const ref = o.data_parada || o.data_abertura;
+        const d = _osDia(ref), h = _osHH(ref);
+        if (!d || !h) return false;
+        if (d < S.de || d > S.ate) return false;
+        let b = null; try { b = blocoPorHora(h, d); } catch (_) { b = null; }
+        return b === bl;
+      });
+      if (osRows.length) {
+        const corU = u => /alta|urg/i.test(String(u || '')) ? '#D64545' : /m[eé]dia/i.test(String(u || '')) ? '#C86A2E' : '#8A97A6';
+        const linhasO = osRows.map(o => {
+          const ref = o.data_parada || o.data_abertura;
+          const d = _osDia(ref), h = _osHH(ref);
+          const mot = [o.motivo, o.submotivo].filter(Boolean).join(' · ');
+          const parou = o.maquina_parada ? ' · <b style="color:#D64545">máquina parada</b>' : '';
+          const hp = (o.horas_parada != null && +o.horas_parada > 0) ? ' · ' + fmtHoras(+o.horas_parada) : '';
+          return `<tr><td class="nome" style="font-size:12px">OS ${escapeHtml(String(o.os_num || '—'))}` +
+            `<div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(fmtDataSem(d))} · ${escapeHtml(h)}${hp}</div>` +
+            `<div style="font-size:10px;color:var(--fraco-2)">${escapeHtml(mot || 'sem motivo')}${parou}</div></td>` +
+            `<td class="nome" style="font-size:11.5px;color:${corU(o.urgencia)};font-weight:800">${escapeHtml(String(o.urgencia || '—'))}</td>` +
+            `<td><span class="cel neutra">${escapeHtml(String(o.situacao || '—'))}</span></td></tr>`;
+        }).join('');
+        secOS = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">OS de manutenção · ' + osRows.length + '</div>'
+          + tabSimples(['OS · quando · motivo', 'Urgência', 'Situação'], linhasO);
+      } else {
+        secOS = '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">OS de manutenção</div>'
+          + '<p class="desc" style="font-size:11.5px">Nenhuma OS desta máquina neste turno e período.</p>';
+      }
+    } catch (e) {
+      secOS = '<div style="height:10px"></div><p class="desc" style="font-size:11.5px">Não consegui buscar as OS de manutenção.</p>';
+    }
+
     abreDet(tit,
       '<div style="font-size:12px;color:var(--fraco)">total <b style="color:var(--txt-2)">' + un(a.v) + '</b> no cartão · <b>' + fmtKg(totKg) + '</b> somando os apontamentos</div>' +
       '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Por item</div>' +
       tabSimples(['Item', 'Peso', 'Cxs'], linhasI) +
       '<div style="height:10px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Apontamento a apontamento' +
       (rows.length > MAXA ? ` <span style="text-transform:none;font-weight:600">· ${MAXA} mais recentes de ${rows.length}</span>` : '') + '</div>' +
-      tabSimples(['Dia · turno · OP · período', 'Item', 'Peso'], linhasA) +
+      tabSimples(['Dia · turno · OP · período', 'Item', 'Peso'], linhasA) + secOS +
       '<p class="desc" style="margin-top:10px;font-size:11px">O cartão soma o RPCP621 e esta lista sai do RPCP622. Os dois relatórios divergem na origem, então os totais podem não fechar.</p>');
   } catch (e) {
     abreDet(tit, '<p class="desc">Não consegui buscar os apontamentos: ' + escapeHtml(String((e && e.message) || e)) + '</p>');
