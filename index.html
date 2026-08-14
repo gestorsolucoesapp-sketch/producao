@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.798.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.799.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2611,7 +2611,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.798.0';
+const APP_VER = '3.799.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10759,10 +10759,16 @@ function _mptDetalhe(a) {
    COM expediente (algum recurso do setor produziu) — evita acusar fim de semana. */
 function cardParadasTotais(D, filtroSetor) {
   if (!D || !D.paradas || !D.producao) return '';
+  /* 13/08/2026: as faixas estavam CONTÍNUAS (Manhã 06:00–13:36, Tarde 13:36–20:51),
+     mas pela tabela do ERP os turnos são INTERCALADOS:
+       T1 06:00–12:00 (Manhã) · T2 12:01–13:36 (Tarde)
+       T3 13:37–15:10 (Manhã) · T4 15:11–20:50 (Tarde) · T5 20:51–05:59 (Noite)
+     Uma parada às 12:30 caía na Manhã quando é Tarde, e às 14:00 caía na Tarde
+     quando é Manhã. Agora cada bloco tem as suas DUAS faixas reais. */
   const BLOCOS = [
-    { b: 'Manhã', ini: 6.0, fim: 13.6, jor: 7.55 },
-    { b: 'Tarde', ini: 13.6, fim: 20.85, jor: 7.23 },
-    { b: 'Noite', ini: 20.85, fim: 30.0, jor: 9.13 }
+    { b: 'Manhã', faixas: [[6.0, 12.0], [13.617, 15.167]], jor: 7.55 },
+    { b: 'Tarde', faixas: [[12.017, 13.6], [15.183, 20.833]], jor: 7.23 },
+    { b: 'Noite', faixas: [[20.85, 30.0]], jor: 9.13 }
   ];
   const JOR = { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 };
   // ---- índices de produção (uma passada só) ----
@@ -10788,7 +10794,9 @@ function cardParadasTotais(D, filtroSetor) {
     nomes[c] = p.recurso_nome || c;
     const dia = String(p.dia).slice(0, 10);
     for (const bl of BLOCOS) {
-      const h = Math.min(fim, bl.fim) - Math.max(ini, bl.ini);
+      // soma a parte da parada que cai em CADA faixa do bloco (são duas na Manhã e na Tarde)
+      let h = 0;
+      for (const [fi, ff] of bl.faixas) h += Math.max(0, Math.min(fim, ff) - Math.max(ini, fi));
       if (h > 0) { const k = dia + '|' + c + '|' + bl.b; parKey.set(k, (parKey.get(k) || 0) + h); }
     }
   }
@@ -17198,7 +17206,13 @@ async function detPerdaApont(cod, bloco, setor, tipoEnc) {
   const tot = rows.reduce((a, r) => a + (+r.peso || 0), 0);
   const totCx = rows.reduce((a, r) => a + _cx(r), 0);
   // Janela de horario de cada bloco (a perda/624 nao tem hora; isto e a janela do turno)
-  const JAN_BLOCO = { 'Manh\u00e3': '06:00\u219213:36', 'Tarde': '13:36\u219220:51', 'Noite': '20:51\u219205:59' };
+  /* 13/08/2026: a janela exibida estava ERRADA. O app mostrava Manhã 06:00→13:36
+     e Tarde 13:36→20:51, como se os blocos fossem contínuos. Pela tabela oficial
+     do ERP eles são INTERCALADOS:
+       T1 06:00–12:00 · T2 12:01–13:36 · T3 13:37–15:10 · T4 15:11–20:50 · T5 20:51–05:59
+       Manhã = T1 + T3   ·   Tarde = T2 + T4   ·   Noite = T5
+     Ou seja, o T2 (tarde) acontece NO MEIO da manhã, e o T3 (manhã) depois dele. */
+  const JAN_BLOCO = { 'Manh\u00e3': '06:00\u201312:00 + 13:37\u201315:10', 'Tarde': '12:01\u201313:36 + 15:11\u201320:50', 'Noite': '20:51\u201305:59' };
   /* INTERVALO REAL DO APONTAMENTO: a perda (624) so tem turno/data, sem hora. A
      producao (622) tem data_inicio/data_fim. Cruzo por OP+dia+turno para pegar o
      span e sinalizar quando o apontamento VIROU O DIA (data_inicio != data_fim).
