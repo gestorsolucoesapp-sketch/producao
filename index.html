@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.803.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.804.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1696,6 +1696,20 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
      ideal e importar dia a dia. */
   const _diaUnico = periodo => (periodo && periodo.de && periodo.de === periodo.ate) ? periodo.de : null;
 
+  /* Deduz o dia operacional de um relatorio sem cabecalho (ver parseDocumento).
+     Devolve o dia, ou null quando o arquivo cobre mais de um dia operacional. */
+  function _diaOperacionalUnico(regs) {
+    const datas = [...new Set(regs.map(r => r.dia).filter(Boolean))].sort();
+    if (!datas.length) return null;
+    if (datas.length === 1) return datas[0];
+    if (datas.length > 2) return null;
+    const [d1, d2] = datas;
+    if (addDiasISO(d1, 1) !== d2) return null;          // precisam ser consecutivas
+    const soNoite = regs.every(r => r.dia !== d2 || Number(r.turno) === 5);
+    const temDia = regs.some(r => r.dia === d1 && Number(r.turno) && Number(r.turno) !== 5);
+    return (soNoite && temDia) ? d1 : null;
+  }
+
   function parse622(linhas, periodo) {
     const out = [];
     let turno = null, op = null, item = null;
@@ -1868,9 +1882,15 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       const mc = /^(\d+)\/(\d+) - (.*)$/.exec(v.componente || '');
       const rc = /^(\d+) - (.*)$/.exec(v.recurso || '');
       const mq = /^([\d.,]+)(?: (KG|CX|MIL|UN))?/.exec(v.quantidade || '');
+      /* o 646 traz HORA. Dia operacional vai das 06:00 as 05:59 do dia seguinte,
+         entao consumo antes das 06:00 pertence ao dia que ABRIU o turno. Aqui da
+         para aplicar exato, sem depender do periodo do relatorio. */
+      const _d = md ? dataBR(md[1]) : (periodo.de || null);
+      const _h = md && md[2] ? md[2] : null;
+      const diaOper = (_d && _h && (+_h.slice(0, 2)) < 6) ? addDiasISO(_d, -1) : _d;
       return {
-        dia: md ? dataBR(md[1]) : (periodo.de || null),
-        data: md ? dataBR(md[1]) : null, hora: md && md[2] ? md[2] : null,
+        dia: diaOper,
+        data: md ? dataBR(md[1]) : null, hora: _h,
         op: v.op || null,
         componente_cod: mc ? mc[1] : null, componente_versao: mc ? mc[2] : null,
         componente_desc: mc ? mc[3].trim() : (v.componente || null),
@@ -2591,6 +2611,20 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
       case '196': registros = parse196(linhas, periodo); break;
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
     }
+    /* PDF DE UM DIA SO, SEM CABECALHO. O RPCP624 gerado dia a dia sai sem o bloco
+       "Período:" — entao acharPeriodo devolve vazio e nao da para saber o dia pelo
+       cabecalho. Mas da para saber pelos dados: num relatorio de um dia so, os
+       turnos 1 a 4 carregam TODOS a mesma data D, e o turno 5 carrega D (das 20:51
+       as 23:59) e D+1 (a madrugada). Se o arquivo tem no maximo duas datas, elas
+       sao consecutivas, e a segunda so aparece no turno 5, entao o relatorio e do
+       dia operacional D.
+       So roda quando NAO ha cabecalho de periodo: com cabecalho, ele manda, para
+       nao colapsar por engano um relatorio de dois dias em que o segundo dia so
+       rodou de noite. */
+    if (['622', '624', '054'].includes(rotina) && registros && registros.length && !(periodo && periodo.de)) {
+      const d = _diaOperacionalUnico(registros);
+      if (d) { registros.forEach(r => { r.dia = d; }); if (periodo) { periodo.de = d; periodo.ate = d; } }
+    }
     /* o 196 grava peso_pendente/qtd_pendente, nao peso/quantidade — sem este
        alias a conferencia somava zero e acusava 100% de divergencia num parser
        que estava certo. */
@@ -2629,7 +2663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.803.0';
+const APP_VER = '3.804.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
