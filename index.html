@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.797.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.798.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2611,7 +2611,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.797.0';
+const APP_VER = '3.798.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5112,7 +5112,7 @@ async function carregarDadosAM(de, ate, anoRef) {
   // DIA OPERACIONAL: no 624 o refugo da madrugada do T5 (00:00–05:59) vem datado no
   // dia SEGUINTE, mas pertence à noite do dia anterior (mesma regra do Painel). Sem
   // remanejar, a noite do último dia sempre dava zero. Espelha o Painel (linha ~10646).
-  try { aplicarDiaOperacional(perd, 'turno'); aplicarDiaOperacional(par, 'inicio'); } catch (_) {}
+  try { aplicarDiaOperacional(perd, 'turno-perda'); aplicarDiaOperacional(par, 'inicio'); } catch (_) {}
   // o Análise+ busca as perdas por conta própria: sem classificar, o refugo de outro
   // setor continuaria somando na máquina que só apontou
   try { classificarPerdas(perd); } catch (_) {}
@@ -11029,7 +11029,21 @@ function aplicarDiaOperacional(rows, modo) {
     rows.forEach(r => { const ts = String(r.inicio || ''); const m = ts.match(/[T ](\d{2}):(\d{2})/); if (!m) return;
       const d0 = String(ts || r.dia).slice(0, 10); if (!d0) return;   // base = data do próprio início (evita duplo-shift de madrugada já datada como dia operacional)
       if ((+m[1] * 60 + +m[2]) < 360) r.dia = addDiasISO(d0, -1); });
-  } else { // 'turno'
+  } else if (modo === 'turno-perda') {
+    /* 13/08/2026 (João, com o operador do turno): a MADRUGADA É SEMPRE DO DIA
+       ANTERIOR — o dia novo só começa 06:00 com o T1, e o T5 do dia 13 só vai
+       existir hoje à noite (20:51 → 05:59 de amanhã).
+       O RPCP624 não traz hora e data a perda pelo dia do LANÇAMENTO: o que o
+       operador aponta depois da meia-noite cai no dia seguinte. A regra antiga
+       só recuava quando o dia vinha SÓ com turno 5 — o que acontece apenas no
+       último dia do relatório. Nos demais, a madrugada ficava no dia errado e
+       o turno da noite somava DUAS noites.
+       Caso real da 1705: o dia 12 mostrou 83 kg (62 kg do 290ML da noite 11→12
+       + 21 kg do 200ML da noite 12→13). O certo é 21 kg — as paradas, que têm
+       hora, provam que só o 200ML rodou naquela noite.
+       Vale SÓ para perdas: produção (621/622) e paradas já vêm com o dia certo. */
+    rows.forEach(r => { const d = String(r.dia || '').slice(0, 10); if (+r.turno === 5 && d) r.dia = addDiasISO(d, -1); });
+  } else { // 'turno' — produção: o ERP já data no dia em que o turno começou
     const td = {}; rows.forEach(r => { const d = String(r.dia || '').slice(0, 10); if (!d) return; (td[d] = td[d] || new Set()).add(+r.turno || 0); });
     const soT5 = new Set(Object.keys(td).filter(d => td[d].size === 1 && td[d].has(5)));
     if (soT5.size) rows.forEach(r => { const d = String(r.dia || '').slice(0, 10); if (+r.turno === 5 && soT5.has(d)) r.dia = addDiasISO(d, -1); });
@@ -11256,7 +11270,7 @@ async function carregarPainel() {
       aplicarDiaOperacional(prod622, 'turno');
       aplicarDiaOperacional(paradas, 'inicio');
       aplicarDiaOperacional(consumo, 'hora');
-      aplicarDiaOperacional(perdas, 'turno');
+      aplicarDiaOperacional(perdas, 'turno-perda');
       producao = filtraPeriodoOperacional(producao, de, ate);
       prod622 = filtraPeriodoOperacional(prod622, de, ate);
       paradas = filtraPeriodoOperacional(paradas, de, ate);
