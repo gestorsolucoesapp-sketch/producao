@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.799.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.800.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -987,6 +987,11 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 
     <!-- USUÁRIOS (admin) -->
     <section id="abaUsuarios" class="oculto">
+      <div class="card" id="cardTurnosRegua">
+        <div class="titulo-sec">Régua de turnos em uso</div>
+        <p class="desc" style="margin-bottom:10px">Gerada a partir do próprio cálculo (<b>blocoPorHora</b> e <b>horasBlocoDe</b>), varrendo minuto a minuto um dia real de cada tipo. Não é uma tabela digitada à mão: se um número mudar aqui, é porque a regra mudou de verdade.</p>
+        <div id="turnosReguaBox"><p class="desc">carregando…</p></div>
+      </div>
       <div class="card oculto" id="cardBriefing">
         <div class="titulo-sec">Briefing diário automático</div>
         <p class="desc" style="margin-bottom:10px">Os gráficos do dia (produção e perdas por setor) são enviados ao <b>grupo do Telegram</b>. Não cria tarefas no app.</p>
@@ -2611,7 +2616,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.799.0';
+const APP_VER = '3.800.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -2786,7 +2791,18 @@ function _rodouNoite(mq, dia) {
 function _equivDiaMaq(dia, mq) {
   const t = tipoDia(dia);
   if (t === 'domingo' || t === 'folga') return 1;          // produziu no domingo = hora extra, dia cheio
-  if (t === 'sabado' || t === 'reduzido') return _rodouNoite(mq, dia) ? 1 : (10.98 / 23.92);
+  if (t === 'sabado' || t === 'reduzido') {
+    /* 14/08/2026 — TABELA OFICIAL do sabado: Manha 5,50 + Tarde 5,48 = 10,98 h;
+       com a Noite (20:51-05:59, 9,13 h) da 20,12 h = 0,84 de um dia util (23,92).
+       Antes o sabado que emendou a noite valia 1,00 (dia cheio) e subestimava a
+       previsao. As horas vem de horasBlocoDe, que ja aplica o esticamento da
+       Tarde ate 20:50 quando ha apontamento depois das 17:00. */
+    let h = null;
+    try { h = horasBlocoDe(dia); } catch (_) { h = null; }
+    if (!h) return _rodouNoite(mq, dia) ? (20.12 / 23.92) : (10.98 / 23.92);
+    const noite = _rodouNoite(mq, dia) ? (h['Noite'] || 9.13) : 0;
+    return Math.min(1, ((h['Manhã'] || 0) + (h['Tarde'] || 0) + noite) / 23.92);
+  }
   return 1;
 }
 /* PESO DO BLOCO NO DIA — regra do chao de fabrica (Joao, 02/08/2026):
@@ -7852,6 +7868,71 @@ function horasBlocoRate(dia) {
   return cinco ? { 'Manhã': 7.55, 'Tarde': 7.23, 'Noite': 9.13 } : { 'Manhã': 8, 'Tarde': 8, 'Noite': 8 };
 }
 const horasDiaRate = dia => { const h = horasBlocoRate(dia); return h['Manhã'] + h['Tarde'] + h['Noite']; };
+/* ===== REGUA DE TURNOS (aba Config./Acesso) =====
+   Monta a tabela varrendo blocoPorHora minuto a minuto, das 06:00 as 05:59 do dia
+   seguinte, num dia REAL de cada tipo. Assim a tela mostra a regra que o calculo
+   usa, e nao uma copia digitada que pode envelhecer sem ninguem perceber. */
+function _amostraDiaTipo(tipo) {
+  const hoje = new Date();
+  for (let i = 1; i <= 120; i++) {
+    const d = new Date(hoje.getTime() - i * 86400000);
+    const iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    let t = 'util';
+    try { t = tipoDia(iso); } catch (_) { }
+    if (t === tipo) return iso;
+  }
+  return null;
+}
+function _faixasDoDia(dia) {
+  const out = [];
+  for (let t = 6 * 60; t < 30 * 60; t++) {
+    const hh = String(Math.floor(t / 60) % 24).padStart(2, '0');
+    const mm = String(t % 60).padStart(2, '0');
+    let b = null;
+    try { b = blocoPorHora(hh + ':' + mm, dia); } catch (_) { b = null; }
+    if (!b) continue;
+    const ult = out[out.length - 1];
+    if (ult && ult.b === b && ult.fim === t - 1) ult.fim = t;
+    else out.push({ b: b, ini: t, fim: t });
+  }
+  return out;
+}
+function renderTabelaTurnos() {
+  const box = $('turnosReguaBox'); if (!box) return;
+  const hm = t => String(Math.floor(t / 60) % 24).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  const cor = b => b === 'Manhã' ? '#E0A82D' : b === 'Tarde' ? '#70AD47' : '#5B9BD5';
+  const tipos = [
+    { rot: 'Segunda a sexta', tipo: 'util' },
+    { rot: 'Sábado', tipo: 'sabado' },
+    { rot: 'Domingo', tipo: 'domingo' }
+  ];
+  let html = '';
+  tipos.forEach(tp => {
+    const dia = _amostraDiaTipo(tp.tipo);
+    if (!dia) { html += `<div style="margin-bottom:14px"><div style="font-weight:800;color:var(--navy);font-size:13px">${tp.rot}</div><p class="desc">sem dia desse tipo nos últimos 120 dias</p></div>`; return; }
+    const fx = _faixasDoDia(dia);
+    let h = null; try { h = horasBlocoDe(dia); } catch (_) { h = null; }
+    const linhas = fx.map(f => {
+      const dur = (f.fim - f.ini) / 60;   // limites inclusivos nos dois lados: 06:00–12:00 = 6,00 h
+      return `<tr><td style="padding:4px 0"><span style="background:${cor(f.b)};color:#fff;border-radius:5px;padding:1px 8px;font-size:10.5px;font-weight:800">${f.b}</span></td>`
+        + `<td style="padding:4px 0;font-size:12.5px;font-weight:700;color:var(--navy)">${hm(f.ini)}–${hm(f.fim)}</td>`
+        + `<td style="padding:4px 0;font-size:12.5px;text-align:right;color:var(--fraco)">${dur.toFixed(2).replace('.', ',')} h</td></tr>`;
+    }).join('');
+    const tot = h ? (h['Manhã'] + h['Tarde'] + h['Noite']) : 0;
+    const resumo = h
+      ? `<div style="font-size:11.5px;color:var(--fraco-2);font-weight:600;margin-top:4px">Jornada usada no cálculo: Manhã ${h['Manhã'].toFixed(2).replace('.', ',')} h · Tarde ${h['Tarde'].toFixed(2).replace('.', ',')} h · Noite ${h['Noite'].toFixed(2).replace('.', ',')} h · total ${tot.toFixed(2).replace('.', ',')} h</div>`
+      : '';
+    html += `<div style="margin-bottom:16px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">${tp.rot}</div>`
+      + `<div style="font-size:10.5px;color:var(--fraco-2);margin-bottom:5px">amostra: ${fmtData(dia)}</div>`
+      + `<table style="width:100%;border-collapse:collapse">${linhas}</table>${resumo}</div>`;
+  });
+  html += `<div style="border-top:1px solid var(--borda);padding-top:9px;font-size:11.5px;color:var(--fraco);line-height:1.5">`
+    + `<b>Turno vem do relatório.</b> RPCP621, 622 e 624 trazem a coluna Turno — o app usa ela. O RPCP643 (paradas) não traz, então o turno é deduzido pelo horário acima.<br>`
+    + `<b>Fim de semana</b> não tem turno 3 nem 4: Manhã=1, Tarde=2, Noite=5 (antes a noite vinha como 3, e o app trata os dois).<br>`
+    + `<b>Sábado com apontamento após 17:00:</b> a Tarde deixa de terminar às 17:00 e vai até 20:50, como meio de semana.<br>`
+    + `<b>Dia de apontamento</b> abre 06:00 e fecha 05:59 do dia seguinte — a madrugada pertence ao dia que começou.</div>`;
+  box.innerHTML = html;
+}
 // ===== OEE: regra própria de paradas =====
 // por padrão o OEE ignora as paradas "INTERROMPIDO" (não são perda de disponibilidade da máquina)
 const EH_INTERROMPIDO = m => /INTERROMP/i.test(m || '');
@@ -10955,7 +11036,7 @@ function blocoPorHora(h, dia) {
   if (dia && _diaReduzido(dia)) {
     let ehDomingo = false;
     try { ehDomingo = new Date(String(dia).slice(0, 10) + 'T12:00:00').getDay() === 0; } catch (_) {}
-    const corte = ehDomingo ? m(13, 30) : m(11, 30);
+    const corte = ehDomingo ? m(13, 36) : m(11, 30);
     if (t >= m(6, 0) && t <= corte) return 'Manhã';
     if (t > corte && t <= m(20, 50)) return 'Tarde';
     return 'Noite';
@@ -18776,6 +18857,7 @@ async function verHistCiencia(userId, nome) {
 }
 
 async function carregarUsuarios() {
+  try { renderTabelaTurnos(); } catch (_) { }
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
   try { await getLinkFormCfg(); } catch (_) {}
   try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; const sv = $('rngLetVel'); if (sv) sv.value = String(_fatorToVel(_letVelFator)); } catch (_) {}
