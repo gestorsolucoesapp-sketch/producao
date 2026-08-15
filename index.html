@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.805.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.806.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2663,7 +2663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.805.0';
+const APP_VER = '3.806.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19459,6 +19459,35 @@ async function renderFila() {
    O app é uma página: só dispara com a tela aberta. Guardamos os horários no
    app_config pra valerem em qualquer aparelho, e um tique de 30s compara o
    relógio. Cada horário dispara UMA vez por dia — a marca fica em _jaDisparou. */
+let _importAutoOff = null;       // null = ainda não li do banco; true = travado
+
+/* TRAVA DA IMPORTAÇÃO AUTOMÁTICA. Fica no app_config, então vale em todos os
+   aparelhos — travar no celular trava também no PC que ficou aberto na mesa.
+   Existe porque o robô puxa a fila sozinho de 5 em 5 minutos: durante uma
+   revisão ou uma reimportação dia a dia, um PDF de período grande chegando pela
+   fila reescreveria o dia inteiro que acabou de ser acertado. */
+async function carregarImportAuto() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'import_auto_off').maybeSingle();
+    let v = data ? data.valor : null;
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = (v === 'true'); } }
+    _importAutoOff = (v === true);
+  } catch (_) { _importAutoOff = false; }
+  return _importAutoOff;
+}
+
+async function toggleImportAuto() {
+  const novo = !_importAutoOff;
+  try {
+    const { error } = await sb.from('app_config').upsert(
+      { chave: 'import_auto_off', valor: JSON.stringify(novo) }, { onConflict: 'chave' });
+    if (error) throw error;
+    _importAutoOff = novo;
+    toast(novo ? '🔒 Importação automática TRAVADA' : '▶️ Importação automática liberada');
+  } catch (e) { toast('❌ Não consegui salvar: ' + (e.message || e)); }
+  renderHorariosImport();
+}
+
 let _horariosImport = null;      // null = ainda não li do banco
 let _jaDisparou = {};            // { '2026-07-31 14:00': true }
 
@@ -19498,6 +19527,7 @@ async function delHorarioImport(h) {
 }
 
 async function renderHorariosImport() {
+  if (_importAutoOff === null) { try { await carregarImportAuto(); } catch (_) { _importAutoOff = false; } }
   const box = $('cardHorarios'); if (!box) return;
   if (_horariosImport === null) await carregarHorariosImport();
   const chips = (_horariosImport || []).map(h =>
@@ -19505,8 +19535,18 @@ async function renderHorariosImport() {
       ⏰ ${escapeHtml(h)}
       <button onclick="delHorarioImport('${escapeHtml(h)}')" title="remover" style="border:none;background:var(--leve-2);color:var(--fraco);border-radius:50%;width:20px;height:20px;line-height:18px;cursor:pointer;font-weight:800">×</button>
     </span>`).join('');
-  box.innerHTML = `<div class="card">
+  const travado = (_importAutoOff === true);
+  box.innerHTML = `<div class="card" style="${travado ? 'border:2px solid #D64545' : ''}">
     <div class="titulo-sec">⏰ Importar automaticamente</div>
+    <div style="display:flex;align-items:center;gap:10px;background:${travado ? '#FDECEC' : 'var(--leve-2)'};border-radius:12px;padding:10px 12px;margin-bottom:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:800;font-size:13px;color:${travado ? '#B02A2A' : 'var(--navy)'}">${travado ? '🔒 Travada' : '▶️ Liberada'}</div>
+        <div style="font-size:11px;color:var(--fraco);line-height:1.45">${travado
+      ? 'O robô não vai importar nada sozinho. Use enquanto estiver revisando ou reimportando dia a dia. O botão “Importar agora” continua funcionando.'
+      : 'O robô busca a fila sozinho ao abrir o app, de 5 em 5 minutos e nos horários abaixo.'}</div>
+      </div>
+      <button class="btn ${travado ? 'btn-verde' : 'btn-navy'}" style="width:auto;padding:0 14px;white-space:nowrap" onclick="toggleImportAuto()">${travado ? 'Liberar' : 'Travar'}</button>
+    </div>
     <p class="desc" style="margin:0 0 10px">Com o app aberto, ele busca a fila nestes horários e atualiza a tela sozinho.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
       <div class="campo" style="margin:0"><label for="novoHorario">Novo horário</label>
@@ -19540,6 +19580,11 @@ async function _tiqueHorarios() {
 }
 async function puxarDaFila(auto) {
   if (_filaOcupada) return;
+  // trava: vale só para o automático — o botão "Importar agora" continua livre
+  if (auto) {
+    if (_importAutoOff === null) await carregarImportAuto();
+    if (_importAutoOff) return;
+  }
   const pend = await filaPendentes();
   if (!pend.length) { if (!auto) toast('Nenhum relatório novo na fila.'); return; }
   _filaOcupada = true;
