@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.808.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.809.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2663,7 +2663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.808.0';
+const APP_VER = '3.809.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5929,7 +5929,9 @@ function renderAnaliseMais(cache) {
       `<button onclick="mtWhatsGerar('${t}')" style="cursor:pointer;border:none;border-radius:9px;background:${
         t === 'Manhã' ? '#E0A82D' : t === 'Tarde' ? '#70AD47' : t === 'Noite' ? '#5B9BD5' : '#0B2A4A'
       };color:#fff;font-weight:700;padding:9px 16px;font-size:13px">${t}</button>`).join('') +
-    `</div><div class="desc" style="text-align:center;margin-top:6px;font-size:11px">uma imagem por bloco de operador · sem o nome dos auxiliares</div></div>`;
+    `</div>` +
+    `<div style="display:flex;justify-content:center;margin-top:8px"><button onclick="mtRelOperador()" style="cursor:pointer;border:none;border-radius:9px;background:#41586F;color:#fff;font-weight:700;padding:9px 18px;font-size:13px">📋 Por operador · kg · cx · perda</button></div>` +
+    `<div class="desc" style="text-align:center;margin-top:6px;font-size:11px">uma imagem por bloco de operador · sem o nome dos auxiliares</div></div>`;
 
   // agregados base
   const prodKg = E.prod.reduce((a, r) => a + (+r.peso || 0), 0);
@@ -24085,6 +24087,122 @@ function _mtTopMotivoTxt(a) {
   ks.sort((p, q) => a.mot[q] - a.mot[p]);
   const k = ks[0], h = a.mot[k];
   return 'maior parada: ' + k + ' · ' + h.toFixed(1).replace('.', ',') + 'h (' + Math.round(h / a.pa * 100) + '%)';
+}
+
+/* ====== RELATORIO COMPACTO POR OPERADOR (15/08/2026, pedido do Joao) ======
+   NAO substitui o relatorio da aba Gestao de Pessoas — e um segundo, ao lado.
+   Diferencas de proposito:
+     - aquele vem da RPC org_kpis_mes, que so tem kg/caixa e e travada no mes;
+     - este le _mtSnap.M, o MESMO agregado dos cartoes de maquina por turno, entao
+       segue o filtro de periodo e de setor da tela e o numero bate com o resto do
+       app (era o risco de fazer uma segunda conta em SQL: divergir do proprio app).
+   Mostra kg, caixas e perda % por maquina, agrupado por operador, tres colunas. */
+function mtRelOperador() {
+  if (!_mtSnap || !_mtSnap.M) { toast('Abra a análise antes de gerar'); return; }
+  const M = _mtSnap.M, BLS = ['Manhã', 'Tarde', 'Noite'];
+  const eq = _mtEquipe || {};
+
+  // operador -> maquinas, por turno. Maquina sem operador cai em "sem operador".
+  const colunas = BLS.map(bl => {
+    const idx = {}, ops = [];
+    Object.keys(M).forEach(cod => {
+      const a = M[cod] && M[cod][bl];
+      if (!a || !(a.v > 0)) return;
+      const e = eq[String(cod) + '|' + bl];
+      const nome = (e && e.operador) ? _mtCurto(e.operador) : 'sem operador';
+      if (!idx[nome]) { idx[nome] = { nome: nome, maqs: [], kg: 0, cx: 0, pe: 0 }; ops.push(idx[nome]); }
+      idx[nome].maqs.push({ cod: cod, kg: a.v || 0, cx: a.vcx || 0, pe: a.pe || 0 });
+      idx[nome].kg += (a.v || 0); idx[nome].cx += (a.vcx || 0); idx[nome].pe += (a.pe || 0);
+    });
+    ops.forEach(o => o.maqs.sort((x, y) => (+x.cod || 0) - (+y.cod || 0)));
+    ops.sort((x, y) => y.kg - x.kg);
+    return { bl: bl, ops: ops, kg: ops.reduce((t, o) => t + o.kg, 0), cx: ops.reduce((t, o) => t + o.cx, 0), pe: ops.reduce((t, o) => t + o.pe, 0) };
+  });
+  if (!colunas.some(c => c.ops.length)) { toast('Nenhuma máquina com produção no período'); return; }
+
+  const rpct = (kg, pe) => (kg + pe) > 0 ? (pe / (kg + pe) * 100) : 0;
+  const fkg = v => Math.round(v).toLocaleString('pt-BR');
+  const COR_T = { 'Manhã': '#E0A82D', 'Tarde': '#70AD47', 'Noite': '#5B9BD5' };
+
+  const W = 1400, PAD = 36, GAP = 20;
+  const CW = (W - PAD * 2 - GAP * 2) / 3;
+  const LOP = 40, LMQ = 26, GAPOP = 13, HDR = 210;
+  const altCol = c => c.ops.reduce((a, o) => a + LOP + o.maqs.length * LMQ + GAPOP, 12);
+  const H = HDR + Math.max(40, ...colunas.map(altCol)) + 70;
+
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const x = cv.getContext('2d');
+  const F = (p, w) => (w || 400) + ' ' + p + 'px -apple-system, "Segoe UI", Roboto, Arial';
+  const rr = (a, b, c, d, r) => { x.beginPath(); x.moveTo(a + r, b); x.arcTo(a + c, b, a + c, b + d, r); x.arcTo(a + c, b + d, a, b + d, r); x.arcTo(a, b + d, a, b, r); x.arcTo(a, b, a + c, b, r); x.closePath(); };
+
+  x.fillStyle = '#0B2A4A'; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#fff'; x.font = F(36, 800); x.textAlign = 'left';
+  x.fillText('POR OPERADOR · kg · caixas · perda', PAD, 60);
+  const totKg = colunas.reduce((a, c) => a + c.kg, 0), totPe = colunas.reduce((a, c) => a + c.pe, 0);
+  x.textAlign = 'right'; x.font = F(25, 800);
+  x.fillText('TOTAL  ' + fkg(totKg) + ' kg', W - PAD, 60);
+  x.textAlign = 'left'; x.fillStyle = '#9FB6CC'; x.font = F(19, 600);
+  let sub = '';
+  try { sub = (_mtSnap.rotulo || '') + (_mtSnap.ate ? ' · até ' + fmtData(_mtSnap.ate) : ''); } catch (_) { }
+  x.fillText(sub + ' · refugo do período ' + rpct(totKg, totPe).toFixed(1).replace('.', ',') + '%', PAD, 90);
+
+  /* ---- cabecalho de cada turno ---- */
+  colunas.forEach((c, i) => {
+    const cx0 = PAD + i * (CW + GAP);
+    x.fillStyle = '#12395F'; rr(cx0, 116, CW, 74, 12); x.fill();
+    x.fillStyle = COR_T[c.bl]; x.fillRect(cx0, 116, 5, 74);
+    x.fillStyle = COR_T[c.bl]; x.font = F(20, 800); x.fillText(c.bl.toUpperCase(), cx0 + 18, 142);
+    x.fillStyle = '#fff'; x.font = F(27, 800);
+    x.fillText(fkg(c.kg) + ' kg', cx0 + 18, 174);
+    x.fillStyle = '#9FB6CC'; x.font = F(17, 600); x.textAlign = 'right';
+    x.fillText(fkg(c.cx) + ' cx · ' + rpct(c.kg, c.pe).toFixed(1).replace('.', ',') + '%', cx0 + CW - 16, 174);
+    x.textAlign = 'left';
+  });
+
+  /* ---- linhas ---- */
+  colunas.forEach((c, i) => {
+    const cx0 = PAD + i * (CW + GAP);
+    let y = HDR;
+    c.ops.forEach(o => {
+      x.fillStyle = '#16406B'; rr(cx0, y - 20, CW, 30, 8); x.fill();
+      x.fillStyle = '#fff'; x.font = F(19, 800);
+      x.fillText(o.nome.length > 22 ? o.nome.slice(0, 21) + '…' : o.nome, cx0 + 12, y + 1);
+      x.textAlign = 'right'; x.fillStyle = '#CFE0F0'; x.font = F(18, 700);
+      x.fillText(fkg(o.kg) + ' kg', cx0 + CW - 12, y + 1);
+      x.textAlign = 'left';
+      y += LOP;
+      o.maqs.forEach(m => {
+        const rp = rpct(m.kg, m.pe);
+        x.fillStyle = '#9FB6CC'; x.font = F(17, 700);
+        x.fillText(m.cod, cx0 + 14, y);
+        x.textAlign = 'right';
+        x.fillStyle = '#E8EFF6'; x.font = F(17, 700);
+        x.fillText(fkg(m.kg) + ' kg', cx0 + CW * 0.60, y);
+        x.fillStyle = '#9FB6CC'; x.font = F(16, 600);
+        x.fillText(m.cx > 0 ? fkg(m.cx) + ' cx' : '—', cx0 + CW * 0.82, y);
+        x.fillStyle = rp <= 2.5 ? '#4ED28A' : rp <= 4 ? '#F0A03C' : '#F06A6A';
+        x.font = F(17, 800);
+        x.fillText(rp.toFixed(1).replace('.', ',') + '%', cx0 + CW - 12, y);
+        x.textAlign = 'left';
+        y += LMQ;
+      });
+      y += GAPOP;
+    });
+  });
+
+  x.fillStyle = '#5C7186'; x.font = F(20, 600); x.textAlign = 'center';
+  x.fillText('Rioplastic · Gestão de Produção', W / 2, H - 26);
+
+  cv.toBlob(async blob => {
+    if (!blob) { toast('Não consegui gerar a imagem'); return; }
+    const f = new File([blob], 'por-operador.jpg', { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [f] }) && navigator.share) {
+      try { await navigator.share({ files: [f], title: 'Produção por operador' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    _mtAbrirGaleria([{ cod: 'Por operador', url: cv.toDataURL('image/jpeg', 0.93) }], 'operador');
+  }, 'image/jpeg', 0.93);
 }
 
 async function mtWhatsGerar(turno) {
