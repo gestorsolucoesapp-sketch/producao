@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.813.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.814.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1229,7 +1229,10 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
             <label><input type="checkbox" id="rhNvTrava"> Requer apuração prévia</label>
           </div>
 
-          <button class="btn btn-verde" onclick="rhNovaSalvar()" style="margin-top:12px">Concluir entrevista</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-verde" onclick="rhNovaSalvar()" style="flex:1;min-width:170px">Concluir entrevista</button>
+            <button class="btn" onclick="rhCopiarIA()" style="width:auto;padding:9px 14px;font-size:13px">📋 copiar para a IA</button>
+          </div>
           <div id="rhNvMsg" style="font-size:12.5px;margin-top:8px;line-height:1.5"></div>
         </div>
       </div>
@@ -2663,7 +2666,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.813.0';
+const APP_VER = '3.814.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6466,6 +6469,75 @@ const RH_COR_TURNO = { 'Manhã':'#E0A82D', 'Tarde':'#70AD47', 'Noite':'#5B9BD5' 
 function rhEsc(v) {
   return (v == null ? '' : String(v))
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* PROMPT PRONTO PARA A IA — 15/08/2026.
+   O texto da entrevista sai cru: cada um escreve de um jeito, e as 105 fichas de
+   junho seguem um padrao (analise curta em terceira pessoa, comecando por cargo e
+   tempo de casa; nada de adjetivo solto; conclusao que o dado sustente).
+   Para a ficha nova sair igual, o prompt leva DUAS FICHAS REAIS como exemplo — o
+   modelo copia o estilo existente em vez de inventar um. Os exemplos saem do
+   proprio banco, entao acompanham o padrao se ele mudar.
+   A saida e pedida em JSON com os mesmos campos de rh_analise_individual, para
+   voce colar de volta sem reescrever nada. */
+function rhCopiarIA() {
+  const v = id => { const e = $(id); return e ? String(e.value || '').trim() : ''; };
+  const nome = v('rhNvBusca'), maq = v('rhNvMaq'), mora = v('rhNvMora'), esc = v('rhNvEsc'), ap = v('rhNvApont');
+  if (!ap) { toast('Escreva os apontamentos antes de copiar'); return; }
+  const cad = ($('rhNvCad') ? $('rhNvCad').textContent : '') || '';
+  const setor = ($('rhNvSetor') && $('rhNvSetor').value) || '';
+  const turno = ($('rhNvTurno') && $('rhNvTurno').value) || '';
+
+  // dois exemplos reais, os mais completos que existirem
+  const ex = (_rhDados || []).filter(p => p.analise && p.analise.length > 150 && p.pontos_fortes && p.acao_sugerida).slice(0, 2);
+  const exTxt = ex.map(p => JSON.stringify({
+    analise: p.analise, pontos_fortes: p.pontos_fortes, necessidades: p.necessidades,
+    acao_sugerida: p.acao_sugerida, temas: p.temas || [],
+    potencial_multiplicador: !!p.potencial_multiplicador, interesse_carreira: !!p.interesse_carreira
+  }, null, 2)).join('\n\n');
+
+  const temas = (Array.isArray(_rhTemas) && _rhTemas.length) ? _rhTemas.join(', ') : '';
+
+  const prompt =
+`Você vai transformar as anotações cruas de uma entrevista de chão de fábrica em uma ficha de diagnóstico, no MESMO padrão das fichas que já existem na Rioplastic.
+
+REGRAS DE ESTILO (obrigatórias):
+- "analise": 2 a 4 frases, terceira pessoa, começando por cargo e tempo de casa. Descreve o que a pessoa relatou e o que isso significa para a gestão.
+- Nada de adjetivo solto ("excelente", "ótimo profissional") sem fato que sustente.
+- Não conclua nada que a anotação não diga. Se algo é dúvida, escreva como dúvida a esclarecer.
+- Relato de atrito ou acusação vira "a verificar" / "a apurar", nunca fato dado.
+- "pontos_fortes", "necessidades" e "acao_sugerida": uma a duas frases cada, diretas.
+- "temas": escolha só desta lista quando couber: ${temas || '(sem lista carregada)'}
+- Responda SOMENTE com o JSON, sem comentário e sem crase.
+
+EXEMPLOS DE FICHAS JÁ APROVADAS:
+${exTxt || '(sem exemplos disponíveis)'}
+
+DADOS DA PESSOA:
+nome: ${nome}
+${cad}
+setor: ${setor} | turno: ${turno}
+máquina/função: ${maq}
+onde mora: ${mora}
+escolaridade: ${esc}
+
+ANOTAÇÕES DA ENTREVISTA (cruas):
+${ap}
+
+Devolva o JSON com as chaves: analise, pontos_fortes, necessidades, acao_sugerida, temas, potencial_multiplicador, interesse_carreira.`;
+
+  const ok = () => { toast('📋 Prompt copiado — cole na IA'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(prompt).then(ok).catch(() => rhCopiaFallback(prompt));
+  } else rhCopiaFallback(prompt);
+}
+function rhCopiaFallback(txt) {
+  const t = document.createElement('textarea');
+  t.value = txt; t.style.position = 'fixed'; t.style.opacity = '0';
+  document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); toast('📋 Prompt copiado'); }
+  catch (_) { toast('Não consegui copiar — selecione o texto manualmente'); }
+  document.body.removeChild(t);
 }
 
 async function carregarRH() {
