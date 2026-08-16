@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.815.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.816.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2668,7 +2668,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.815.0';
+const APP_VER = '3.816.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19919,6 +19919,41 @@ async function renderFila() {
    app_config pra valerem em qualquer aparelho, e um tique de 30s compara o
    relógio. Cada horário dispara UMA vez por dia — a marca fica em _jaDisparou. */
 let _importAutoOff = null;       // null = ainda não li do banco; true = travado
+let _importBloq = null;          // rotinas que a FILA não deve importar (ex.: ['622','624','054'])
+
+/* BLOQUEIO POR RELATÓRIO. Diferente da trava geral: aqui a fila roda normalmente,
+   mas os relatórios escolhidos ficam parados nela em vez de entrar. Serve para o
+   caso do 622/624/054, que precisam ser importados DIA A DIA na mão enquanto o
+   robô só sabe mandar o período do mês.
+   Vale para a fila (automática e botão "Importar agora"). O envio direto de PDF
+   pela caixa de arquivos NÃO é afetado — é justamente por lá que você importa o
+   dia certo. Nada é descartado: o que fica bloqueado continua na fila. */
+async function carregarImportBloq() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'import_bloq').maybeSingle();
+    let v = data ? data.valor : null;
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = null; } }
+    _importBloq = Array.isArray(v) ? v.map(String) : [];
+  } catch (_) { _importBloq = []; }
+  return _importBloq;
+}
+async function toggleImportBloq(cod) {
+  if (_importBloq === null) await carregarImportBloq();
+  const i = _importBloq.indexOf(String(cod));
+  if (i >= 0) _importBloq.splice(i, 1); else _importBloq.push(String(cod));
+  try {
+    const { error } = await sb.from('app_config').upsert(
+      { chave: 'import_bloq', valor: JSON.stringify(_importBloq) }, { onConflict: 'chave' });
+    if (error) throw error;
+    toast(i >= 0 ? '▶️ ' + cod + ' volta a entrar pela fila' : '⛔ ' + cod + ' fica parado na fila');
+  } catch (e) { toast('❌ Não consegui salvar: ' + (e.message || e)); }
+  renderHorariosImport(); try { renderFila(); } catch (_) { }
+}
+function _bloqueado(codigo) {
+  if (!_importBloq || !_importBloq.length) return false;
+  const c = String(codigo || '').toLowerCase();
+  return _importBloq.some(b => c.includes(String(b).toLowerCase()));
+}
 
 /* TRAVA DA IMPORTAÇÃO AUTOMÁTICA. Fica no app_config, então vale em todos os
    aparelhos — travar no celular trava também no PC que ficou aberto na mesa.
@@ -19987,6 +20022,7 @@ async function delHorarioImport(h) {
 
 async function renderHorariosImport() {
   if (_importAutoOff === null) { try { await carregarImportAuto(); } catch (_) { _importAutoOff = false; } }
+  if (_importBloq === null) { try { await carregarImportBloq(); } catch (_) { _importBloq = []; } }
   const box = $('cardHorarios'); if (!box) return;
   if (_horariosImport === null) await carregarHorariosImport();
   const chips = (_horariosImport || []).map(h =>
@@ -20005,6 +20041,14 @@ async function renderHorariosImport() {
       : 'O robô busca a fila sozinho ao abrir o app, de 5 em 5 minutos e nos horários abaixo.'}</div>
       </div>
       <button class="btn ${travado ? 'btn-verde' : 'btn-navy'}" style="width:auto;padding:0 14px;white-space:nowrap" onclick="toggleImportAuto()">${travado ? 'Liberar' : 'Travar'}</button>
+    </div>
+    <div style="border:1px solid var(--borda);border-radius:12px;padding:9px 11px;margin-bottom:10px">
+      <div style="font-weight:800;font-size:12.5px;color:var(--navy);margin-bottom:2px">Relatórios que NÃO devem entrar pela fila</div>
+      <div style="font-size:11px;color:var(--fraco);line-height:1.5;margin-bottom:6px">Ficam parados na fila esperando. Use para o que você importa dia a dia na mão — o envio direto de PDF continua livre.</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">${['621', '622', '624', '054', '643', '646', '196', '241', '264', '339'].map(c => {
+      const on = (_importBloq || []).includes(c);
+      return `<span onclick="toggleImportBloq('${c}')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 11px;${on ? 'background:#D64545;color:#fff' : 'background:var(--leve-2);color:var(--navy)'}">${on ? '⛔ ' : ''}${c}</span>`;
+    }).join('')}</div>
     </div>
     <p class="desc" style="margin:0 0 10px">Com o app aberto, ele busca a fila nestes horários e atualiza a tela sozinho.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
@@ -20053,8 +20097,11 @@ async function puxarDaFila(auto) {
   // Dois importadores diferentes: os seis rpcp passam pelo RioParsers da aba
   // Importar; o rsmi005 e o rsmi010 têm parser próprio e viram OS na aba
   // Manutenção. Mandar um pro caminho do outro dá "não foi possível ler".
+  if (_importBloq === null) await carregarImportBloq();
   const prod = [], os = [], ids = [], falhas = [];
+  let segurados = 0;
   for (const r of pend) {
+    if (_bloqueado(r.codigo)) { segurados++; continue; }   // fica na fila, não é descartado
     try {
       const { data: blob, error } = await sb.storage.from('relatorios-dia').download(r.caminho);
       if (error || !blob) { falhas.push(r.arquivo); continue; }
@@ -20066,7 +20113,8 @@ async function puxarDaFila(auto) {
 
   if (!prod.length && !os.length) {
     _filaOcupada = false; renderFila();
-    toast('❌ Não consegui baixar os PDFs da fila.');
+    if (b) { b.disabled = false; b.textContent = 'Importar agora'; }
+    toast(segurados ? '⛔ Os ' + segurados + ' relatório(s) da fila estão bloqueados — nada foi importado.' : '❌ Não consegui baixar os PDFs da fila.');
     return;
   }
 
