@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.810.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.811.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2663,7 +2663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.810.0';
+const APP_VER = '3.811.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3332,7 +3332,9 @@ let abasPermitidas = ['painel'];
    criadas depois e esquecidas nesta lista. A ordem abaixo segue a barra de abas.
    'usuarios' fica de fora de propósito: é a própria tela de permissão, só admin.
    O antigo sinalizador soDev não era lido em lugar nenhum — removido para não dar
-   a impressão de que protegia algo. */
+   a impressão de que protegia algo.
+   'rh' (Diagnóstico RH) também fica FORA: ela não olha abasPermitidas, é liberada
+   pelo sinalizador souRH. Pôr aqui criaria um checkbox que não liberaria nada. */
 const ABAS = [
   { id: 'painel', nome: 'Painel' }, { id: 'analise', nome: 'Itens' },
   { id: 'analisemais', nome: 'Análise+' },
@@ -3344,7 +3346,6 @@ const ABAS = [
   { id: 'importar', nome: 'Importar' }, { id: 'historico', nome: 'Histórico' },
   { id: 'estoque', nome: 'Estoque' },
   { id: 'conf', nome: 'Conferência' },
-  { id: 'rh', nome: 'Diagnóstico RH' },
   { id: 'organograma', nome: 'Gestão de Pessoas' }
 ];
 const SETORES_PADRAO = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Manutenção', 'KIT', 'Qualidade', 'PCP / Programação', 'Almoxarifado', 'Administrativo', 'Outro'];
@@ -6478,6 +6479,7 @@ async function carregarRH() {
   if (error) { box.innerHTML = '<div class="card">Erro ao carregar: ' + rhEsc(error.message) + '</div>'; return; }
   if (!data || !data.length) { box.innerHTML = '<div class="card">Nenhuma ficha visível para este login.</div>'; return; }
   _rhDados = data;
+  try { await entrevCarregar(); } catch (_) { }
   try {
     const rem = await sb.from('rh_remuneracao').select('matricula,cargo,salario,situacao,admissao');
     if (rem.data && rem.data.length) {
@@ -6811,6 +6813,128 @@ function rhRemBloco(p) {
     comp + '</div>';
 }
 
+/* ================= ENTREVISTA (Diagnóstico RH) — 15/08/2026 =================
+   Duas respostas ao MESMO questionário: uma do líder, uma do colaborador.
+   O líder responde ANTES e às cegas — não vê a resposta do colaborador, e o
+   gestor lê a avaliação dele antes de sentar com a pessoa. Se o líder visse
+   antes, ele ancoraria e a comparação perderia o valor.
+   Só o gestor enxerga: a tabela rh_entrevista tem RLS travada no uid dele,
+   igual a rh_analise_individual. Se um dia o líder for preencher direto no app,
+   é preciso uma policy nova por eh_lider — hoje quem digita os dois lados é o gestor.
+   A chave é (matricula, lado, data_ref): dá para reentrevistar a mesma pessoa
+   noutra data sem perder a rodada anterior. */
+let _entrev = {};        // matricula -> { lider: {...}, colaborador: {...} }
+let _entrevAberta = null;
+
+const ENT_CAMPOS = [
+  { g: 'Encaixe', k: 'maquina_atual', r: 'Máquina em que está hoje', t: 'txt' },
+  { g: 'Encaixe', k: 'maquinas_pref', r: 'Até 3 máquinas que preferiria', t: 'lista' },
+  { g: 'Encaixe', k: 'maquina_certa', r: 'Está na máquina certa?', t: 'sn' },
+  { g: 'Convívio', k: 'colegas_pref', r: 'Até 3 colegas com quem gosta de trabalhar', t: 'lista' },
+  { g: 'Convívio', k: 'colega_certo', r: 'Está com a dupla certa?', t: 'sn' },
+  { g: 'Carreira', k: 'treinamentos', r: 'Treinamentos que precisa', t: 'area' },
+  { g: 'Carreira', k: 'quer_crescer', r: 'Quer crescer para qual função', t: 'txt' },
+  { g: 'Salário', k: 'merece_aumento', r: 'Merece aumento?', t: 'sn' },
+  { g: 'Salário', k: 'salario_just', r: 'Por quê', t: 'area' },
+  { g: 'Sentimento', k: 'deixa_feliz', r: 'O que deixa feliz', t: 'area' },
+  { g: 'Sentimento', k: 'deixa_frustrado', r: 'O que deixa frustrado', t: 'area' },
+  { g: 'Empresa', k: 'percepcao_nota', r: 'Percepção da empresa (1 a 5)', t: 'nota' },
+  { g: 'Empresa', k: 'percepcao_txt', r: 'Percepção — comentário', t: 'area' },
+  { g: 'Empresa', k: 'espera_futuro', r: 'O que espera do futuro', t: 'area' },
+  { g: 'Empresa', k: 'observacoes', r: 'Observações', t: 'area' }
+];
+
+async function entrevCarregar() {
+  try {
+    const { data } = await sb.from('rh_entrevista').select('*').order('data_ref', { ascending: false });
+    _entrev = {};
+    (data || []).forEach(r => {
+      const m = String(r.matricula || '');
+      _entrev[m] = _entrev[m] || {};
+      if (!_entrev[m][r.lado]) _entrev[m][r.lado] = r;   // fica a rodada mais recente
+    });
+  } catch (e) { console.warn('entrevista:', e); }
+}
+
+function entrevResumo(mat) {
+  const e = _entrev[String(mat || '')] || {};
+  const cor = (ok, txt) => `<span style="font-size:10.5px;font-weight:800;border-radius:6px;padding:2px 7px;background:${ok ? '#D5F0E3' : '#F2F3F4'};color:${ok ? '#1E7A4E' : '#7F8C8D'}">${txt}</span>`;
+  return cor(!!e.lider, 'líder ' + (e.lider ? '✓' : '—')) + ' ' + cor(!!e.colaborador, 'colaborador ' + (e.colaborador ? '✓' : '—'));
+}
+
+function entrevAbrir(mat, nome, lado) {
+  _entrevAberta = { mat: String(mat), nome: nome, lado: lado };
+  const d = ((_entrev[String(mat)] || {})[lado]) || {};
+  const val = k => { const v = d[k]; return (v === null || v === undefined) ? '' : v; };
+  const lista = k => { try { return (d[k] || []).join(', '); } catch (_) { return ''; } };
+  let h = `<div style="font-size:12px;color:var(--fraco);margin-bottom:10px">${lado === 'lider'
+    ? 'Avaliação do <b>líder</b>, respondida <b>antes</b> da conversa e sem ver o que o colaborador disse.'
+    : 'Resposta do <b>colaborador</b>, colhida na entrevista.'}</div>`;
+  let gAtual = '';
+  ENT_CAMPOS.forEach(c => {
+    if (c.g !== gAtual) { gAtual = c.g; h += `<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin:12px 0 4px">${c.g}</div>`; }
+    const id = 'ent_' + c.k;
+    h += `<label style="display:block;font-size:12px;font-weight:700;color:var(--navy);margin-bottom:3px">${c.r}</label>`;
+    if (c.t === 'area') h += `<textarea id="${id}" rows="2" style="width:100%;border:1px solid var(--borda);border-radius:8px;padding:7px;font-size:13px;margin-bottom:8px">${escapeHtml(String(val(c.k)))}</textarea>`;
+    else if (c.t === 'sn') h += `<select id="${id}" style="width:100%;border:1px solid var(--borda);border-radius:8px;padding:7px;font-size:13px;margin-bottom:8px"><option value="">—</option><option value="1"${d[c.k] === true ? ' selected' : ''}>Sim</option><option value="0"${d[c.k] === false ? ' selected' : ''}>Não</option></select>`;
+    else if (c.t === 'nota') h += `<select id="${id}" style="width:100%;border:1px solid var(--borda);border-radius:8px;padding:7px;font-size:13px;margin-bottom:8px"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}"${String(val(c.k)) === String(n) ? ' selected' : ''}>${n}</option>`).join('')}</select>`;
+    else if (c.t === 'lista') h += `<input id="${id}" placeholder="separe por vírgula" value="${escapeHtml(lista(c.k))}" style="width:100%;border:1px solid var(--borda);border-radius:8px;padding:7px;font-size:13px;margin-bottom:8px">`;
+    else h += `<input id="${id}" value="${escapeHtml(String(val(c.k)))}" style="width:100%;border:1px solid var(--borda);border-radius:8px;padding:7px;font-size:13px;margin-bottom:8px">`;
+  });
+  h += `<button class="btn btn-navy" style="margin-top:6px" onclick="entrevSalvar()">Salvar</button>`;
+  abreDet((lado === 'lider' ? '👔 Líder · ' : '🗣 Colaborador · ') + nome, h);
+}
+
+async function entrevSalvar() {
+  if (!_entrevAberta) return;
+  const A = _entrevAberta;
+  const reg = { matricula: A.mat, nome: A.nome, lado: A.lado, atualizado_em: new Date().toISOString() };
+  ENT_CAMPOS.forEach(c => {
+    const el = $('ent_' + c.k); if (!el) return;
+    const v = el.value;
+    if (c.t === 'sn') reg[c.k] = v === '' ? null : (v === '1');
+    else if (c.t === 'nota') reg[c.k] = v === '' ? null : Number(v);
+    else if (c.t === 'lista') reg[c.k] = v.split(',').map(x => x.trim()).filter(Boolean).slice(0, 3);
+    else reg[c.k] = v || null;
+  });
+  try {
+    const { error } = await sb.from('rh_entrevista').upsert(reg, { onConflict: 'matricula,lado,data_ref' });
+    if (error) throw error;
+    toast('✅ Entrevista salva');
+    await entrevCarregar();
+    fecharItemDet();
+    if (typeof rhRender === 'function') rhRender();
+  } catch (e) { toast('❌ ' + (e.message || e)); }
+}
+
+function entrevConfronto(mat, nome) {
+  const e = _entrev[String(mat)] || {};
+  const L = e.lider, C = e.colaborador;
+  if (!L || !C) { toast('Precisa das duas respostas para confrontar'); return; }
+  const txt = (o, k, t) => {
+    const v = o ? o[k] : null;
+    if (v === null || v === undefined || v === '') return '—';
+    if (t === 'sn') return v ? 'Sim' : 'Não';
+    if (t === 'lista') { try { return (v || []).join(', ') || '—'; } catch (_) { return '—'; } }
+    return String(v);
+  };
+  let h = '<div style="font-size:12px;color:var(--fraco);margin-bottom:10px">Laranja = onde líder e colaborador <b>divergem</b>. É aí que está a conversa.</div>';
+  let gAtual = '';
+  ENT_CAMPOS.forEach(c => {
+    const a = txt(L, c.k, c.t), b = txt(C, c.k, c.t);
+    if (a === '—' && b === '—') return;
+    const diverge = (c.t === 'sn' || c.t === 'nota') && a !== '—' && b !== '—' && a !== b;
+    if (c.g !== gAtual) { gAtual = c.g; h += `<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin:12px 0 4px">${c.g}</div>`; }
+    h += `<div style="border:1px solid ${diverge ? '#E8871F' : 'var(--borda)'};background:${diverge ? '#FDF3E7' : 'transparent'};border-radius:9px;padding:8px 10px;margin-bottom:7px">
+      <div style="font-size:11.5px;font-weight:800;color:var(--navy);margin-bottom:4px">${c.r}${diverge ? ' <span style="color:#B8620F">· diverge</span>' : ''}</div>
+      <div style="display:flex;gap:10px;font-size:12px;line-height:1.5">
+        <div style="flex:1;min-width:0"><div style="font-size:10px;font-weight:800;color:#8A97A6">LÍDER</div>${escapeHtml(a)}</div>
+        <div style="flex:1;min-width:0;border-left:1px solid var(--borda);padding-left:10px"><div style="font-size:10px;font-weight:800;color:#8A97A6">COLABORADOR</div>${escapeHtml(b)}</div>
+      </div></div>`;
+  });
+  abreDet('⚖️ Confronto · ' + nome, h);
+}
+
 function rhFicha(p) {
   let h = '<div style="border-top:1px solid #E3E9EF;margin-top:10px;padding-top:9px" onclick="event.stopPropagation()">';
 
@@ -6869,6 +6993,22 @@ function rhFicha(p) {
   }
 
   h += '<button class="btn" onclick="rhEditar(' + p.num + ')" style="margin-top:10px;width:auto;padding:7px 14px;font-size:13px">✏️ Editar ficha</button>';
+
+  /* ENTREVISTA — o líder primeiro, o colaborador depois, o confronto no fim.
+     O botão do confronto só habilita com os dois lados preenchidos. */
+  if (p.matricula) {
+    const m = String(p.matricula), nm = String(p.nome || '').replace(/'/g, "\\'");
+    const e = _entrev[m] || {};
+    h += '<div style="margin-top:12px;border-top:1px dashed #E3E9EF;padding-top:9px">' +
+      '<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Entrevista ' + entrevResumo(m) + '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button class="btn" onclick="entrevAbrir(\'' + m + '\',\'' + nm + '\',\'lider\')" style="width:auto;padding:7px 12px;font-size:12.5px">👔 ' + (e.lider ? 'Ver/editar líder' : '+ Avaliação do líder') + '</button>' +
+      '<button class="btn" onclick="entrevAbrir(\'' + m + '\',\'' + nm + '\',\'colaborador\')" style="width:auto;padding:7px 12px;font-size:12.5px">🗣 ' + (e.colaborador ? 'Ver/editar colaborador' : '+ Entrevista do colaborador') + '</button>' +
+      (e.lider && e.colaborador ? '<button class="btn btn-navy" onclick="entrevConfronto(\'' + m + '\',\'' + nm + '\')" style="width:auto;padding:7px 12px;font-size:12.5px">⚖️ Confrontar</button>' : '') +
+      '</div>' +
+      (e.lider && !e.colaborador ? '<div class="desc" style="margin-top:5px;font-size:11px">Avaliação do líder pronta — leia antes de sentar com a pessoa.</div>' : '') +
+      '</div>';
+  }
   h += '</div>';
   return h;
 }
