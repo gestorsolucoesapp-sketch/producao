@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.817.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.818.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2668,7 +2668,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.817.0';
+const APP_VER = '3.818.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11678,16 +11678,18 @@ let usuariosCarregados = []; // cache da lista de usuários (admin)
 // SEM hora (621/622/624): dia composto SÓ por turno 5 = madrugada pura → vai p/ véspera.
 // flag: false = paradas confiam no dia do ERP (igual ao PDF/RPCP643) · true = aplica a regra 06:00→05:59 (correto p/ madrugada)
 const DIA_OP_PARADAS = false;
-/* ===== DIAS ISOLADOS =====
-   15/08/2026: o ERP sofreu um incidente no servidor e os dias 12 e 13/08 vieram
-   incompletos — parte do apontamento se perdeu e a empresa tenta recuperar.
-   Dado incompleto é PIOR que dado ausente: entra na média, derruba a previsão do
-   mês e ninguém percebe, porque o número existe e parece plausível.
-   Então o dia continua no banco (nada é apagado, e volta sozinho se a
-   recuperação der certo e o relatório for reimportado), mas é EXCLUÍDO de toda
-   conta e sinalizado na tela.
-   A lista fica no app_config, chave 'dias_isolados', para tirar/pôr sem deploy. */
-let _diasIsolados = null;   // { '2026-08-12': 'motivo', ... }
+/* ===== TURNOS SINALIZADOS =====
+   15/08/2026: incidente no servidor do ERP entre 22:00 de 12/08 e ~14:00 de 13/08.
+   Parte do apontamento se perdeu e só uma parte foi recuperada.
+   O corte é POR TURNO, não por dia: 12/08 perdeu só a Noite; 13/08 perdeu T1 e T2
+   e voltou ao normal do T3 em diante. Isolar o dia inteiro descartaria dado bom —
+   12/08 T1 a T4 e 13/08 T3/T4/T5 estão íntegros.
+   Decisão do João: o dado que existe FICA e continua nas contas; o que muda é a
+   sinalização, para quem lê saber que aquele turno está por baixo do real.
+   Formato no app_config, chave 'dias_isolados':
+     { "2026-08-12": { "motivo": "...", "turnos": [5] }, ... }
+   Aceita também o formato antigo (string = dia inteiro). */
+let _diasIsolados = null;
 
 async function carregarDiasIsolados() {
   try {
@@ -11698,18 +11700,31 @@ async function carregarDiasIsolados() {
   } catch (_) { _diasIsolados = {}; }
   return _diasIsolados;
 }
-function diaIsolado(dia) {
-  if (!_diasIsolados) return false;
-  return !!_diasIsolados[String(dia || '').slice(0, 10)];
+function diaIsolado() { return false; }   // nada mais é descartado — ver TURNOS SINALIZADOS
+function _turnosAfetados(dia) {
+  const e = (_diasIsolados || {})[String(dia || '').slice(0, 10)];
+  if (!e) return null;
+  if (typeof e === 'string') return { motivo: e, turnos: null };          // formato antigo = dia todo
+  return { motivo: e.motivo || 'dados incompletos', turnos: Array.isArray(e.turnos) ? e.turnos : null };
 }
+function turnoAfetado(dia, turno) {
+  const a = _turnosAfetados(dia); if (!a) return false;
+  return !a.turnos || a.turnos.includes(Number(turno));
+}
+const _BL_NOME = { 1: 'Manhã', 2: 'Tarde', 3: 'Manhã', 4: 'Tarde', 5: 'Noite' };
 function avisoDiasIsolados() {
   const ks = Object.keys(_diasIsolados || {}).sort();
   if (!ks.length) return '';
+  const linhas = ks.map(d => {
+    const a = _turnosAfetados(d);
+    const t = a.turnos ? a.turnos.map(x => 'T' + x + ' (' + (_BL_NOME[x] || '?') + ')').join(', ') : 'dia inteiro';
+    return '<div style="margin-top:2px">• <b>' + escapeHtml(fmtData(d)) + '</b> — ' + escapeHtml(t) + '</div>';
+  }).join('');
+  const m = _turnosAfetados(ks[0]).motivo;
   return '<div style="background:#FDF3E7;border-left:4px solid #E8871F;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;line-height:1.55;color:#8A5A12">' +
-    '<b>⚠️ ' + ks.length + ' dia(s) fora das contas:</b> ' +
-    ks.map(d => escapeHtml(fmtData(d))).join(' · ') +
-    '<div style="margin-top:3px;font-size:11.5px">' + escapeHtml(String(_diasIsolados[ks[0]] || 'dados incompletos')) +
-    '. Ficam de fora da média, da meta e da previsão até o ERP recuperar e o relatório ser reimportado.</div></div>';
+    '<b>⚠️ Turnos com apontamento incompleto</b>' + linhas +
+    '<div style="margin-top:4px;font-size:11.5px">' + escapeHtml(String(m)) +
+    '. O que foi recuperado continua nas contas — esses turnos aparecem <b>abaixo do real</b>.</div></div>';
 }
 
 function aplicarDiaOperacional(rows, modo) {
