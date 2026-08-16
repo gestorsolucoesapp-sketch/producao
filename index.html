@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.823.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.824.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2668,7 +2668,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.823.0';
+const APP_VER = '3.824.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10975,11 +10975,11 @@ async function getMetasReal() {
   if (metasReal) return metasReal;
   metasReal = {};
   try {
-    const { data } = await sb.from('v_metas_real_2026').select('*');
+    const { data } = await sb.from('v_metas_ritmo_2026').select('*');   // tem cx além de kg — ver correção de mix
     (data || []).forEach(r => {
       const c = String(r.recurso_cod); if (!c) return;
       if (!metasReal[c]) metasReal[c] = {};
-      metasReal[c][r.bloco] = { kg: +r.kg || 0, dias: +r.dias || 0, h_parada: +r.h_parada || 0 };
+      metasReal[c][r.bloco] = { kg: +r.kg || 0, cx: +r.cx || 0, dias: +r.dias || 0, h_parada: +r.h_parada || 0 };
     });
   } catch (_) {}
   return metasReal;
@@ -11012,17 +11012,35 @@ const MOSTRAR_REAL_KGH = false; // real/h oculto até calibrarmos o cálculo (vi
    não ritmo de máquina. Somando os três turnos a base fica maior e mais estável.
    Então: kg/h = TODO o kg da máquina ÷ TODAS as horas que ela rodou;
    meta do turno = esse kg/h × a jornada daquele turno. */
+/* CORREÇÃO DE MIX (João, 16/08/2026): "quando muda o produto com peso menor ou
+   amido, dá diferença na tonelagem". O ritmo físico da máquina é CAIXA por hora —
+   produto mais leve enche a mesma caixa. O quilo é consequência do que está
+   rodando. A 603 está com produto 23% mais leve que a média do ano: pela conta
+   antiga ela ganharia meta de 499 kg e passaria a "não bater" fazendo o mesmo
+   número de caixas.
+   Então: ritmo = caixas ÷ horas rodadas; meta = ritmo × kg-por-caixa ATUAL da
+   máquina × jornada do turno. A meta continua em kg (unidade que o chão entende),
+   mas acompanha o produto.
+   Setor medido em outra unidade (Extrusão em metros) não tem caixa: cai no kg/h,
+   e ali o mix é estável porque sai bobina. */
 function metaPropostaMaq(cod) {
   const m = metasReal && metasReal[cod]; if (!m) return null;
-  let kg = 0, horas = 0, dias = 0;
+  let kg = 0, cx = 0, horas = 0, dias = 0;
   _BLOCOS_META.forEach(b => {
     const rr = m[b[0]]; if (!rr || !(rr.dias > 0)) return;
     const hB = hDoBloco(b[0]);
     const h = rr.dias * hB - (rr.h_parada || 0);
-    if (h > 0) { kg += (rr.kg || 0); horas += h; dias += rr.dias; }
+    if (h > 0) { kg += (rr.kg || 0); cx += (rr.cx || 0); horas += h; dias += rr.dias; }
   });
   if (!(horas > 0) || !(kg > 0)) return null;
-  return { kgh: kg / horas, dias: dias };
+  const kghBruto = kg / horas;
+  // caixa/hora + peso da caixa de hoje: só quando os dois existem
+  let fx = null; try { fx = kgPorCxMaq(cod); } catch (_) { fx = null; }
+  if (cx > 0 && fx > 0) {
+    const cxh = cx / horas;
+    return { kgh: cxh * fx, cxh: cxh, kgcx: fx, dias: dias, mix: true };
+  }
+  return { kgh: kghBruto, dias: dias, mix: false };
 }
 function metaPropostaBloco(cod, bloco) {
   const p = metaPropostaMaq(cod); if (!p) return null;
@@ -11055,7 +11073,7 @@ function metaInfoProposta() {
   abreDet('Como a meta proposta é calculada',
     '<div style="font-size:13px;line-height:1.65">' +
     '<p>Sai do que a <b>própria máquina</b> já fez naquele turno, não de cálculo teórico de ciclo.</p>' +
-    '<p><b>Ritmo (kg/h)</b> = quilos produzidos ÷ horas em que ela <b>realmente rodou</b>. As horas rodadas são a jornada do turno menos as paradas apontadas — assim manutenção longa não derruba o ritmo, e máquina que ficou parada não ganha ritmo alto de graça.</p>' + '<p><b>Um ritmo por máquina, não por turno.</b> Os três turnos entram na mesma conta. A meta em kg é que muda, porque cada turno tem jornada diferente — é a mesma lógica da meta que já está cadastrada (277 · 265 · 335 são todos 37 kg/h).</p>' +
+    '<p><b>Ritmo (kg/h)</b> = quilos produzidos ÷ horas em que ela <b>realmente rodou</b>. As horas rodadas são a jornada do turno menos as paradas apontadas — assim manutenção longa não derruba o ritmo, e máquina que ficou parada não ganha ritmo alto de graça.</p>' + '<p><b>Corrigido pelo mix.</b> O ritmo é medido em <b>caixas por hora</b>, não em quilos: produto mais leve ou com amido enche a mesma caixa e pesa menos. A meta em kg sai de caixas/h × o <b>peso da caixa que a máquina roda hoje</b>. Assim a máquina não passa a furar meta só porque o produto emagreceu — foi o caso da 603, 23% mais leve que a média do ano. Onde não há caixa (Extrusão, em metros), volta a valer o kg/h.</p>' + '<p><b>Um ritmo por máquina, não por turno.</b> Os três turnos entram na mesma conta. A meta em kg é que muda, porque cada turno tem jornada diferente — é a mesma lógica da meta que já está cadastrada (277 · 265 · 335 são todos 37 kg/h).</p>' +
     '<p><b>Meta proposta</b> = esse ritmo × a jornada cheia do turno (Manhã 7,55 h · Tarde 7,23 h · Noite 9,13 h).</p>' +
     '<p style="background:#FDF3E7;border-left:3px solid #E8871F;border-radius:8px;padding:8px 10px"><b>Cuidado ao usar.</b> Isto é o retrato do que a máquina <i>faz hoje</i>, não do que ela <i>deveria</i> fazer. Se você adotar a proposta em tudo, congela o desempenho atual como padrão — quem está mal continua com meta baixa. Use para achar meta desencontrada da realidade e decida a régua você.</p>' +
     '<p style="font-size:12px;color:var(--fraco)">Máquina que troca muito de item tem produção em kg naturalmente instável: parte do desvio pode ser mix, não desempenho. Vale olhar caso a caso antes de mexer.</p>' +
@@ -11243,7 +11261,7 @@ function renderMetas() {
     const cod = String(c), nome = nomes[cod] || '', m = (metasData && metasData[cod]) || {};
     const soma = _BLOCOS_META.reduce((a, b) => a + (m[b[0]] || 0), 0);
     const _pm = metaPropostaMaq(cod);
-    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}${_pm ? `<div style="margin-top:3px"><span onclick="metaUsarPropostaMaq('${cod}')" style="cursor:pointer;font-size:9.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border-radius:6px;padding:2px 7px">hist ${Math.round(_pm.kgh).toLocaleString('pt-BR')} kg/h · usar nos 3</span></div>` : ''}<label style="display:flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;color:var(--fraco);font-weight:600;cursor:pointer" title="Marque para máquina que reveza turno (ex.: à noite rodam 2 e alternam). A meta só é cobrada nos turnos em que ela produziu; no turno que não rodou, a meta é ignorada e não conta como furo no Análise+."><input type="checkbox" id="scp_${cod}" ${m.__soComProd ? 'checked' : ''} ${metasEditavel ? '' : 'disabled'} style="width:14px;height:14px;flex:none">só cobrar meta se rodou</label></td><td style="vertical-align:top"><input type="number" inputmode="decimal" min="0" step="0.1" id="vel_${cod}" value="${(velNomData && velNomData[cod] != null) ? velNomData[cod] : ''}" placeholder="—" ${ro} style="width:100%;max-width:60px;padding:5px 3px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${roStyle}"></td>${_BLOCOS_META.map(b => {
+    html += `<tr><td class="nome" style="text-align:left"><span class="cod">${cod}</span> ${escapeHtml(nome)}${_pm ? `<div style="margin-top:3px"><span onclick="metaUsarPropostaMaq('${cod}')" style="cursor:pointer;font-size:9.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border-radius:6px;padding:2px 7px">hist ${Math.round(_pm.kgh).toLocaleString('pt-BR')} kg/h · usar nos 3</span>${_pm.mix ? `<div style="font-size:9px;color:var(--fraco-2);margin-top:1px">${_pm.cxh.toFixed(1).replace('.', ',')} cx/h × ${_pm.kgcx.toFixed(2).replace('.', ',')} kg/cx de hoje</div>` : ''}</div>` : ''}<label style="display:flex;align-items:center;gap:5px;margin-top:4px;font-size:10px;color:var(--fraco);font-weight:600;cursor:pointer" title="Marque para máquina que reveza turno (ex.: à noite rodam 2 e alternam). A meta só é cobrada nos turnos em que ela produziu; no turno que não rodou, a meta é ignorada e não conta como furo no Análise+."><input type="checkbox" id="scp_${cod}" ${m.__soComProd ? 'checked' : ''} ${metasEditavel ? '' : 'disabled'} style="width:14px;height:14px;flex:none">só cobrar meta se rodou</label></td><td style="vertical-align:top"><input type="number" inputmode="decimal" min="0" step="0.1" id="vel_${cod}" value="${(velNomData && velNomData[cod] != null) ? velNomData[cod] : ''}" placeholder="—" ${ro} style="width:100%;max-width:60px;padding:5px 3px;font-size:14px;border:1px solid var(--borda);border-radius:10px;text-align:right${roStyle}"></td>${_BLOCOS_META.map(b => {
       const pr = metaPropostaBloco(cod, b[0]);
       const atual = m[b[0]] || 0;
       const desvio = (pr && atual > 0) ? (pr.meta / atual) : null;
