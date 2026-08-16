@@ -762,7 +762,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.812.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.813.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2663,7 +2663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.812.0';
+const APP_VER = '3.813.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6856,10 +6856,10 @@ async function entrevCarregar() {
   } catch (e) { console.warn('entrevista:', e); }
 }
 
-function entrevResumo(mat) {
+function entrevResumo(mat, nomeRef) {
   const e = _entrev[String(mat || '')] || {};
   const cor = (ok, txt) => `<span style="font-size:10.5px;font-weight:800;border-radius:6px;padding:2px 7px;background:${ok ? '#D5F0E3' : '#F2F3F4'};color:${ok ? '#1E7A4E' : '#7F8C8D'}">${txt}</span>`;
-  return cor(!!e.lider, 'líder ' + (e.lider ? '✓' : '—')) + ' ' + cor(!!e.colaborador, 'colaborador ' + (e.colaborador ? '✓' : '—'));
+  return cor(!!e.lider, 'líder ' + (e.lider ? '✓' : '—')) + ' ' + cor(!!e.colaborador, 'colaborador ' + (e.colaborador ? '✓' : '—')) + ' ' + entrevEstrela(nomeRef);
 }
 
 /* CONTEXTO DA PESSOA NA HORA DA ENTREVISTA. Sentar com alguem sem os numeros na
@@ -6888,10 +6888,22 @@ async function entrevListas() {
 async function entrevContexto(mat) {
   const k = String(mat);
   if (_entCtx[k]) return _entCtx[k];
-  const ctx = { aloc: [], falt: [], perf: [] };
+  const ctx = { aloc: [], falt: [], perf: [], cad: {} };
   try {
     const a = await sb.from('org_alocacoes').select('setor,turno,maquina_codigo,funcao').eq('matricula', k).is('vigencia_fim', null);
     ctx.aloc = a.data || [];
+  } catch (_) { }
+  try {
+    const c = await sb.from('colaboradores').select('admissao,cargo,setor').eq('matricula', k).maybeSingle();
+    if (c.data) { ctx.cad.admissao = c.data.admissao; ctx.cad.cargo = c.data.cargo; }
+    const r = (typeof _rhRem === 'object' && _rhRem) ? _rhRem[k] : null;
+    if (r) {
+      ctx.cad.salario = Number(r.salario) || null;
+      ctx.cad.cargo = ctx.cad.cargo || r.cargo;
+      ctx.cad.admissao = ctx.cad.admissao || r.admissao;
+      const fx = (typeof _rhFaixa === 'object' && _rhFaixa) ? _rhFaixa[r.cargo] : null;
+      if (fx && fx.length > 1) ctx.cad.faixa = [fx[0], fx[fx.length - 1]];
+    }
   } catch (_) { }
   try {
     const de = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
@@ -6914,6 +6926,34 @@ async function entrevContexto(mat) {
   return ctx;
 }
 
+/* QUEM FOI CITADO POR QUEM. O campo "colegas com quem gosta de trabalhar" e
+   texto livre, entao o cruzamento e por nome normalizado (sem acento, minusculo).
+   Nao e perfeito — apelido nao casa com nome de cadastro — mas erra para menos:
+   deixa de marcar uma estrela, nunca inventa uma. */
+function _entNorm(t) {
+  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function entrevCitacoes() {
+  const mapa = {};
+  Object.keys(_entrev).forEach(m => {
+    ['lider', 'colaborador'].forEach(lado => {
+      const r = (_entrev[m] || {})[lado]; if (!r) return;
+      let lst = []; try { lst = r.colegas_pref || []; } catch (_) { lst = []; }
+      (lst || []).forEach(nomeCit => {
+        const k = _entNorm(nomeCit); if (!k) return;
+        (mapa[k] = mapa[k] || []).push({ por: r.nome || m, lado: lado });
+      });
+    });
+  });
+  return mapa;
+}
+function entrevEstrela(nome) {
+  const cit = entrevCitacoes()[_entNorm(nome)] || [];
+  if (!cit.length) return '';
+  const quem = [...new Set(cit.map(c => c.por))];
+  return `<span title="citada por ${escapeHtml(quem.join(', '))}" style="font-size:10.5px;font-weight:800;border-radius:6px;padding:2px 7px;background:#FDF3E7;color:#B8620F">⭐ citada por ${quem.length}</span>`;
+}
+
 function entrevCtxHtml(ctx) {
   const nf = n => Math.round(n).toLocaleString('pt-BR');
   let h = '<div style="background:var(--leve-2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.6">';
@@ -6922,23 +6962,52 @@ function entrevCtxHtml(ctx) {
       escapeHtml(String(a.maquina_codigo || '—')) + ' · ' + escapeHtml(String(a.turno || '')) + (a.funcao ? ' · ' + escapeHtml(String(a.funcao)) : '')).join(' &nbsp;|&nbsp; ') + '</div>';
   } else h += '<div style="color:var(--laranja-2)"><b>Sem alocação registrada</b> no organograma.</div>';
 
+  /* CADASTRO: preenche sozinho o que ja existe. O que falta NAO fica em branco —
+     diz de onde vem, para nao parecer erro do app e para virar tarefa de importacao. */
+  const semCad = [];
+  if (ctx.cad.admissao) {
+    const anos = (Date.now() - new Date(ctx.cad.admissao + 'T12:00:00').getTime()) / (365.25 * 86400000);
+    h += '<div style="margin-top:4px"><b>Casa:</b> ' + (anos >= 1 ? anos.toFixed(1).replace('.', ',') + ' anos' : Math.round(anos * 12) + ' meses') +
+      ' <span style="color:var(--fraco)">(desde ' + escapeHtml(String(ctx.cad.admissao).split('-').reverse().join('/')) + ')</span></div>';
+  } else semCad.push('admissão');
+  if (ctx.cad.cargo) h += '<div><b>Cargo:</b> ' + escapeHtml(String(ctx.cad.cargo)) + '</div>';
+  else semCad.push('cargo');
+  if (ctx.cad.salario) {
+    h += '<div><b>Salário:</b> R$ ' + Number(ctx.cad.salario).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) +
+      (ctx.cad.faixa ? ' <span style="color:var(--fraco)">· faixa do cargo R$ ' + nf(ctx.cad.faixa[0]) + ' a ' + nf(ctx.cad.faixa[1]) + '</span>' : '') + '</div>';
+  } else semCad.push('salário');
+  if (semCad.length) {
+    h += '<div style="margin-top:5px;background:#FDF3E7;border-left:3px solid #E8871F;border-radius:7px;padding:6px 9px;font-size:11.5px;color:#8A5A12">' +
+      '<b>Sem cadastro de ' + semCad.join(', ') + '.</b> Preenche sozinho na próxima importação do RH — não precisa digitar aqui.</div>';
+  }
+
+  /* HISTORICO ATRAS DO OLHINHO. Falta e atestado na tela durante a conversa vira
+     cobranca sem querer e a pessoa fecha. Fica escondido por padrao: voce olha
+     antes de sentar, e nao deixa exposto na frente dela. */
   const fa = ctx.falt.filter(x => !/ATESTADO/i.test(String(x.tipo || '') + String(x.motivo || '')));
   const at = ctx.falt.filter(x => /ATESTADO/i.test(String(x.tipo || '') + String(x.motivo || '')));
-  h += '<div style="margin-top:5px"><b>12 meses:</b> ' +
+  let oculto = '<div style="margin-top:5px"><b>12 meses:</b> ' +
     '<span style="color:' + (fa.length >= 3 ? '#C0392B' : 'var(--txt-2)') + ';font-weight:800">' + fa.length + ' falta(s)</span> · ' +
     '<span style="font-weight:800">' + at.length + ' atestado(s)</span></div>';
   if (ctx.falt.length) {
-    h += '<div style="margin-top:3px;font-size:11px;color:var(--fraco)">últimas: ' +
+    oculto += '<div style="margin-top:3px;font-size:11px;color:var(--fraco)">últimas: ' +
       ctx.falt.slice(0, 5).map(x => escapeHtml(String(x.data || '').split('-').reverse().join('/')) + (x.motivo ? ' (' + escapeHtml(String(x.motivo).slice(0, 22)) + ')' : '')).join(' · ') + '</div>';
   }
   if (ctx.perf.length) {
-    h += '<div style="margin-top:6px"><b>Máquina · últimos 30 dias:</b> ' + ctx.perf.map(x => {
+    oculto += '<div style="margin-top:6px"><b>Máquina · últimos 30 dias:</b> ' + ctx.perf.map(x => {
       const rp = (x.kg + x.pe) > 0 ? (x.pe / (x.kg + x.pe) * 100) : 0;
       return escapeHtml(x.maq) + ' — ' + nf(x.kg) + ' kg · refugo <b style="color:' + (rp <= 2.5 ? '#1E7A4E' : rp <= 4 ? '#C86A2E' : '#C0392B') + '">' + rp.toFixed(1).replace('.', ',') + '%</b>';
     }).join(' &nbsp;|&nbsp; ') + '</div>';
   }
+  h += '<div style="margin-top:7px"><button onclick="entrevOlho(this)" style="cursor:pointer;border:1px solid var(--borda);background:#fff;border-radius:8px;padding:4px 10px;font-size:11.5px;font-weight:700;color:var(--navy)">👁 ver histórico</button>' +
+    '<div class="oculto" style="margin-top:4px">' + oculto + '</div></div>';
   h += '</div>';
   return h;
+}
+function entrevOlho(btn) {
+  const cx = btn.nextElementSibling; if (!cx) return;
+  const off = cx.classList.toggle('oculto');
+  btn.textContent = off ? '👁 ver histórico' : '🙈 esconder histórico';
 }
 
 async function entrevAbrir(mat, nome, lado) {
@@ -6951,6 +7020,8 @@ async function entrevAbrir(mat, nome, lado) {
   let h = `<div style="font-size:12px;color:var(--fraco);margin-bottom:10px">${lado === 'lider'
     ? 'Avaliação do <b>líder</b>, respondida <b>antes</b> da conversa e sem ver o que o colaborador disse.'
     : 'Resposta do <b>colaborador</b>, colhida na entrevista.'}</div>`;
+  const est = entrevEstrela(nome);
+  if (est) h += '<div style="margin-bottom:8px">' + est + ' <span style="font-size:11.5px;color:var(--fraco)">— outros colegas pediram para trabalhar com esta pessoa</span></div>';
   h += entrevCtxHtml(ctx);
   h += `<datalist id="dlColegas">${(_entColegas || []).map(n2 => `<option value="${escapeHtml(n2)}">`).join('')}</datalist>`;
   h += `<datalist id="dlMaquinas">${(_entMaquinas || []).map(m2 => `<option value="${escapeHtml(m2)}">`).join('')}</datalist>`;
@@ -7090,7 +7161,7 @@ function rhFicha(p) {
     const m = String(p.matricula), nm = String(p.nome || '').replace(/'/g, "\\'");
     const e = _entrev[m] || {};
     h += '<div style="margin-top:12px;border-top:1px dashed #E3E9EF;padding-top:9px">' +
-      '<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Entrevista ' + entrevResumo(m) + '</div>' +
+      '<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin-bottom:5px">Entrevista ' + entrevResumo(m, p.nome) + '</div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
       '<button class="btn" onclick="entrevAbrir(\'' + m + '\',\'' + nm + '\',\'lider\')" style="width:auto;padding:7px 12px;font-size:12.5px">👔 ' + (e.lider ? 'Ver/editar líder' : '+ Avaliação do líder') + '</button>' +
       '<button class="btn" onclick="entrevAbrir(\'' + m + '\',\'' + nm + '\',\'colaborador\')" style="width:auto;padding:7px 12px;font-size:12.5px">🗣 ' + (e.colaborador ? 'Ver/editar colaborador' : '+ Entrevista do colaborador') + '</button>' +
