@@ -790,7 +790,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.831.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.832.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2701,7 +2701,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.831.0';
+const APP_VER = '3.832.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15439,6 +15439,7 @@ const FERR_CORES = ['#0B2A4A', '#D64545', '#1E7A4E', '#C86A2E', '#6A4FBF', '#111
 let _fNotas = [], _fNota = null, _fPags = [], _fPagIdx = 0;
 let _fTool = 'caneta', _fCor = FERR_CORES[0], _fEsp = 2.6, _fTracos = [], _fRefeitos = [];
 let _fDesenhando = false, _fAtual = null, _fCanetaAtiva = false, _fSalvaT = null;
+let _fTextos = [], _fFundo = null, _fFundoImg = null, _fArrastandoTxt = null;
 
 async function ferrHome() {
   const box = $('ferrHome'); if (!box) return;
@@ -15501,6 +15502,7 @@ function ferrEditorHtml() {
     '<span id="ferrStatus" style="font-size:11px;color:var(--fraco)"></span></div>' +
     '<div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;background:var(--leve-2);border-radius:12px;padding:5px 7px;margin-bottom:7px">' +
     bt('caneta', '🖊', 'Caneta') + bt('marca', '🖍', 'Marca-texto') + bt('borracha', '🧽', 'Borracha (apaga o traço)') +
+    bt('texto', '🔤', 'Texto — toque para criar, arraste para mover') +
     '<span style="width:1px;height:22px;background:var(--borda);margin:0 4px"></span>' +
     FERR_CORES.map(c => '<span onclick="ferrCor(\'' + c + '\')" data-cor="' + c + '" class="ferr-cor" style="cursor:pointer;width:20px;height:20px;border-radius:50%;background:' + c + ';display:inline-block;border:2px solid transparent"></span>').join('') +
     '<span style="width:1px;height:22px;background:var(--borda);margin:0 4px"></span>' +
@@ -15509,6 +15511,9 @@ function ferrEditorHtml() {
     '<span onclick="ferrDesfazer()" title="Desfazer" style="cursor:pointer;font-size:18px;padding:5px 8px">↶</span>' +
     '<span onclick="ferrRefazer()" title="Refazer" style="cursor:pointer;font-size:18px;padding:5px 8px">↷</span>' +
     '<span onclick="ferrLimpar()" title="Limpar página" style="cursor:pointer;font-size:16px;padding:5px 8px">🗑</span>' +
+    '<span style="width:1px;height:22px;background:var(--borda);margin:0 4px"></span>' +
+    '<label title="Importar PDF como fundo" style="cursor:pointer;font-size:16px;padding:5px 8px">📄<input type="file" accept="application/pdf" onchange="ferrImportarPDF(this)" style="display:none"></label>' +
+    (_fFundo ? '<span onclick="ferrTirarFundo()" title="Tirar o PDF do fundo" style="cursor:pointer;font-size:13px;font-weight:800;color:#D64545;padding:5px 8px">sem fundo</span>' : '') +
     '</div>' +
     '<canvas id="ferrCv" style="width:100%;display:block;border:1px solid var(--borda);border-radius:12px;background:#FFFDF3;touch-action:none"></canvas>' +
     '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px">' +
@@ -15535,7 +15540,11 @@ async function ferrRenomear(v) {
 function ferrCarregarPagina() {
   const pg = _fPags[_fPagIdx]; if (!pg) return;
   _fTracos = Array.isArray(pg.tracos) ? JSON.parse(JSON.stringify(pg.tracos)) : [];
+  _fTextos = Array.isArray(pg.textos) ? JSON.parse(JSON.stringify(pg.textos)) : [];
+  _fFundo = pg.fundo || null; _fFundoImg = null;
+  if (_fFundo) { const im = new Image(); im.onload = () => { _fFundoImg = im; ferrRedesenhar(); }; im.src = _fFundo; }
   _fRefeitos = [];
+  try { const ed = $('ferrEditor'); if (ed) ed.innerHTML = ferrEditorHtml(); } catch (_) { }
   const lbl = $('ferrPagLbl'); if (lbl) lbl.textContent = (_fPagIdx + 1) + ' de ' + _fPags.length;
   ferrPrepararCanvas();
 }
@@ -15578,12 +15587,50 @@ function ferrRedesenhar() {
   const cv = $('ferrCv'); if (!cv) return;
   const x = cv.getContext('2d'), W = cv._larg, H = cv._alt;
   x.clearRect(0, 0, W, H);
-  // papel quadriculado, como o caderno de verdade
-  x.strokeStyle = '#E4E0C8'; x.lineWidth = 0.5;
-  for (let i = 20; i < W; i += 20) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, H); x.stroke(); }
-  for (let j = 20; j < H; j += 20) { x.beginPath(); x.moveTo(0, j); x.lineTo(W, j); x.stroke(); }
+  if (_fFundoImg) {
+    // PDF ao fundo: preenche a largura e mantém a proporção da página
+    const r = Math.min(W / _fFundoImg.width, H / _fFundoImg.height);
+    x.drawImage(_fFundoImg, 0, 0, _fFundoImg.width * r, _fFundoImg.height * r);
+  } else {
+    // papel quadriculado, como o caderno de verdade
+    x.strokeStyle = '#E4E0C8'; x.lineWidth = 0.5;
+    for (let i = 20; i < W; i += 20) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, H); x.stroke(); }
+    for (let j = 20; j < H; j += 20) { x.beginPath(); x.moveTo(0, j); x.lineTo(W, j); x.stroke(); }
+  }
   _fTracos.forEach(tr => ferrDesenhaTraco(x, tr, W, H));
   if (_fAtual) ferrDesenhaTraco(x, _fAtual, W, H);
+  _fTextos.forEach((t, i) => ferrDesenhaTexto(x, t, W, H, i === _fArrastandoTxt));
+}
+/* TEXTO: guardado em coordenada 0..1 igual ao traço, então acompanha o reescalar.
+   Quebra de linha manual com \n; a caixa não tem largura fixa de propósito —
+   caixa com largura exigiria reflow e viraria um editor de texto inteiro. */
+function ferrDesenhaTexto(x, t, W, H, destaque) {
+  const px = t.s * (W / 340);          // tamanho relativo à largura da folha
+  x.save();
+  x.font = '600 ' + px.toFixed(1) + 'px -apple-system, "Segoe UI", Roboto, Arial';
+  x.fillStyle = t.c || '#111';
+  x.textBaseline = 'top';
+  const linhas = String(t.v || '').split('\n');
+  linhas.forEach((l, i) => x.fillText(l, t.x * W, t.y * H + i * px * 1.25));
+  if (destaque) {
+    const larg = Math.max(...linhas.map(l => x.measureText(l).width));
+    x.strokeStyle = '#5B9BD5'; x.lineWidth = 1; x.setLineDash([4, 3]);
+    x.strokeRect(t.x * W - 3, t.y * H - 3, larg + 6, linhas.length * px * 1.25 + 6);
+  }
+  x.restore();
+}
+function _fTextoEm(pt, W, H) {
+  const cv = $('ferrCv'); if (!cv) return -1;
+  const x = cv.getContext('2d');
+  for (let i = _fTextos.length - 1; i >= 0; i--) {
+    const t = _fTextos[i], px = t.s * (W / 340);
+    x.font = '600 ' + px + 'px Arial';
+    const linhas = String(t.v || '').split('\n');
+    const larg = Math.max(...linhas.map(l => x.measureText(l).width));
+    const X = t.x * W, Y = t.y * H, A = linhas.length * px * 1.25;
+    if (pt[0] * W >= X - 6 && pt[0] * W <= X + larg + 6 && pt[1] * H >= Y - 6 && pt[1] * H <= Y + A + 6) return i;
+  }
+  return -1;
 }
 function ferrDesenhaTraco(x, tr, W, H) {
   const p = tr.p; if (!p || p.length < 1) return;
@@ -15613,6 +15660,13 @@ function ferrDown(e) {
   if (e.pointerType === 'touch' && _fCanetaAtiva) return;      // rejeição de palma
   cv.setPointerCapture(e.pointerId);
   const pt = _fPos(e, cv);
+  const iT = _fTextoEm(pt, cv._larg, cv._alt);
+  if (iT >= 0) {                      // tocou num texto: arrasta (qualquer ferramenta)
+    _fArrastandoTxt = iT; _fDesenhando = true;
+    cv._dtx = pt[0] - _fTextos[iT].x; cv._dty = pt[1] - _fTextos[iT].y;
+    cv._moveuTxt = false; ferrRedesenhar(); return;
+  }
+  if (_fTool === 'texto') { ferrNovoTexto(pt); return; }
   if (_fTool === 'borracha') { _fDesenhando = true; ferrApagarEm(pt); return; }
   _fDesenhando = true;
   _fAtual = { t: _fTool, c: _fCor, w: _fEsp, p: [pt] };
@@ -15622,6 +15676,12 @@ function ferrMove(e) {
   const cv = e.currentTarget;
   if (e.pointerType === 'touch' && _fCanetaAtiva) return;
   const pt = _fPos(e, cv);
+  if (_fArrastandoTxt != null) {
+    const t = _fTextos[_fArrastandoTxt];
+    t.x = Math.max(0, Math.min(1, pt[0] - cv._dtx));
+    t.y = Math.max(0, Math.min(1, pt[1] - cv._dty));
+    cv._moveuTxt = true; ferrRedesenhar(); return;
+  }
   if (_fTool === 'borracha') { ferrApagarEm(pt); return; }
   if (!_fAtual) return;
   const ult = _fAtual.p[_fAtual.p.length - 1];
@@ -15630,6 +15690,12 @@ function ferrMove(e) {
   ferrRedesenhar();
 }
 function ferrUp() {
+  if (_fArrastandoTxt != null) {
+    const cv = $('ferrCv');
+    const i = _fArrastandoTxt; _fArrastandoTxt = null; _fDesenhando = false;
+    if (cv && !cv._moveuTxt) ferrEditarTexto(i); else { ferrRedesenhar(); ferrSalvar(); }
+    return;
+  }
   if (!_fDesenhando) return;
   _fDesenhando = false;
   if (_fAtual && _fAtual.p.length) { _fTracos.push(_fAtual); _fRefeitos = []; }
@@ -15641,6 +15707,66 @@ function ferrApagarEm(pt) {
   const antes = _fTracos.length;
   _fTracos = _fTracos.filter(tr => !(tr.p || []).some(q => Math.abs(q[0] - pt[0]) < 0.018 && Math.abs(q[1] - pt[1]) < 0.014));
   if (_fTracos.length !== antes) { _fRefeitos = []; ferrRedesenhar(); ferrSalvar(); }
+}
+function ferrNovoTexto(pt) {
+  const v = prompt('Texto:'); if (!v) return;
+  _fTextos.push({ x: pt[0], y: pt[1], s: Math.max(11, _fEsp * 5), c: _fCor, v: v });
+  ferrRedesenhar(); ferrSalvar();
+}
+function ferrEditarTexto(i) {
+  const t = _fTextos[i]; if (!t) return;
+  const v = prompt('Editar texto (deixe vazio para apagar):', t.v);
+  if (v === null) { ferrRedesenhar(); return; }
+  if (!v.trim()) _fTextos.splice(i, 1); else { t.v = v; t.c = _fCor; }
+  ferrRedesenhar(); ferrSalvar();
+}
+/* PDF COMO FUNDO. Renderiza a página escolhida com o pdf.js que o importador já
+   usa, vira imagem e fica no fundo da folha — você escreve por cima. Guardo como
+   dataURL na própria linha da página: simples, sem depender de bucket de arquivo.
+   Por isso limito a resolução: PDF inteiro em alta viraria megabytes por página. */
+async function ferrImportarPDF(inp) {
+  const f = inp && inp.files && inp.files[0]; if (!f) return;
+  inp.value = '';
+  try {
+    toast('📄 Lendo o PDF…');
+    await garantirPdfJs();
+    const buf = await f.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    const total = doc.numPages;
+    let de = 1, ate = Math.min(total, 20);
+    if (total > 1) {
+      const r = prompt('O PDF tem ' + total + ' página(s). Quais importar? (ex.: 1-5)', '1-' + ate);
+      if (r === null) return;
+      const m = /^(\d+)\s*(?:-\s*(\d+))?$/.exec(r.trim());
+      if (m) { de = Math.max(1, +m[1]); ate = Math.min(total, m[2] ? +m[2] : de); }
+    }
+    for (let n = de; n <= ate; n++) {
+      const pg = await doc.getPage(n);
+      const vp0 = pg.getViewport({ scale: 1 });
+      const esc = Math.min(1400 / vp0.width, 2);
+      const vp = pg.getViewport({ scale: esc });
+      const c = document.createElement('canvas');
+      c.width = vp.width; c.height = vp.height;
+      await pg.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      const url = c.toDataURL('image/jpeg', 0.72);
+      if (n === de) {
+        _fFundo = url;
+        await sb.from('nota_paginas').update({ fundo: url }).eq('id', _fPags[_fPagIdx].id);
+        _fPags[_fPagIdx].fundo = url;
+      } else {
+        const { data } = await sb.from('nota_paginas').insert({ nota_id: _fNota.id, ordem: _fPags.length + 1, fundo: url }).select('*').single();
+        if (data) _fPags.push(data);
+      }
+      toast('página ' + n + ' de ' + ate);
+    }
+    ferrCarregarPagina();
+    toast('✅ PDF importado');
+  } catch (e) { toast('❌ ' + (e.message || e)); }
+}
+async function ferrTirarFundo() {
+  _fFundo = null; _fFundoImg = null;
+  try { await sb.from('nota_paginas').update({ fundo: null }).eq('id', _fPags[_fPagIdx].id); _fPags[_fPagIdx].fundo = null; } catch (_) { }
+  ferrCarregarPagina();
 }
 function ferrDesfazer() { if (!_fTracos.length) return; _fRefeitos.push(_fTracos.pop()); ferrRedesenhar(); ferrSalvar(); }
 function ferrRefazer() { if (!_fRefeitos.length) return; _fTracos.push(_fRefeitos.pop()); ferrRedesenhar(); ferrSalvar(); }
@@ -15654,9 +15780,9 @@ async function ferrSalvar(imediato) {
     const pg = _fPags[_fPagIdx]; if (!pg) return;
     const st = $('ferrStatus'); if (st) st.textContent = 'salvando…';
     try {
-      await sb.from('nota_paginas').update({ tracos: _fTracos, atualizado_em: new Date().toISOString() }).eq('id', pg.id);
+      await sb.from('nota_paginas').update({ tracos: _fTracos, textos: _fTextos, atualizado_em: new Date().toISOString() }).eq('id', pg.id);
       await sb.from('notas').update({ atualizado_em: new Date().toISOString() }).eq('id', _fNota.id);
-      pg.tracos = _fTracos;
+      pg.tracos = _fTracos; pg.textos = _fTextos;
       if (st) st.textContent = 'salvo ✓';
     } catch (e) { if (st) st.textContent = 'erro ao salvar'; }
   };
