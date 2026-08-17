@@ -790,7 +790,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.835.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.836.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1020,6 +1020,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
       <div class="card oculto" id="ferrEditor" style="padding:8px"></div>
     </section>
     <section id="abaUsuarios" class="oculto">
+      <div class="card" id="cardAbasObra"></div>
       <div class="card" id="cardTurnosRegua">
         <div class="titulo-sec">Régua de turnos em uso</div>
         <p class="desc" style="margin-bottom:10px">Gerada a partir do próprio cálculo (<b>blocoPorHora</b> e <b>horasBlocoDe</b>), varrendo minuto a minuto um dia real de cada tipo. Não é uma tabela digitada à mão: se um número mudar aqui, é porque a regra mudou de verdade.</p>
@@ -2701,7 +2702,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.835.0';
+const APP_VER = '3.836.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3385,6 +3386,45 @@ let vePessoal = false;
 let ehLider = false;   // pode LANÇAR falta, feedback e observação (não dá acesso ao histórico geral)
 let souDev = false;     // admin por perfil OU por e-mail (fallback)
 let souDevReal = false; // flag 'desenvolvedor' pura — sem o atalho do Organograma
+
+/* ABAS EM CONSTRUÇÃO (17/08/2026). Aba que ainda não está pronta some para todo
+   mundo, menos para você — assim dá para desenvolver com o app publicado sem que
+   a equipe encontre tela pela metade. Vale por CIMA da permissão: mesmo quem tem
+   a aba liberada não a vê enquanto ela estiver marcada.
+   Fica no app_config, então liga e desliga sem deploy. */
+let _abasOcultas = null;
+async function carregarAbasOcultas() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'abas_ocultas').maybeSingle();
+    let v = data ? data.valor : null;
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) { v = null; } }
+    _abasOcultas = Array.isArray(v) ? v.map(String) : [];
+  } catch (_) { _abasOcultas = []; }
+  return _abasOcultas;
+}
+async function toggleAbaOculta(id) {
+  if (_abasOcultas === null) await carregarAbasOcultas();
+  const i = _abasOcultas.indexOf(id);
+  if (i >= 0) _abasOcultas.splice(i, 1); else _abasOcultas.push(id);
+  try {
+    const { error } = await sb.from('app_config').upsert({ chave: 'abas_ocultas', valor: JSON.stringify(_abasOcultas) }, { onConflict: 'chave' });
+    if (error) throw error;
+    toast(i >= 0 ? '👁 ' + id + ' liberada para a equipe' : '🚧 ' + id + ' escondida — só você vê');
+  } catch (e) { toast('❌ ' + (e.message || e)); }
+  try { aplicarPermissoes(); } catch (_) { }
+  renderAbasOcultas();
+}
+function renderAbasOcultas() {
+  const box = $('cardAbasObra'); if (!box) return;
+  const abas = [...document.querySelectorAll('.aba')].map(a => ({ id: a.dataset.aba, nome: a.textContent.trim() }))
+    .filter(a => a.id && a.id !== 'usuarios' && a.id !== 'ferramentas');
+  box.innerHTML = '<div class="titulo-sec">🚧 Abas em construção</div>' +
+    '<p class="desc" style="margin-bottom:9px">Aba marcada some para toda a equipe e continua visível só para você. Vale por cima da permissão — serve para trabalhar numa tela sem ninguém esbarrar nela pela metade.</p>' +
+    '<div style="display:flex;gap:5px;flex-wrap:wrap">' + abas.map(a => {
+      const on = (_abasOcultas || []).includes(a.id);
+      return `<span onclick="toggleAbaOculta('${a.id}')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 11px;${on ? 'background:#E8871F;color:#fff' : 'background:var(--leve-2);color:var(--navy)'}">${on ? '🚧 ' : ''}${escapeHtml(a.nome)}</span>`;
+    }).join('') + '</div>';
+}
 let souRH = false;      // Diagnóstico RH: só os e-mails da RLS (mesma dupla de UIDs da policy)
 let vejoFolha = false;  // salário na ficha: admin, dev ou ve_folha (espelha a policy rem_folha)
 /* 06/08/2026: jpferreira1356@icloud.com saiu daqui a pedido do Joao — ele vai
@@ -3837,13 +3877,16 @@ async function aplicarPermissoes() {
      souDevReal guarda a flag de verdade e é o que libera o caderno pessoal. */
   souDevReal = !!(perfil && perfil.desenvolvedor === true);
   if (souDev && !abasPermitidas.includes('organograma')) abasPermitidas.push('organograma');
+  if (_abasOcultas === null) { try { await carregarAbasOcultas(); } catch (_) { _abasOcultas = []; } }
 
   // mostra/oculta os botões de aba conforme permissão
   document.querySelectorAll('.aba').forEach(a => {
     const id = a.dataset.aba;
     // Estoque nasce so para admin/gestor: tem valor em R$ na tela.
     const ok = id === 'ferramentas' ? souDevReal : (id === 'usuarios' ? souAdmin : (id === 'rh' ? souRH : (id === 'demanda' ? (souAdmin || abasPermitidas.includes('demanda')) : (id === 'estoque' ? (souAdmin || abasPermitidas.includes('estoque')) : (id === 'conf' ? (souDev || abasPermitidas.includes('conf')) : (id === 'organograma' ? (souDev || abasPermitidas.includes('organograma')) : abasPermitidas.includes(id)))))));
-    a.classList.toggle('oculto', !ok);
+    // aba em construção: some para todos, menos para o dono
+    const emObra = Array.isArray(_abasOcultas) && _abasOcultas.includes(id) && !souDevReal;
+    a.classList.toggle('oculto', !ok || emObra);
   });
 }
 
@@ -8207,6 +8250,7 @@ function trocarAba(qual) {
      chamava animAplicar(), então trocar para Metas ou OEE não animava nada. */
   try { animTelaNova(); setTimeout(() => { try { animAplicar(); } catch (_) { } }, 60); } catch (_) { }
   if (qual === 'ferramentas' && !souDevReal) return;   // caderno pessoal: só o dono
+  if (Array.isArray(_abasOcultas) && _abasOcultas.includes(qual) && !souDevReal) return;   // em construção
   if (qual === 'usuarios' && !souAdmin) return;
   if (qual === 'organograma' && !souDev && !abasPermitidas.includes('organograma')) return;
   if (qual === 'rh' && !souRH) return;
@@ -20477,6 +20521,7 @@ async function verHistCiencia(userId, nome) {
 }
 
 async function carregarUsuarios() {
+  try { if (_abasOcultas === null) await carregarAbasOcultas(); renderAbasOcultas(); } catch (_) { }
   try { renderTabelaTurnos(); } catch (_) { }
   await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
   try { await getLinkFormCfg(); } catch (_) {}
