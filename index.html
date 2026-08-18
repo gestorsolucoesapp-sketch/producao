@@ -662,6 +662,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
    classe .telanova é posta pelo roteador e retirada em 900ms. Sem isso, cada
    gravação faria a tela inteira piscar. */
 @keyframes svgdraw{to{stroke-dashoffset:0}}
+@keyframes gaugeGira{from{transform:rotate(-70deg)}to{transform:rotate(0)}}
 @keyframes svgpop{from{opacity:0;transform:scale(.6);transform-origin:center}to{opacity:1;transform:scale(1)}}
 @keyframes cardin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes growbar{from{width:0}}
@@ -790,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.844.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.845.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2710,7 +2711,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.844.0';
+const APP_VER = '3.845.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5828,12 +5829,23 @@ function _mtMontaSerie7(E) {
     if (ds.length >= 2) _mtSerie7[c] = ds.map(d => porDia[c][d]);
   });
 }
+/* 19/08/2026: aqui era um sparkline de 7 dias. Virou mostrador porque no
+   cabeçalho da máquina a pergunta é "está batendo a meta?", não "como veio
+   vindo". O sparkline continua disponível (sparkSVG) para onde tendência
+   importar. */
 function _mtSpark(cod) {
-  const v = _mtSerie7 && _mtSerie7[String(cod)];
-  if (!v || v.length < 2) return '';
-  const sobe = v[v.length - 1] >= v[0];
-  return '<span title="últimos ' + v.length + ' dias com produção" style="margin-left:8px;opacity:.9">' +
-    sparkSVG(v, sobe ? '#3CA96E' : '#D64545', 64, 22) + '</span>';
+  const M = _mtSnap && _mtSnap.M && _mtSnap.M[cod];
+  if (!M) return '';
+  let v = 0, meta = 0;
+  _BLOCOS_META.forEach(b => {
+    const a = M[b[0]]; if (!a || !(a.v > 0)) return;
+    const mt = (metasData && metasData[cod] && metasData[cod][b[0]]) || 0;   // meta cadastrada do bloco
+    const d = Math.max(_diasEqBloco(a.dias, b[0]), 0.25);
+    if (mt > 0) { v += a.v; meta += mt * d; }
+  });
+  if (!(meta > 0)) return '';
+  return '<span title="' + Math.round(v / meta * 100) + '% da meta no período" style="margin-left:8px">' +
+    gaugeSVG(v / meta * 100, 72, 42) + '</span>';
 }
 function _mtTopMotivo(a) {
   const ks = Object.keys(a.mot || {});
@@ -16374,6 +16386,36 @@ async function fbApagar(id) {
   if (!confirm('Apagar este feedback?')) return;
   try { await sb.from('feedbacks').delete().eq('id', id); toast('Apagado'); fbCarregar(); }
   catch (e) { toast('❌ ' + (e.message || e)); }
+}
+
+
+/* ===== MOSTRADOR (gauge) — 19/08/2026 =====
+   Substitui o sparkline no cabeçalho da máquina. Ali o que interessa é UM valor
+   contra uma faixa (quanto da meta atingiu), e para isso o ponteiro lê melhor
+   que uma curva: a curva mostra tendência, o mostrador mostra situação.
+   Escala 0 a 150% — acima disso o ponteiro trava no fim, senão uma máquina a
+   400% (dia atípico) esmagaria a escala e todas as outras ficariam iguais.
+   Faixas iguais às do resto do app: <85 vermelho, 85–99 laranja, ≥100 verde. */
+function gaugeSVG(pct, larg, alt) {
+  const W = larg || 74, H = alt || 44, R = W * 0.42, cx = W / 2, cy = H - 6;
+  const p = Math.max(0, Math.min(150, +pct || 0));
+  const ang = 180 + (p / 150) * 180;                     // 180° = 0% · 360° = 150%
+  const rad = a => (a * Math.PI) / 180;
+  const pt = (a, r) => [cx + r * Math.cos(rad(a)), cy + r * Math.sin(rad(a))];
+  const arco = (a1, a2, cor) => {
+    const [x1, y1] = pt(a1, R), [x2, y2] = pt(a2, R);
+    return `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 0 1 ${x2.toFixed(1)},${y2.toFixed(1)}" fill="none" stroke="${cor}" stroke-width="${(W * 0.11).toFixed(1)}" stroke-linecap="round"/>`;
+  };
+  const a85 = 180 + (85 / 150) * 180, a100 = 180 + (100 / 150) * 180;
+  const [nx, ny] = pt(ang, R * 0.78);
+  const cor = p >= 100 ? '#3CA96E' : p >= 85 ? '#E8871F' : '#D64545';
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block;overflow:visible">
+    ${arco(180, a85, '#D64545')}${arco(a85, a100, '#E8871F')}${arco(a100, 360, '#3CA96E')}
+    <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--txt-2,#2C3E50)" stroke-width="2" stroke-linecap="round"
+      style="transform-origin:${cx}px ${cy}px;animation:gaugeGira .8s cubic-bezier(.2,.9,.3,1) both"/>
+    <circle cx="${cx}" cy="${cy}" r="${(W * 0.055).toFixed(1)}" fill="var(--txt-2,#2C3E50)"/>
+    <text x="${cx}" y="${(cy - R * 0.30).toFixed(1)}" text-anchor="middle" font-size="${(W * 0.20).toFixed(1)}" font-weight="800" fill="${cor}">${Math.round(p)}%</text>
+  </svg>`;
 }
 
 function animTelaNova() { window._telaNova = true; }
