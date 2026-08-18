@@ -790,7 +790,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.841.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.842.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1174,6 +1174,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
           <button class="btn cf-sig" data-s="5" onclick="cfSigma(5)" style="width:auto;padding:6px 11px;font-size:12px">grave (5σ)</button>
         </div>
       </div>
+      <div id="cfParadasAbsurdas"></div>
       <div id="cfAlertas"></div>
       <div id="cfGraficos"></div>
     </section>
@@ -2708,7 +2709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.841.0';
+const APP_VER = '3.842.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25602,6 +25603,7 @@ async function carregarConf(forcar) {
   if (_cfDiaAtual === chave && _cfDados && !forcar) { cfRender(); return; }
   $('cfAlertas').innerHTML = '<div class="card">Carregando…</div>';
   $('cfGraficos').innerHTML = '';
+  try { await cfCarregarAbsurdas(a.value, b.value); } catch (_) { }
   document.querySelectorAll('.cf-per').forEach(x => {
     const on = x.dataset.p === _cfModo;
     x.style.background = on ? 'var(--navy)' : ''; x.style.color = on ? '#fff' : '';
@@ -25636,8 +25638,81 @@ function cfSetores() {
   if (atual && S.indexOf(atual) >= 0) sel.value = atual;
 }
 
+
+/* ===== PARADAS FORA DA REALIDADE (18/08/2026, pedido do João) =====
+   Apontamento de parada que ninguém fechou. O ERP registra o início e, se o
+   operador não encerra, a parada segue correndo — de julho para cá tem
+   INTERROMPIDA de 1.386 h (58 dias) e PARADA PROGRAMADA de 611 h.
+   Por que dói: no Pareto e no ranking de maior parada esses registros entram
+   inteiros e mandam o motivo para o topo sozinhos. O cálculo da meta já se
+   protege cortando em 7,5 h por turno, mas a aba de Manutenção não.
+   O corte é POR MOTIVO, não fixo: comparo com a mediana daquele motivo. Uma
+   MANUTENÇÃO DE TERCEIROS de 8 h é normal (mediana 5,8 h); uma MICROPARADA de
+   8 h não é (mediana 0,03 h). Régua fixa acusaria a primeira e deixaria passar
+   a segunda. Piso de 12 h para não encher a tela de caso pequeno. */
+const CF_LIM_H = 12;          // nada abaixo disso é considerado
+const CF_X_MEDIANA = 8;       // e precisa passar de 8× a mediana do próprio motivo
+let _cfAbsurdas = null;
+
+async function cfCarregarAbsurdas(de, ate) {
+  try {
+    const { data } = await sb.from('paradas')
+      .select('dia,turno,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op')
+      .gte('dia', de).lte('dia', ate).gte('tempo_horas', CF_LIM_H)
+      .order('tempo_horas', { ascending: false }).limit(300);
+    _cfAbsurdas = data || [];
+  } catch (_) { _cfAbsurdas = []; }
+  return _cfAbsurdas;
+}
+/* mediana por motivo, calculada com o histórico já carregado do período */
+function _cfMedianaMotivo() {
+  const porMot = {};
+  (dadosPainel && dadosPainel.paradas || []).forEach(p => {
+    const m = p.motivo_desc || '—'; (porMot[m] = porMot[m] || []).push(+p.tempo_horas || 0);
+  });
+  const med = {};
+  Object.keys(porMot).forEach(m => {
+    const a = porMot[m].filter(v => v > 0).sort((x, y) => x - y);
+    med[m] = a.length ? a[Math.floor(a.length / 2)] : 0;
+  });
+  return med;
+}
+function cfRenderAbsurdas() {
+  const box = $('cfParadasAbsurdas'); if (!box) return;
+  const med = _cfMedianaMotivo();
+  const setorSel = ($('cfSetor') && $('cfSetor').value) || '';
+  const lista = (_cfAbsurdas || []).filter(p => {
+    if (setorSel && setorDe(p.recurso_cod) !== setorSel) return false;
+    const m = med[p.motivo_desc || '—'] || 0;
+    return m > 0 ? (+p.tempo_horas > m * CF_X_MEDIANA) : (+p.tempo_horas >= CF_LIM_H);
+  });
+  if (!lista.length) { box.innerHTML = ''; return; }
+  const totH = lista.reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+  const hhmm = ts => { const m = String(ts || '').match(/[T ](\d{2}):(\d{2})/); return m ? m[1] + ':' + m[2] : '—'; };
+  const dt = ts => { const d = String(ts || '').slice(0, 10); return d.length === 10 ? d.split('-').reverse().join('/') : '—'; };
+  const linhas = lista.slice(0, 40).map(p => {
+    const m = med[p.motivo_desc || '—'] || 0;
+    const vezes = m > 0 ? Math.round((+p.tempo_horas) / m) : null;
+    const dias = (+p.tempo_horas) / 24;
+    return `<tr><td class="nome" style="font-size:12px">
+        <b>${escapeHtml(String(p.motivo_desc || '—'))}</b>
+        <div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(fmtDataSem(String(p.dia).slice(0, 10)))} · T${escapeHtml(String(p.turno || '—'))} · máq <b>${escapeHtml(String(p.recurso_cod || '—'))}</b>${p.op ? ' · OP ' + escapeHtml(String(p.op)) : ''}</div>
+        <div style="font-size:10px;color:var(--fraco-2)">${dt(p.inicio)} ${hhmm(p.inicio)} → ${p.fim ? dt(p.fim) + ' ' + hhmm(p.fim) : '<b style="color:#B03030">sem fim</b>'}</div>
+        ${vezes ? `<div style="font-size:10.5px;font-weight:800;color:#B03030;margin-top:2px">${vezes}× a mediana deste motivo (${m.toFixed(2).replace('.', ',')} h)</div>` : ''}
+      </td><td><span class="cel cel-tot">${(+p.tempo_horas).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</span>
+        <div style="font-size:10px;color:var(--fraco-2);text-align:right">${dias >= 1 ? dias.toFixed(1).replace('.', ',') + ' dias' : ''}</div></td></tr>`;
+  }).join('');
+  box.innerHTML = '<div class="card" style="border:2px solid #E8871F">' +
+    '<div class="titulo-sec" style="color:#8A5A12">🚩 Paradas fora da realidade · ' + lista.length + '</div>' +
+    '<p class="desc" style="margin-bottom:9px">Apontamentos que provavelmente ficaram <b>abertos</b> — alguém marcou o início e não fechou. Somam <b>' +
+    totH.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' h</b> no período e inflam o Pareto e o ranking de maior parada. Corrija no ERP e reimporte o RPCP643.</p>' +
+    tabSimples(['Motivo · quando · máquina · OP', 'Duração'], linhas) +
+    (lista.length > 40 ? '<p class="desc" style="margin-top:6px">mostrando as 40 maiores de ' + lista.length + '</p>' : '');
+}
+
 function cfRender() {
   cfSetores();
+  try { cfRenderAbsurdas(); } catch (_) { }
   const setorSel = ($('cfSetor') && $('cfSetor').value) || '';
   const metSel = ($('cfMetrica') && $('cfMetrica').value) || '';
   const D = (_cfDados || []).filter(r =>
