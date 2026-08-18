@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.851.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.852.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2711,7 +2711,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.851.0';
+const APP_VER = '3.852.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5959,15 +5959,28 @@ function cardMaquinaTurno(E) {
   let _nFora = 0, _hFora = 0;
   (E.par || []).forEach(r => {
     if (_fora(r)) { _nFora++; _hFora += (r.tempo_horas || 0); return; }   // mesmo filtro da aba Painel
-    const b = blocoParada(r); if (!b) return;
-    const c = String(r.recurso_cod || ''); if (!c || !M[c] || !M[c][b]) return;
-    const _h = (r.tempo_horas || 0);
-    M[c][b].pa += _h;
+    const c = String(r.recurso_cod || ''); if (!c || !M[c]) return;
+    /* 19/08/2026 (João): a parada era jogada INTEIRA no turno em que começou.
+       Numa troca de OP das 20:33 às 00:29 isso mandava 3h39 da Noite para a
+       Tarde — a Tarde da 703 aparecia com 5h12 e a Noite com 3h29, quando o
+       certo é ~1h33 e ~7h08. Agora reparte minuto a minuto entre os turnos que
+       a parada atravessa, com a mesma função que o detalhe já usava.
+       Sem hora de início, cai no bloco de início como antes. */
     const _mo = String(r.motivo_desc || '').trim() || '(sem motivo)';
-    M[c][b].mot[_mo] = (M[c][b].mot[_mo] || 0) + _h;
-    M[c][b].motN[_mo] = (M[c][b].motN[_mo] || 0) + 1;
     const _op = String(r.op || '').trim();
-    if (_op) { (M[c][b].motOp[_mo] = M[c][b].motOp[_mo] || {})[_op] = (M[c][b].motOp[_mo][_op] || 0) + _h; }
+    const _por = (b, _h) => {
+      if (!M[c][b] || !(_h > 0)) return;
+      M[c][b].pa += _h;
+      M[c][b].mot[_mo] = (M[c][b].mot[_mo] || 0) + _h;
+      M[c][b].motN[_mo] = (M[c][b].motN[_mo] || 0) + 1;
+      if (_op) { (M[c][b].motOp[_mo] = M[c][b].motOp[_mo] || {})[_op] = (M[c][b].motOp[_mo][_op] || 0) + _h; }
+    };
+    let _fat = null;
+    try { _fat = tempoParadaPorTurno(r.inicio, r.tempo_horas || 0, _diaDeParada(r)); } catch (_) { _fat = null; }
+    const _bs = _fat ? Object.keys(_fat).filter(k => _fat[k] > 0.0005) : [];
+    if (_bs.length) { _bs.forEach(b => _por(b, _fat[b])); return; }
+    const b = blocoParada(r); if (!b) return;
+    _por(b, r.tempo_horas || 0);
   });
   const cods = Object.keys(M); if (!cods.length) return '';
   /* 13/08/2026 (João): "permita clicar para ver o período e a OP". Guarda as
@@ -19730,11 +19743,23 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
     if (opts.dia && _diaDeParada(p) !== opts.dia) return;
     const c = String(p.recurso_cod); if (!noFiltro(c)) return;
     const metas = metasData[c]; if (!metas) return;
+    /* parada que atravessa turno usa a meta de CADA turno: a da Noite é maior
+       que a da Tarde, e calcular tudo pela do início subestima o kg perdido. */
+    const dP = _diaDeParada(p), hr = horasBlocoRate(dP);
+    let fat = null; try { fat = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, dP); } catch (_) { fat = null; }
+    if (fat && Object.keys(fat).some(k => fat[k] > 0.0005)) {
+      Object.keys(fat).forEach(b2 => {
+        const h = fat[b2]; if (!(h > 0.0005)) return;
+        const kgH = hr[b2] > 0 ? (metas[b2] || 0) / hr[b2] : 0; if (!(kgH > 0)) return;
+        addKg(c, dP, p.motivo_desc || '—', h * kgH, h);
+      });
+      return;
+    }
     const b = blocoParada(p); if (!b) return;
-    const hb = horasBlocoRate(_diaDeParada(p))[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return;
+    const hb = hr[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return;
     const horas = p.tempo_horas || 0; const kg = horas * kgHora;
     if (kg <= 0) return;
-    addKg(c, _diaDeParada(p), p.motivo_desc || '—', kg, horas);
+    addKg(c, dP, p.motivo_desc || '—', kg, horas);
   });
   // 2) OCIOSIDADE SEM APONTAMENTO: máquina ativa (produziu no período) com meta, em
   //    dia operacional do seu setor, que não produziu e não teve parada apontada.
@@ -19787,8 +19812,19 @@ function kgPerdidoParadas(D, codsFiltro, opts) {
 function kgParada(p) {
   if (PARADA_NAO_PERDE(p.motivo_desc)) return 0;
   const c = String(p.recurso_cod); const metas = metasData && metasData[c]; if (!metas) return 0;
+  const dP = _diaDeParada(p), hr = horasBlocoRate(dP);
+  let fat = null; try { fat = tempoParadaPorTurno(p.inicio, p.tempo_horas || 0, dP); } catch (_) { fat = null; }
+  if (fat && Object.keys(fat).some(k => fat[k] > 0.0005)) {
+    let kg = 0;
+    Object.keys(fat).forEach(b2 => {
+      const h = fat[b2]; if (!(h > 0.0005)) return;
+      const kgH = hr[b2] > 0 ? (metas[b2] || 0) / hr[b2] : 0;
+      if (kgH > 0) kg += h * kgH;
+    });
+    return kg;
+  }
   const b = blocoParada(p); if (!b) return 0;
-  const hb = horasBlocoRate(_diaDeParada(p))[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return 0;
+  const hb = hr[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return 0;
   return (p.tempo_horas || 0) * kgHora;
 }
 const _diaDeParada = p => p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
