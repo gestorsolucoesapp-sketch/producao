@@ -790,7 +790,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.840.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.841.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2708,7 +2708,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.840.0';
+const APP_VER = '3.841.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16602,9 +16602,36 @@ function detItemRefugo(key) {
   const linTipo = Object.entries(porTipo).sort((a, b) => b[1] - a[1]).map(([t, kg]) => `<tr><td class="nome" style="font-size:12px">${escapeHtml(t)}</td><td><span class="cel neutra">${fmtKg(kg)}</span></td></tr>`).join('');
   const _pk = _abcProd[alvo] || 0;
   const _pref = (_pk + tot) > 0 ? tot / (_pk + tot) * 100 : 0;
+  /* POR OP + APONTAMENTO A APONTAMENTO (18/08/2026, pedido do João).
+     Sem a OP não dava para levar o número ao ERP e conferir. E como os
+     apontamentos ficam à vista, aproveito para marcar o que está fora de escala:
+     um lançamento que sozinho passa de 20× a mediana dos outros é quase sempre
+     vírgula errada na digitação — foi o caso de 17/08, OP 260520 na 1501, com
+     925,926 cx (6.500 kg) onde os vizinhos tinham 0,926 cx (6,5 kg).
+     Só sinaliza; não corrige nem esconde nada. A correção é no ERP. */
+  const porOP = {};
+  rows.forEach(r => { const o2 = String(r.op || '—'); porOP[o2] = (porOP[o2] || 0) + (+r.peso || 0); });
+  const linOP = Object.entries(porOP).sort((a, b) => b[1] - a[1]).map(([o2, kg]) =>
+    `<tr><td class="nome"><span class="cod">${escapeHtml(o2)}</span></td><td><span class="cel neutra">${fmtKg(kg)}</span></td></tr>`).join('');
+
+  const pesos = rows.map(r => +r.peso || 0).filter(v => v > 0).sort((a, b) => a - b);
+  const mediana = pesos.length ? pesos[Math.floor(pesos.length / 2)] : 0;
+  const linAp = rows.slice().sort((a, b) => (+b.peso || 0) - (+a.peso || 0)).slice(0, 30).map(r => {
+    const kg = +r.peso || 0;
+    const suspeito = mediana > 0 && pesos.length >= 3 && kg > mediana * 20;
+    return `<tr><td class="nome" style="font-size:11.5px">${escapeHtml(fmtDataSem(String(r.dia).slice(0, 10)))}` +
+      `<div style="font-size:10px;color:var(--fraco-2)">T${escapeHtml(String(r.turno || '—'))} · máq ${escapeHtml(String(r.recurso_cod || '—'))} · OP ${escapeHtml(String(r.op || '—'))}</div>` +
+      `<div style="font-size:10px;color:var(--fraco-2)">${escapeHtml(String(r.tipo_perda_desc || ''))}</div>` +
+      (suspeito ? `<div style="font-size:10.5px;font-weight:800;color:#B03030;margin-top:2px">⚠️ valor fora de escala — ${Math.round(kg / mediana)}× a mediana deste item. Confira o apontamento no ERP.</div>` : '') +
+      `</td><td><span class="cel ${suspeito ? 'cel-tot' : 'neutra'}">${fmtKg(kg)}</span>` +
+      `<div style="font-size:10px;color:var(--fraco-2);text-align:right">${(+r.quantidade || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${escapeHtml(String(r.unidade || ''))}</div></td></tr>`;
+  }).join('');
+
   abreDet(titulo, `<p class="idet-desc">refugo <b>${fmtKg(tot)}</b>${_pk > 0 ? ` · produção <b>${fmtKg(_pk)}</b> · <b style="color:#B03030">${_pref.toFixed(1)}% de refugo do item</b>` : ''} · ${rows.length} apontamento(s)</p>`
     + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:6px 0 4px">Por máquina</div>${tabSimples(['Máquina', 'Refugo'], linMaq)}`
-    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Por tipo de perda</div>${tabSimples(['Tipo', 'Refugo'], linTipo)}`);
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Por OP</div>${tabSimples(['OP', 'Refugo'], linOP)}`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Por tipo de perda</div>${tabSimples(['Tipo', 'Refugo'], linTipo)}`
+    + `<div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:12px 0 4px">Apontamento a apontamento</div>${tabSimples(['Quando · máquina · OP', 'Refugo'], linAp)}`);
 }
 function bocaDe(desc) {
   const s = String(desc || '');
