@@ -790,7 +790,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.839.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.840.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2708,7 +2708,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.839.0';
+const APP_VER = '3.840.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13644,13 +13644,31 @@ async function detSetupsMaq(cod, dia, setor) {
   const hhmm = x => { const m = String(x || '').match(/(\d{2}):(\d{2})/); return m ? m[0] : ''; };
   const eventos = [];
   trocas.forEach(t => eventos.push({ h: hhmm(t.hora), tipo: 'troca', txt: `🔁 <b>Troca</b> · saiu <span class="cod">${escapeHtml(String(t.deCod || ''))}</span> → entrou <span class="cod">${escapeHtml(String(t.paraCod || ''))}</span><div style="font-size:11px;color:var(--fraco)">${escapeHtml((t.paraDesc || '').slice(0, 60))}</div>` }));
+  /* 18/08/2026: a parada que atravessa turno mostrava só o pedaço do turno
+     filtrado e parecia número errado — o setup das 14:40 às 17:12 aparecia como
+     0,5 h. Agora a linha diz a duração TOTAL e como ela se reparte entre os
+     blocos, usando tempoParadaPorTurno, a mesma função do resto do app. */
   pars.forEach(p => { const hI = hhmm(p.inicio), hF = hhmm(p.fim);
-    eventos.push({ h: hI, tipo: 'parada', txt: `⏸ Parada SETUP · ${hI}${hF ? ' → ' + hF : ''}`, dur: (p.tempo_horas || 0) }); });
+    const total = _horasOrig ? (_horasOrig(p) || p.tempo_horas || 0) : (p.tempo_horas || 0);
+    let rep = null;
+    try { rep = tempoParadaPorTurno(p.inicio, total, p.dia || dia); } catch (_) { rep = null; }
+    let quebra = '';
+    if (rep) {
+      const partes = ['Manhã', 'Tarde', 'Noite'].filter(b => rep[b] > 0.008);
+      if (partes.length > 1) {
+        quebra = '<div style="font-size:11px;color:#8A5A12;margin-top:2px">atravessa turno: ' +
+          partes.map(b => '<b>' + rep[b].toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h</b> na ' + b).join(' · ') + '</div>';
+      } else if (partes.length === 1) {
+        quebra = '<div style="font-size:11px;color:var(--fraco);margin-top:2px">tudo na ' + partes[0] + '</div>';
+      }
+    }
+    eventos.push({ h: hI, tipo: 'parada', txt: `⏸ Parada SETUP · ${hI}${hF ? ' → ' + hF : ''}` + quebra, dur: total }); });
   eventos.sort((a, b) => (a.h || '99:99').localeCompare(b.h || '99:99'));
-  const totH = pars.reduce((a, p) => a + (p.tempo_horas || 0), 0);
+  const totH = pars.reduce((a, p) => a + ((_horasOrig ? _horasOrig(p) : 0) || p.tempo_horas || 0), 0);
+  const noTurno = pars.reduce((a, p) => a + (p.tempo_horas || 0), 0);   // já cortado pelo filtro de turno
   const nome = (D.nomeMaq && D.nomeMaq[cod]) || cod;
   abreDet('Setups · ' + cod + ' · ' + fmtDataSem(dia), `
-    <p class="idet-desc">${escapeHtml(nome)} · <b>${trocas.length} troca(s) real(is)</b> · ${pars.length} parada(s) SETUP somando ${totH.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</p>
+    <p class="idet-desc">${escapeHtml(nome)} · <b>${trocas.length} troca(s) real(is)</b> · ${pars.length} parada(s) SETUP somando <b>${totH.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h</b>${(totH - noTurno) > 0.05 ? ` <span style="color:#8A5A12">· ${noTurno.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h dentro do turno filtrado</span>` : ''}</p>
     ${tabSimples(['Hora', 'Evento', 'Duração'], eventos.map(e => `<tr><td class="nome" style="white-space:nowrap">${e.h || '—'}</td><td class="nome">${e.txt}</td><td>${e.dur != null ? `<span class=\"cel cel-tot\">${e.dur.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h</span>` : ''}</td></tr>`).join('') || '<tr><td class="nome" colspan="3">Sem eventos.</td></tr>')}`);
 }
 async function detMotivoParada(setor, motivo, dia) {
