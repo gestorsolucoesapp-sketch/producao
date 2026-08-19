@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.863.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.864.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.863.0';
+const APP_VER = '3.864.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15390,6 +15390,17 @@ function classeItem(desc) {
   if (/COPO|\bCPFR\b|\bCPPM\b|\bCP\b|\bEMB/i.test(s)) return 'COPO';
   return 'POTE';
 }
+/* 19/08/2026 (João, "dê a possibilidade de separar tampas"): a Estratégia usa
+   uma classe MAIS FINA que classeItem — lá SOBRE TAMPA e TAMPA caem juntas em
+   'TAMPA', e na análise elas são peças diferentes (a sobre tampa é o item de
+   maior giro da Termoformagem). Aqui viram famílias separadas.
+   Não altero classeItem: ela é usada em outros pontos e a mudança propagaria. */
+const _RX_STP = /SOBRE\s*TAMPA|SOBRETAMPA|\bSTP\b/i;
+function classeEstrat(desc) {
+  const c = classeItem(desc);
+  if (c === 'TAMPA') return _RX_STP.test(String(desc || '')) ? 'SOBRE TAMPA' : 'TAMPA';
+  return c;
+}
 /* ===== ABA ESTRATÉGIA: histórico de produção por BOCA (622), gráfico montanha ===== */
 let _estratRows = null;
 const _estratBocaOff = {};
@@ -15398,8 +15409,10 @@ const _estratBocaOff = {};
    codigo de maquina (1901) e boca (101) sao ambos numericos e se atropelariam. */
 let _estratAgrup = 'boca';
 const _estratMaqOff = {};
+const _estratPecaOff = {};
+function _estratOffMap() { return _estratAgrup === 'maquina' ? _estratMaqOff : _estratAgrup === 'peca' ? _estratPecaOff : _estratBocaOff; }
 function estratModo(m) { if (_estratAgrup === m) return; _estratAgrup = m; renderEstrategia(); }
-function estratToggleGrp(k) { const M = _estratAgrup === 'maquina' ? _estratMaqOff : _estratBocaOff; M[k] = !M[k]; renderEstrategia(); }
+function estratToggleGrp(k) { const M = _estratOffMap(); M[k] = !M[k]; renderEstrategia(); }
 let _estratInitDefault = false;
 // gráfico de área empilhada estilo "montanha" (Power BI), com gradiente, média e tendência
 function areaMontanha(labels, series, opts) {
@@ -16717,12 +16730,13 @@ async function carregarEstrategia() {
   }
 }
 function bocas_todas() {
-  const M = _estratAgrup === 'maquina' ? _estratMaqOff : _estratBocaOff;
+  const M = _estratOffMap();
   Object.keys(M).forEach(k => delete M[k]); renderEstrategia();
 }
 function bocas_nenhuma() {
   try {
     if (_estratAgrup === 'maquina') (_estratRows || []).forEach(r => { _estratMaqOff[String(r.recurso_cod || '').trim() || '—'] = true; });
+    else if (_estratAgrup === 'peca') (_estratRows || []).forEach(r => { _estratPecaOff[classeEstrat(r.item_desc)] = true; });
     else (_estratRows || []).forEach(r => { _estratBocaOff[bocaDe(r.item_desc) || 's/ boca'] = true; });
   } catch (_) {}
   renderEstrategia();
@@ -16909,8 +16923,11 @@ function renderEstrategia() {
     : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
   const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
   const _porMaq = _estratAgrup === 'maquina';
-  const grpR = r => _porMaq ? (String(r.recurso_cod || '').trim() || '—') : bocaR(r);
-  const _offMap = _porMaq ? _estratMaqOff : _estratBocaOff;
+  const _porPeca = _estratAgrup === 'peca';
+  const grpR = r => _porMaq ? (String(r.recurso_cod || '').trim() || '—')
+    : _porPeca ? classeEstrat(r.item_desc)
+    : bocaR(r);
+  const _offMap = _estratOffMap();
   const _de = (periodoSel && periodoSel.de) || '0000-01-01', _ate = (periodoSel && periodoSel.ate) || '9999-12-31';
   /* 19/08/2026 (João): "consultei Pt 450 e os dados têm que mostrar só dele".
      O filtro entrava só em rows (o período) e NÃO em rowsAno — que alimenta o
@@ -16938,12 +16955,14 @@ function renderEstrategia() {
   const chaveB = r => { const d = String(r.dia).slice(0, 10); return _porMes ? d.slice(0, 7) : d; };
   const dias = [...new Set(rows.map(chaveB))].sort();
   const idxDia = {}; dias.forEach((d, i) => idxDia[d] = i);
-  const bocas = [...new Set(rowsAno.map(grpR))].sort((a, b) => (parseInt(a) || 99999) - (parseInt(b) || 99999));   // universo do ANO
+  const bocas = _porPeca
+    ? [...new Set(rowsAno.map(grpR))].sort((a, b) => String(a).localeCompare(String(b), 'pt'))
+    : [...new Set(rowsAno.map(grpR))].sort((a, b) => (parseInt(a) || 99999) - (parseInt(b) || 99999));   // universo do ANO
   const serie = {}; bocas.forEach(b => serie[b] = dias.map(() => 0));
   rows.forEach(r => { const di = idxDia[chaveB(r)]; if (di != null) serie[grpR(r)][di] += val(r); });
   const totalBoca = {}; bocas.forEach(b => totalBoca[b] = serie[b].reduce((a, x) => a + x, 0));   // total do período
   const totalAno = {}; bocas.forEach(b => totalAno[b] = 0); rowsAno.forEach(r => { totalAno[grpR(r)] += val(r); });
-  if (!_porMaq && !_estratInitDefault) { ['s/ boca', '1', '01', '10', '20'].forEach(b => _estratBocaOff[b] = true); _estratInitDefault = true; }   // sem boca + injeção (Ps) fora por padrão
+  if (!_porMaq && !_porPeca && !_estratInitDefault) { ['s/ boca', '1', '01', '10', '20'].forEach(b => _estratBocaOff[b] = true); _estratInitDefault = true; }   // sem boca + injeção (Ps) fora por padrão
   const _PS = ['1', '01', '10', '20'];
   /* 12/08/2026 (João): o rótulo do item sem boca segue o SETOR, e não pode
      inventar produto que não existe ali.
@@ -16954,7 +16973,8 @@ function renderEstrategia() {
   const _rotSemBoca = setor === 'Extrusão' ? 'Bobina'
     : setor === 'Termoformagem' ? 'Bandeja'
     : 'Boca não identificada';
-  const rotBoca = b => _porMaq ? ('máq ' + b) : (b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b));
+  const _CAP = t => String(t).charAt(0) + String(t).slice(1).toLowerCase();
+  const rotBoca = b => _porMaq ? ('máq ' + b) : _porPeca ? _CAP(b) : (b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b));
   const fmtV = metrica === 'peso' ? fmtKg : metrica === 'milheiro' ? (x => fmtNum(Math.round(x)) + ' mi') : (x => fmtNum(Math.round(x)) + ' cx');
   const CORES = ['#2F6FED', '#00964D', '#E8A13D', '#7B4FA8', '#D64545', '#3CA9C4', '#C86A2E', '#6C7BD1', '#28348E', '#9AA6B2'];
   /* 12/08/2026 (João, print do gráfico vazio): dá para desligar boca por boca até
@@ -16983,14 +17003,15 @@ function renderEstrategia() {
   const _itens = Object.values(_itAgg).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
   const _maxIt = _itens.length ? _itens[0].v : 1;
   _estratItemRows = rows; _estratMetricaAtual = metrica; _estratPorMes = _porMes;
-  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${_porMaq ? escapeHtml(String(it.boca)) : (it.boca === 's/ boca' ? '—' : 'b' + it.boca)}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
+  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${(_porMaq || _porPeca) ? escapeHtml(String(it.boca)) : (it.boca === 's/ boca' ? '—' : 'b' + it.boca)}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
   const periodoLbl = periodoSel ? periodoSel.label : '';
   box.innerHTML = `<div class="card">
-      <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por ${_porMaq ? 'máquina' : 'boca'} · histórico</div>
-      <div style="font-size:11px;color:var(--fraco);margin:1px 0 10px">${escapeHtml(setor || 'Todos os setores')}${periodoLbl ? ' · ' + escapeHtml(periodoLbl) : ''} · ${metrica === 'peso' ? 'Toneladas' : metrica === 'milheiro' ? 'Milheiros' : 'Caixas'} · fonte RPCP622 · toque ${_porMaq ? 'nas máquinas' : 'nas bocas'} p/ filtrar</div>
-      <div style="display:flex;gap:0;margin-bottom:9px;border:1.5px solid var(--navy);border-radius:999px;overflow:hidden;width:fit-content">
-        <button onclick="estratModo('boca')" style="border:0;background:${_porMaq ? '#fff' : 'var(--navy)'};color:${_porMaq ? 'var(--navy)' : '#fff'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por boca</button>
-        <button onclick="estratModo('maquina')" style="border:0;background:${_porMaq ? 'var(--navy)' : '#fff'};color:${_porMaq ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por máquina</button>
+      <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por ${_porMaq ? 'máquina' : _porPeca ? 'peça' : 'boca'} · histórico</div>
+      <div style="font-size:11px;color:var(--fraco);margin:1px 0 10px">${escapeHtml(setor || 'Todos os setores')}${periodoLbl ? ' · ' + escapeHtml(periodoLbl) : ''} · ${metrica === 'peso' ? 'Toneladas' : metrica === 'milheiro' ? 'Milheiros' : 'Caixas'} · fonte RPCP622 · toque ${_porMaq ? 'nas máquinas' : _porPeca ? 'nas peças' : 'nas bocas'} p/ filtrar</div>
+      <div style="display:flex;gap:0;margin-bottom:9px;border:1.5px solid var(--navy);border-radius:999px;overflow:hidden;width:fit-content;flex-wrap:wrap">
+        <button onclick="estratModo('boca')" style="border:0;border-right:1.5px solid var(--navy);background:${(_porMaq || _porPeca) ? '#fff' : 'var(--navy)'};color:${(_porMaq || _porPeca) ? 'var(--navy)' : '#fff'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por boca</button>
+        <button onclick="estratModo('maquina')" style="border:0;border-right:1.5px solid var(--navy);background:${_porMaq ? 'var(--navy)' : '#fff'};color:${_porMaq ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por máquina</button>
+        <button onclick="estratModo('peca')" style="border:0;background:${_porPeca ? 'var(--navy)' : '#fff'};color:${_porPeca ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por peça</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:9px">
         <input id="estratItemBusca" value="${escapeHtml(_estratItemQ || '')}" placeholder="🔎 consultar item (código ou nome)"
@@ -17019,16 +17040,16 @@ function renderEstrategia() {
             return 'As bocas escolhidas não produziram neste período.';
           })() + '</div>'}
       <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--fraco);margin-top:8px">
-        <span>■ área = ${_porMaq ? 'máquina' : 'boca'} &nbsp; <span style="color:#D64545">┄ média dos dias com produção</span> &nbsp; <span style="color:#16283A">━ tendência</span>${series.length === 1 ? ' &nbsp; <span style="color:#1F7A46">▮ pico</span> / <span style="color:#C0392B">▮ vale</span> com a data' : ''}</span>
+        <span>■ área = ${_porMaq ? 'máquina' : _porPeca ? 'peça' : 'boca'} &nbsp; <span style="color:#D64545">┄ média dos dias com produção</span> &nbsp; <span style="color:#16283A">━ tendência</span>${series.length === 1 ? ' &nbsp; <span style="color:#1F7A46">▮ pico</span> / <span style="color:#C0392B">▮ vale</span> com a data' : ''}</span>
         <span style="margin-left:auto">total visível: <b style="color:var(--txt-2)">${fmtV(totGeral)}</b> · eixo em ${_porMes ? 'meses' : 'dias'} · ${dias.length} ${_porMes ? 'mês(es)' : 'dia(s)'}</span>
       </div>
     </div>
     <div class="card" style="margin-top:12px">
       <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🏆 Itens por ordem de grandeza</div>
-      <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) ${_porMaq ? 'nas máquinas visíveis' : 'nas bocas visíveis'}${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
+      <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) ${_porMaq ? 'nas máquinas visíveis' : _porPeca ? 'nas peças visíveis' : 'nas bocas visíveis'}${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
       ${_listaItens || '<p class="desc">sem itens no filtro</p>'}
     </div>
-    ${(() => { try { return estratMelhorMes(rowsAno, val, fmtV, rotBoca, grpR, _offMap, _porMaq); } catch (_) { return ''; } })()}
+    ${(() => { try { return estratMelhorMes(rowsAno, val, fmtV, rotBoca, grpR, _offMap, _porMaq ? 'máquina' : _porPeca ? 'peça' : 'boca'); } catch (_) { return ''; } })()}
     ${(() => { try { return estratCapacidadeItem(rows, _rowsTodas, fmtV, metrica); } catch (_) { return ''; } })()}
     <div class="card" style="margin-top:12px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de produção</div><p class="desc">Espaço reservado para o plano — a próxima etapa. Me diga o formato (meta por boca, por período?) e eu monto aqui.</p></div>`;
 }
@@ -17044,7 +17065,7 @@ let _estratItemQ = '';
    fevereiro nunca vai ganhar de março no volume, mas pode ganhar no ritmo.
    Base: rowsAno (ano corrente já filtrado por setor/turno/item), respeitando
    os chips ligados. Não usa meta: meta é por máquina e muda no meio do ano. */
-function estratMelhorMes(rowsAno, val, fmtV, rotGrp, grpR, offMap, porMaq) {
+function estratMelhorMes(rowsAno, val, fmtV, rotGrp, grpR, offMap, rotAgrup) {
   const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const rotMes = m => MES3[+m.slice(5, 7) - 1] + '/' + m.slice(2, 4);
   const vis = (rowsAno || []).filter(r => !offMap[grpR(r)]);
@@ -17097,7 +17118,7 @@ function estratMelhorMes(rowsAno, val, fmtV, rotGrp, grpR, offMap, porMaq) {
   }
   return '<div class="card" style="margin-top:12px">'
     + '<div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🏅 Melhor mês · referência do ano</div>'
-    + '<div style="font-size:11px;color:var(--fraco);margin-bottom:9px">' + lista.length + ' mês(es) com produção · ' + (porMaq ? 'máquinas' : 'bocas') + ' visíveis · fonte RPCP622</div>'
+    + '<div style="font-size:11px;color:var(--fraco);margin-bottom:9px">' + lista.length + ' mês(es) com produção · ' + (rotAgrup + 's') + ' visíveis · fonte RPCP622</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<div style="flex:1;min-width:150px;background:#F2F7F4;border:1px solid #CFE3D8;border-radius:11px;padding:9px 11px">'
     + '<div style="font-size:10.5px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px">maior volume</div>'
@@ -17112,7 +17133,7 @@ function estratMelhorMes(rowsAno, val, fmtV, rotGrp, grpR, offMap, porMaq) {
     + '</div>'
     + cmp
     + '<div style="margin-top:11px">' + barras + '</div>'
-    + (gHtml ? '<div style="margin-top:11px"><div style="font-size:11px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px">melhor mês de cada ' + (porMaq ? 'máquina' : 'boca') + '</div>' + gHtml + '</div>' : '')
+    + (gHtml ? '<div style="margin-top:11px"><div style="font-size:11px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px">melhor mês de cada ' + rotAgrup + '</div>' + gHtml + '</div>' : '')
     + '<p class="desc" style="margin-top:8px">Volume premia mês cheio; ritmo compara mês curto com mês longo em pé de igualdade. Meses sem produção não entram na conta.</p>'
     + '</div>';
 }
