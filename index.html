@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.854.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.855.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.854.0';
+const APP_VER = '3.855.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26259,10 +26259,53 @@ function cfRender() {
   $('cfGraficos').innerHTML = g;
 }
 
-function cfDetalhe(cod, metrica, turno, dia) {
+async function cfDetalhe(cod, metrica, turno, dia) {
   const r = (_cfDados || []).find(x => x.tipo === 'alerta' && x.recurso_cod === cod && x.metrica === metrica &&
     (turno === null ? x.turno == null : Number(x.turno) === Number(turno)) && (!dia || x.dia === dia));
   if (!r) return;
+  /* 19/08/2026 (João): faltava o MOTIVO. Saber que a Manhã da 702 teve 23,4 h
+     não diz nada sem saber de quê — a conversa com o turno começa no motivo,
+     não no desvio. Busco as paradas do dia/turno e listo por motivo. */
+  let motivos = null;
+  if (metrica === 'paradas' && r.dia) {
+    try {
+      const { data } = await sb.from('paradas')
+        .select('motivo_desc,tempo_horas,inicio,fim,op')
+        .eq('recurso_cod', String(cod)).eq('dia', r.dia);
+      const agg = {};
+      (data || []).forEach(x => {
+        let fat = null;
+        try { fat = tempoParadaPorTurno(x.inicio, x.tempo_horas || 0, r.dia); } catch (_) { fat = null; }
+        /* o repartidor usa 'Manhã'/'Tarde'/'Noite'; CF_TURDET traz 'Manhã (T1+T3)' */
+        const bl = (r.turno != null) ? ({ 1: 'Manhã', 2: 'Tarde', 5: 'Noite' }[Number(r.turno)] || null) : null;
+        const h = (fat && bl && fat[bl] != null) ? fat[bl] : (bl ? 0 : (x.tempo_horas || 0));
+        if (!(h > 0.001)) return;
+        const k = String(x.motivo_desc || '(sem motivo)').trim();
+        (agg[k] = agg[k] || { h: 0, n: 0, ini: null, fim: null });
+        agg[k].h += h; agg[k].n++;
+        const hh = t => { const m2 = String(t || '').match(/[T ](\d{2}):(\d{2})/); return m2 ? m2[1] + ':' + m2[2] : null; };
+        if (!agg[k].ini) agg[k].ini = hh(x.inicio);
+        agg[k].fim = hh(x.fim) || agg[k].fim;
+      });
+      const ks = Object.keys(agg).sort((a, b) => agg[b].h - agg[a].h);
+      if (ks.length) {
+        const tot = ks.reduce((acc, k) => acc + agg[k].h, 0);
+        motivos = '<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin:12px 0 5px">Por motivo</div>' +
+          '<div style="border:1px solid var(--linha-s);border-radius:10px;overflow:hidden">' +
+          ks.map(k => {
+            const v = agg[k], pct = tot > 0 ? v.h / tot * 100 : 0;
+            return '<div style="padding:7px 10px;border-bottom:1px solid var(--leve-2s)">' +
+              '<div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px">' +
+              '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(k) + '</span>' +
+              '<b style="white-space:nowrap">' + fmtHoras(v.h) + '</b>' +
+              '<span style="font-size:11px;color:var(--fraco);min-width:38px;text-align:right">' + Math.round(pct) + '%</span></div>' +
+              '<div style="height:6px;background:var(--leve-2);border-radius:3px;margin-top:4px"><div style="width:' + Math.round(pct) + '%;height:100%;background:#C0392B;border-radius:3px"></div></div>' +
+              '<div style="font-size:10.5px;color:var(--fraco);margin-top:3px">' + v.n + ' parada(s)' +
+              (v.ini ? ' · a partir de ' + v.ini : '') + '</div></div>';
+          }).join('') + '</div>';
+      }
+    } catch (_) { motivos = null; }
+  }
   const un = metrica === 'paradas' ? ' h' : ' kg';
   const z = Number(r.z), dif = Number(r.valor) - Number(r.media);
   abreDet('Conferência · ' + cod + (turno != null ? ' · ' + (CF_TUR[turno] || turno) : ''),
@@ -26284,7 +26327,7 @@ function cfDetalhe(cod, metrica, turno, dia) {
       : Math.abs(z) >= 5
       ? '<b>Muito fora do padrão.</b> Valor desse tamanho normalmente é erro de apontamento — unidade trocada, vírgula no lugar errado ou lançamento duplicado. Confirmar com o operador antes de fechar o dia.'
       : '<b>Fora da faixa usual.</b> Pode ser variação legítima (troca de produto, parada longa) ou erro de digitação. Vale conferir.') +
-    '</div>');
+    '</div>' + (motivos || ''));
 }
 
 /* ===== avisa quando o app reabriu numa versão nova (evita parecer bug) ===== */
