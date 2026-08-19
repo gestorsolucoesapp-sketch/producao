@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.864.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.865.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.864.0';
+const APP_VER = '3.865.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15413,6 +15413,13 @@ const _estratPecaOff = {};
 function _estratOffMap() { return _estratAgrup === 'maquina' ? _estratMaqOff : _estratAgrup === 'peca' ? _estratPecaOff : _estratBocaOff; }
 function estratModo(m) { if (_estratAgrup === m) return; _estratAgrup = m; renderEstrategia(); }
 function estratToggleGrp(k) { const M = _estratOffMap(); M[k] = !M[k]; renderEstrategia(); }
+function estratLimparCruz() {
+  const a = _estratAgrup;
+  if (a !== 'boca') Object.keys(_estratBocaOff).forEach(k => delete _estratBocaOff[k]);
+  if (a !== 'maquina') Object.keys(_estratMaqOff).forEach(k => delete _estratMaqOff[k]);
+  if (a !== 'peca') Object.keys(_estratPecaOff).forEach(k => delete _estratPecaOff[k]);
+  renderEstrategia();
+}
 let _estratInitDefault = false;
 // gráfico de área empilhada estilo "montanha" (Power BI), com gradiente, média e tendência
 function areaMontanha(labels, series, opts) {
@@ -16940,6 +16947,30 @@ function renderEstrategia() {
       String(r.item_cod || '').toLowerCase().includes(_qA) ||
       String(r.item_desc || '').toLowerCase().includes(_qA));
   }
+  /* 19/08/2026 (João, "quando filtrar a boca quero ver só as máquinas que
+     produziram esse item"): FILTRO CRUZADO. O que está desligado num eixo
+     (boca / máquina / peça) tira as linhas dos outros eixos — então o universo
+     do eixo ativo passa a ser só o que sobrou. Antes, ligar uma única boca e
+     trocar para "por máquina" listava a fábrica inteira, porque cada eixo tinha
+     seu mapa de desligados e nenhum enxergava o outro. */
+  const _uniB = new Set(), _uniM = new Set(), _uniP = new Set();
+  rowsAno.forEach(r => { _uniB.add(bocaR(r)); _uniM.add(String(r.recurso_cod || '').trim() || '—'); _uniP.add(classeEstrat(r.item_desc)); });
+  rowsAno = rowsAno.filter(r => {
+    if ((_porMaq || _porPeca) && _estratBocaOff[bocaR(r)]) return false;
+    if (!_porMaq && _estratMaqOff[String(r.recurso_cod || '').trim() || '—']) return false;
+    if (!_porPeca && _estratPecaOff[classeEstrat(r.item_desc)]) return false;
+    return true;
+  });
+  const _resumoEixo = (set, M, rot) => {
+    const off = [...set].filter(k => M[k]); if (!off.length) return '';
+    const on = [...set].filter(k => !M[k]);
+    if (!on.length) return 'nenhuma';
+    return on.length <= 4 ? on.map(rot).join(', ') : on.length + ' de ' + set.size;
+  };
+  const _cruzTags = [];
+  if (_porMaq || _porPeca) { const t = _resumoEixo(_uniB, _estratBocaOff, b => b === 's/ boca' ? 'sem boca' : 'boca ' + b); if (t) _cruzTags.push(t); }
+  if (!_porMaq) { const t = _resumoEixo(_uniM, _estratMaqOff, m => 'máq ' + m); if (t) _cruzTags.push(t); }
+  if (!_porPeca) { const t = _resumoEixo(_uniP, _estratPecaOff, x => String(x).charAt(0) + String(x).slice(1).toLowerCase()); if (t) _cruzTags.push(t); }
   let rows = rowsAno.filter(r => { const d = String(r.dia).slice(0, 10); return d >= _de && d <= _ate; });   // recorte do gráfico = período
   /* linhas SEM o filtro de item, no mesmo período: usadas só para mostrar o que
      mais roda na máquina no card de capacidade. */
@@ -17013,6 +17044,10 @@ function renderEstrategia() {
         <button onclick="estratModo('maquina')" style="border:0;border-right:1.5px solid var(--navy);background:${_porMaq ? 'var(--navy)' : '#fff'};color:${_porMaq ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por máquina</button>
         <button onclick="estratModo('peca')" style="border:0;background:${_porPeca ? 'var(--navy)' : '#fff'};color:${_porPeca ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por peça</button>
       </div>
+      ${_cruzTags.length ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--leve-4);border-left:4px solid var(--azul-marca);border-radius:9px;padding:7px 10px;margin-bottom:9px;font-size:12px">
+        <span>🔗 mostrando só <b>${escapeHtml(_cruzTags.join(' · '))}</b> — ${_porMaq ? 'as máquinas' : _porPeca ? 'as peças' : 'as bocas'} abaixo são só ${_porMaq ? 'as que produziram isso' : 'o que sobrou desse filtro'}</span>
+        <span onclick="estratLimparCruz()" style="cursor:pointer;font-weight:800;color:#B03030;white-space:nowrap;margin-left:auto">limpar ✕</span>
+      </div>` : ''}
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:9px">
         <input id="estratItemBusca" value="${escapeHtml(_estratItemQ || '')}" placeholder="🔎 consultar item (código ou nome)"
           onchange="estratBuscaItem(this.value)"
