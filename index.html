@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.884.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.885.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2774,7 +2774,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.884.0';
+const APP_VER = '3.885.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26922,6 +26922,74 @@ function _arQuebra(serieMes) {
   return q.length ? q : null;
 }
 function arGran(g) { _arGran = g; arRender(); }
+
+/* PICOS E VALES (19/08/2026, pedido do Joao). Ponto so vira pico/vale se
+   destoar mais de 8% dos dois vizinhos - senao todo serrilhado de dado vira
+   "pico" e o grafico fica cheio de bolinha sem significado. */
+function _arExtremos(serie, campo) {
+  const out = [];
+  for (let i = 1; i < serie.length - 1; i++) {
+    const a = serie[i - 1][campo], v = serie[i][campo], b = serie[i + 1][campo];
+    if (!(v > 0)) continue;
+    if (v >= a && v >= b) { const ref = Math.max(a, b); if (ref > 0 && (v - ref) / v > 0.08) out.push({ i, tipo: 'pico' }); }
+    else if (v <= a && v <= b) { const ref = Math.min(a, b); if (v > 0 && (ref - v) / ref > 0.08) out.push({ i, tipo: 'vale' }); }
+  }
+  return out;
+}
+
+/* clique no ponto: o que a maquina estava rodando naquele mes e quanto variou.
+   Usa o 622 quando ele existe na area (tem item de verdade); sem 622, mostra
+   so a variacao do proprio ponto e avisa o que falta. */
+function arPonto(k) {
+  if (!_arRows) return;
+  const serie = _arSerie(_arGran);
+  const i = serie.findIndex(x => x.k === k);
+  if (i < 0) return;
+  const p = serie[i], ant = i > 0 ? serie[i - 1] : null;
+  const rotL = kk => kk.length === 4 ? kk : kk.length === 7
+    ? (['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+kk.slice(5, 7) - 1] + '/' + kk.slice(2, 4))
+    : (kk.slice(8, 10) + '/' + kk.slice(5, 7) + '/' + kk.slice(2, 4));
+  const seta = d => d >= 0 ? '<span style="color:#1F7A46;font-weight:800">\u25b2 +' + Math.round(d * 100) + '%</span>' : '<span style="color:#C0392B;font-weight:800">\u25bc ' + Math.round(d * 100) + '%</span>';
+
+  /* media do periodo inteiro como regua fixa */
+  const mediaKg = serie.reduce((a, x) => a + x.kgd, 0) / serie.length;
+
+  let h = '<p class="idet-desc"><b>' + rotL(k) + '</b> \u00b7 ' + p.nd + ' dia(s) com produ\u00e7\u00e3o</p>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<div style="flex:1;min-width:120px;background:var(--leve-4);border-radius:9px;padding:8px 10px"><div style="font-size:11px;color:var(--fraco-2)">kg/dia</div><div style="font-size:17px;font-weight:800;color:var(--navy)">' + fmtKg(p.kgd) + '</div>'
+    + (ant ? '<div style="font-size:11px">vs ' + rotL(ant.k) + ': ' + seta(p.kgd / ant.kgd - 1) + '</div>' : '') + '</div>'
+    + '<div style="flex:1;min-width:120px;background:var(--leve-4);border-radius:9px;padding:8px 10px"><div style="font-size:11px;color:var(--fraco-2)">cxs/dia</div><div style="font-size:17px;font-weight:800;color:var(--navy)">' + fmt(Math.round(p.cxd), 0) + '</div>'
+    + (ant && ant.cxd > 0 ? '<div style="font-size:11px">vs ' + rotL(ant.k) + ': ' + seta(p.cxd / ant.cxd - 1) + '</div>' : '') + '</div>'
+    + '</div>';
+  h += '<p class="desc" style="margin-bottom:8px">Contra a m\u00e9dia de todo o hist\u00f3rico (' + fmtKg(mediaKg) + '/dia): ' + seta(p.kgd / mediaKg - 1) + '</p>';
+
+  /* o que estava rodando: 622 */
+  const its = (_arItens || []).filter(r => String(r.dia).slice(0, k.length) === k && (+r.peso || 0) > 0);
+  if (its.length) {
+    const agg = {};
+    its.forEach(r => { const ch = String(r.item_cod || '?'); if (!agg[ch]) agg[ch] = { desc: r.item_desc || ch, kg: 0, cx: 0, t: 0 }; agg[ch].kg += (+r.peso || 0); agg[ch].cx += (+r.quantidade || 0); agg[ch].t++; });
+    /* mesmo item no ponto anterior, para dizer se ELE caiu ou se trocou de produto */
+    const aggA = {};
+    if (ant) (_arItens || []).forEach(r => { const d = String(r.dia).slice(0, ant.k.length); if (d !== ant.k) return; const ch = String(r.item_cod || '?'); if (!aggA[ch]) aggA[ch] = { kg: 0, t: 0 }; aggA[ch].kg += (+r.peso || 0); aggA[ch].t++; });
+    const tot = Object.values(agg).reduce((a, x) => a + x.kg, 0) || 1;
+    const linhas = Object.entries(agg).sort((a, b) => b[1].kg - a[1].kg).slice(0, 10).map(([ch, v]) => {
+      const kgT = v.t ? v.kg / v.t : 0;
+      const A = aggA[ch];
+      const cmp = A && A.t ? seta(kgT / (A.kg / A.t) - 1) : '<span style="color:var(--fraco-2);font-size:11px">n\u00e3o rodou antes</span>';
+      return '<tr><td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(ch) + '</span> ' + escapeHtml(String(v.desc).slice(0, 30)) + '</td>'
+        + '<td><span class="cel neutra">' + fmtKg(v.kg) + '</span></td>'
+        + '<td><span class="cel neutra">' + Math.round(v.kg / tot * 100) + '%</span></td>'
+        + '<td><span class="cel neutra">' + fmtKg(kgT) + '/turno</span></td>'
+        + '<td>' + cmp + '</td></tr>';
+    }).join('');
+    h += '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:8px 0 3px">O que estava rodando</div>'
+      + '<p class="desc" style="margin-bottom:4px">A \u00faltima coluna compara o <b>kg/turno do mesmo item</b> com ' + rotL(ant ? ant.k : k) + ' \u2014 \u00e9 assim que se separa m\u00e1quina mais lenta de produto trocado.</p>'
+      + tabSimples(['Item', 'Peso', 'Fatia', 'Ritmo', 'vs anterior'], linhas);
+  } else {
+    h += '<p class="desc">Sem 622 importado para este per\u00edodo \u2014 por isso n\u00e3o d\u00e1 para dizer <b>o que</b> estava rodando aqui, s\u00f3 quanto saiu. Importe o RPCP622 da m\u00e1quina cobrindo este m\u00eas.</p>';
+  }
+  abreDet('\ud83d\udd0e ' + rotL(k) + ' \u00b7 m\u00e1quina ' + _arCod, h);
+}
 function arRender() {
   const box = $('arConteudo'); if (!box || !_arRows) return;
   const nome = (_arRows.find(r => r.recurso_nome) || {}).recurso_nome || '';
@@ -26960,15 +27028,25 @@ function arRender() {
         + '<text x="' + (X(iQ) + 3).toFixed(1) + '" y="18" font-size="9.5" fill="#C0392B" font-weight="700">' + (n + 1) + '\u00ba</text>';
     });
   }
+  /* bolinha so nos picos e vales; faixa invisivel em CADA ponto para o toque
+     no celular pegar sem precisar acertar a linha. */
+  const ext = _arExtremos(serie, 'kgd');
+  const bolinhas = ext.map(e => {
+    const x = X(e.i), y = Yk(serie[e.i].kgd), cor = e.tipo === 'pico' ? '#1F7A46' : '#C0392B';
+    return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="4.2" fill="#fff" stroke="' + cor + '" stroke-width="2"><title>' + (e.tipo === 'pico' ? 'pico' : 'vale') + ' \u00b7 ' + rot(serie[e.i].k) + ' \u00b7 toque para ver o que rodou</title></circle>';
+  }).join('');
+  const larg = (W - 75) / Math.max(1, serie.length - 1);
+  const toque = serie.map((x, i) => '<rect x="' + (X(i) - larg / 2).toFixed(1) + '" y="8" width="' + Math.max(6, larg).toFixed(1) + '" height="' + (H - 42) + '" fill="transparent" style="cursor:pointer" onclick="arPonto(\'' + x.k + '\')"><title>' + rot(x.k) + ' \u00b7 ' + fmtKg(x.kgd) + '/dia</title></rect>').join('');
   const labStep = Math.ceil(serie.length / 14);
   const labs = serie.map((x, i) => i % labStep ? '' : '<text x="' + X(i).toFixed(1) + '" y="' + (H - 16) + '" font-size="9.5" fill="#8A97A6" text-anchor="middle">' + rot(x.k) + '</text>').join('');
   const svg = '<div style="overflow-x:auto"><svg viewBox="0 0 ' + W + ' ' + H + '" style="min-width:' + Math.min(W, 900) + 'px;width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">'
     + faixas
     + '<path d="' + pKg + '" fill="none" stroke="#2F6FED" stroke-width="2.2"/>'
     + '<path d="' + pCx + '" fill="none" stroke="#E8A13D" stroke-width="1.8" stroke-dasharray="6 3"/>'
-    + labs
+    + bolinhas + toque + labs
     + '<text x="55" y="' + (H - 4) + '" font-size="10" fill="#2F6FED" font-weight="700">\u2501 kg/dia produzido</text>'
     + '<text x="200" y="' + (H - 4) + '" font-size="10" fill="#E8A13D" font-weight="700">\u2504 cxs/dia produzido</text>'
+    + '<text x="345" y="' + (H - 4) + '" font-size="10" fill="#5A6B7D">\u25cb pico / vale \u2014 toque em qualquer ponto</text>'
     + (_arQuedas.length ? '<text x="' + (W - 20) + '" y="' + (H - 4) + '" font-size="10" fill="#C0392B" font-weight="700" text-anchor="end">\u25ae degrau de queda</text>' : '')
     + '</svg></div>';
 
