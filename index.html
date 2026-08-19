@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.885.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.886.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2774,7 +2774,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.885.0';
+const APP_VER = '3.886.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -21500,7 +21500,14 @@ let novosIntegrantes = [];   // cadastros recentes (só o gestor é avisado)
 async function carregarNovosIntegrantes() {
   try {
     // 'aprovado' entra aqui para o sino poder liberar o acesso sem passar pela aba Usuários
-    const { data } = await sb.from('perfis').select('id,nome,email,setor,criado_em,role,aprovado').order('criado_em', { ascending: false }).limit(200);
+    /* 19/08/2026 - BUG QUE SILENCIOU A APROVACAO: aqui pedia a coluna 'role',
+       que NAO EXISTE em perfis (o nome certo e 'papel'). O PostgREST recusa a
+       consulta inteira quando uma coluna nao existe, o catch engolia o erro e
+       novosIntegrantes ficava vazio SEMPRE. Resultado: quem se cadastrava
+       entrava como pendente (aprovado default false) e ficava esperando para
+       sempre, sem nenhum aviso chegar no sino do gestor. */
+    const { data, error } = await sb.from('perfis').select('id,nome,email,setor,criado_em,papel,aprovado').order('criado_em', { ascending: false }).limit(200);
+    if (error) { console.warn('novos integrantes:', error.message); return; }
     /* A janela de 7 dias servia para o aviso de "cadastro novo" não ficar eterno.
        Só que ela também apagava do sino QUEM AINDA ESTÁ ESPERANDO LIBERAÇÃO:
        passou de uma semana sem ninguém aprovar, a pessoa sumia e ficava travada
@@ -21515,8 +21522,9 @@ let ultimoAcessoGestor = null;   // {nome, quando}
 async function carregarUltimoAcessoGestor() {
   try {
     // admins/gestores
-    const { data: perfis } = await sb.from('perfis').select('id,nome,role');
-    const admins = (perfis || []).filter(u => (u.role || '').toLowerCase() === 'admin');
+    /* mesma coluna errada de antes: 'role' nao existe, o nome e 'papel'. */
+    const { data: perfis } = await sb.from('perfis').select('id,nome,papel');
+    const admins = (perfis || []).filter(u => (u.papel || '').toLowerCase() === 'admin');
     if (!admins.length) return;
     const ids = admins.map(a => a.id);
     const nomeById = {}; admins.forEach(a => nomeById[a.id] = a.nome);
