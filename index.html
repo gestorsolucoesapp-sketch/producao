@@ -443,7 +443,9 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
   transform:rotate(90deg);transition:transform .18s ease,opacity .15s ease}
 .olho-sec:active{opacity:1}
 .card.sec-recolhida .olho-sec{transform:rotate(0deg);opacity:1}
-.card.sec-recolhida > *:not(.titulo-sec){display:none!important}
+.sec-cab{position:relative;padding-right:34px}
+.card.sec-recolhida > *:not(.titulo-sec):not(.sec-cab){display:none!important}
+.card.sec-recolhida > .sec-cab{margin-bottom:0}
 .card.sec-recolhida{opacity:.78;padding-bottom:10px}
 .card.sec-recolhida > .titulo-sec{margin-bottom:0}
 .per-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#54626F;background:#EDF0F3;border:1px solid #DBE1E7;border-radius:999px;padding:2px 9px;margin:0 6px 0 0;vertical-align:middle;letter-spacing:.2px}
@@ -791,7 +793,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.868.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.869.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2726,7 +2728,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.868.0';
+const APP_VER = '3.869.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4025,7 +4027,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); getPerdaCfg(); preencherSelSetores(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); } catch (_) {} }, 120);
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); getPerdaCfg(); preencherSelSetores(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); observarSecoesRecolhiveis(); } catch (_) {} }, 120);
   await aplicarPermissoes();
   // abre a primeira aba permitida
   const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
@@ -4119,9 +4121,28 @@ function togSecao(k, btn) {
   if (fecha) _secOcultas.add(k); else _secOcultas.delete(k);
   try { localStorage.setItem('rp_sec_recolhidas', JSON.stringify([..._secOcultas])); } catch (_) {}
 }
+/* 19/08/2026 (João, "coloque aquela flechinha para esconder em todos os cards"):
+   a seta só existia em quem usava a classe .titulo-sec — um punhado de cards.
+   A maioria escreve o título como um <div> solto em negrito, então ficava sem.
+   Agora um detector genérico reconhece esse padrão e trata o div como cabeçalho.
+   O que NÃO pode virar cabeçalho: bloco com campo de formulário, tabela, svg ou
+   texto longo — recolher por cima disso esconderia controle e não título.
+   Como o app redesenha as abas o tempo todo, um observador reaplica em silêncio
+   a cada render, senão a seta sumiria a cada troca de período. */
+function _ehCabecalho(el, card) {
+  if (!el || el.nodeType !== 1 || el.tagName !== 'DIV') return false;
+  if (el.classList.contains('titulo-sec') || el.classList.contains('sec-cab')) return false;
+  if (card.children.length < 2) return false;                       // nada para esconder
+  if (el.querySelector('input,select,textarea,button,table,svg,canvas,img')) return false;
+  const t = (el.textContent || '').trim();
+  if (t.length < 2 || t.length > 90) return false;
+  let fw = 0;
+  try { fw = parseInt(getComputedStyle(el).fontWeight, 10) || 0; } catch (_) { return false; }
+  return fw >= 700;
+}
 function prepararSecoesRecolhiveis() {
   try {
-    document.querySelectorAll('.card > .titulo-sec').forEach(t => {
+    const liga = (t, card) => {
       if (t.dataset.rec) return;
       const k = (t.textContent || '').trim().slice(0, 48);
       if (!k) return;
@@ -4131,8 +4152,27 @@ function prepararSecoesRecolhiveis() {
       b.title = 'Abrir ou recolher'; b.setAttribute('aria-label', 'Abrir ou recolher');
       b.addEventListener('click', e => { e.stopPropagation(); togSecao(k, b); });
       t.appendChild(b);
-      if (_secOcultas.has(k)) t.closest('.card').classList.add('sec-recolhida');
+      if (_secOcultas.has(k)) card.classList.add('sec-recolhida');
+    };
+    document.querySelectorAll('.card > .titulo-sec').forEach(t => { const c = t.closest('.card'); if (c) liga(t, c); });
+    document.querySelectorAll('.card').forEach(c => {
+      if (c.querySelector(':scope > .titulo-sec')) return;          // já tem cabeçalho próprio
+      const el = c.firstElementChild;
+      if (!_ehCabecalho(el, c)) return;
+      el.classList.add('sec-cab');
+      liga(el, c);
     });
+  } catch (_) {}
+}
+let _obsSecTimer = null;
+function observarSecoesRecolhiveis() {
+  try {
+    if (window._obsSec) return;
+    window._obsSec = new MutationObserver(() => {
+      clearTimeout(_obsSecTimer);
+      _obsSecTimer = setTimeout(() => { try { prepararSecoesRecolhiveis(); } catch (_) {} }, 180);
+    });
+    window._obsSec.observe(document.body, { childList: true, subtree: true });
   } catch (_) {}
 }
 async function togGrafico(k) {
