@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.879.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.880.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2774,7 +2774,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.879.0';
+const APP_VER = '3.880.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24294,6 +24294,13 @@ function _alocarEstoque() {
        Referência é o dia do próprio relatório (_cart196.dia), não a data do
        aparelho: abrir a carteira de ontem tem de dar o mesmo resultado. */
     if (p._falta > 0.001 && _entregaVencida(p.entrega)) a.blq.add(String(p.item_cod));
+    /* 19/08/2026 (João, "avalie e veja se é tudo isso mesmo"): quando o travado
+       passou a exigir entrega vencida, pedido com falta mas prazo futuro caiu na
+       faixa "Completo — dá para faturar hoje" — e o card prometia 1.175,8 t
+       faturáveis quando o material pronto de verdade era ~332 t. A flag abaixo
+       guarda a falta SEM olhar prazo, para separar "material pronto" de
+       "no prazo, falta produzir". Travado continua sendo só o vencido. */
+    if (p._falta > 0.001) a.temFalta = true;
   });
   /* ATRASO REAL x REPROGRAMACAO. O campo <> do ERP e a diferenca entre a data de
      ORIGEM e a entrega atual — quanto o pedido foi empurrado — e nao atraso.
@@ -24641,7 +24648,11 @@ function detGrupoTravado(gid, filtro) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
-  let L = A.peds.filter(p => gid === 3 ? p.blq.size >= 3 : p.blq.size === gid)
+  let L = A.peds.filter(p =>
+      gid === 3 ? p.blq.size >= 3
+      : gid === 4 ? (!p.blq.size && p.temFalta)
+      : gid === 0 ? (!p.blq.size && !p.temFalta)
+      : p.blq.size === gid)
     .sort((a, b) => b.kg - a.kg);
   /* filtro 'imp' / 'dem': o mesmo critério da barra, para a lista bater com o
      número que foi clicado. */
@@ -24651,7 +24662,7 @@ function detGrupoTravado(gid, filtro) {
     L = L.filter(p => filtro === 'imp' ? temImp(p) : !temImp(p));
   }
   const _sufT = filtro === 'imp' ? ' · 🖨️ Impressão' : filtro === 'dem' ? ' · demais setores' : '';
-  const TIT = ['Completos — dá para faturar hoje' + _sufT, 'Travados por 1 item só' + _sufT, 'Travados por 2 itens' + _sufT, 'Travados por 3 ou mais' + _sufT];
+  const TIT = ['Material pronto — dá para faturar hoje' + _sufT, 'Travados por 1 item só' + _sufT, 'Travados por 2 itens' + _sufT, 'Travados por 3 ou mais' + _sufT, 'No prazo — falta produzir' + _sufT];
   if (!L.length) { abreDet(TIT[gid], '<p class="desc">Nenhum pedido neste grupo.</p>'); return; }
   const descItem = {};
   A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
@@ -24687,7 +24698,8 @@ function cardDestrava() {
   const A = _alocarEstoque();
   if (!A || !A.peds.length) return '';
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
-  const comp = A.peds.filter(p => !p.blq.size);
+  const comp = A.peds.filter(p => !p.blq.size && !p.temFalta);
+  const prazo = A.peds.filter(p => !p.blq.size && p.temFalta);
   const t1 = A.peds.filter(p => p.blq.size === 1);
   const t2 = A.peds.filter(p => p.blq.size === 2);
   const t3 = A.peds.filter(p => p.blq.size >= 3);
@@ -24814,7 +24826,8 @@ function cardDestrava() {
         + (semUn ? ` · <span style="color:var(--laranja)">${semUn} linha(s) sem unidade ficaram fora da conta de paletes</span>` : '');
     })(),
     '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada em <b style="color:var(--azul-marca)">🖨️ Impressão</b> e <b>demais setores</b>. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
-    + barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)', 0)
+    + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
+    + barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
     + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
