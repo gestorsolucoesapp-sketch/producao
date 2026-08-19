@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.861.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.862.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.861.0';
+const APP_VER = '3.862.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16896,15 +16896,27 @@ function renderEstrategia() {
     : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
   const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
   const _de = (periodoSel && periodoSel.de) || '0000-01-01', _ate = (periodoSel && periodoSel.ate) || '9999-12-31';
-  let rows = rowsAno.filter(r => { const d = String(r.dia).slice(0, 10); return d >= _de && d <= _ate; });   // recorte do gráfico = período
-  const _rowsTodas = rows;   // sem filtro: serve para ver o que mais roda na máquina
-  /* filtro por item: aplicado sobre as linhas cruas, antes de qualquer soma */
+  /* 19/08/2026 (João): "consultei Pt 450 e os dados têm que mostrar só dele".
+     O filtro entrava só em rows (o período) e NÃO em rowsAno — que alimenta o
+     universo de bocas e o total "no ano" das pastilhas. Resultado: as pastilhas
+     mostravam 398,5 t, 863,8 t etc. de TODOS os itens, ao lado de um gráfico
+     que era só do item. Agora o filtro é aplicado antes de qualquer derivação. */
   if (_estratItemQ) {
-    const _q = _estratItemQ.toLowerCase();
-    rows = (rows || []).filter(r =>
-      String(r.item_cod || '').toLowerCase().includes(_q) ||
-      String(r.item_desc || '').toLowerCase().includes(_q));
+    const _qA = _estratItemQ.toLowerCase();
+    rowsAno = rowsAno.filter(r =>
+      String(r.item_cod || '').toLowerCase().includes(_qA) ||
+      String(r.item_desc || '').toLowerCase().includes(_qA));
   }
+  let rows = rowsAno.filter(r => { const d = String(r.dia).slice(0, 10); return d >= _de && d <= _ate; });   // recorte do gráfico = período
+  /* linhas SEM o filtro de item, no mesmo período: usadas só para mostrar o que
+     mais roda na máquina no card de capacidade. */
+  const _rowsTodas = (_estratRows || []).filter(r => {
+    const d = String(r.dia).slice(0, 10);
+    if (d < _de || d > _ate) return false;
+    if (setor && setorDe(r.recurso_cod) !== setor) return false;
+    if (_tur && blocoTurno(r.turno, r.dia) !== _tur) return false;
+    return true;
+  });
   const _tipoP = (periodoSel && periodoSel.tipo) || 'mes';
   const _porMes = _tipoP === 'ano';
   const chaveB = r => { const d = String(r.dia).slice(0, 10); return _porMes ? d.slice(0, 7) : d; };
@@ -17077,9 +17089,60 @@ function estratCapacidadeItem(rows, todasRows, fmtV, metrica) {
       '</div>';
   }).join('');
 
+  /* ===== O QUE JÁ FOI PRODUZIDO (real) =====
+     Serve para dimensionar demanda de item novo: capacidade teórica diz o teto,
+     mas o histórico diz o que a fábrica de fato entrega deste item por mês.
+     Média MENSAL sobre os meses em que houve produção — incluir mês zerado
+     puxaria a média para baixo e faria parecer que a fábrica entrega menos do
+     que entrega quando o item está na programação. */
+  let tKg = 0, tCx = 0, tPc = 0; const diasT = new Set(), mesesT = {};
+  rows.forEach(r => {
+    const d = String(r.dia || '').slice(0, 10); if (!d) return;
+    const un = String(r.unidade || 'CX').toUpperCase(), q = +r.quantidade || 0;
+    const upc = undPorCaixa(r.item_desc) || 0;
+    tKg += (+r.peso || 0);
+    if (un === 'CX') { tCx += q; tPc += upc ? q * upc : 0; }
+    else if (un === 'MIL') { tPc += q * 1000; tCx += upc ? (q * 1000 / upc) : 0; }
+    else { tPc += q; tCx += upc ? q / upc : 0; }
+    diasT.add(d);
+    const ym = d.slice(0, 7); mesesT[ym] = (mesesT[ym] || 0) + (+r.peso || 0);
+  });
+  const nDias = diasT.size || 1, nMeses = Object.keys(mesesT).length || 1;
+  const mesesArr = Object.entries(mesesT).sort((a, b) => a[0].localeCompare(b[0]));
+  const mMax = mesesArr.length ? Math.max(...mesesArr.map(m => m[1])) : 0;
+  const _MESN = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const cxDia = tCx / nDias, milDia = tPc / nDias / 1000, kgDia = tKg / nDias;
+  const real = '<div style="border:1px solid var(--borda);border-radius:12px;padding:11px 12px;margin-bottom:11px;background:var(--leve-4)">' +
+    '<div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📈 O que já foi produzido</div>' +
+    '<div style="font-size:11px;color:var(--fraco);margin-bottom:8px">' + nDias + ' dia(s) com produção em ' + nMeses + ' mês(es) · média por <b>dia rodado</b> e por <b>mês com produção</b></div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<tr style="color:var(--fraco);font-size:10px;font-weight:800"><td></td><td style="text-align:right">POR DIA</td><td style="text-align:right">POR MÊS</td><td style="text-align:right">TOTAL</td></tr>' +
+    [['Caixas', cxDia, tCx / nMeses, tCx, 0],
+     ['Milheiros', milDia, tPc / nMeses / 1000, tPc / 1000, 1],
+     ['Toneladas', kgDia / 1000, tKg / nMeses / 1000, tKg / 1000, 1]].map(l =>
+      '<tr style="border-top:1px solid var(--linha-s)"><td style="padding:5px 0;font-weight:700;color:var(--txt-2)">' + l[0] + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:var(--navy)">' + l[1].toLocaleString('pt-BR', { maximumFractionDigits: l[4] }) + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:var(--navy)">' + l[2].toLocaleString('pt-BR', { maximumFractionDigits: l[4] }) + '</td>' +
+      '<td style="text-align:right;color:var(--fraco)">' + l[3].toLocaleString('pt-BR', { maximumFractionDigits: l[4] }) + '</td></tr>').join('') +
+    '</table>' +
+    (mesesArr.length > 1
+      ? '<div style="margin-top:9px"><div style="font-size:10px;font-weight:800;color:var(--fraco);margin-bottom:3px">MÊS A MÊS (t)</div>' +
+        mesesArr.slice(-12).map(m => {
+          const t = m[1] / 1000, w = mMax > 0 ? (m[1] / mMax * 100) : 0;
+          return '<div style="display:flex;align-items:center;gap:6px;font-size:10.5px;margin-bottom:2px">' +
+            '<span style="width:46px;flex:none;color:var(--fraco)">' + _MESN[+m[0].slice(5, 7) - 1] + '/' + m[0].slice(2, 4) + '</span>' +
+            '<div style="flex:1;height:7px;background:var(--leve-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + w.toFixed(1) + '%;background:#2F6FED;border-radius:4px"></div></div>' +
+            '<span style="width:46px;text-align:right;font-weight:700">' + t.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</span></div>';
+        }).join('') +
+        '<div style="font-size:10.5px;color:var(--fraco-2);margin-top:4px">maior mês: <b>' + (mMax / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t</b> — é o que a fábrica já provou que entrega deste item.</div></div>'
+      : '') +
+    '</div>';
+
   return '<div class="card" style="margin-top:12px">' +
-    '<div style="font-weight:800;color:var(--navy);font-size:14px">📦 Capacidade mensal do item</div>' +
-    '<p class="desc" style="margin:2px 0 10px;font-size:11.5px">Teto <b>teórico</b>: o ritmo do item nos dias em que ele rodou, esticado para todos os dias que a máquina trabalha. Só se realiza se a máquina ficar dedicada a ele.</p>' +
+    '<div style="font-weight:800;color:var(--navy);font-size:14px">📦 Capacidade e histórico do item</div>' +
+    '<p class="desc" style="margin:2px 0 10px;font-size:11.5px">Para dimensionar demanda nova: o <b>histórico</b> mostra o que já foi entregue; a <b>capacidade</b> mostra o teto se a máquina ficasse dedicada.</p>' +
+    real +
+    '<div style="font-size:11px;font-weight:800;color:#8A97A6;letter-spacing:.3px;text-transform:uppercase;margin:4px 0 6px">Teto teórico por máquina</div>' +
     linhas + '</div>';
 }
 
