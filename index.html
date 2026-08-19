@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.855.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.856.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.855.0';
+const APP_VER = '3.856.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24032,20 +24032,29 @@ function cardPorCliente() {
 /* Lista os pedidos de um grupo de bloqueio: 0 = completos, 1/2 = travados por
    1 ou 2 itens, 3 = tres ou mais. Mostra o NUMERO DO PEDIDO, o cliente e
    exatamente quais itens estao segurando cada um. */
-function detGrupoTravado(gid) {
+function detGrupoTravado(gid, filtro) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
-  const L = A.peds.filter(p => gid === 3 ? p.blq.size >= 3 : p.blq.size === gid)
+  let L = A.peds.filter(p => gid === 3 ? p.blq.size >= 3 : p.blq.size === gid)
     .sort((a, b) => b.kg - a.kg);
-  const TIT = ['Completos — dá para faturar hoje', 'Travados por 1 item só', 'Travados por 2 itens', 'Travados por 3 ou mais'];
+  /* filtro 'imp' / 'dem': o mesmo critério da barra, para a lista bater com o
+     número que foi clicado. */
+  if (filtro) {
+    const ehImp = k => { try { return _setorDoItem(k) === 'Impressão'; } catch (_) { return false; } };
+    const temImp = p => gid > 0 ? [...p.blq].some(ehImp) : (p.itens ? [...p.itens] : []).some(ehImp);
+    L = L.filter(p => filtro === 'imp' ? temImp(p) : !temImp(p));
+  }
+  const _sufT = filtro === 'imp' ? ' · 🖨️ Impressão' : filtro === 'dem' ? ' · demais setores' : '';
+  const TIT = ['Completos — dá para faturar hoje' + _sufT, 'Travados por 1 item só' + _sufT, 'Travados por 2 itens' + _sufT, 'Travados por 3 ou mais' + _sufT];
   if (!L.length) { abreDet(TIT[gid], '<p class="desc">Nenhum pedido neste grupo.</p>'); return; }
   const descItem = {};
   A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
   const faltaItem = {};
   A.linhas.forEach(l => { if (l._falta > 0.001) faltaItem[String(l.item_cod)] = (faltaItem[String(l.item_cod)] || 0) + l._falta; });
-  const MAX = 40;
-  const linhas = L.slice(0, MAX).map(p => {
+  /* sem corte: "vejo 40 de 420, quero ver todos". A lista completa é o ponto do
+     relatório — cortar obrigava a exportar por fora para conferir a carteira. */
+  const linhas = L.map(p => {
     const pal = _paletesPorItem(A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num));
     const blq = [...p.blq].map(k => _selo196(k)).join('');
     return `<tr><td class="nome" style="font-size:12px;cursor:pointer" onclick="event.stopPropagation();detPedido('${escapeHtml(p.num)}')"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 28))} ›`
@@ -24061,8 +24070,7 @@ function detGrupoTravado(gid) {
     + (gid ? ` · <b>${gid === 3 ? '3 ou mais itens' : gid + ' item' + (gid > 1 ? 'ns' : '')}</b> segurando cada pedido — o resto das linhas já tem material` : '')
     + '</p>'
     + (gid ? '<p class="desc" style="margin:-4px 0 8px">Ao lado do código vem a <b>máquina programada</b> e a data de início · <b>🔧</b> = OS de manutenção aberta e sem produção apontada depois (pode estar parada) · <b>sem programação</b> = nenhuma ordem na fila. Toque para ver o item e a sugestão de máquina.</p>' : '')
-    + tabSimples(['Pedido · cliente', 'Valor', gid ? 'Itens que travam' : 'Situação'], linhas)
-    + (L.length > MAX ? `<p class="desc">mostrando os ${MAX} maiores de ${L.length}</p>` : ''));
+    + tabSimples(['Pedido · cliente', 'Valor', gid ? 'Itens que travam' : 'Situação'], linhas));
 }
 
 /* ===== O QUE DESTRAVA FATURAMENTO =====
@@ -24158,17 +24166,27 @@ function cardDestrava() {
     ? L.filter(p => [...p.blq].some(_ehImp))
     : L.filter(p => (p.itens ? [...p.itens] : []).some(_ehImp));
 
+  /* 19/08/2026 (João): "vc separou os itens impressos mas eles constam junto com
+     o completo ainda". A barra fina de Impressão era uma FATIA de dentro da
+     faixa — o número da faixa continuava somando tudo. Agora cada faixa mostra
+     as duas partes SEPARADAS, cada uma com o seu total, e cada uma abre a sua
+     própria lista. O total da faixa fica só como referência, em cinza. */
   const barra = (rot, L, cor, gid) => {
-    const pct = A.peds.length ? (L.length / A.peds.length * 100) : 0;
     const imp = _fatiaImp(L, gid > 0);
-    const pctImp = L.length ? (imp.length / L.length * 100) : 0;
-    return `<div style="margin-bottom:9px;cursor:pointer" onclick="detGrupoTravado(${gid})"><div style="display:flex;font-size:11.5px"><span style="flex:1;color:var(--fraco)">${rot} ›</span><b style="color:${cor}">${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</b></div>`
-      + `<div style="height:8px;border-radius:4px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${pct.toFixed(1)}%;background:${cor}"></div></div>`
-      + (imp.length
-          ? `<div style="display:flex;align-items:center;gap:6px;margin-top:2px">`
-            + `<div style="flex:1;height:5px;border-radius:3px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${(pct * pctImp / 100).toFixed(1)}%;background:var(--azul-marca)"></div></div>`
-            + `<span style="font-size:10px;font-weight:800;color:var(--azul-marca);white-space:nowrap">🖨️ ${imp.length} ped · ${kg(S(imp))} <span style="opacity:.7;font-weight:600">(${Math.round(pctImp)}%)</span></span></div>`
-          : '')
+    const setImp = new Set(imp.map(p => p.num));
+    const dem = L.filter(p => !setImp.has(p.num));
+    const mx = A.peds.length || 1;
+    const linha = (rotulo, arr, c, gid2, filtro) => arr.length
+      ? `<div style="margin-bottom:5px;cursor:pointer" onclick="detGrupoTravado(${gid2},'${filtro}')">`
+        + `<div style="display:flex;font-size:11px;gap:6px"><span style="flex:1;color:var(--fraco)">${rotulo} ›</span>`
+        + `<b style="color:${c};white-space:nowrap">${arr.length} ped · ${kg(S(arr))} · ${plt(pal(arr))}</b></div>`
+        + `<div style="height:7px;border-radius:4px;background:var(--leve-3);overflow:hidden"><div style="height:100%;width:${(arr.length / mx * 100).toFixed(1)}%;background:${c}"></div></div></div>`
+      : '';
+    return `<div style="margin-bottom:11px;border-left:3px solid ${cor};padding-left:8px">`
+      + `<div style="display:flex;font-size:11.5px;margin-bottom:4px"><span style="flex:1;font-weight:800;color:var(--txt-2)">${rot}</span>`
+      + `<span style="color:var(--fraco);font-size:10.5px">total ${L.length} ped · ${kg(S(L))}</span></div>`
+      + linha('🖨️ passa pela Impressão', imp, 'var(--azul-marca)', gid, 'imp')
+      + linha('demais setores', dem, cor, gid, 'dem')
       + `</div>`;
   };
 
@@ -24190,7 +24208,7 @@ function cardDestrava() {
         + (dif > 0 ? ` <span title="Palete = teto(caixas ÷ ${CX_POR_PALETE}) por item. Um item que aparece em mais de uma faixa arredonda pra cima em cada uma, por isso a soma das faixas passa do total em ${dif} palete(s). O total é o número correto." style="color:var(--fraco)">(faixas somam +${dif} pal · arredondamento)</span>` : '')
         + (semUn ? ` · <span style="color:var(--laranja)">${semUn} linha(s) sem unidade ficaram fora da conta de paletes</span>` : '');
     })(),
-    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:6px"><span style="display:inline-block;width:10px;height:5px;border-radius:3px;background:var(--azul-marca);vertical-align:middle;margin-right:4px"></span>a barra fina azul é a parte que passa pela <b>Impressão</b></div>'
+    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada em <b style="color:var(--azul-marca)">🖨️ Impressão</b> e <b>demais setores</b>. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
     + barra('✅ Completos — dá para faturar hoje', comp, 'var(--verde)', 0)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
