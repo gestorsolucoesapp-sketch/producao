@@ -803,7 +803,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.875.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.876.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2743,7 +2743,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.875.0';
+const APP_VER = '3.876.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24294,14 +24294,45 @@ function _alocarEstoque() {
    perguntas diferentes: aqui é ONDE ESTÁ; lá é SE TEM MATÉRIA-PRIMA. */
 const _soNum = v => String(v == null ? '' : v).split('/')[0].replace(/\D/g, '');
 const _progNumPed = rows => { const S = new Set(); (rows || []).forEach(r => { const n = _soNum(r.pedido); if (n) S.add(n); }); return S; };
-function detPedidoFila(num) {
+async function detPedidoFila(num) {
   const n = _soNum(num);
   const L = (_progDados || []).filter(r => _soNum(r.pedido) === n)
     .sort((a, b) => String(a.recurso_cod).localeCompare(String(b.recurso_cod)) || ((a.ordem || 9999) - (b.ordem || 9999)));
   const naCart = ((_cart196 && _cart196.pend) || []).some(p => _soNum(p.pedido) === n);
   if (!L.length) {
     if (naCart) return detPedido(n);
-    abreDet('Pedido ' + n, '<p class="desc">Este pedido não está na fila de hoje nem na carteira pendente. Ou já foi entregue, ou o número está incompleto — o pedido tem 5 a 7 dígitos (ex.: 225156).</p>');
+    /* 19/08/2026 (João, "por que esse pedido não apareceu o histórico?"):
+       a busca só olhava a FOTO DE HOJE. Pedido faturado sai da foto e virava
+       "nada encontrado" — a resposta certa é a história dele: até quando esteve
+       na carteira, entrega, item e onde o item rodou. Caso testemunha: 227483
+       (ATIV PLUS), entregue 18/08, sumia da busca em 19/08. */
+    abreDet('Pedido ' + n, '<p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Não está na fila de hoje — procurando no histórico da carteira…</p>');
+    try {
+      const { data: H } = await sb.from('rest196_pendente')
+        .select('dia_foto,pedido,item_cod,item_desc,cliente,entrega,peso_pendente,qtd_pendente,un')
+        .like('pedido', n + '%').order('dia_foto', { ascending: false }).limit(120);
+      if (!H || !H.length) {
+        abreDet('Pedido ' + n, '<p class="desc">Não achei este pedido nem na fila de hoje, nem na carteira, nem no histórico das fotos do REST196. Confira o número — o pedido tem 5 a 7 dígitos (ex.: 225156).</p>');
+        return;
+      }
+      const ult = H[0], fotos = [...new Set(H.map(h => String(h.dia_foto).slice(0, 10)))].sort();
+      const itens = {}; H.filter(h => String(h.dia_foto).slice(0, 10) === String(ult.dia_foto).slice(0, 10)).forEach(h => { itens[h.item_cod] = h; });
+      const hoje = hojeISO();
+      const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+      const linhas = Object.values(itens).map(h =>
+        '<tr onclick="detItemMaquinas(\'' + escapeHtml(String(h.item_cod || '')) + '\')" style="cursor:pointer">'
+        + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(h.item_cod || '—')) + '</span> ' + escapeHtml(_descItem(h.item_desc, '', 34)) + '</td>'
+        + '<td><span class="cel neutra">' + (h.entrega ? fmtData(String(h.entrega).slice(0, 10)) : '—') + '</span></td>'
+        + '<td><span class="cel cel-tot">' + kg(h.peso_pendente) + (h.qtd_pendente ? '<div style="font-size:10px;font-weight:600;opacity:.85">' + fmt(+h.qtd_pendente, 0) + ' ' + escapeHtml(String(h.un || '')) + '</div>' : '') + '</span></td></tr>').join('');
+      const sumiuDepois = String(ult.dia_foto).slice(0, 10) < hoje;
+      abreDet('Pedido ' + n + ' · ' + escapeHtml(String(ult.cliente || '—').slice(0, 28)),
+        '<p class="idet-desc">fora da fila e da carteira de hoje · esteve na carteira de <b>' + fmtData(fotos[0]) + '</b> até <b>' + fmtData(fotos[fotos.length - 1]) + '</b> (' + fotos.length + ' fotos)</p>'
+        + (sumiuDepois ? '<div style="background:#F2F7F4;border-left:4px solid #1F7A46;border-radius:9px;padding:7px 10px;margin-bottom:8px;font-size:12px">Saiu da carteira depois de ' + fmtData(String(ult.dia_foto).slice(0, 10)) + ' — o normal é ter sido <b>faturado/entregue</b>' + (ult.entrega ? ' (entrega prevista: ' + fmtData(String(ult.entrega).slice(0, 10)) + ')' : '') + '. Se o cliente diz que não recebeu, confira no ERP.</div>' : '')
+        + tabSimples(['Item (última foto)', 'Entrega', 'Pendente na época'], linhas)
+        + '<p class="desc" style="margin-top:8px">Toque num item para ver em que máquinas ele roda e o histórico de produção.</p>');
+    } catch (e) {
+      abreDet('Pedido ' + n, '<p class="desc" style="color:var(--critico-s)">Erro ao consultar o histórico: ' + escapeHtml((e && e.message) || String(e)) + '</p>');
+    }
     return;
   }
   const hoje = hojeISO();
