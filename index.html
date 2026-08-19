@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.882.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.883.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2774,7 +2774,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.882.0';
+const APP_VER = '3.883.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26744,7 +26744,7 @@ async function arCobertura() {
     const de = p1.data && p1.data[0] && p1.data[0].dia, ate = p2.data && p2.data[0] && p2.data[0].dia;
     const { count } = await sb.from('ar_producao').select('id', { count: 'exact', head: true });
     box.innerHTML = de
-      ? '<p class="desc">Área da análise: <b>' + fmt(count || 0, 0) + '</b> linhas do 621 · ' + fmtData(String(de).slice(0, 10)) + ' → ' + fmtData(String(ate).slice(0, 10)) + (p3.data && p3.data.length ? ' · ' + p3.data.length + ' arquivo(s) bruto(s) de manutenção' : '') + '</p>'
+      ? '<p class="desc">Área da análise: <b>' + fmt(count || 0, 0) + '</b> linhas do 621 · ' + fmtData(String(de).slice(0, 10)) + ' → ' + fmtData(String(ate).slice(0, 10)) + (cItem ? ' · ' + fmt(cItem, 0) + ' linhas do 622 (por item)' : '') + (p3.data && p3.data.length ? ' · ' + p3.data.length + ' arquivo(s) bruto(s) de manutenção' : '') + '</p>'
       : '<p class="desc">Área da análise vazia — importe o primeiro 621 acima.</p>';
   } catch (_) { box.innerHTML = ''; }
 }
@@ -26877,6 +26877,34 @@ function _arQuebras(S) {
   return out.sort((a, b) => a.i - b.i).slice(0, 3);
 }
 
+/* RITMO POR ITEM (622). Dentro de um item o produto e o mesmo, entao kg/turno
+   e ritmo puro - nao precisa de proxy nenhum. Compara os 12 primeiros meses do
+   item com os 12 ultimos meses dele. So entram itens com 20+ turnos e 8+ meses,
+   e o card avisa quando o item nasceu depois do 1o degrau (nesse caso ele nao
+   serve para provar queda de maquina, so para mostrar troca de produto). */
+function _arRitmoItens(itens, mesQuebra) {
+  const bal = {};
+  (itens || []).forEach(r => {
+    const pe = +r.peso || 0, d = String(r.dia).slice(0, 10);
+    if (pe <= 0 || d.length < 10) return;
+    const k = String(r.item_cod || r.item_desc || '?');
+    if (!bal[k]) bal[k] = { desc: r.item_desc || r.item_cod || '?', L: [] };
+    bal[k].L.push({ m: d.slice(0, 7), kg: pe });
+  });
+  const out = [];
+  Object.keys(bal).forEach(k => {
+    const L = bal[k].L; if (L.length < 20) return;
+    const meses = Array.from(new Set(L.map(x => x.m))).sort();
+    if (meses.length < 8) return;
+    const ini = meses.slice(0, 12), fim = meses.slice(-12);
+    const mediaDe = ms => { const F = L.filter(x => ms.indexOf(x.m) >= 0); return F.length ? F.reduce((a, x) => a + x.kg, 0) / F.length : 0; };
+    const a = mediaDe(ini), b = mediaDe(fim);
+    if (a <= 0) return;
+    out.push({ k, desc: bal[k].desc, turnos: L.length, de: meses[0], ate: meses[meses.length - 1], antes: a, depois: b, dif: b / a - 1, novo: mesQuebra ? meses[0] >= mesQuebra : false });
+  });
+  return out.sort((x, y) => y.turnos - x.turnos).slice(0, 8);
+}
+
 /* fallback: sem fam\u00edlia com lastro, usa kg/dia como antes (melhor que nada,
    mas o texto avisa que o mix pode estar contaminando). */
 function _arQuebra(serieMes) {
@@ -26982,6 +27010,28 @@ function arRender() {
       + tabSimples(['Fam\u00edlia', 'Lastro', 'Base (in\u00edcio)', ult, 'Varia\u00e7\u00e3o'], linhas);
   }
 
+  /* card do 622: ritmo por item real */
+  let tabItem = '';
+  if ((_arItens || []).length) {
+    const RI = _arRitmoItens(_arItens, _arQueda ? _arQueda.mes : null);
+    if (RI.length) {
+      const linhas = RI.map(r => {
+        const cor = r.dif <= -0.15 ? '#C0392B' : r.dif <= -0.05 ? '#B36B00' : '#1F7A46';
+        return '<tr><td class="nome">' + escapeHtml(String(r.desc).slice(0, 34)) + (r.novo ? ' <span style="color:#B36B00;font-size:10px">novo</span>' : '') + '</td>'
+          + '<td><span class="cel neutra">' + r.turnos + ' turnos</span></td>'
+          + '<td><span class="cel neutra">' + fmtKg(r.antes) + '/turno</span></td>'
+          + '<td><span class="cel neutra">' + fmtKg(r.depois) + '/turno</span></td>'
+          + '<td><span class="cel neutra" style="color:' + cor + ';font-weight:800">' + (r.dif >= 0 ? '+' : '') + Math.round(r.dif * 100) + '%</span></td></tr>';
+      }).join('');
+      const nNovos = RI.filter(r => r.novo).length;
+      tabItem = '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 2px">Ritmo por item \u2014 fonte 622, sem aproxima\u00e7\u00e3o</div>'
+        + '<p class="desc" style="margin-bottom:4px">Dentro de um mesmo item o produto \u00e9 id\u00eantico, ent\u00e3o kg/turno \u00e9 ritmo puro. Compara os 12 primeiros meses do item com os 12 \u00faltimos.'
+        + (nNovos ? ' <b>' + nNovos + '</b> item(ns) marcado(s) como <b>novo</b> s\u00f3 nasceram depois do 1\u00ba degrau \u2014 esses mostram troca de produto, n\u00e3o queda de m\u00e1quina.' : '')
+        + '</p>'
+        + tabSimples(['Item', 'Lastro', '12 meses iniciais', '12 meses finais', 'Varia\u00e7\u00e3o'], linhas);
+    }
+  }
+
   /* refugo: antes x depois do primeiro degrau */
   const perdasQ = (() => {
     if (!_arQueda || !(_arPerdas || []).length) return '';
@@ -27027,7 +27077,7 @@ function arRender() {
     + '<button class="btn" style="width:auto;padding:6px 13px;font-size:12px" onclick="arImprimir()">\ud83d\udda8 imprimir</button>'
     + '<button class="btn btn-verde" style="width:auto;padding:6px 13px;font-size:12px" onclick="arSalvar()">\ud83d\udcbe salvar retrato</button>'
     + '</div>'
-    + diag + svg + svgIdx + tabFam
+    + diag + svg + svgIdx + tabFam + tabItem
     + '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:10px 0 4px">Ano a ano</div>'
     + tabSimples(['Ano', 'Dias c/ produ\u00e7\u00e3o', 'kg/dia', 'cx/dia', 'Total'], tabAnos)
     + '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:10px 0 3px">Conclus\u00e3o (vai junto no retrato salvo)</div>'
