@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.887.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.888.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2792,7 +2792,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.887.0';
+const APP_VER = '3.888.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22899,6 +22899,58 @@ async function carregarProgReal() {
     _progReal = data || [];
   } catch (e) { _progReal = null; console.warn('progReal:', e && e.message); }
 }
+/* ONDE O ESTOQUE ESTA (19/08/2026 - achado do Joao no pedido 219908).
+   O REST196 tem UMA coluna de estoque e nao diz o deposito. O pedido 219908
+   aparecia como "tudo em estoque - pode faturar" com 12 cx, mas as 12 cx estao
+   no deposito 6 - PRODUTOS RESERVADOS. Na foto de 19/08, 116 dos 358 itens com
+   estoque no 196 tem 100% dele em RESERVADOS: 88 t que o card conta como
+   faturavel hoje. Aqui o app so passa a MOSTRAR onde esta; a conta continua a
+   mesma ate o Joao definir quais depositos valem como faturaveis. */
+let _depoItem = null;
+const _DEP_RESERV = ['6'];
+const _DEP_QUAL = ['13', '14', '26', '36', '70', '113'];
+async function carregarDepositoItem() {
+  try {
+    const { data: dd } = await sb.from('estoque_deposito').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const dia = dd && dd[0] && dd[0].dia_foto; if (!dia) { _depoItem = null; return; }
+    let linhas = [], de = 0;
+    for (let g = 0; g < 40; g++) {
+      const { data, error } = await sb.from('estoque_deposito').select('item_cod,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia).range(de, de + 999);
+      if (error) throw error;
+      const d = data || []; linhas = linhas.concat(d);
+      if (d.length < 1000) break;
+      de += 1000;
+    }
+    const m = {};
+    linhas.forEach(r => {
+      const k = String(r.item_cod), kg = +r.peso || 0;
+      if (!m[k]) m[k] = { tot: 0, reserv: 0, qual: 0, deps: [] };
+      m[k].tot += kg;
+      if (_DEP_RESERV.includes(String(r.deposito_cod))) m[k].reserv += kg;
+      if (_DEP_QUAL.includes(String(r.deposito_cod))) m[k].qual += kg;
+      if (kg > 0) m[k].deps.push({ cod: String(r.deposito_cod), nome: r.deposito_nome || '', kg, cx: +r.quantidade || 0 });
+    });
+    Object.keys(m).forEach(k => m[k].deps.sort((a, b) => b.kg - a.kg));
+    _depoItem = { dia, itens: m };
+  } catch (e) { _depoItem = null; console.warn('depositoItem:', e && e.message); }
+}
+/* selo curto para o item: avisa quando o estoque nao esta livre */
+function _depoAviso(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  if (!d || d.tot <= 0) return '';
+  const bloq = d.reserv + d.qual;
+  if (bloq < d.tot * 0.999) return '';
+  const rot = d.reserv >= d.qual ? 'reservado' : 'em qualidade';
+  return '<div style="font-size:10px;font-weight:700;color:#B36B00;margin-top:2px">⚠ estoque ' + rot + ' — não é livre</div>';
+}
+function _depoOnde(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  if (!d || !d.deps.length) return '';
+  return '<div style="font-size:10px;color:var(--fraco-2);margin-top:2px">' + d.deps.slice(0, 3).map(x => escapeHtml(String(x.nome).slice(0, 26)) + ': ' + fmtKg(x.kg)).join(' · ') + '</div>';
+}
+
 let _filaVenc = null;
 async function carregarFilaVenc() {
   try {
@@ -22957,6 +23009,8 @@ async function carregarProgramacao(forcar) {
     if (error) throw error;
     _progDados = data || [];
     try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
+    /* onde o estoque esta - roda junto com a carteira, sem travar a tela */
+    try { carregarDepositoItem(); } catch (_) {}
     try { await carregarPropostas(); } catch (e) { _prop = null; console.warn('propostas:', e && e.message); }
     try { await carregarItemMaquina(); } catch (_) { }
     try { await carregarCapMaquina(); } catch (_) { }
@@ -24472,6 +24526,7 @@ function detPedido(num) {
          (caixa pendente ÷ kg pendente). Item apontado em MIL/UN fica so em kg,
          como no palete: nao inventa caixa onde nao existe. */
       + `<td><span class="cel ${ok ? 'ok' : 'baixo'}">${ok ? '✓ material pronto' : 'falta ' + kg(f)}`
+      + (ok ? _depoAviso(l.item_cod) + _depoOnde(l.item_cod) : '')
       + (!ok && cx && need > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.95">${fmt(Math.round(cx * f / need), 0)} cx</div>` : '')
       + (!ok && temEst > 0 ? `<div style="font-size:10px;font-weight:600;opacity:.85">tem ${kg(temEst)}${cx && need > 0 ? ' · ' + fmt(Math.round(cx * temEst / need), 0) + ' cx' : ''}</div>` : '')
       + '</span></td></tr>';
