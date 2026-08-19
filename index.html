@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.860.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.861.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.860.0';
+const APP_VER = '3.861.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16897,6 +16897,7 @@ function renderEstrategia() {
   const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
   const _de = (periodoSel && periodoSel.de) || '0000-01-01', _ate = (periodoSel && periodoSel.ate) || '9999-12-31';
   let rows = rowsAno.filter(r => { const d = String(r.dia).slice(0, 10); return d >= _de && d <= _ate; });   // recorte do gráfico = período
+  const _rowsTodas = rows;   // sem filtro: serve para ver o que mais roda na máquina
   /* filtro por item: aplicado sobre as linhas cruas, antes de qualquer soma */
   if (_estratItemQ) {
     const _q = _estratItemQ.toLowerCase();
@@ -16995,10 +16996,93 @@ function renderEstrategia() {
       <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) nas bocas visíveis${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
       ${_listaItens || '<p class="desc">sem itens no filtro</p>'}
     </div>
+    ${(() => { try { return estratCapacidadeItem(rows, _rowsTodas, fmtV, metrica); } catch (_) { return ''; } })()}
     <div class="card" style="margin-top:12px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de produção</div><p class="desc">Espaço reservado para o plano — a próxima etapa. Me diga o formato (meta por boca, por período?) e eu monto aqui.</p></div>`;
 }
 // ===== Curva ABC (Pareto) de itens por refugo — barras A/B/C + curva acumulada =====
 let _estratItemQ = '';
+
+/* ===== CAPACIDADE MENSAL DO ITEM (19/08/2026, pedido do João) =====
+   Responde "quanto dá para fazer deste item num mês" em caixas, milheiros e
+   toneladas — e, junto, o alerta que evita a leitura errada: a MÁQUINA NÃO É
+   SÓ DELE. A capacidade sai do ritmo real do item (o que ele faz num dia em
+   que roda) multiplicado pelos dias que a máquina trabalha no mês. É um teto
+   TEÓRICO, válido só se o item ocupasse a máquina sozinho — por isso mostro ao
+   lado quanto da máquina ele ocupa hoje e quais itens dividem o espaço.
+   Ritmo por DIA RODADO, não por dia do calendário: dividir pelo mês inteiro
+   diria que o item é lento quando na verdade ele só rodou três dias. */
+function estratCapacidadeItem(rows, todasRows, fmtV, metrica) {
+  if (!_estratItemQ || !rows || !rows.length) return '';
+  const porMaq = {};
+  rows.forEach(r => {
+    const c = String(r.recurso_cod || '—'), d = String(r.dia || '').slice(0, 10);
+    if (!c || !d) return;
+    const a = porMaq[c] || (porMaq[c] = { kg: 0, cx: 0, pc: 0, dias: new Set(), desc: r.item_desc || '' });
+    a.kg += (+r.peso || 0);
+    const un = String(r.unidade || 'CX').toUpperCase();
+    const q = +r.quantidade || 0;
+    const upc = undPorCaixa(r.item_desc) || 0;
+    if (un === 'CX') { a.cx += q; a.pc += upc ? q * upc : 0; }
+    else if (un === 'MIL') { a.pc += q * 1000; a.cx += upc ? (q * 1000 / upc) : 0; }
+    else { a.pc += q; a.cx += upc ? q / upc : 0; }
+    a.dias.add(d);
+  });
+  const cods = Object.keys(porMaq); if (!cods.length) return '';
+
+  /* dias que a MÁQUINA trabalha no mês e o que ela faz além deste item */
+  const maqDias = {}, outros = {};
+  (todasRows || []).forEach(r => {
+    const c = String(r.recurso_cod || ''), d = String(r.dia || '').slice(0, 10);
+    if (!c || !d || !porMaq[c]) return;
+    (maqDias[c] = maqDias[c] || new Set()).add(d);
+    const k = String(r.item_cod || '').trim() + '|' + (r.item_desc || '');
+    const _q = _estratItemQ.toLowerCase();
+    const ehEste = String(r.item_cod || '').toLowerCase().includes(_q) || String(r.item_desc || '').toLowerCase().includes(_q);
+    if (!ehEste) { (outros[c] = outros[c] || {}); outros[c][k] = (outros[c][k] || 0) + (+r.peso || 0); }
+  });
+
+  const linhas = cods.sort((a, b) => porMaq[b].kg - porMaq[a].kg).map(c => {
+    const a = porMaq[c];
+    const dR = a.dias.size || 1;                       // dias em que o ITEM rodou
+    const dM = (maqDias[c] ? maqDias[c].size : dR) || dR;  // dias que a MÁQUINA rodou
+    const ocup = dM > 0 ? (dR / dM * 100) : 100;
+    const capKg = a.kg / dR * dM, capCx = a.cx / dR * dM, capMil = a.pc / dR * dM / 1000;
+    const outArr = Object.entries(outros[c] || {}).sort((x, y) => y[1] - x[1]).slice(0, 4);
+    const outTot = Object.values(outros[c] || {}).reduce((x, y) => x + y, 0);
+    const corOc = ocup >= 70 ? '#1E7A4E' : ocup >= 35 ? '#C86A2E' : '#B03030';
+    return '<div style="border:1px solid var(--borda);border-radius:12px;padding:11px 12px;margin-bottom:9px">' +
+      '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:7px">' +
+      '<b style="font-size:15px;color:var(--navy)">' + escapeHtml(c) + '</b>' +
+      '<span style="font-size:11px;color:var(--fraco)">rodou ' + dR + ' de ' + dM + ' dia(s) da máquina</span>' +
+      '<span style="margin-left:auto;font-size:11.5px;font-weight:800;color:' + corOc + '">' + Math.round(ocup) + '% do tempo</span></div>' +
+      '<div style="display:flex;gap:6px;text-align:center">' +
+      [['CAIXAS', Math.round(capCx).toLocaleString('pt-BR')],
+       ['MILHEIROS', capMil.toLocaleString('pt-BR', { maximumFractionDigits: 1 })],
+       ['TONELADAS', (capKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })]].map(t =>
+        '<div style="flex:1;background:var(--leve-2);border-radius:9px;padding:7px 4px">' +
+        '<div style="font-size:9px;font-weight:800;color:var(--fraco);letter-spacing:.3px">' + t[0] + '</div>' +
+        '<div style="font-size:15px;font-weight:800;color:var(--navy)">' + t[1] + '</div></div>').join('') +
+      '</div>' +
+      '<div style="font-size:10.5px;color:var(--fraco-2);margin-top:5px">no ritmo de ' +
+      Math.round(a.cx / dR).toLocaleString('pt-BR') + ' cx/dia rodado, se a máquina fosse só deste item</div>' +
+      (outArr.length
+        ? '<div style="margin-top:8px;background:#FDF3E7;border-left:3px solid #E8871F;border-radius:8px;padding:7px 9px">' +
+          '<b style="font-size:11.5px;color:#8A5A12">A máquina não é só deste item.</b>' +
+          '<div style="font-size:11px;color:var(--txt-2);margin-top:3px">Ela também fez <b>' + fmtKg(outTot) + '</b> de outros itens no período:</div>' +
+          outArr.map(o2 => '<div style="font-size:10.5px;color:var(--fraco-2);margin-top:2px">• ' +
+            escapeHtml(String(o2[0].split('|')[1] || o2[0].split('|')[0]).slice(0, 48)) + ' · ' + fmtKg(o2[1]) + '</div>').join('') +
+          (Object.keys(outros[c] || {}).length > 4 ? '<div style="font-size:10px;color:var(--fraco-2);margin-top:2px">+ ' + (Object.keys(outros[c]).length - 4) + ' outro(s)</div>' : '') +
+          '</div>'
+        : '<div style="margin-top:8px;font-size:11px;color:#1E7A4E">✔ No período, esta máquina rodou só este item.</div>') +
+      '</div>';
+  }).join('');
+
+  return '<div class="card" style="margin-top:12px">' +
+    '<div style="font-weight:800;color:var(--navy);font-size:14px">📦 Capacidade mensal do item</div>' +
+    '<p class="desc" style="margin:2px 0 10px;font-size:11.5px">Teto <b>teórico</b>: o ritmo do item nos dias em que ele rodou, esticado para todos os dias que a máquina trabalha. Só se realiza se a máquina ficar dedicada a ele.</p>' +
+    linhas + '</div>';
+}
+
 function estratBuscaItem(v) {
   _estratItemQ = String(v == null ? '' : v).replace(/^\s+|\s+$/g, '');
   try { renderEstrategia(); } catch (_) { }
