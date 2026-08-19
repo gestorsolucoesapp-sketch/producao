@@ -96,7 +96,15 @@ a[onclick]:active{opacity:.6}
 button{font:inherit;cursor:pointer;border:none;background:none}
 input,select{font:inherit}
 /* ---------- header ---------- */
-#topoFixo{position:sticky;top:0;z-index:60;box-shadow:0 2px 10px rgba(11,42,74,.18)}
+/* 19/08/2026 (João, "do letreiro para cima deve ficar travado, está subindo
+   junto quando rolo a tela"): era position:sticky, e sticky depende do
+   comportamento de rolagem dos ancestrais — com overflow-x em html/body o Safari
+   solta a barra e ela sobe junto. position:fixed não depende de ancestral nenhum,
+   então o topo fica travado em qualquer navegador. Em troca, ele sai do fluxo:
+   o espaço dele precisa virar padding no <main>, senão o primeiro card nasce
+   escondido embaixo da barra. A altura vem de --topo-app, medida em tempo real. */
+#topoFixo{position:fixed;top:0;left:0;right:0;z-index:60;box-shadow:0 2px 10px rgba(11,42,74,.18)}
+main{padding-top:calc(var(--topo-app, 150px) + 9px)}
 header{background:var(--topo);color:#fff;padding:calc(env(safe-area-inset-top) + 8px) 18px 5px}
 .h-linha{display:flex;align-items:center;justify-content:space-between;max-width:var(--larg-app, 920px);margin:0 auto}
 .marca{display:flex;align-items:center;gap:10px}
@@ -793,7 +801,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.869.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.870.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2728,7 +2736,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.869.0';
+const APP_VER = '3.870.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4027,7 +4035,7 @@ async function mostrarApp() {
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
-  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); getPerdaCfg(); preencherSelSetores(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); observarSecoesRecolhiveis(); } catch (_) {} }, 120);
+  setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); getSetupCfg(); getPerdaCfg(); preencherSelSetores(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); observarSecoesRecolhiveis(); medirTopoApp(); observarTopoApp(); } catch (_) {} }, 120);
   await aplicarPermissoes();
   // abre a primeira aba permitida
   const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
@@ -4438,6 +4446,16 @@ async function getTarefas() {
 function medirTopoApp() {
   const t = $('topoFixo');
   if (t) document.documentElement.style.setProperty('--topo-app', t.offsetHeight + 'px');
+}
+/* a barra muda de altura sozinha (letreiro entra/sai, abas quebram linha, o
+   celular gira). Sem remedir, o padding do main descola e some um pedaço do
+   primeiro card — ou abre um buraco branco. */
+function observarTopoApp() {
+  try {
+    const t = $('topoFixo'); if (!t || window._obsTopo || !window.ResizeObserver) return;
+    window._obsTopo = new ResizeObserver(() => { try { medirTopoApp(); } catch (_) {} });
+    window._obsTopo.observe(t);
+  } catch (_) {}
 }
 window.addEventListener('resize', medirTopoApp);
 window.addEventListener('resize', () => { try { const pf = $('pilPeriodoFix'), ph = $('pilPeriodoHost'); if (pf && ph && pf.offsetHeight) ph.style.height = (pf.offsetHeight + 8) + 'px'; } catch (_) {} });
@@ -22828,7 +22846,7 @@ async function carregarProgramacao(forcar) {
   if (alvo) alvo.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando a fila…</p>';
   try {
     const { data, error } = await sb.from('v_fila_op')
-      .select('dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo,cores,estoque,prazo_dias,data_pedido,suprimento_op,largura,espessura')
+      .select('dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo,cores,estoque,prazo_dias,data_pedido,suprimento_op,largura,espessura,pedido')
       .limit(8000);
     if (error) throw error;
     _progDados = data || [];
@@ -24231,6 +24249,56 @@ function _alocarEstoque() {
 /* TODAS as linhas de um pedido: o que ja tem material e o que falta. O grupo
    mostra so os itens que TRAVAM; aqui aparece o pedido inteiro, para ver o que
    ja esta pronto esperando o resto. */
+/* ===== PEDIDO NA FILA (19/08/2026, pedido do João) =====
+   Responde "onde esse pedido está" com o que o chão precisa: em qual máquina,
+   em que posição da fila, quanto já saiu e se a entrega está em risco. A visão
+   de material (REST196) continua existindo e fica a um toque, porque são duas
+   perguntas diferentes: aqui é ONDE ESTÁ; lá é SE TEM MATÉRIA-PRIMA. */
+const _soNum = v => String(v == null ? '' : v).split('/')[0].replace(/\D/g, '');
+const _progNumPed = rows => { const S = new Set(); (rows || []).forEach(r => { const n = _soNum(r.pedido); if (n) S.add(n); }); return S; };
+function detPedidoFila(num) {
+  const n = _soNum(num);
+  const L = (_progDados || []).filter(r => _soNum(r.pedido) === n)
+    .sort((a, b) => String(a.recurso_cod).localeCompare(String(b.recurso_cod)) || ((a.ordem || 9999) - (b.ordem || 9999)));
+  const naCart = ((_cart196 && _cart196.pend) || []).some(p => _soNum(p.pedido) === n);
+  if (!L.length) {
+    if (naCart) return detPedido(n);
+    abreDet('Pedido ' + n, '<p class="desc">Este pedido não está na fila de hoje nem na carteira pendente. Ou já foi entregue, ou o número está incompleto — o pedido tem 5 a 7 dígitos (ex.: 225156).</p>');
+    return;
+  }
+  const hoje = hojeISO();
+  const cli = (L.find(r => r.cliente) || {}).cliente || '—';
+  const totKg = L.reduce((s, r) => s + (+r.kg_programado || 0), 0);
+  const feitoKg = L.reduce((s, r) => s + (+r.kg_produzido || 0), 0);
+  const pct = totKg > 0 ? Math.min(100, feitoKg / totKg * 100) : 0;
+  const entregas = L.map(r => r.entrega).filter(Boolean).sort();
+  const ent1 = entregas[0] || null;
+  const vencido = ent1 && String(ent1) < hoje && pct < 99.5;
+  const arrisca = L.filter(r => r.entrega && r.termino && String(r.termino).slice(0, 10) > String(r.entrega));
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const linhas = L.map(r => {
+    const p = Math.max(0, Math.min(100, +r.pct_concluido || 0));
+    const atrasa = r.entrega && r.termino && String(r.termino).slice(0, 10) > String(r.entrega);
+    return '<tr onclick="detFilaMaquina(\'' + escapeHtml(String(r.recurso_cod)) + '\')" style="cursor:pointer">'
+      + '<td class="nome" style="font-size:12px"><b>' + escapeHtml(String(r.recurso_cod)) + '</b>'
+      + '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(r.recurso_nome || '').slice(0, 20)) + (r.ordem != null ? ' · ' + r.ordem + 'º da fila' : '') + '</div></td>'
+      + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(r.item_cod || '—')) + '</span> ' + escapeHtml(_descItem(r.item_desc, '', 30))
+      + '<div style="font-size:10.5px;color:var(--fraco-2)">OP ' + escapeHtml(String(r.op || '—')) + '</div></td>'
+      + '<td><span class="cel ' + (atrasa ? 'baixo' : 'neutra') + '">' + (r.entrega ? fmtData(String(r.entrega)) : '—')
+      + (atrasa ? '<div style="font-size:10px;font-weight:700">termina depois</div>' : '') + '</span></td>'
+      + '<td><span class="cel ' + (p >= 99.5 ? 'ok' : p > 0 ? 'cel-tot' : 'neutra') + '">' + kg(+r.kg_programado || 0)
+      + '<div style="font-size:10px;font-weight:600;opacity:.85">' + Math.round(p) + '% feito</div></span></td></tr>';
+  }).join('');
+  const avisos = [];
+  if (vencido) avisos.push('<b>Entrega vencida</b> — a primeira era ' + fmtData(String(ent1)) + ' e o pedido está com ' + Math.round(pct) + '% produzido.');
+  if (arrisca.length) avisos.push('<b>' + arrisca.length + ' OP</b> com término programado <b>depois</b> da entrega — o risco já está na própria fila, não é atraso futuro.');
+  abreDet('Pedido ' + n + ' · ' + String(cli).slice(0, 28),
+    '<p class="idet-desc">' + L.length + ' OP em ' + new Set(L.map(r => r.recurso_cod)).size + ' máquina(s) · ' + kg(totKg) + ' programado · ' + Math.round(pct) + '% produzido'
+    + (ent1 ? ' · 1ª entrega ' + fmtData(String(ent1)) : '') + '</p>'
+    + (avisos.length ? avisos.map(a => '<div style="background:#FCF3F3;border-left:4px solid #C0392B;border-radius:9px;padding:7px 10px;margin-bottom:7px;font-size:12px">' + a + '</div>').join('') : '')
+    + tabSimples(['Máquina', 'Item / OP', 'Entrega', 'Programado'], linhas)
+    + (naCart ? '<button class="btn btn-navy" style="width:100%;margin-top:9px" onclick="detPedido(\'' + escapeHtml(n) + '\')">ver material deste pedido na carteira (REST196) ›</button>' : ''));
+}
 function detPedido(num) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
@@ -24982,8 +25050,11 @@ function progBuscar() {
 
   // 1) máquina: bate com um recurso que tem ordem na fila
   if (alvo && todas.some(r => String(r.recurso_cod) === alvo)) return detFilaMaquina(alvo);
-  // 2) pedido: existe no REST196 (o pedido lá vem como 225156/1)
-  if (alvo && pend.some(p => String(p.pedido || '').split('/')[0] === alvo)) return detPedido(alvo);
+  /* 2) pedido. Antes só procurava no REST196 (a carteira pendente), então
+     consultar um pedido que JÁ ESTÁ programado devolvia "nada encontrado" —
+     justamente o caso mais comum de quem quer saber em que máquina ele caiu.
+     Agora a fila vem primeiro; a carteira entra como complemento. */
+  if (alvo && (_progNumPed(todas).has(alvo) || pend.some(p => _soNum(p.pedido) === alvo))) return detPedidoFila(alvo);
   // 3) item: na fila ou na carteira
   if (alvo && (todas.some(r => String(r.item_cod) === alvo) || pend.some(p => String(p.item_cod) === alvo)))
     return detItemMaquinas(alvo);
@@ -25000,10 +25071,18 @@ function progBuscar() {
     }
   });
   pend.forEach(p => {
-    const k = 'p' + String(p.pedido || '').split('/')[0];
+    const k = 'p' + _soNum(p.pedido);
     if (vistos.has(k)) return;
     if (String(p.cliente || '').toLowerCase().includes(t)) {
-      vistos.add(k); achou.push({ tipo: 'pedido', cod: String(p.pedido || '').split('/')[0], desc: p.cliente });
+      vistos.add(k); achou.push({ tipo: 'pedido', cod: _soNum(p.pedido), desc: p.cliente });
+    }
+  });
+  // cliente que só aparece na fila também vira resultado de pedido
+  todas.forEach(r => {
+    const n = _soNum(r.pedido); if (!n) return;
+    const k = 'p' + n; if (vistos.has(k)) return;
+    if (String(r.cliente || '').toLowerCase().includes(t) || n === alvo) {
+      vistos.add(k); achou.push({ tipo: 'pedido', cod: n, desc: r.cliente });
     }
   });
   if (!achou.length) {
@@ -25013,7 +25092,7 @@ function progBuscar() {
   abreDet('Busca: ' + q,
     `<p class="idet-desc">${achou.length} resultado(s)</p>`
     + tabSimples(['Resultado', 'Tipo'], achou.slice(0, 40).map(a =>
-      `<tr onclick="${a.tipo === 'item' ? `detItemMaquinas('${escapeHtml(a.cod)}')` : `detPedido('${escapeHtml(a.cod)}')`}" style="cursor:pointer">`
+      `<tr onclick="${a.tipo === 'item' ? `detItemMaquinas('${escapeHtml(a.cod)}')` : `detPedidoFila('${escapeHtml(a.cod)}')`}" style="cursor:pointer">`
       + `<td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(a.cod)}</span> ${escapeHtml(_descItem(a.desc, '', 40))}</td>`
       + `<td class="nome" style="font-size:11.5px">${a.tipo === 'item' ? 'item' : 'pedido'} ›</td></tr>`).join('')));
 }
