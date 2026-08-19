@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.890.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.891.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2792,7 +2792,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.890.0';
+const APP_VER = '3.891.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22911,11 +22911,16 @@ const _DEP_RESERV = ['6'];
 const _DEP_QUAL = ['13', '14', '26', '36', '70', '113'];
 async function carregarDepositoItem() {
   try {
-    const { data: dd } = await sb.from('estoque_deposito').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    /* mesmo problema da carteira: em 19/08 o deposito tem foto de 06:30 (1.216
+       linhas) e de 18:23 (3.360). Somar as duas duplica o estoque. */
+    const { data: dd } = await sb.from('estoque_deposito').select('dia_foto,hora_foto').order('dia_foto', { ascending: false }).order('hora_foto', { ascending: false }).limit(1);
     const dia = dd && dd[0] && dd[0].dia_foto; if (!dia) { _depoItem = null; return; }
+    const hora = dd[0].hora_foto || null;
     let linhas = [], de = 0;
     for (let g = 0; g < 40; g++) {
-      const { data, error } = await sb.from('estoque_deposito').select('item_cod,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia).range(de, de + 999);
+      let q = sb.from('estoque_deposito').select('item_cod,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia);
+      if (hora) q = q.eq('hora_foto', hora);
+      const { data, error } = await q.range(de, de + 999);
       if (error) throw error;
       const d = data || []; linhas = linhas.concat(d);
       if (d.length < 1000) break;
@@ -22931,7 +22936,7 @@ async function carregarDepositoItem() {
       if (kg > 0) m[k].deps.push({ cod: String(r.deposito_cod), nome: r.deposito_nome || '', kg, cx: +r.quantidade || 0 });
     });
     Object.keys(m).forEach(k => m[k].deps.sort((a, b) => b.kg - a.kg));
-    _depoItem = { dia, itens: m };
+    _depoItem = { dia, hora, itens: m };
   } catch (e) { _depoItem = null; console.warn('depositoItem:', e && e.message); }
 }
 /* 19/08/2026 (Joao: "melhore essa visibilidade"): o aviso laranja ficava DENTRO
@@ -23651,16 +23656,45 @@ function cardPropostas() {
    O estoque vem da tabela propria (deduplicada); somar o estoque das linhas de
    pedido contaria o mesmo material uma vez por cliente. */
 let _cart196 = null;
+/* 19/08/2026 - FOTO E (DIA + HORA), NAO SO O DIA.
+   O app assumia UMA emissao por dia e filtrava so por dia_foto. Em 19/08 o
+   banco tem DUAS fotos do REST196: 06:30 com 20 linhas e 18:37 com 50.302.
+   Filtrando so pelo dia, as duas entravam JUNTAS e a carteira virava a soma de
+   duas emissoes diferentes. Ja tinha acontecido em 13/08 (06:30 com 105 linhas
+   e 11:00 com 4.138) e ninguem viu. Agora a foto escolhida e o par (dia, hora)
+   mais recente, e a hora fica visivel na tela para anomalia assim nao passar
+   despercebida de novo. */
+async function _ultimaFoto196() {
+  const { data } = await sb.from('rest196_pendente').select('dia_foto,hora_foto').order('dia_foto', { ascending: false }).order('hora_foto', { ascending: false }).limit(1);
+  const r = data && data[0]; if (!r) return null;
+  return { dia: r.dia_foto, hora: r.hora_foto || null };
+}
 async function carregarCarteira196() {
-  const { data: dd } = await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
-  const dia = dd && dd[0] && dd[0].dia_foto;
-  if (!dia) { _cart196 = null; return; }
+  const f = await _ultimaFoto196();
+  if (!f) { _cart196 = null; return; }
+  const dia = f.dia;
+  const filtro = q => { const x = q.eq('dia_foto', dia); return f.hora ? x.eq('hora_foto', f.hora) : x; };
   const [pend, est, hist] = await Promise.all([
-    fetchTudoSimples('rest196_pendente', 'item_cod,item_desc,un,cliente,pedido,entrega,dias,peso_pendente,qtd_pendente', 'dia_foto', dia),
+    fetchTudoFoto('rest196_pendente', 'item_cod,item_desc,un,cliente,pedido,entrega,dias,peso_pendente,qtd_pendente', filtro),
+    /* rest196_estoque nao tem hora_foto: ele e reescrito por emissao, entao o
+       dia basta — mas se um dia ganhar a coluna, o filtro acima cobre. */
     fetchTudoSimples('rest196_estoque', 'item_cod,item_desc,qtd,peso', 'dia_foto', dia),
     carregarItemMaquina()
   ]);
-  _cart196 = { dia, pend: pend || [], est: est || [], hist: hist || {} };
+  _cart196 = { dia, hora: f.hora, pend: pend || [], est: est || [], hist: hist || {} };
+}
+/* paginacao aceitando um filtro montado por quem chama */
+async function fetchTudoFoto(tabela, colunas, filtro, ordenarPor) {
+  const ord = ordenarPor || 'item_cod';
+  const passo = 1000; let ini = 0, tudo = [];
+  for (let g = 0; g < 80; g++) {
+    const { data, error } = await filtro(sb.from(tabela).select(colunas)).order(ord, { ascending: true }).range(ini, ini + passo - 1);
+    if (error) throw error;
+    const d = data || []; tudo = tudo.concat(d);
+    if (d.length < passo) break;
+    ini += passo;
+  }
+  return tudo;
 }
 // paginacao simples por igualdade (o fetchTudo do app filtra por 'dia', aqui e 'dia_foto')
 async function fetchTudoSimples(tabela, colunas, campo, valor, ordenarPor) {
@@ -24982,6 +25016,14 @@ function cardDestrava() {
     'O que destrava faturamento');
 }
 
+/* carimbo da foto usada: dia, hora e quantas linhas. Sem isso, uma emissao
+   fora do padrao (20 linhas ou 50 mil) passa despercebida. */
+function _foto196Txt() {
+  if (!_cart196) return '';
+  return 'REST196 de ' + fmtData(String(_cart196.dia).slice(0, 10))
+    + (_cart196.hora ? ' às ' + String(_cart196.hora).slice(0, 5) : '')
+    + ' · ' + fmt((_cart196.pend || []).length, 0) + ' linha(s)';
+}
 function cardCarteira196(rows) {
   if (!_cart196 || !_cart196.pend.length) return '';
   const C = _cart196;
@@ -26880,6 +26922,7 @@ async function cmAbrir(forcar) {
     _cmDados = { linhas, mat };
     _cmStamp = cmDataHoraAgora();
     try { const f = linhas[0] && linhas[0].dia_foto; if (f) _cmStamp += ' · fila de ' + fmtData(String(f).slice(0, 10)); } catch (_) {}
+    try { const t = _foto196Txt(); if (t) _cmStamp += ' · ' + t; } catch (_) {}
     cmRender();
   } catch (e) {
     if (box) box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Erro ao carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
