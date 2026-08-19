@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.862.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.863.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.862.0';
+const APP_VER = '3.863.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15393,6 +15393,13 @@ function classeItem(desc) {
 /* ===== ABA ESTRATÉGIA: histórico de produção por BOCA (622), gráfico montanha ===== */
 let _estratRows = null;
 const _estratBocaOff = {};
+/* 19/08/2026 (Joao): o historico nasceu por boca; agora o MESMO motor agrupa
+   tambem por MAQUINA. Os mapas de "desligado" sao separados por modo porque
+   codigo de maquina (1901) e boca (101) sao ambos numericos e se atropelariam. */
+let _estratAgrup = 'boca';
+const _estratMaqOff = {};
+function estratModo(m) { if (_estratAgrup === m) return; _estratAgrup = m; renderEstrategia(); }
+function estratToggleGrp(k) { const M = _estratAgrup === 'maquina' ? _estratMaqOff : _estratBocaOff; M[k] = !M[k]; renderEstrategia(); }
 let _estratInitDefault = false;
 // gráfico de área empilhada estilo "montanha" (Power BI), com gradiente, média e tendência
 function areaMontanha(labels, series, opts) {
@@ -16709,9 +16716,15 @@ async function carregarEstrategia() {
     box.innerHTML = '<div class="card"><p class="vazio-painel">Erro ao carregar o 622: ' + escapeHtml(String((e && e.message) || e)) + '</p></div>';
   }
 }
-function bocas_todas() { Object.keys(_estratBocaOff).forEach(k => delete _estratBocaOff[k]); renderEstrategia(); }
+function bocas_todas() {
+  const M = _estratAgrup === 'maquina' ? _estratMaqOff : _estratBocaOff;
+  Object.keys(M).forEach(k => delete M[k]); renderEstrategia();
+}
 function bocas_nenhuma() {
-  try { (_estratRows || []).forEach(r => { _estratBocaOff[bocaDe(r.item_desc) || 's/ boca'] = true; }); } catch (_) {}
+  try {
+    if (_estratAgrup === 'maquina') (_estratRows || []).forEach(r => { _estratMaqOff[String(r.recurso_cod || '').trim() || '—'] = true; });
+    else (_estratRows || []).forEach(r => { _estratBocaOff[bocaDe(r.item_desc) || 's/ boca'] = true; });
+  } catch (_) {}
   renderEstrategia();
 }
 
@@ -16895,6 +16908,9 @@ function renderEstrategia() {
     : metrica === 'milheiro' ? milDeLinha(r, semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r))
     : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
   const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
+  const _porMaq = _estratAgrup === 'maquina';
+  const grpR = r => _porMaq ? (String(r.recurso_cod || '').trim() || '—') : bocaR(r);
+  const _offMap = _porMaq ? _estratMaqOff : _estratBocaOff;
   const _de = (periodoSel && periodoSel.de) || '0000-01-01', _ate = (periodoSel && periodoSel.ate) || '9999-12-31';
   /* 19/08/2026 (João): "consultei Pt 450 e os dados têm que mostrar só dele".
      O filtro entrava só em rows (o período) e NÃO em rowsAno — que alimenta o
@@ -16922,12 +16938,12 @@ function renderEstrategia() {
   const chaveB = r => { const d = String(r.dia).slice(0, 10); return _porMes ? d.slice(0, 7) : d; };
   const dias = [...new Set(rows.map(chaveB))].sort();
   const idxDia = {}; dias.forEach((d, i) => idxDia[d] = i);
-  const bocas = [...new Set(rowsAno.map(bocaR))].sort((a, b) => (parseInt(a) || 99999) - (parseInt(b) || 99999));   // universo do ANO
+  const bocas = [...new Set(rowsAno.map(grpR))].sort((a, b) => (parseInt(a) || 99999) - (parseInt(b) || 99999));   // universo do ANO
   const serie = {}; bocas.forEach(b => serie[b] = dias.map(() => 0));
-  rows.forEach(r => { const di = idxDia[chaveB(r)]; if (di != null) serie[bocaR(r)][di] += val(r); });
+  rows.forEach(r => { const di = idxDia[chaveB(r)]; if (di != null) serie[grpR(r)][di] += val(r); });
   const totalBoca = {}; bocas.forEach(b => totalBoca[b] = serie[b].reduce((a, x) => a + x, 0));   // total do período
-  const totalAno = {}; bocas.forEach(b => totalAno[b] = 0); rowsAno.forEach(r => { totalAno[bocaR(r)] += val(r); });
-  if (!_estratInitDefault) { ['s/ boca', '1', '01', '10', '20'].forEach(b => _estratBocaOff[b] = true); _estratInitDefault = true; }   // sem boca + injeção (Ps) fora por padrão
+  const totalAno = {}; bocas.forEach(b => totalAno[b] = 0); rowsAno.forEach(r => { totalAno[grpR(r)] += val(r); });
+  if (!_porMaq && !_estratInitDefault) { ['s/ boca', '1', '01', '10', '20'].forEach(b => _estratBocaOff[b] = true); _estratInitDefault = true; }   // sem boca + injeção (Ps) fora por padrão
   const _PS = ['1', '01', '10', '20'];
   /* 12/08/2026 (João): o rótulo do item sem boca segue o SETOR, e não pode
      inventar produto que não existe ali.
@@ -16938,13 +16954,13 @@ function renderEstrategia() {
   const _rotSemBoca = setor === 'Extrusão' ? 'Bobina'
     : setor === 'Termoformagem' ? 'Bandeja'
     : 'Boca não identificada';
-  const rotBoca = b => b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b);
+  const rotBoca = b => _porMaq ? ('máq ' + b) : (b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b));
   const fmtV = metrica === 'peso' ? fmtKg : metrica === 'milheiro' ? (x => fmtNum(Math.round(x)) + ' mi') : (x => fmtNum(Math.round(x)) + ' cx');
   const CORES = ['#2F6FED', '#00964D', '#E8A13D', '#7B4FA8', '#D64545', '#3CA9C4', '#C86A2E', '#6C7BD1', '#28348E', '#9AA6B2'];
   /* 12/08/2026 (João, print do gráfico vazio): dá para desligar boca por boca até
      não sobrar nenhuma, e aí o gráfico some sem explicação e só volta clicando
      em cada chip de novo. Botões "todas / nenhuma" resolvem em um toque. */
-  const _nVis = bocas.filter(b => !_estratBocaOff[b]).length;
+  const _nVis = bocas.filter(b => !_offMap[b]).length;
   const _btnTodas = `<button onclick="bocas_todas()" style="border:1.5px solid var(--navy);background:${_nVis === bocas.length ? 'var(--navy)' : '#fff'};color:${_nVis === bocas.length ? '#fff' : 'var(--navy)'};border-radius:999px;padding:5px 12px;font-size:12px;font-weight:800;cursor:pointer">todas</button>`
     + `<button onclick="bocas_nenhuma()" style="border:1.5px solid var(--fraco-2s);background:#fff;color:var(--fraco);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">nenhuma</button>`;
   /* ===== CONSULTA POR ITEM (19/08/2026, pedido do João) =====
@@ -16953,25 +16969,29 @@ function renderEstrategia() {
      totais e lista — passa a considerar só as linhas daquele item.
      Guardo em _estratItemQ para sobreviver ao re-render dos chips. */
   const chips = _btnTodas + bocas.map((b) => {
-    const off = !!_estratBocaOff[b], cor = CORES[bocas.indexOf(b) % CORES.length];
+    const off = !!_offMap[b], cor = CORES[bocas.indexOf(b) % CORES.length];
     const bk = b.replace(/'/g, ''), noP = totalBoca[b] > 0.001;
-    return `<button onclick="_estratBocaOff['${bk}']=!_estratBocaOff['${bk}'];renderEstrategia()" style="border:1.5px solid ${cor};background:${off ? '#fff' : cor};color:${off ? cor : '#fff'};opacity:${off ? '.45' : (noP ? '1' : '.7')};border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">${off ? '⃠ ' : ''}${escapeHtml(rotBoca(b))} · ${fmtV(noP ? totalBoca[b] : totalAno[b])}${noP ? '' : ' <span style="font-weight:400;font-size:9.5px;opacity:.8">no ano</span>'}</button>`;
+    return `<button onclick="estratToggleGrp('${bk}')" style="border:1.5px solid ${cor};background:${off ? '#fff' : cor};color:${off ? cor : '#fff'};opacity:${off ? '.45' : (noP ? '1' : '.7')};border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer">${off ? '⃠ ' : ''}${escapeHtml(rotBoca(b))} · ${fmtV(noP ? totalBoca[b] : totalAno[b])}${noP ? '' : ' <span style="font-weight:400;font-size:9.5px;opacity:.8">no ano</span>'}</button>`;
   }).join('');
-  const series = bocas.filter(b => !_estratBocaOff[b] && totalBoca[b] > 0.001).map((b) => ({ nome: b, vals: serie[b], cor: CORES[bocas.indexOf(b) % CORES.length] }));
+  const series = bocas.filter(b => !_offMap[b] && totalBoca[b] > 0.001).map((b) => ({ nome: b, vals: serie[b], cor: CORES[bocas.indexOf(b) % CORES.length] }));
   const _MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const lbls = dias.map(d => _porMes ? (_MES3[+d.slice(5, 7) - 1] + '/' + d.slice(2, 4)) : (d.slice(8, 10) + '/' + d.slice(5, 7)));
-  const totGeral = bocas.filter(b => !_estratBocaOff[b]).reduce((a, b) => a + totalBoca[b], 0);
-  const _bocasVis = new Set(bocas.filter(b => !_estratBocaOff[b]));
+  const totGeral = bocas.filter(b => !_offMap[b]).reduce((a, b) => a + totalBoca[b], 0);
+  const _bocasVis = new Set(bocas.filter(b => !_offMap[b]));
   const _itAgg = {};
-  rows.forEach(r => { const b = bocaR(r); if (!_bocasVis.has(b)) return; const cod = String(r.item_cod || '').trim(); const k = cod || (r.item_desc || '—'); if (!_itAgg[k]) _itAgg[k] = { key: k, cod, desc: r.item_desc || r.item_cod || '—', boca: b, v: 0 }; _itAgg[k].v += val(r); });
+  rows.forEach(r => { const b = grpR(r); if (!_bocasVis.has(b)) return; const cod = String(r.item_cod || '').trim(); const k = cod || (r.item_desc || '—'); if (!_itAgg[k]) _itAgg[k] = { key: k, cod, desc: r.item_desc || r.item_cod || '—', boca: b, v: 0 }; _itAgg[k].v += val(r); });
   const _itens = Object.values(_itAgg).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
   const _maxIt = _itens.length ? _itens[0].v : 1;
   _estratItemRows = rows; _estratMetricaAtual = metrica; _estratPorMes = _porMes;
-  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${it.boca === 's/ boca' ? '—' : 'b' + it.boca}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
+  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${_porMaq ? escapeHtml(String(it.boca)) : (it.boca === 's/ boca' ? '—' : 'b' + it.boca)}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
   const periodoLbl = periodoSel ? periodoSel.label : '';
   box.innerHTML = `<div class="card">
-      <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por boca · histórico</div>
-      <div style="font-size:11px;color:var(--fraco);margin:1px 0 10px">${escapeHtml(setor || 'Todos os setores')}${periodoLbl ? ' · ' + escapeHtml(periodoLbl) : ''} · ${metrica === 'peso' ? 'Toneladas' : metrica === 'milheiro' ? 'Milheiros' : 'Caixas'} · fonte RPCP622 · toque nas bocas p/ filtrar</div>
+      <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por ${_porMaq ? 'máquina' : 'boca'} · histórico</div>
+      <div style="font-size:11px;color:var(--fraco);margin:1px 0 10px">${escapeHtml(setor || 'Todos os setores')}${periodoLbl ? ' · ' + escapeHtml(periodoLbl) : ''} · ${metrica === 'peso' ? 'Toneladas' : metrica === 'milheiro' ? 'Milheiros' : 'Caixas'} · fonte RPCP622 · toque ${_porMaq ? 'nas máquinas' : 'nas bocas'} p/ filtrar</div>
+      <div style="display:flex;gap:0;margin-bottom:9px;border:1.5px solid var(--navy);border-radius:999px;overflow:hidden;width:fit-content">
+        <button onclick="estratModo('boca')" style="border:0;background:${_porMaq ? '#fff' : 'var(--navy)'};color:${_porMaq ? 'var(--navy)' : '#fff'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por boca</button>
+        <button onclick="estratModo('maquina')" style="border:0;background:${_porMaq ? 'var(--navy)' : '#fff'};color:${_porMaq ? '#fff' : 'var(--navy)'};padding:6px 16px;font-size:12.5px;font-weight:800;cursor:pointer">por máquina</button>
+      </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:9px">
         <input id="estratItemBusca" value="${escapeHtml(_estratItemQ || '')}" placeholder="🔎 consultar item (código ou nome)"
           onchange="estratBuscaItem(this.value)"
@@ -16988,7 +17008,7 @@ function renderEstrategia() {
             /* 12/08/2026 (João, "Sem boca mas não aparecem os itens"): o chip liga,
                a tela fica vazia e o motivo — produziu no ano, não no período — só
                estava escrito em letra miúda dentro do chip. Agora vai por extenso. */
-            const _lig = bocas.filter(b => !_estratBocaOff[b]);
+            const _lig = bocas.filter(b => !_offMap[b]);
             const _comAno = _lig.filter(b => (totalAno[b] || 0) > 0.001);
             if (_comAno.length) {
               return '<b>' + _comAno.map(b => escapeHtml(rotBoca(b))).join(', ') + '</b> não produziu em ' +
@@ -16999,20 +17019,103 @@ function renderEstrategia() {
             return 'As bocas escolhidas não produziram neste período.';
           })() + '</div>'}
       <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--fraco);margin-top:8px">
-        <span>■ área = boca &nbsp; <span style="color:#D64545">┄ média dos dias com produção</span> &nbsp; <span style="color:#16283A">━ tendência</span>${series.length === 1 ? ' &nbsp; <span style="color:#1F7A46">▮ pico</span> / <span style="color:#C0392B">▮ vale</span> com a data' : ''}</span>
+        <span>■ área = ${_porMaq ? 'máquina' : 'boca'} &nbsp; <span style="color:#D64545">┄ média dos dias com produção</span> &nbsp; <span style="color:#16283A">━ tendência</span>${series.length === 1 ? ' &nbsp; <span style="color:#1F7A46">▮ pico</span> / <span style="color:#C0392B">▮ vale</span> com a data' : ''}</span>
         <span style="margin-left:auto">total visível: <b style="color:var(--txt-2)">${fmtV(totGeral)}</b> · eixo em ${_porMes ? 'meses' : 'dias'} · ${dias.length} ${_porMes ? 'mês(es)' : 'dia(s)'}</span>
       </div>
     </div>
     <div class="card" style="margin-top:12px">
       <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🏆 Itens por ordem de grandeza</div>
-      <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) nas bocas visíveis${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
+      <div style="font-size:11px;color:var(--fraco);margin-bottom:6px">${_itens.length} item(ns) ${_porMaq ? 'nas máquinas visíveis' : 'nas bocas visíveis'}${setor ? ' · ' + escapeHtml(setor) : ''} · maior → menor</div>
       ${_listaItens || '<p class="desc">sem itens no filtro</p>'}
     </div>
+    ${(() => { try { return estratMelhorMes(rowsAno, val, fmtV, rotBoca, grpR, _offMap, _porMaq); } catch (_) { return ''; } })()}
     ${(() => { try { return estratCapacidadeItem(rows, _rowsTodas, fmtV, metrica); } catch (_) { return ''; } })()}
     <div class="card" style="margin-top:12px"><div style="font-weight:800;color:var(--navy);font-size:13px;margin-bottom:2px">📋 Plano de produção</div><p class="desc">Espaço reservado para o plano — a próxima etapa. Me diga o formato (meta por boca, por período?) e eu monto aqui.</p></div>`;
 }
 // ===== Curva ABC (Pareto) de itens por refugo — barras A/B/C + curva acumulada =====
 let _estratItemQ = '';
+
+/* ===== MELHOR MÊS (19/08/2026, pedido do João) =====
+   Responde "qual foi o melhor mês e o que ele tinha de diferente".
+   Duas leituras que quase nunca coincidem e por isso vão separadas:
+     VOLUME  = quanto saiu no mês inteiro (mês cheio ganha de mês curto).
+     RITMO   = média dos dias COM produção (o mês curto pode ter o melhor ritmo).
+   O ritmo é a leitura honesta para comparar meses de tamanhos diferentes —
+   fevereiro nunca vai ganhar de março no volume, mas pode ganhar no ritmo.
+   Base: rowsAno (ano corrente já filtrado por setor/turno/item), respeitando
+   os chips ligados. Não usa meta: meta é por máquina e muda no meio do ano. */
+function estratMelhorMes(rowsAno, val, fmtV, rotGrp, grpR, offMap, porMaq) {
+  const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const rotMes = m => MES3[+m.slice(5, 7) - 1] + '/' + m.slice(2, 4);
+  const vis = (rowsAno || []).filter(r => !offMap[grpR(r)]);
+  if (!vis.length) return '';
+  const porMes = {}, porGrp = {};
+  vis.forEach(r => {
+    const d = String(r.dia).slice(0, 10); if (d.length < 10) return;
+    const m = d.slice(0, 7), v = val(r); if (!(v > 0)) return;
+    if (!porMes[m]) porMes[m] = { v: 0, dias: new Set() };
+    porMes[m].v += v; porMes[m].dias.add(d);
+    const g = grpR(r);
+    if (!porGrp[g]) porGrp[g] = {};
+    porGrp[g][m] = (porGrp[g][m] || 0) + v;
+  });
+  const lista = Object.keys(porMes).map(m => ({ m, v: porMes[m].v, nd: porMes[m].dias.size, md: porMes[m].v / porMes[m].dias.size }))
+    .filter(x => x.v > 0.001).sort((a, b) => b.v - a.v);
+  if (lista.length < 2) return '';
+  const bestV = lista[0];
+  const bestR = [...lista].sort((a, b) => b.md - a.md)[0];
+  const atual = (periodoSel && periodoSel.de) ? String(periodoSel.de).slice(0, 7) : '';
+  const linAtual = lista.find(x => x.m === atual);
+  const maxV = lista[0].v;
+  const ordem = [...lista].sort((a, b) => a.m < b.m ? -1 : 1);
+  const barras = ordem.map(x => {
+    const eh = x.m === bestV.m, ehAt = x.m === atual;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">'
+      + '<span style="width:52px;font-size:11px;font-weight:' + (ehAt ? '800' : '600') + ';color:' + (ehAt ? 'var(--navy)' : 'var(--fraco)') + ';flex:none">' + rotMes(x.m) + (ehAt ? ' •' : '') + '</span>'
+      + '<div style="flex:1;height:9px;background:#eef2f7;border-radius:5px;overflow:hidden"><div style="height:100%;width:' + (x.v / maxV * 100).toFixed(1) + '%;background:' + (eh ? '#1F7A46' : '#2F6FED') + ';border-radius:5px"></div></div>'
+      + '<span style="font-size:11px;font-weight:700;min-width:74px;text-align:right;flex:none">' + fmtV(x.v) + '</span>'
+      + '<span style="font-size:10px;color:var(--fraco);min-width:78px;text-align:right;flex:none">' + fmtV(x.md) + '/dia</span>'
+      + '</div>';
+  }).join('');
+  const gList = Object.keys(porGrp).map(g => {
+    const ms = Object.keys(porGrp[g]).map(m => ({ m, v: porGrp[g][m] })).sort((a, b) => b.v - a.v);
+    return { g, m: ms[0].m, v: ms[0].v };
+  }).sort((a, b) => b.v - a.v).slice(0, 12);
+  const gHtml = gList.map(x => '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--linha,#eef2f7);font-size:12px">'
+    + '<span style="font-weight:700;color:var(--txt-2,#16283A)">' + escapeHtml(rotGrp(x.g)) + '</span>'
+    + '<span style="color:var(--fraco)">melhor em <b style="color:var(--navy)">' + rotMes(x.m) + '</b> · ' + fmtV(x.v) + '</span></div>').join('');
+  let cmp = '';
+  if (linAtual && linAtual.m !== bestV.m) {
+    const dv = (linAtual.v / bestV.v - 1) * 100, dr = (linAtual.md / bestR.md - 1) * 100;
+    cmp = '<div style="background:var(--leve-4);border-left:4px solid ' + (dr >= -2 ? '#1F7A46' : '#C0392B') + ';border-radius:9px;padding:8px 10px;margin-top:10px;font-size:12px;line-height:1.45">'
+      + '<b>' + rotMes(atual) + '</b> está <b style="color:' + (dv >= 0 ? '#1F7A46' : '#C0392B') + '">' + (dv >= 0 ? '+' : '') + dv.toFixed(0) + '%</b> no volume e '
+      + '<b style="color:' + (dr >= 0 ? '#1F7A46' : '#C0392B') + '">' + (dr >= 0 ? '+' : '') + dr.toFixed(0) + '%</b> no ritmo comparado ao melhor mês. '
+      + 'Para empatar no ritmo faltam <b>' + fmtV(Math.max(0, bestR.md - linAtual.md)) + '</b> por dia produzido.</div>';
+  } else if (linAtual) {
+    cmp = '<div style="background:var(--leve-4);border-left:4px solid #1F7A46;border-radius:9px;padding:8px 10px;margin-top:10px;font-size:12px">'
+      + '<b>' + rotMes(atual) + '</b> é o melhor mês do ano até agora.</div>';
+  }
+  return '<div class="card" style="margin-top:12px">'
+    + '<div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🏅 Melhor mês · referência do ano</div>'
+    + '<div style="font-size:11px;color:var(--fraco);margin-bottom:9px">' + lista.length + ' mês(es) com produção · ' + (porMaq ? 'máquinas' : 'bocas') + ' visíveis · fonte RPCP622</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:150px;background:#F2F7F4;border:1px solid #CFE3D8;border-radius:11px;padding:9px 11px">'
+    + '<div style="font-size:10.5px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px">maior volume</div>'
+    + '<div style="font-size:19px;font-weight:800;color:#1F7A46;line-height:1.15">' + rotMes(bestV.m) + '</div>'
+    + '<div style="font-size:12px;font-weight:700;color:var(--txt-2,#16283A)">' + fmtV(bestV.v) + '</div>'
+    + '<div style="font-size:10.5px;color:var(--fraco)">' + bestV.nd + ' dias com produção</div></div>'
+    + '<div style="flex:1;min-width:150px;background:#F1F5FC;border:1px solid #CFDCF2;border-radius:11px;padding:9px 11px">'
+    + '<div style="font-size:10.5px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px">melhor ritmo</div>'
+    + '<div style="font-size:19px;font-weight:800;color:#2F6FED;line-height:1.15">' + rotMes(bestR.m) + '</div>'
+    + '<div style="font-size:12px;font-weight:700;color:var(--txt-2,#16283A)">' + fmtV(bestR.md) + ' / dia produzido</div>'
+    + '<div style="font-size:10.5px;color:var(--fraco)">' + bestR.nd + ' dias com produção</div></div>'
+    + '</div>'
+    + cmp
+    + '<div style="margin-top:11px">' + barras + '</div>'
+    + (gHtml ? '<div style="margin-top:11px"><div style="font-size:11px;color:var(--fraco);font-weight:800;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px">melhor mês de cada ' + (porMaq ? 'máquina' : 'boca') + '</div>' + gHtml + '</div>' : '')
+    + '<p class="desc" style="margin-top:8px">Volume premia mês cheio; ritmo compara mês curto com mês longo em pé de igualdade. Meses sem produção não entram na conta.</p>'
+    + '</div>';
+}
 
 /* ===== CAPACIDADE MENSAL DO ITEM (19/08/2026, pedido do João) =====
    Responde "quanto dá para fazer deste item num mês" em caixas, milheiros e
