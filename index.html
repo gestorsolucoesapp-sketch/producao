@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.865.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.866.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2712,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.865.0';
+const APP_VER = '3.866.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15410,12 +15410,28 @@ const _estratBocaOff = {};
 let _estratAgrup = 'boca';
 const _estratMaqOff = {};
 const _estratPecaOff = {};
+/* 19/08/2026 (João, "permita separar bandeja também"): a bandeja não tem boca —
+   cai em 's/ boca', que já nasce DESLIGADA por padrão na visão por boca. Com o
+   filtro cruzado, esse default derrubava a bandeja (e as máquinas que só fazem
+   bandeja) das visões por peça e por máquina, e o chip nem aparecia.
+   Correção: o default vale só para DESENHAR a visão por boca. No cruzamento
+   entram apenas as bocas que o João desligou de fato — registradas aqui. */
+const _estratBocaUser = {};
+/* A bandeja não tem boca por natureza (é chapa cortada, não copo formado), mas
+   ficava no mesmo balaio de quem tem boca e o ERP não soube escrever. Misturar
+   as duas coisas escondia a bandeja e sujava o rótulo. Agora ela é chip próprio
+   também na visão por boca; sobra em 's/ boca' só o que é descrição ruim. */
+function bocaEstratR(r) {
+  const b = bocaDe(r && r.item_desc);
+  if (b) return b;
+  return classeEstrat(r && r.item_desc) === 'BANDEJA' ? 'bandeja' : 's/ boca';
+}
 function _estratOffMap() { return _estratAgrup === 'maquina' ? _estratMaqOff : _estratAgrup === 'peca' ? _estratPecaOff : _estratBocaOff; }
 function estratModo(m) { if (_estratAgrup === m) return; _estratAgrup = m; renderEstrategia(); }
-function estratToggleGrp(k) { const M = _estratOffMap(); M[k] = !M[k]; renderEstrategia(); }
+function estratToggleGrp(k) { const M = _estratOffMap(); M[k] = !M[k]; if (_estratAgrup === 'boca') _estratBocaUser[k] = true; renderEstrategia(); }
 function estratLimparCruz() {
   const a = _estratAgrup;
-  if (a !== 'boca') Object.keys(_estratBocaOff).forEach(k => delete _estratBocaOff[k]);
+  if (a !== 'boca') { Object.keys(_estratBocaOff).forEach(k => delete _estratBocaOff[k]); Object.keys(_estratBocaUser).forEach(k => delete _estratBocaUser[k]); }
   if (a !== 'maquina') Object.keys(_estratMaqOff).forEach(k => delete _estratMaqOff[k]);
   if (a !== 'peca') Object.keys(_estratPecaOff).forEach(k => delete _estratPecaOff[k]);
   renderEstrategia();
@@ -16738,13 +16754,15 @@ async function carregarEstrategia() {
 }
 function bocas_todas() {
   const M = _estratOffMap();
-  Object.keys(M).forEach(k => delete M[k]); renderEstrategia();
+  Object.keys(M).forEach(k => delete M[k]);
+  if (_estratAgrup === 'boca') Object.keys(_estratBocaUser).forEach(k => delete _estratBocaUser[k]);
+  renderEstrategia();
 }
 function bocas_nenhuma() {
   try {
     if (_estratAgrup === 'maquina') (_estratRows || []).forEach(r => { _estratMaqOff[String(r.recurso_cod || '').trim() || '—'] = true; });
     else if (_estratAgrup === 'peca') (_estratRows || []).forEach(r => { _estratPecaOff[classeEstrat(r.item_desc)] = true; });
-    else (_estratRows || []).forEach(r => { _estratBocaOff[bocaDe(r.item_desc) || 's/ boca'] = true; });
+    else (_estratRows || []).forEach(r => { const b = bocaEstratR(r); _estratBocaOff[b] = true; _estratBocaUser[b] = true; });
   } catch (_) {}
   renderEstrategia();
 }
@@ -16928,7 +16946,7 @@ function renderEstrategia() {
   const val = r => metrica === 'peso' ? (r.peso || 0)
     : metrica === 'milheiro' ? milDeLinha(r, semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r))
     : (semCaixa(setorDe(r.recurso_cod)) ? 0 : caixasDe(r));
-  const bocaR = r => bocaDe(r.item_desc) || 's/ boca';
+  const bocaR = r => bocaEstratR(r);
   const _porMaq = _estratAgrup === 'maquina';
   const _porPeca = _estratAgrup === 'peca';
   const grpR = r => _porMaq ? (String(r.recurso_cod || '').trim() || '—')
@@ -16955,8 +16973,10 @@ function renderEstrategia() {
      seu mapa de desligados e nenhum enxergava o outro. */
   const _uniB = new Set(), _uniM = new Set(), _uniP = new Set();
   rowsAno.forEach(r => { _uniB.add(bocaR(r)); _uniM.add(String(r.recurso_cod || '').trim() || '—'); _uniP.add(classeEstrat(r.item_desc)); });
+  const _bocaCruz = {};
+  Object.keys(_estratBocaOff).forEach(k => { if (_estratBocaOff[k] && _estratBocaUser[k]) _bocaCruz[k] = true; });
   rowsAno = rowsAno.filter(r => {
-    if ((_porMaq || _porPeca) && _estratBocaOff[bocaR(r)]) return false;
+    if ((_porMaq || _porPeca) && _bocaCruz[bocaR(r)]) return false;
     if (!_porMaq && _estratMaqOff[String(r.recurso_cod || '').trim() || '—']) return false;
     if (!_porPeca && _estratPecaOff[classeEstrat(r.item_desc)]) return false;
     return true;
@@ -16968,7 +16988,7 @@ function renderEstrategia() {
     return on.length <= 4 ? on.map(rot).join(', ') : on.length + ' de ' + set.size;
   };
   const _cruzTags = [];
-  if (_porMaq || _porPeca) { const t = _resumoEixo(_uniB, _estratBocaOff, b => b === 's/ boca' ? 'sem boca' : 'boca ' + b); if (t) _cruzTags.push(t); }
+  if (_porMaq || _porPeca) { const t = _resumoEixo(_uniB, _bocaCruz, b => b === 's/ boca' ? 'sem boca' : 'boca ' + b); if (t) _cruzTags.push(t); }
   if (!_porMaq) { const t = _resumoEixo(_uniM, _estratMaqOff, m => 'máq ' + m); if (t) _cruzTags.push(t); }
   if (!_porPeca) { const t = _resumoEixo(_uniP, _estratPecaOff, x => String(x).charAt(0) + String(x).slice(1).toLowerCase()); if (t) _cruzTags.push(t); }
   let rows = rowsAno.filter(r => { const d = String(r.dia).slice(0, 10); return d >= _de && d <= _ate; });   // recorte do gráfico = período
@@ -17001,11 +17021,9 @@ function renderEstrategia() {
        Termoformagem .... Bandeja (bandeja não tem boca e é produzida aqui)
        demais setores ... "Sem boca": na Impressão não existe bandeja — o que cai
                           aqui é item cuja boca não veio na descrição do ERP. */
-  const _rotSemBoca = setor === 'Extrusão' ? 'Bobina'
-    : setor === 'Termoformagem' ? 'Bandeja'
-    : 'Boca não identificada';
+  const _rotSemBoca = setor === 'Extrusão' ? 'Bobina' : 'Boca não identificada';
   const _CAP = t => String(t).charAt(0) + String(t).slice(1).toLowerCase();
-  const rotBoca = b => _porMaq ? ('máq ' + b) : _porPeca ? _CAP(b) : (b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b));
+  const rotBoca = b => _porMaq ? ('máq ' + b) : _porPeca ? _CAP(b) : b === 'bandeja' ? 'Bandeja' : (b === 's/ boca' ? _rotSemBoca : (_PS.includes(b) ? 'Ps ' + b : 'boca ' + b));
   const fmtV = metrica === 'peso' ? fmtKg : metrica === 'milheiro' ? (x => fmtNum(Math.round(x)) + ' mi') : (x => fmtNum(Math.round(x)) + ' cx');
   const CORES = ['#2F6FED', '#00964D', '#E8A13D', '#7B4FA8', '#D64545', '#3CA9C4', '#C86A2E', '#6C7BD1', '#28348E', '#9AA6B2'];
   /* 12/08/2026 (João, print do gráfico vazio): dá para desligar boca por boca até
@@ -17034,7 +17052,7 @@ function renderEstrategia() {
   const _itens = Object.values(_itAgg).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
   const _maxIt = _itens.length ? _itens[0].v : 1;
   _estratItemRows = rows; _estratMetricaAtual = metrica; _estratPorMes = _porMes;
-  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${(_porMaq || _porPeca) ? escapeHtml(String(it.boca)) : (it.boca === 's/ boca' ? '—' : 'b' + it.boca)}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
+  const _listaItens = _itens.slice(0, 40).map((it, i) => { const kk = String(it.key).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); return `<div onclick="detItemEstrat('${kk}')" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer"><span style="width:20px;text-align:right;color:var(--fraco);font-size:11px;flex:none">${i + 1}</span><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--txt-2,#16283A);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((it.cod ? it.cod + ' · ' : '') + String(it.desc))}</div><div style="height:5px;background:#eef2f7;border-radius:3px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${(it.v / _maxIt * 100).toFixed(1)}%;background:#2F6FED;border-radius:3px"></div></div></div><span style="font-size:10.5px;color:var(--fraco);white-space:nowrap;flex:none">${(_porMaq || _porPeca) ? escapeHtml(String(it.boca)) : (/^\d+$/.test(String(it.boca)) ? 'b' + it.boca : it.boca === 'bandeja' ? 'bandeja' : '—')}</span><span style="font-weight:700;font-size:12px;white-space:nowrap;min-width:66px;text-align:right;flex:none">${fmtV(it.v)} ›</span></div>`; }).join('');
   const periodoLbl = periodoSel ? periodoSel.label : '';
   box.innerHTML = `<div class="card">
       <div style="font-size:16px;font-weight:800;color:var(--navy);line-height:1.15">Produção por ${_porMaq ? 'máquina' : _porPeca ? 'peça' : 'boca'} · histórico</div>
