@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.853.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.854.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1440,6 +1440,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
     </section>
 
     <section id="abaMetas" class="oculto">
+      <div class="card" id="cardRegrasPerda"></div>
       <div class="card">
         <div class="titulo-sec">Metas por máquina e turno <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px;white-space:nowrap;vertical-align:middle">🚧 em construção</span><button class="i-info" onclick="abreInfo('metas')" title="Como este número é feito" aria-label="Como este número é feito">i</button></div>
         <div class="painel-filtros" style="margin-bottom:10px">
@@ -2711,7 +2712,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.853.0';
+const APP_VER = '3.854.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8409,7 +8410,7 @@ function trocarAba(qual) {
   if (qual === 'historico') carregarHistorico();
   if (qual === 'ferramentas') ferrSub(_fSubAtual || 'caderno');
   if (qual === 'usuarios')  carregarUsuarios();
-  if (qual === 'metas')     carregarMetas();
+  if (qual === 'metas')     { carregarMetas(); try { rpCarregar(); } catch (_) { } }
   if (qual === 'oee')       carregarOEE();
   if (qual === 'manut')     carregarManut();
   if (qual === 'analisemais') carregarAnaliseMais();
@@ -16529,6 +16530,114 @@ function gaugeSVG(pct, larg, alt, opts) {
     <circle cx="${cx}" cy="${cy}" r="${(W * 0.05).toFixed(1)}" fill="var(--txt-2,#2C3E50)"/>
     <text x="${cx}" y="${(cy - R * 0.34).toFixed(1)}" text-anchor="middle" font-size="${(W * 0.21).toFixed(1)}" font-weight="800" fill="${cor}">${o2.rot != null ? o2.rot : Math.round(p) + '%'}</text>
   </svg>`;
+}
+
+
+/* ===== TABELA DE DESTINO DA PERDA (19/08/2026, pedido do João) =====
+   Antes as regras viviam só no banco, escritas por padrão de texto (BOBINA%,
+   MATERIAL RUIM SEM IMPRESS%...). Funcionava, mas ninguém via o que estava
+   valendo — e quando o destino saía errado não havia onde corrigir sem SQL.
+   Agora a aba Metas lista TODO tipo de perda que aparece no dado, com quanto
+   pesa, onde é apontado e o que a regra faz hoje. A escolha vira uma regra
+   EXATA (sem curinga) com prioridade 5, que vence as genéricas de prioridade
+   50 — assim o ajuste de um tipo não quebra o padrão dos outros. */
+let _rpTipos = null, _rpRegras = null;
+
+async function rpCarregar() {
+  const box = $('cardRegrasPerda'); if (!box) return;
+  box.innerHTML = '<p class="desc">Carregando tipos de perda…</p>';
+  try {
+    const de = addDiasISO(hojeISO(), -60);
+    const [t, g] = await Promise.all([
+      sb.from('perdas').select('tipo_perda_desc,peso,recurso_cod').gte('dia', de),
+      sb.from('tipo_perda_regra').select('*').order('prioridade', { ascending: true })
+    ]);
+    const agg = {};
+    (t.data || []).forEach(r => {
+      const k = String(r.tipo_perda_desc || '(sem tipo)').trim();
+      const st = setorDe(r.recurso_cod) || '—';
+      (agg[k] = agg[k] || { kg: 0, n: 0, set: new Set() });
+      agg[k].kg += (+r.peso || 0); agg[k].n++; agg[k].set.add(st);
+    });
+    _rpTipos = Object.keys(agg).map(k => ({ tipo: k, kg: agg[k].kg, n: agg[k].n, setores: [...agg[k].set] }))
+      .sort((a, b) => b.kg - a.kg);
+    _rpRegras = g.data || [];
+  } catch (e) { box.innerHTML = '<p class="desc" style="color:var(--critico)">Não consegui carregar: ' + escapeHtml(e.message || '') + '</p>'; return; }
+  rpRender();
+}
+
+/* qual regra pega este tipo hoje — mesma ordem do classPerda */
+function rpRegraDe(tipo) {
+  for (const g of (_rpRegras || [])) {
+    let re = null; try { re = _padraoRegex(g.padrao); } catch (_) { re = null; }
+    if (re && re.test(tipo)) return g;
+  }
+  return null;
+}
+
+function rpRender() {
+  const box = $('cardRegrasPerda'); if (!box) return;
+  const q = ((($('rpBusca') || {}).value) || '').toLowerCase();
+  const soReg = !!(($('rpSoRegra') || {}).checked);
+  const setores = ['Termoformagem', 'Impressão', 'Extrusão', 'Embaladeiras', 'Sleeve', 'Rotulagem', 'Injeção', 'Compressão'];
+  const lista = (_rpTipos || []).filter(t => (!q || t.tipo.toLowerCase().includes(q)) && (!soReg || rpRegraDe(t.tipo)));
+  const linhas = lista.slice(0, 120).map(t => {
+    const g = rpRegraDe(t.tipo);
+    const acao = g ? g.acao : 'ficar';
+    const dest = g && g.setor_culpado ? g.setor_culpado : '';
+    const exata = g && String(g.padrao) === t.tipo;
+    const id = 'rp_' + btoa(unescape(encodeURIComponent(t.tipo))).replace(/[^A-Za-z0-9]/g, '');
+    const cor = acao === 'excluir' ? '#8E44AD' : acao === 'informar' ? '#2471A3' : acao === 'reatribuir' ? '#C86A2E' : '#1E7A4E';
+    return '<tr><td class="nome" style="text-align:left;font-size:12px">' + escapeHtml(t.tipo) +
+      '<div style="font-size:10px;color:var(--fraco-2)">' + fmtKg(t.kg) + ' · ' + t.n + ' lanç. · apontado em ' + escapeHtml(t.setores.join(', ')) +
+      (g && !exata ? ' · <span style="color:var(--fraco)">regra por padrão <b>' + escapeHtml(String(g.padrao)) + '</b></span>' : '') + '</div></td>' +
+      '<td style="min-width:130px"><select id="' + id + '_a" onchange="rpMudou(\'' + id + '\')" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--borda);border-radius:8px;color:' + cor + ';font-weight:700">' +
+      [['ficar', 'Fica na máquina'], ['reatribuir', 'Reatribuir para…'], ['informar', 'Só informa'], ['excluir', 'Não é refugo']]
+        .map(o2 => '<option value="' + o2[0] + '"' + (acao === o2[0] ? ' selected' : '') + '>' + o2[1] + '</option>').join('') + '</select>' +
+      '<select id="' + id + '_s" onchange="rpMudou(\'' + id + '\')" style="width:100%;font-size:12px;padding:5px;border:1px solid var(--borda);border-radius:8px;margin-top:4px' + (acao === 'reatribuir' ? '' : ';display:none') + '">' +
+      '<option value="">— setor de destino —</option>' +
+      setores.map(x => '<option value="' + x + '"' + (dest === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' +
+      '<input type="hidden" id="' + id + '_t" value="' + escapeHtml(t.tipo) + '">' +
+      '<button class="btn" id="' + id + '_b' + '" onclick="rpSalvar(\'' + id + '\')" style="width:100%;margin-top:4px;padding:5px;font-size:11.5px;display:none">salvar</button></td></tr>';
+  }).join('');
+  box.innerHTML =
+    '<div class="titulo-sec">♻️ Destino da perda por tipo</div>' +
+    '<p class="desc" style="margin-bottom:9px">Define de quem é a culpa de cada tipo de refugo. <b>Fica na máquina</b> = conta para quem apontou. <b>Reatribuir</b> = a causa é de outro setor. <b>Só informa</b> = aparece mas não entra no refugo. <b>Não é refugo</b> = some da conta (ex.: regranulado).</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:9px">' +
+    '<input id="rpBusca" oninput="rpRender()" value="' + escapeHtml(q) + '" placeholder="buscar tipo de perda" style="flex:1;min-width:140px;padding:7px;font-size:13px;border:1px solid var(--borda);border-radius:9px">' +
+    '<label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="rpSoRegra" onchange="rpRender()"' + (soReg ? ' checked' : '') + '> só os que têm regra</label>' +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--fraco);margin-bottom:6px">' + lista.length + ' tipo(s) nos últimos 60 dias' + (lista.length > 120 ? ' · mostrando 120' : '') + '</div>' +
+    tabSimples(['Tipo de perda', 'O que fazer'], linhas);
+}
+
+function rpMudou(id) {
+  const a = $(id + '_a'), sel = $(id + '_s'), b = $(id + '_b');
+  if (!a) return;
+  if (sel) sel.style.display = (a.value === 'reatribuir') ? '' : 'none';
+  if (b) b.style.display = '';
+}
+
+async function rpSalvar(id) {
+  const a = $(id + '_a'), sel = $(id + '_s'), t = $(id + '_t');
+  if (!a || !t) return;
+  const tipo = t.value, acao = a.value, dest = sel ? sel.value : '';
+  if (acao === 'reatribuir' && !dest) { toast('Escolha o setor de destino'); return; }
+  try {
+    // apaga regra exata anterior deste tipo e grava a nova (prioridade 5 vence as genéricas)
+    await sb.from('tipo_perda_regra').delete().eq('padrao', tipo).eq('prioridade', 5);
+    if (acao !== 'ficar') {
+      const { error } = await sb.from('tipo_perda_regra').insert({
+        padrao: tipo, acao: acao, setor_culpado: (acao === 'reatribuir' ? dest : null),
+        prioridade: 5, obs: 'definido na aba Metas'
+      });
+      if (error) throw error;
+    }
+    REGRAS_PERDA = null;
+    try { await getRegrasPerda(); } catch (_) { }
+    toast('✅ Regra salva — vale na próxima atualização da tela');
+    await rpCarregar();
+  } catch (e) { toast('❌ ' + (e.message || e)); }
 }
 
 function animTelaNova() { window._telaNova = true; }
