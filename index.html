@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.867.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.868.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1176,6 +1176,15 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         </div>
       </div>
       <div id="cfParadasAbsurdas"></div>
+      <div id="cfMaqDiag"><div class="card" style="margin-top:12px">
+        <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🔧 Diagnóstico de máquina</div>
+        <p class="desc" style="margin-bottom:8px">Máquina nova ou suspeita: veja em quais relatórios ela já tem dado, desde quando, e se a meta está cadastrada.</p>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input id="mdCod" value="1713" placeholder="código (ex.: 1713)" style="width:150px;font-size:16px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px"
+            onkeydown="if(event.key==='Enter')mdCarregar()">
+          <button class="btn" onclick="mdCarregar()" style="width:auto;padding:8px 16px;font-size:13px">verificar</button>
+        </div>
+      </div></div>
       <div id="cfCobertura"><div class="card" style="margin-top:12px">
         <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🗓️ Cobertura do ano · que dia falta em cada relatório</div>
         <p class="desc" style="margin-bottom:8px">Varre 621, 622, 624, 643 e 646 do ano inteiro e mostra, mês a mês, qual dia não chegou. Leva alguns segundos.</p>
@@ -2717,7 +2726,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.867.0';
+const APP_VER = '3.868.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8448,7 +8457,10 @@ function trocarAba(qual) {
 // mapeamento máquina -> setor (embutido; não depende de SQL de cadastro)
 // Lista EXATA de máquinas por setor (conforme cadastro da fábrica)
 const SETOR_MAQ = {
-  'Termoformagem': [601, 602, 603, 1501, 1504, 1508, 1509, 1510, 1511, 1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1711, 1712, 2001, 2002, 2003],
+  // 19/08/2026 (João): 1713 entrou na Termoformagem. Fora desta lista a máquina
+  // cai em 'Outros' e some dos denominadores 'X de N máquinas', das metas e das
+  // tabelas por setor — mesmo com dado no banco.
+  'Termoformagem': [601, 602, 603, 1501, 1504, 1508, 1509, 1510, 1511, 1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1711, 1712, 1713, 2001, 2002, 2003],
   'Impressão': [702, 703, 704, 705, 706, 707, 708, 709, 710],
   'Rotulagem': [1302, 1303, 1304],
   'Sleeve': [1901, 1902, 1903],
@@ -26422,6 +26434,75 @@ function cfMove(n) {
   di.setDate(di.getDate() + n * passo); df.setDate(df.getDate() + n * passo);
   a.value = cfISO(di); b.value = cfISO(df);
   carregarConf(true);
+}
+
+/* ===== DIAGNÓSTICO DE MÁQUINA (19/08/2026, pedido do João ao cadastrar a 1713) =====
+   Uma máquina só aparece inteira no app quando CINCO coisas existem: o código no
+   mapa de setores (aqui no arquivo), e dado nos relatórios 621/622/624/643/646 do
+   ERP, mais a meta por bloco de turno. Faltando qualquer uma, ela some de uma
+   tela e continua em outra — o sintoma clássico de "a máquina nova não aparece".
+   Este card responde onde está o furo, sem SQL. */
+async function mdCarregar() {
+  const box = $('cfMaqDiag'); if (!box) return;
+  const cod = String(($('mdCod') || {}).value || '').trim();
+  if (!cod) { toast('Informe o código da máquina.'); return; }
+  box.innerHTML = '<div class="card" style="margin-top:12px"><p class="desc" style="padding:14px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Procurando a máquina ' + escapeHtml(cod) + '…</p></div>';
+  const TAB = [
+    { t: 'producao_resumo', r: '621', n: 'Produção (resumo)' },
+    { t: 'producao', r: '622', n: 'Produção por item' },
+    { t: 'paradas', r: '624', n: 'Paradas' },
+    { t: 'perdas', r: '643', n: 'Refugo' },
+    { t: 'consumo', r: '646', n: 'Consumo' }
+  ];
+  const uma = async (t, asc) => {
+    const { data, error } = await sb.from(t).select('dia,recurso_cod,recurso_nome').eq('recurso_cod', cod).order('dia', { ascending: asc }).limit(1);
+    if (error) throw error;
+    return (data && data[0]) || null;
+  };
+  try {
+    const linhas = await Promise.all(TAB.map(async x => {
+      try {
+        const [p, u] = await Promise.all([uma(x.t, true), uma(x.t, false)]);
+        return { ...x, tem: !!p, de: p && String(p.dia).slice(0, 10), ate: u && String(u.dia).slice(0, 10), nome: (p && p.recurso_nome) || '' };
+      } catch (e) { return { ...x, erro: (e && e.message) || String(e) }; }
+    }));
+    let metas = [], metaErro = '';
+    try {
+      const { data, error } = await sb.from('metas').select('bloco,meta').eq('recurso_cod', cod);
+      if (error) throw error; metas = data || [];
+    } catch (e) { metaErro = (e && e.message) || String(e); }
+    const setor = setorDe(cod);
+    const nome = (linhas.find(l => l.nome) || {}).nome || '';
+    const BLOCOS = ['Manhã', 'Tarde', 'Noite'];
+    const mMap = {}; metas.forEach(m => { mMap[String(m.bloco)] = m.meta; });
+    const faltaMeta = BLOCOS.filter(b => !(mMap[b] > 0));
+    const semDado = linhas.filter(l => !l.erro && !l.tem);
+    const linhaHtml = linhas.map(l => {
+      if (l.erro) return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--linha,#eef2f7);font-size:12px"><b style="min-width:38px;color:var(--fraco)">' + l.r + '</b><span style="flex:1">' + l.n + '</span><span style="color:var(--fraco)">erro ao ler</span></div>';
+      const cor = l.tem ? '#1F7A46' : '#C0392B';
+      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--linha,#eef2f7);font-size:12px">'
+        + '<b style="min-width:38px;color:' + cor + '">' + l.r + '</b><span style="flex:1">' + l.n + '</span>'
+        + '<span style="color:' + cor + ';font-weight:700;white-space:nowrap">' + (l.tem ? fmtData(l.de) + ' → ' + fmtData(l.ate) : 'sem dado') + '</span></div>';
+    }).join('');
+    const pend = [];
+    if (setor === 'Outros') pend.push('O código <b>' + escapeHtml(cod) + '</b> não está no mapa de setores do app — ela vai cair em "Outros" em todas as telas. Me avise em qual setor ela entra que eu cadastro.');
+    if (semDado.length) pend.push('Sem dado em <b>' + semDado.map(l => l.r).join(', ') + '</b> — é cadastro do recurso no ERP ou relatório que ainda não saiu com ela.');
+    if (metaErro) pend.push('Não consegui ler a tabela de metas: ' + escapeHtml(metaErro));
+    else if (faltaMeta.length) pend.push('Meta não cadastrada para <b>' + faltaMeta.join(', ') + '</b> — sem isso a linha azul e o "abaixo da meta" ignoram esta máquina. Cadastre na aba <b>Metas</b>.');
+    box.innerHTML = '<div class="card" style="margin-top:12px">'
+      + '<div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🔧 Máquina ' + escapeHtml(cod) + (nome ? ' · ' + escapeHtml(nome) : '') + '</div>'
+      + '<div style="font-size:11px;color:var(--fraco);margin-bottom:9px">setor no app: <b>' + escapeHtml(setor) + '</b> · metas cadastradas: ' + (3 - faltaMeta.length) + ' de 3</div>'
+      + linhaHtml
+      + (pend.length
+        ? '<div style="margin-top:10px">' + pend.map(x => '<div style="background:#FCF3F3;border-left:4px solid #C0392B;border-radius:9px;padding:7px 10px;margin-bottom:6px;font-size:12px;line-height:1.45">' + x + '</div>').join('') + '</div>'
+        : '<div style="background:#F2F7F4;border-left:4px solid #1F7A46;border-radius:9px;padding:7px 10px;margin-top:10px;font-size:12px">Nada pendente: a máquina tem dado nos cinco relatórios, está no setor certo e com as três metas cadastradas.</div>')
+      + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+      + '<input id="mdCod" value="' + escapeHtml(cod) + '" style="width:150px;font-size:16px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px" onkeydown="if(event.key===\'Enter\')mdCarregar()">'
+      + '<button class="btn" onclick="mdCarregar()" style="width:auto;padding:8px 16px;font-size:13px">verificar outra</button></div>'
+      + '</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="card" style="margin-top:12px"><p class="desc" style="color:var(--critico-s)">Erro: ' + escapeHtml((e && e.message) || String(e)) + '</p><button class="btn" onclick="mdCarregar()" style="width:auto;padding:8px 16px;font-size:13px;margin-top:8px">tentar de novo</button></div>';
+  }
 }
 
 /* ===== COBERTURA DO ANO (19/08/2026, pedido do João: "veja de jan a ago o que falta") =====
