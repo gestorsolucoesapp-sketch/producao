@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.894.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.895.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2792,7 +2792,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.894.0';
+const APP_VER = '3.895.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24843,19 +24843,26 @@ function _desvioLog(entrega) {
    Tres blocos, nessa ordem, com cabecalho e contagem. Dentro do bloco continua
    do pior para o melhor. "No prazo" e a janela de ate 5 dias ate a carga
    precisar fechar; acima disso e folga de verdade. */
-function _faixaDesvio(entrega) {
+function _faixaDesvio(entrega, pronto) {
   const d = _desvioLog(entrega);
   if (d === null) return { i: 3, rot: 'Sem data de entrega', cor: '#5A6B7D', d: null };
-  if (d < 0) return { i: 0, rot: 'Atrasado', cor: '#C0392B', d };
+  /* 19/08/2026 (Joao): no grupo de material PRONTO nao existe atraso de
+     producao — o que atrasou foi a saida. Chamar de "Atrasado" ali fazia
+     parecer culpa da fabrica quando a carga esta esperando expedicao. */
+  if (d < 0) return { i: 0, rot: pronto ? 'Atraso de entrega' : 'Atrasado', cor: '#C0392B', d };
   if (d <= 5) return { i: 1, rot: 'No prazo', cor: '#2F6FED', d };
   return { i: 2, rot: 'Adiantado', cor: '#1F7A46', d };
 }
-function _seloDesvio(entrega) {
+function _seloDesvio(entrega, pronto) {
   const d = _desvioLog(entrega);
   if (d === null) return '<span style="background:#EEF1F4;color:#5A6B7D;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">sem data</span>';
-  if (d > 0) return '<span style="background:#F2F7F4;color:#1F7A46;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▲ ' + d + 'd adiantado</span>';
+  /* o selo tem de falar a mesma lingua do bloco: 1 a 5 dias e "no prazo",
+     acima de 5 e folga de verdade. Antes o bloco dizia No prazo e a linha
+     dizia adiantado. */
+  if (d > 5) return '<span style="background:#F2F7F4;color:#1F7A46;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▲ ' + d + 'd adiantado</span>';
+  if (d > 0) return '<span style="background:#EAF1FB;color:#2F6FED;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▲ ' + d + 'd no prazo</span>';
   if (d === 0) return '<span style="background:#EAF1FB;color:#2F6FED;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">fecha hoje</span>';
-  return '<span style="background:#FCF3F3;color:#C0392B;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▼ ' + Math.abs(d) + 'd atrasado</span>';
+  return '<span style="background:#FCF3F3;color:#C0392B;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▼ ' + Math.abs(d) + 'd ' + (pronto ? 'na entrega' : 'atrasado') + '</span>';
 }
 function detGrupoTravado(gid, filtro) {
   const A = _alocarEstoque();
@@ -24870,7 +24877,7 @@ function detGrupoTravado(gid, filtro) {
       /* 19/08/2026: ordem passa a ser urgencia, nao peso. Lista de "pode
          faturar hoje" ordenada por tonelada punia o pedido pequeno que ja
          estourou o prazo — ele ia parar no fim de 400 linhas. */
-      const fa = _faixaDesvio(a.ent), fb = _faixaDesvio(b.ent);
+      const fa = _faixaDesvio(a.ent, gid === 0), fb = _faixaDesvio(b.ent, gid === 0);
       if (fa.i !== fb.i) return fa.i - fb.i;
       if (fa.d === null || fb.d === null) return b.kg - a.kg;
       return fa.d - fb.d || b.kg - a.kg;
@@ -24893,7 +24900,7 @@ function detGrupoTravado(gid, filtro) {
      relatório — cortar obrigava a exportar por fora para conferir a carteira. */
   let _faixaAnt = -1;
   const _totFaixa = {};
-  L.forEach(p => { const f = _faixaDesvio(p.ent); _totFaixa[f.i] = (_totFaixa[f.i] || { n: 0, kg: 0 }); _totFaixa[f.i].n++; _totFaixa[f.i].kg += p.kg; });
+  L.forEach(p => { const f = _faixaDesvio(p.ent, gid === 0); _totFaixa[f.i] = (_totFaixa[f.i] || { n: 0, kg: 0 }); _totFaixa[f.i].n++; _totFaixa[f.i].kg += p.kg; });
   const linhas = L.map(p => {
     const pal = _paletesPorItem(A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num));
     const blq = [...p.blq].map(k => _selo196(k)).join('');
@@ -24905,14 +24912,14 @@ function detGrupoTravado(gid, filtro) {
     const _it = _lp.length
       ? '<span class="cod">' + escapeHtml(String(_lp[0].item_cod)) + '</span>' + (_lp.length > 1 ? ' <span style="font-size:10px;color:var(--fraco-2)">+' + (_lp.length - 1) + '</span>' : '')
       : '';
-    const _fx = _faixaDesvio(p.ent);
+    const _fx = _faixaDesvio(p.ent, gid === 0);
     let _cab = '';
     if (_fx.i !== _faixaAnt) {
       _faixaAnt = _fx.i;
       const _t = _totFaixa[_fx.i] || { n: 0, kg: 0 };
       _cab = `<tr><td colspan="3" style="background:${_fx.cor};color:#fff;font-weight:800;font-size:12px;padding:5px 9px;border-radius:7px">${_fx.rot} · ${_t.n} pedido(s) · ${kg(_t.kg)}</td></tr>`;
     }
-    return _cab + `<tr><td class="nome" style="font-size:12px;cursor:pointer" onclick="event.stopPropagation();detPedido('${escapeHtml(p.num)}')">${_seloDesvio(p.ent)} <span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} ›`
+    return _cab + `<tr><td class="nome" style="font-size:12px;cursor:pointer" onclick="event.stopPropagation();detPedido('${escapeHtml(p.num)}')">${_seloDesvio(p.ent, gid === 0)} <span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} ›`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${_it}${_it ? ' · ' : ''}${p.linhas} linha(s)${p.ent ? ' · entrega ' + escapeHtml(fmtDataSem(p.ent)) : ''}`
       + (p.atraso > 0 ? ` · <b style="color:var(--critico)">${p.atraso}d vencido</b>` : '')
       + (p.reprog > 0 ? ` · <span title="diferença entre a data de origem e a entrega atual">reprog. ${p.reprog}d</span>` : '') + '</div></td>'
