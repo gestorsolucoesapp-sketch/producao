@@ -791,7 +791,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.866.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.867.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1176,6 +1176,11 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         </div>
       </div>
       <div id="cfParadasAbsurdas"></div>
+      <div id="cfCobertura"><div class="card" style="margin-top:12px">
+        <div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🗓️ Cobertura do ano · que dia falta em cada relatório</div>
+        <p class="desc" style="margin-bottom:8px">Varre 621, 622, 624, 643 e 646 do ano inteiro e mostra, mês a mês, qual dia não chegou. Leva alguns segundos.</p>
+        <button class="btn" onclick="cobCarregar()" style="width:auto;padding:8px 16px;font-size:13px">verificar o ano</button>
+      </div></div>
       <div id="cfAlertas"></div>
       <div id="cfGraficos"></div>
     </section>
@@ -2712,7 +2717,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.866.0';
+const APP_VER = '3.867.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26417,6 +26422,100 @@ function cfMove(n) {
   di.setDate(di.getDate() + n * passo); df.setDate(df.getDate() + n * passo);
   a.value = cfISO(di); b.value = cfISO(df);
   carregarConf(true);
+}
+
+/* ===== COBERTURA DO ANO (19/08/2026, pedido do João: "veja de jan a ago o que falta") =====
+   Pergunta real: quais meses estão FECHADOS e onde estão os buracos.
+   A leitura ingênua — "dia sem linha = dia faltando" — mente duas vezes:
+   domingo e feriado não têm produção e apareceriam como buraco, e dia de fábrica
+   parada também. Então separo dois casos, que pedem ações diferentes:
+     BURACO DE RELATÓRIO — o dia existe (algum relatório trouxe dado) mas um
+       deles não veio. É o caso do 12 e 13/08: o 621 recuperou, o 622/624/643 não.
+       Isso é importação para refazer.
+     DIA SEM NADA — nenhum dos cinco tem linha. Domingo, feriado, fábrica parada
+       ou um dia de importação que nunca rodou. Listo à parte, sem alarmar.
+   Puxo só a coluna 'dia' — é a varredura mais leve possível dessas tabelas. */
+let _cobDados = null;
+async function cobCarregar() {
+  const box = $('cfCobertura'); if (!box) return;
+  box.innerHTML = '<div class="card" style="margin-top:12px"><p class="desc" style="padding:14px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Varrendo os relatórios do ano…</p></div>';
+  const TAB = [
+    { t: 'producao_resumo', r: '621', n: 'Produção (resumo)' },
+    { t: 'producao', r: '622', n: 'Produção por item' },
+    { t: 'paradas', r: '624', n: 'Paradas' },
+    { t: 'perdas', r: '643', n: 'Refugo' },
+    { t: 'consumo', r: '646', n: 'Consumo' }
+  ];
+  try {
+    const ate = (infoImports && infoImports.periodoAte) || hojeISO();
+    const ano = String(ate).slice(0, 4), de = ano + '-01-01';
+    const res = await Promise.all(TAB.map(x => fetchTudo(x.t, 'dia', de, ate).then(a => a || []).catch(e => ({ erro: (e && e.message) || String(e) }))));
+    const sets = res.map(a => {
+      if (a && a.erro) return { erro: a.erro };
+      const S = new Set(); (a || []).forEach(r => { const d = String(r.dia || '').slice(0, 10); if (d.length === 10) S.add(d); });
+      return { set: S };
+    });
+    const comAlgum = new Set();
+    sets.forEach(x => { if (x.set) x.set.forEach(d => comAlgum.add(d)); });
+    const meses = {};
+    const d0 = new Date(de + 'T12:00:00'), d1 = new Date(String(ate).slice(0, 10) + 'T12:00:00');
+    for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+      const iso = d.toISOString().slice(0, 10), ym = iso.slice(0, 7), dow = d.getDay();
+      if (!meses[ym]) meses[ym] = { ym, ativos: [], vazios: [], dom: 0, falta: TAB.map(() => []) };
+      const M = meses[ym];
+      if (comAlgum.has(iso)) {
+        M.ativos.push(iso);
+        if (dow === 0) M.dom++;
+        sets.forEach((x, i) => { if (x.set && !x.set.has(iso)) M.falta[i].push(iso); });
+      } else if (dow !== 0) M.vazios.push(iso);
+    }
+    _cobDados = { TAB, sets, meses, ate };
+    cobRender();
+  } catch (e) {
+    box.innerHTML = '<div class="card" style="margin-top:12px"><p class="desc" style="color:var(--critico-s)">Erro ao varrer: ' + escapeHtml((e && e.message) || String(e)) + '</p><button class="btn" onclick="cobCarregar()" style="width:auto;padding:8px 16px;font-size:13px;margin-top:8px">tentar de novo</button></div>';
+  }
+}
+function cobRender() {
+  const box = $('cfCobertura'); if (!box || !_cobDados) return;
+  const { TAB, sets, meses, ate } = _cobDados;
+  const dd = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  const MES3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const chaves = Object.keys(meses).sort();
+  const erros = TAB.filter((t, i) => sets[i].erro);
+  const completos = [], furados = [];
+  const blocos = chaves.map(ym => {
+    const M = meses[ym];
+    if (!M.ativos.length) return '';
+    const totFalta = M.falta.reduce((a, f) => a + f.length, 0);
+    (totFalta === 0 ? completos : furados).push(ym);
+    const chips = TAB.map((t, i) => {
+      if (sets[i].erro) return '<span style="border:1.5px solid var(--borda);color:var(--fraco);border-radius:999px;padding:3px 9px;font-size:11px;font-weight:700">' + t.r + ' ?</span>';
+      const f = M.falta[i].length, cor = f === 0 ? '#1F7A46' : f <= 2 ? '#E8A13D' : '#C0392B';
+      return '<span style="border:1.5px solid ' + cor + ';color:' + cor + ';border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800">' + t.r + (f === 0 ? ' ✓' : ' −' + f) + '</span>';
+    }).join(' ');
+    const det = TAB.map((t, i) => M.falta[i].length
+      ? '<div style="font-size:11.5px;color:var(--fraco);padding:1px 0"><b style="color:#C0392B">' + t.r + '</b> ' + t.n + ' — falta ' + M.falta[i].map(dd).join(', ') + '</div>' : '').join('');
+    const vaz = M.vazios.length ? '<div style="font-size:11px;color:var(--fraco);margin-top:3px">sem nenhum relatório (feriado, fábrica parada ou importação que nunca rodou): ' + M.vazios.map(dd).join(', ') + '</div>' : '';
+    return '<div style="padding:9px 0;border-bottom:1px solid var(--linha,#eef2f7)">'
+      + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<b style="font-size:13.5px;color:var(--navy);min-width:58px">' + MES3[+ym.slice(5, 7) - 1] + '/' + ym.slice(2, 4) + '</b>'
+      + chips
+      + '<span style="margin-left:auto;font-size:11px;color:var(--fraco)">' + M.ativos.length + ' dias com movimento' + (M.dom ? ' · ' + M.dom + ' domingo(s) de HE' : '') + '</span>'
+      + '</div>' + det + vaz + '</div>';
+  }).join('');
+  const rotM = ym => MES3[+ym.slice(5, 7) - 1] + '/' + ym.slice(2, 4);
+  box.innerHTML = '<div class="card" style="margin-top:12px">'
+    + '<div style="font-weight:800;color:var(--navy);font-size:14px;margin-bottom:1px">🗓️ Cobertura do ano · que dia falta em cada relatório</div>'
+    + '<div style="font-size:11px;color:var(--fraco);margin-bottom:9px">621 resumo · 622 item · 624 paradas · 643 refugo · 646 consumo · até ' + fmtData(String(ate).slice(0, 10)) + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div style="flex:1;min-width:150px;background:#F2F7F4;border:1px solid #CFE3D8;border-radius:11px;padding:8px 11px"><div style="font-size:10.5px;color:var(--fraco);font-weight:800;text-transform:uppercase">meses fechados</div><div style="font-size:13px;font-weight:800;color:#1F7A46">' + (completos.length ? completos.map(rotM).join(' · ') : 'nenhum') + '</div></div>'
+    + '<div style="flex:1;min-width:150px;background:#FCF3F3;border:1px solid #F0D4D4;border-radius:11px;padding:8px 11px"><div style="font-size:10.5px;color:var(--fraco);font-weight:800;text-transform:uppercase">com buraco</div><div style="font-size:13px;font-weight:800;color:#C0392B">' + (furados.length ? furados.map(rotM).join(' · ') : 'nenhum') + '</div></div>'
+    + '</div>'
+    + blocos
+    + (erros.length ? '<p class="desc" style="color:#C0392B;margin-top:8px">Não consegui ler: ' + erros.map(t => t.r + ' (' + t.n + ')').join(', ') + ' — marcados com "?".</p>' : '')
+    + '<p class="desc" style="margin-top:8px">Só conta como buraco o dia em que ALGUM relatório trouxe dado e outro não — aí é importação para refazer. Dia sem nenhum relatório vai listado à parte, porque costuma ser feriado ou fábrica parada. Domingo só entra se teve hora extra.</p>'
+    + '<button class="btn" onclick="cobCarregar()" style="width:auto;padding:7px 14px;font-size:12.5px;margin-top:8px">recarregar</button>'
+    + '</div>';
 }
 
 async function carregarConf(forcar) {
