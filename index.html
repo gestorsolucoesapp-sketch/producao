@@ -867,7 +867,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.935.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.936.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2870,7 +2870,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.935.0';
+const APP_VER = '3.936.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24110,6 +24110,7 @@ async function carregarCarteira196() {
     carregarItemMaquina()
   ]);
   _cart196 = { dia, hora: f.hora, pend: pend || [], est: est || [], hist: hist || {} };
+  try { _limparMemoSetor(); } catch (_) {}
 }
 /* paginacao aceitando um filtro montado por quem chama */
 async function fetchTudoFoto(tabela, colunas, filtro, ordenarPor) {
@@ -25202,12 +25203,41 @@ function _comboSetorPed(p, travado) {
   if (arr.length <= 3) return { k: arr.join('+'), rot: 'misto ' + arr.join(' / '), cor: '#7B5CD6', n: arr.length };
   return { k: 'misto' + arr.length, rot: 'misto (' + arr.length + ' setores)', cor: '#7B5CD6', n: arr.length };
 }
+/* 20/08/2026 (João: "pode ser o abastecimento de dados na aba Comercial?" — era.)
+   Quando o item não estava no cache de histórico, esta função varria a FILA
+   INTEIRA com um find. Ela é chamada para cada item de cada pedido, e o card de
+   faturamento a chama várias vezes por pedido (combinação de setor, faixa,
+   lista). Com 660 itens na carteira e 1.264 linhas de fila, dá 834 mil
+   comparações de texto POR PASSADA, tudo na thread que desenha a tela — por
+   isso o app inteiro parava de responder ao toque.
+   Agora o índice item→linha da fila é montado uma vez e reaproveitado, e o
+   resultado de cada item fica memorizado. O índice é descartado quando a fila
+   muda de tamanho, para não servir dado velho. */
+let _setorItemMemo = null, _filaPorItem = null, _filaPorItemN = -1;
 function _setorDoItem(item) {
-  const hs = (_itemMaqCache || {})[String(item)] || [];
-  if (hs.length) return setorDe(hs[0].cod);
-  const naFila = (_progDados || []).find(r => String(r.item_cod) === String(item));
-  return naFila ? (naFila.setor || setorDe(naFila.recurso_cod)) : null;
+  const k = String(item);
+  if (_setorItemMemo && k in _setorItemMemo) return _setorItemMemo[k];
+  const hs = (_itemMaqCache || {})[k] || [];
+  let r = null;
+  if (hs.length) r = setorDe(hs[0].cod);
+  else {
+    const fila = _progDados || [];
+    if (!_filaPorItem || _filaPorItemN !== fila.length) {
+      _filaPorItem = new Map(); _filaPorItemN = fila.length;
+      for (let i = 0; i < fila.length; i++) {
+        const c = String(fila[i].item_cod || '');
+        if (c && !_filaPorItem.has(c)) _filaPorItem.set(c, fila[i]);
+      }
+    }
+    const naFila = _filaPorItem.get(k);
+    r = naFila ? (naFila.setor || setorDe(naFila.recurso_cod)) : null;
+  }
+  if (!_setorItemMemo) _setorItemMemo = {};
+  _setorItemMemo[k] = r;
+  return r;
 }
+/* a memória precisa cair quando a carteira ou a fila são recarregadas */
+function _limparMemoSetor() { _setorItemMemo = null; _filaPorItem = null; _filaPorItemN = -1; }
 
 /* ===== O QUE EU FARIA =====
    Plano de acao tirado do dado, nao texto pronto. Cada acao carrega o numero
