@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.903.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.904.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.903.0';
+const APP_VER = '3.904.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8476,17 +8476,28 @@ function renderEstoque() {
   const dep = {};
   todas.forEach(r => {
     const c = String(r.deposito_cod);
-    const o = (dep[c] = dep[c] || { cod: c, nome: r.deposito_nome || c, n: 0, kg: 0, cx: 0, rs: 0, cat: r.categoria });
+    const o = (dep[c] = dep[c] || { cod: c, nome: r.deposito_nome || c, n: 0, kg: 0, cx: 0, pal: 0, rs: 0, cat: r.categoria });
+    /* 20/08/2026 (João): palete entra ao lado de caixa e tonelada. O palete é
+       por ITEM — teto(caixas ÷ 20) — e só vale para item medido em CX. Somar as
+       caixas do depósito e dividir no fim daria menos palete do que a fábrica
+       ocupa de verdade, porque cada item fecha o palete dele. */
     o.n++; o.kg += _estKg(r); o.cx += _estCx(r); o.rs += (+r.valor || 0);
+    o.pal += _ehCx(r.unidade) ? _paletes(_estCx(r)) : 0;
   });
   const lista = Object.values(dep).sort((a, b) => (b.kg - a.kg) || (b.cx - a.cx));
   const kgTot = lista.reduce((a, d) => a + d.kg, 0);
   const cxTot = lista.reduce((a, d) => a + d.cx, 0);
   const rsTot = lista.reduce((a, d) => a + d.rs, 0);
+  const palTot = lista.reduce((a, d) => a + d.pal, 0);
 
   const porGrupo = {};
-  todas.forEach(r => { const g = estCat(r.categoria).grupo; const o = (porGrupo[g] = porGrupo[g] || { kg: 0, cx: 0 }); o.kg += _estKg(r); o.cx += _estCx(r); });
-  const g = k => porGrupo[k] || { kg: 0, cx: 0 };
+  todas.forEach(r => {
+    const g = estCat(r.categoria).grupo;
+    const o = (porGrupo[g] = porGrupo[g] || { kg: 0, cx: 0, pal: 0, rs: 0, n: 0 });
+    o.kg += _estKg(r); o.cx += _estCx(r); o.rs += (+r.valor || 0); o.n++;
+    o.pal += _ehCx(r.unidade) ? _paletes(_estCx(r)) : 0;
+  });
+  const g = k => porGrupo[k] || { kg: 0, cx: 0, pal: 0, rs: 0, n: 0 };
 
   const linha = d => {
     const ct = estCat(d.cat);
@@ -8495,7 +8506,8 @@ function renderEstoque() {
         <span style="display:inline-block;background:${ct.cor};color:#fff;border-radius:6px;padding:0 6px;font-size:10px;font-weight:800;margin-left:4px">${ct.nome}</span>
         <div style="font-size:10.5px;color:var(--fraco-2);font-weight:600">${d.n} item(ns)${_estVerValor ? ' · ' + _estRS(d.rs) : ''}</div></td>
       <td><span class="cel ${d.kg > 0 ? 'cel-tot' : 'vazio'}">${d.kg > 0 ? _estT(d.kg) : '—'}</span></td>
-      <td><span class="cel ${d.cx > 0 ? 'cel-tot' : 'vazio'}">${d.cx > 0 ? _estNum(d.cx) : '—'}</span></td></tr>`;
+      <td><span class="cel ${d.cx > 0 ? 'cel-tot' : 'vazio'}">${d.cx > 0 ? _estNum(d.cx) : '—'}</span></td>
+      <td><span class="cel ${d.pal > 0 ? 'cel-cx' : 'vazio'}">${d.pal > 0 ? _estNum(d.pal) : '—'}</span></td></tr>`;
   };
 
   box.innerHTML = cardDesviosEstoque(todas) + barra + `
@@ -8503,13 +8515,24 @@ function renderEstoque() {
     <div class="idet-grid">
       <div><b>${_estT(kgTot)}</b><span>tonelagem total</span></div>
       <div><b>${_estNum(cxTot)}</b><span>caixas</span></div>
+      <div><b>${_estNum(palTot)}</b><span>paletes</span></div>
       <div><b>${_estT(g('Disponível').kg)} · ${_estNum(g('Disponível').cx)} cxs</b><span>disponível</span></div>
       <div><b style="color:#6A1B9A">${_estT(g('Vendido').kg)} · ${_estNum(g('Vendido').cx)} cxs</b><span>já vendido</span></div>
       <div><b style="color:#B26B00">${_estT(g('Travado').kg)} · ${_estNum(g('Travado').cx)} cxs</b><span>travado em CQ</span></div>
       ${_estVerValor ? `<div><b>${_estRS(rsTot)}</b><span>valor total</span></div>` : ''}
     </div>
     <div style="height:10px"></div>
-    ${tabSimples(['Depósito', 'Peso', 'Caixas'], lista.map(linha).join(''))}
+    ${tabSimples(['Depósito', 'Peso', 'Caixas', 'Paletes'], lista.map(linha).join(''))}
+    <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">Por situação do material</div>
+    ${tabSimples(['Situação', 'Peso', 'Caixas', 'Paletes'], ['Disponível', 'Vendido', 'Travado'].map(k => {
+      const v = g(k), cor = k === 'Vendido' ? '#6A1B9A' : k === 'Travado' ? '#B26B00' : '#1F7A46';
+      if (!v.n) return '';
+      return `<tr><td class="nome"><span style="display:inline-block;background:${cor};color:#fff;border-radius:6px;padding:1px 8px;font-size:11px;font-weight:800">${k}</span>
+        <div style="font-size:10.5px;color:var(--fraco-2);font-weight:600">${v.n} item(ns)${_estVerValor ? ' · ' + _estRS(v.rs) : ''}</div></td>
+        <td><span class="cel ${v.kg > 0 ? 'cel-tot' : 'vazio'}">${v.kg > 0 ? _estT(v.kg) : '—'}</span></td>
+        <td><span class="cel ${v.cx > 0 ? 'cel-tot' : 'vazio'}">${v.cx > 0 ? _estNum(v.cx) : '—'}</span></td>
+        <td><span class="cel ${v.pal > 0 ? 'cel-cx' : 'vazio'}">${v.pal > 0 ? _estNum(v.pal) : '—'}</span></td></tr>`;
+    }).join(''))}
     <p class="desc" style="margin-top:8px">Nos itens em <b>KG</b> o ERP escreve o quilo na coluna <i>Quantidade</i> e zera a coluna <i>Peso</i> — a tonelagem aqui já soma os dois. Milheiro, par, unidade e peça não viram caixa nem quilo e ficam atrás do olho.</p>`;
 }
 
