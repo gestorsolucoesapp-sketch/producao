@@ -867,7 +867,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.936.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.938.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2870,7 +2870,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.936.0';
+const APP_VER = '3.938.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22073,29 +22073,49 @@ async function verHistCiencia(userId, nome) {
 }
 
 async function carregarUsuarios() {
-  try { if (_abasOcultas === null) await carregarAbasOcultas(); renderAbasOcultas(); } catch (_) { }
+  /* 20/08/2026 (João: "abro a liberação de usuários e trava tudo") — esta tela
+     fazia DEZESSEIS idas ao servidor UMA DEPOIS DA OUTRA antes de desenhar
+     qualquer coisa, e o "Carregando…" só era escrito na nona delas. No 4G isso
+     é o app parado por vários segundos sem nada na tela — e app parado sem aviso
+     é exatamente o que a pessoa chama de travado.
+     Agora: as consultas saem todas juntas, a lista de gente é desenhada assim
+     que chega, e os cartões pesados do admin (roteamento com 7 listas de gente,
+     briefing, última importação) entram depois, com a lista já no ar. */
+  const box = $('listaUsuarios');
+  if (box) box.innerHTML = '<p class="desc">Carregando…</p>';
+
+  /* dispara ANTES de esperar qualquer coisa: enquanto as configurações carregam,
+     o servidor já está montando a lista. */
+  const pLista = !souAdmin ? null : Promise.all([
+    sb.from('perfis').select('*').order('criado_em', { ascending: true }),
+    sb.from('acessos').select('user_id, entrou_em').order('entrou_em', { ascending: false }).limit(1000),
+    sb.from('ia_uso').select('user_id, criado_em').order('criado_em', { ascending: false }).limit(3000).then(r => r, () => ({ data: [] })),
+    sb.from('app_config').select('valor').eq('chave', 'timeout_min').maybeSingle().then(r => r, () => ({ data: null }))
+  ]);
+
+  await Promise.all([
+    (async () => { try { if (_abasOcultas === null) await carregarAbasOcultas(); renderAbasOcultas(); } catch (_) { } })(),
+    getSetoresLista(),
+    getTelasSetor(),
+    (async () => { try { await getLinkFormCfg(); } catch (_) { } })(),
+    (async () => { try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; const sv = $('rngLetVel'); if (sv) sv.value = String(_fatorToVel(_letVelFator)); } catch (_) { } })()
+  ]);
+  renderTelasSetor();
   try { renderLarguraCard(); } catch (_) { }
   try { renderTabelaTurnos(); } catch (_) { }
-  await getSetoresLista(); await getTelasSetor(); renderTelasSetor();
-  try { await getLinkFormCfg(); } catch (_) {}
-  try { await getPresencaCfg(); const c = $('chkPresenca'); if (c) c.checked = presAtiva; const cl = $('chkLetSetores'); if (cl) cl.checked = _letSetores; const sv = $('rngLetVel'); if (sv) sv.value = String(_fatorToVel(_letVelFator)); } catch (_) {}
   if (!souAdmin) return;
-  // direcionamento automático (Manutenção) — agora mora nesta aba
-  try { await getUsuariosOS(); await getRoteamento(); renderRoteamento(); } catch (_) {}
-  try { await renderBriefingConfig(); } catch (_) {}
-  atualizarInfoUltima();
-  const box = $('listaUsuarios');
-  box.innerHTML = '<p class="desc">Carregando…</p>';
-  // timeout no campo
-  try {
-    const { data: cfg } = await sb.from('app_config').select('valor').eq('chave', 'timeout_min').maybeSingle();
-    $('inTimeout').value = cfg ? cfg.valor : '60';
-  } catch (_) {}
-  // perfis + acessos (para último acesso e contagem)
-  const [{ data: perfis, error: e1 }, { data: acessos }] = await Promise.all([
-    sb.from('perfis').select('*').order('criado_em', { ascending: true }),
-    sb.from('acessos').select('user_id, entrou_em').order('entrou_em', { ascending: false }).limit(1000)
-  ]);
+
+  const [{ data: perfis, error: e1 }, { data: acessos }, _rIA, _rCfg] = await pLista;
+  try { const cfg = _rCfg && _rCfg.data; const it = $('inTimeout'); if (it) it.value = cfg ? cfg.valor : '60'; } catch (_) { }
+
+  /* fora do caminho da lista: estes três somam mais seis idas ao servidor e
+     desenham centenas de opções de gente em selects — não podem mais segurar a
+     tela de liberação. */
+  setTimeout(async () => {
+    try { await getUsuariosOS(); await getRoteamento(); renderRoteamento(); } catch (_) { }
+    try { await renderBriefingConfig(); } catch (_) { }
+    try { atualizarInfoUltima(); } catch (_) { }
+  }, 0);
   if (e1) {
     box.innerHTML = '<p class="desc">A lista de usuários precisa do SQL 04 rodado no Supabase.<br><span class="desc">(' + escapeHtml(e1.message) + ')</span></p>';
     return;
@@ -22107,11 +22127,10 @@ async function carregarUsuarios() {
   });
   if (!perfis || !perfis.length) { box.innerHTML = '<p class="desc">Nenhum usuário cadastrado ainda.</p>'; return; }
   // uso da IA (resiliente: se a tabela não existir, ignora)
-  const iaCont = {}, iaUltimo = {};
+  const iaCont = {}, iaUltimo = {};   // já veio junto com a lista, sem ida extra
   try {
-    const ri = await sb.from('ia_uso').select('user_id, criado_em').order('criado_em', { ascending: false }).limit(3000);
-    (ri.data || []).forEach(a => { if (!iaUltimo[a.user_id]) iaUltimo[a.user_id] = a.criado_em; iaCont[a.user_id] = (iaCont[a.user_id] || 0) + 1; });
-  } catch (_) {}
+    ((_rIA && _rIA.data) || []).forEach(a => { if (!iaUltimo[a.user_id]) iaUltimo[a.user_id] = a.criado_em; iaCont[a.user_id] = (iaCont[a.user_id] || 0) + 1; });
+  } catch (_) { }
   const meuId = perfil && perfil.id;
   // ordena: quem acessou por último (que não seja você) sempre no topo; você por último
   perfis.sort((a, b) => {
@@ -28525,7 +28544,7 @@ async function arListarSnapshots() {
     if (!data || !data.length) { box.innerHTML = ''; return; }
     box.innerHTML = '<div class="card"><div class="titulo-sec">📚 Retratos salvos</div>'
       + data.map(r => '<div style="padding:7px 0;border-bottom:1px solid var(--linha,#eef2f7)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:13px;color:var(--navy)">' + escapeHtml(r.titulo || r.recurso_cod) + '</b>'
-        + (r.queda ? '<span style="font-size:11px;font-weight:800;color:#C0392B">queda ' + Math.round((r.queda.queda || 0) * 100) + '% em ' + escapeHtml(String(r.queda.mes)) + '</span>' : '<span style="font-size:11px;color:#1F7A46;font-weight:800">estável</span>')
+        + (r.queda ? '<span style="font-size:11px;font-weight:800;color:#C0392B">queda ' + Math.round((r.queda.queda || r.queda.acumulado || 0) * 100) + '%' + (r.queda.mes ? ' em ' + escapeHtml(String(r.queda.mes)) : (Array.isArray(r.queda.degraus) && r.queda.degraus.length ? ' em ' + r.queda.degraus.length + ' degraus' : '')) + '</span>' : '<span style="font-size:11px;color:#1F7A46;font-weight:800">estável</span>')
         + '<span style="margin-left:auto;font-size:11px;color:var(--fraco)">' + fmtData(String(r.criado_em).slice(0, 10)) + '</span>'
         + '<button class="btn" style="width:auto;padding:4px 11px;font-size:11.5px" onclick="arVerSnap(' + r.id + ')">ver</button></div>'
         + (r.conclusao ? '<div style="font-size:12px;color:var(--cinza);margin-top:2px">' + escapeHtml(String(r.conclusao).slice(0, 200)) + '</div>' : '')
@@ -28533,9 +28552,24 @@ async function arListarSnapshots() {
     window._arSnaps = {}; data.forEach(r => { window._arSnaps[r.id] = r; });
   } catch (_) { box.innerHTML = ''; }
 }
+/* 20/08/2026 (Jo\u00e3o: "an\u00e1lise de recurso n\u00e3o est\u00e1 abrindo o ver") \u2014 o bot\u00e3o
+   morria em sil\u00eancio. O retrato do raio-X da 1504 foi gravado com a s\u00e9rie em
+   formato de RESUMO ({de, ate, fonte, por_ano, kg_total}), e n\u00e3o como a lista
+   de pontos por m\u00eas que esta fun\u00e7\u00e3o esperava. Na primeira linha ela j\u00e1
+   chamava .map() num objeto, estourava, e o app engolia o erro: nada abria e
+   nada aparecia escrito.
+   Agora a fun\u00e7\u00e3o l\u00ea os DOIS formatos e, se ainda assim algo quebrar, diz o que
+   quebrou em vez de n\u00e3o fazer nada. */
 function arVerSnap(id) {
-  const r = (window._arSnaps || {})[id]; if (!r) return;
-  const S = r.serie || [];
+  try { _arVerSnap(id); }
+  catch (e) { toast('N\u00e3o consegui abrir este retrato: ' + ((e && e.message) || e)); }
+}
+function _arVerSnap(id) {
+  const r = (window._arSnaps || {})[id];
+  if (!r) { toast('Retrato n\u00e3o encontrado \u2014 recarregue a lista.'); return; }
+  if (r.serie && !Array.isArray(r.serie) && Array.isArray(r.serie.por_ano)) { _arVerSnapResumo(r); return; }
+  const S = Array.isArray(r.serie) ? r.serie : [];
+  if (!S.length) { toast('Este retrato foi salvo sem a s\u00e9rie de pontos.'); return; }
   const W = Math.max(600, S.length * 14 + 80), H = 170;
   const maxK = Math.max(...S.map(x => x.kgd || 0), 1);
   const X = i => 45 + i * ((W - 60) / Math.max(1, S.length - 1));
@@ -28547,6 +28581,61 @@ function arVerSnap(id) {
     '<p class="idet-desc">salvo em ' + fmtData(String(r.criado_em).slice(0, 10)) + (r.queda ? ' · queda de ' + Math.round((r.queda.queda || 0) * 100) + '% a partir de ' + escapeHtml(String(r.queda.mes)) + ' (' + fmtKg(r.queda.antes) + '/dia → ' + fmtKg(r.queda.depois) + '/dia)' : ' · sem queda sustentada') + '</p>'
     + '<div style="overflow-x:auto"><svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">' + marca + '<path d="' + path + '" fill="none" stroke="#2F6FED" stroke-width="2"/><text x="45" y="' + (H - 6) + '" font-size="10" fill="#2F6FED" font-weight="700">kg/dia por mês</text></svg></div>'
     + (r.conclusao ? '<div style="background:var(--leve-4);border-radius:9px;padding:9px 11px;margin-top:8px;font-size:13px;line-height:1.5"><b>Conclusão:</b> ' + escapeHtml(r.conclusao) + '</div>' : ''));
+}
+/* retrato em formato RESUMO: um ponto por ANO, com kg/turno \u2014 que \u00e9 o que
+   separa "produziu menos porque rodou menos" de "produziu menos no mesmo tempo
+   de m\u00e1quina". Mostra tamb\u00e9m a escada de degraus e, quando existe, o bloco de
+   manuten\u00e7\u00e3o que sustenta a conclus\u00e3o. */
+function _arVerSnapResumo(r) {
+  const S = r.serie, anos = S.por_ano || [], q = r.queda || {};
+  const dados = anos.map(a => ({ l: String(a.ano), v: +a.kg_turno || 0 }));
+  const pico = Math.max(...dados.map(d => d.v), 0);
+  const cor = d => d.v >= pico * 0.9 ? '#1F7A46' : d.v <= pico * 0.5 ? '#C0392B' : '#2F6FED';
+
+  let h = '<p class="idet-desc">' + fmtData(String(S.de).slice(0, 10)) + ' a ' + fmtData(String(S.ate).slice(0, 10))
+    + ' \u00b7 fonte RPCP' + escapeHtml(String(S.fonte || '\u2014'))
+    + ' \u00b7 ' + fmtKg(S.kg_total || 0) + ' em ' + fmtNum(S.turnos || 0) + ' turnos'
+    + ' \u00b7 salvo em ' + fmtData(String(r.criado_em).slice(0, 10)) + '</p>';
+
+  h += '<div class="titulo-sec" style="margin-top:6px">Ritmo por ano \u2014 kg por turno</div>'
+    + barrasVerticalScroll(dados, cor, { fmt: v => Math.round(v) + ' kg' });
+
+  const linhas = anos.map(a => '<tr><td style="padding:4px 0;font-weight:700;color:var(--navy)">' + a.ano + '</td>'
+    + '<td style="padding:4px 0;text-align:right">' + fmtKg(a.kg || 0) + '</td>'
+    + '<td style="padding:4px 0;text-align:right;color:var(--fraco)">' + fmtNum(a.turnos || 0) + '</td>'
+    + '<td style="padding:4px 0;text-align:right;font-weight:800">' + Math.round(a.kg_turno || 0) + '</td></tr>').join('');
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px">'
+    + '<tr style="border-bottom:1px solid var(--linha,#eef2f7)"><th style="text-align:left;font-size:11px;color:var(--fraco)">Ano</th>'
+    + '<th style="text-align:right;font-size:11px;color:var(--fraco)">Produzido</th>'
+    + '<th style="text-align:right;font-size:11px;color:var(--fraco)">Turnos</th>'
+    + '<th style="text-align:right;font-size:11px;color:var(--fraco)">kg/turno</th></tr>' + linhas + '</table>';
+
+  if (Array.isArray(q.degraus) && q.degraus.length) {
+    h += '<div class="titulo-sec" style="margin-top:12px">Degraus de queda</div>'
+      + q.degraus.map(d => '<div style="display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px dashed var(--linha,#eef2f7);font-size:13px">'
+        + '<b style="color:var(--navy)">' + escapeHtml(String(d.mes)) + '</b>'
+        + '<span style="color:var(--fraco);font-size:12px">' + Math.round(d.antes) + ' \u2192 ' + Math.round(d.depois) + ' kg/turno</span>'
+        + '<span style="margin-left:auto;font-weight:800;color:#C0392B">\u2212' + Math.round((d.queda || 0) * 100) + '%</span></div>').join('')
+      + (q.acumulado ? '<p class="desc" style="margin:6px 0 0">No acumulado: <b style="color:#C0392B">\u2212' + Math.round(q.acumulado * 100) + '%</b> do primeiro degrau at\u00e9 hoje.</p>' : '');
+  }
+
+  const c = q.causa;
+  if (c) {
+    h += '<div class="titulo-sec" style="margin-top:12px">Manuten\u00e7\u00e3o no mesmo per\u00edodo</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      + '<tr style="border-bottom:1px solid var(--linha,#eef2f7)"><th style="text-align:left;font-size:11px;color:var(--fraco)"></th>'
+      + '<th style="text-align:right;font-size:11px;color:var(--fraco)">2024</th>'
+      + '<th style="text-align:right;font-size:11px;color:var(--fraco)">2025</th>'
+      + '<th style="text-align:right;font-size:11px;color:var(--fraco)">2026</th></tr>'
+      + '<tr><td style="padding:4px 0">OS abertas</td><td style="padding:4px 0;text-align:right">' + (c.os_2024 != null ? c.os_2024 : '\u2014') + '</td><td style="padding:4px 0;text-align:right">' + (c.os_2025 != null ? c.os_2025 : '\u2014') + '</td><td style="padding:4px 0;text-align:right;font-weight:800">' + (c.os_2026 != null ? c.os_2026 : '\u2014') + '</td></tr>'
+      + '<tr><td style="padding:4px 0">Dias para fechar (m\u00e9dia)</td><td style="padding:4px 0;text-align:right">' + (c.dias_fechar_os_2024 != null ? String(c.dias_fechar_os_2024).replace('.', ',') : '\u2014') + '</td><td style="padding:4px 0;text-align:right">' + (c.dias_fechar_os_2025 != null ? String(c.dias_fechar_os_2025).replace('.', ',') : '\u2014') + '</td><td style="padding:4px 0;text-align:right;font-weight:800;color:#C0392B">' + (c.dias_fechar_os_2026 != null ? String(c.dias_fechar_os_2026).replace('.', ',') : '\u2014') + '</td></tr>'
+      + '</table>'
+      + (c.preventiva_ultima ? '<p class="desc" style="margin:6px 0 0">\u00daltima preventiva registrada: <b>' + fmtData(String(c.preventiva_ultima).slice(0, 10)) + '</b>.</p>' : '');
+  }
+
+  if (r.conclusao) h += '<div style="background:var(--leve-4);border-radius:9px;padding:9px 11px;margin-top:10px;font-size:13px;line-height:1.5"><b>Conclus\u00e3o:</b> ' + escapeHtml(r.conclusao) + '</div>';
+
+  abreDet(r.titulo || ('Retrato ' + r.recurso_cod), h);
 }
 function arImprimir() {
   document.body.classList.add('print-anrec');
