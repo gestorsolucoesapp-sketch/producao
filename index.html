@@ -335,6 +335,13 @@ input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select{f
 .letreiro-card{padding:3px 12px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:letFade .45s ease}
 @keyframes letFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .letreiro-wrap:active .letreiro-in{animation-play-state:paused}
+/* 20/08/2026 (Joao: "vou arrastando e ja trava"). O letreiro anima sem parar
+   dentro do cabecalho fixo. No iPhone, animacao continua + cabecalho fixo +
+   pagina longa disputam a mesma linha do tempo do Safari, e quem perde e a
+   rolagem. Enquanto o dedo arrasta, a animacao pausa; 220 ms depois de parar,
+   ela volta. Ninguem le letreiro enquanto rola a tela. */
+body.rolando .letreiro-in{animation-play-state:paused!important}
+body.rolando .skel,body.rolando [class*="anim-"]{animation-play-state:paused!important}
 @keyframes g{to{transform:rotate(360deg)}}
 /* ---------- vinheta / splash ---------- */
 /* vinheta em vídeo */
@@ -902,7 +909,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.944.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.945.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2909,7 +2916,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.944.0';
+const APP_VER = '3.945.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4649,6 +4656,10 @@ function limparCachesDados() {
   try { ULTIMO_DIA_PROD = null; } catch (_) {}   // senão o 🔄 não pega um dia novo importado na mesma sessão
   try { REGRAS_PERDA = null; } catch (_) {}
   try { infoImports = null; } catch (_) {}
+  /* 20/08/2026: atualizar de verdade tem de refazer a classificacao das perdas e
+     rebuscar o mix de boca. Fora daqui, reabrir a aba nao busca nada. */
+  try { _regrasAplicadas = false; } catch (_) {}
+  try { _bocaMixMaq = null; } catch (_) {}
 }
 
 function refreshAbaAtiva() {
@@ -12125,7 +12136,14 @@ let _bocaMixMaq = null;   // { recurso_cod: [{boca,pct}] } — mix de boca por m
 async function carregarBocaMix() {
   if (_bocaMixMaq) return _bocaMixMaq;
   try {
-    const { data, error } = await sb.from('v_boca_mix_maquina').select('recurso_cod,boca,kg,qtd');
+    /* 20/08/2026: passou a ler a versao materializada. A view calculada levava
+       6,5 s em media porque roda 8 expressoes regulares sobre as 110 mil linhas de
+       producao a cada chamada. A materializada responde em menos de 1 ms e e
+       atualizada uma vez por dia, junto com o carimbo de dado novo. */
+    let { data, error } = await sb.from('mv_boca_mix_maquina').select('recurso_cod,boca,kg,qtd');
+    /* se a materializada ainda nao existir neste ambiente, cai na view antiga em
+       vez de perder a boca da tela. */
+    if (error) ({ data, error } = await sb.from('v_boca_mix_maquina').select('recurso_cod,boca,kg,qtd'));
     if (error) throw error;
     const acc = {};
     (data || []).forEach(r => {
@@ -12787,13 +12805,26 @@ function aplicarPeriodo(v) {
 function mudarPeriodo() { const v = $('fPeriodo').value; aplicarPeriodo(v); if (v !== 'custom') carregarPainel(); }
 function mudarPeriodoAnalise() { aplicarPeriodo($('anPeriodo').value); carregarAnalise(); }
 
+/* 20/08/2026 (Joao: "vou arrastando e ja trava; tinha que baixar uma vez e so
+   baixar de novo quando eu atualizar").
+   O dado grande ja era guardado em cache, mas DUAS coisas refaziam trabalho toda
+   vez que a tela era aberta - inclusive so trocando de aba e voltando:
+     1. o mix de boca era esperado antes de qualquer desenho;
+     2. as regras de perda eram buscadas no servidor DE NOVO e todas as perdas do
+        periodo reclassificadas uma a uma, cada linha passando por todas as
+        expressoes regulares. Com milhares de linhas isso trava a tela.
+   Agora as duas so acontecem quando ha motivo: na primeira montagem, ou quando
+   voce toca em atualizar (que limpa os caches). Reabrir a aba nao busca nada. */
+let _regrasAplicadas = false;
 async function carregarPainel() {
   setTimeout(travarSetores, 0);
-  try { await carregarBocaMix(); } catch (_) {}
   const box = $('painelConteudo');
-  // regras de reclassificação podem ter mudado no banco → rebusca e reclassifica o cache
-  if (dadosPainel && dadosPainel.perdas) {
-    try { await getRegrasPerda(); classificarPerdas(dadosPainel.perdas); } catch (_) {}
+  const _primeira = !dadosPainel;
+  /* o mix de boca so segura a tela na primeira montagem, quando ja existe um
+     "Carregando..." na frente. Depois vem do cache e nao custa nada. */
+  if (_primeira || !_bocaMixMaq) { try { await carregarBocaMix(); } catch (_) { } }
+  if (dadosPainel && dadosPainel.perdas && !_regrasAplicadas) {
+    try { await getRegrasPerda(); classificarPerdas(dadosPainel.perdas); _regrasAplicadas = true; } catch (_) { }
   }
   if (!dadosPainel) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
@@ -12893,7 +12924,7 @@ async function carregarPainel() {
     try { console.error('renderPainel', e); } catch (_) {}
   }
 }
-function recarregarPainel() { limparCachesDados(); carregarPainel(); }
+function recarregarPainel() { _regrasAplicadas = false; limparCachesDados(); carregarPainel(); }
 // ao trocar de setor, define a métrica padrão: Embaladeiras = Cxs; demais = Peso
 /* METRICA AMARRADA AO SETOR — 04/08/2026.
    Antes a regra so rodava no change do fSetor, ou seja, so quando o setor era
@@ -20168,6 +20199,19 @@ function barrasVerticalScroll(dados, corFn, opts) {
   const fim = (opts && opts.abreInicio) ? ' data-inicio="1"' : (margem ? ' data-fim="1"' : '');
   return `<div class="svg-scroll"${fim}>${svg}</div>`;
 }
+/* marca body.rolando durante a rolagem. Listener PASSIVO: sem passivo o Safari
+   espera para saber se o handler vai cancelar o gesto, e a rolagem engasga logo
+   no primeiro toque. O handler nao le nem escreve layout - so mexe numa classe,
+   e so quando o estado muda. */
+let _rolT = null, _rolando = false;
+function _marcaRolagem() {
+  if (!_rolando) { _rolando = true; document.body.classList.add('rolando'); }
+  clearTimeout(_rolT);
+  _rolT = setTimeout(() => { _rolando = false; document.body.classList.remove('rolando'); }, 220);
+}
+window.addEventListener('scroll', _marcaRolagem, { passive: true });
+window.addEventListener('touchmove', _marcaRolagem, { passive: true });
+
 let _asgT = null;
 function agendarScrollGraficos() { clearTimeout(_asgT); _asgT = setTimeout(ajustarScrollGraficos, 60); }
 document.addEventListener('DOMContentLoaded', agendarScrollGraficos);
