@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.905.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.906.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1523,7 +1523,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
       </div>
       <div class="card">
         <div style="font-weight:800;color:var(--navy);font-size:13.5px;margin-bottom:2px">📥 Importar para a análise (área separada)</div>
-        <p class="desc" style="margin-bottom:7px">Aceita PDF do <b>RPCP621</b>, do <b>RPCP622</b> (por item) e do <b>RPCP643</b> (vários arquivos de uma vez — um por ano funciona bem). Relatório de OS de manutenção (005/010) também pode ser enviado: fica guardado bruto e entra na análise assim que o formato for mapeado.</p>
+        <p class="desc" style="margin-bottom:7px">Aceita PDF do <b>RPCP621</b>, do <b>RPCP622</b> (por item) e do <b>RPCP643</b> (vários arquivos de uma vez — um por ano funciona bem). Aceita também o <b>RSMI010</b> (ordens de manutenção com tempo, motivo e conclusão). O RSMI005 ainda fica guardado bruto.</p>
         <input type="file" id="arArq" accept="application/pdf" multiple onchange="arImportar(this.files)" style="font-size:14px">
         <div id="arImpStatus" style="margin-top:7px"></div>
         <div id="arCobertura" style="margin-top:4px"></div>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.905.0';
+const APP_VER = '3.906.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27316,8 +27316,66 @@ async function arImportar(files) {
         const regs = (res.registros || []).map(r => ({ dia: r.dia, turno: r.turno || null, recurso_cod: String(r.recurso_cod || ''), recurso_nome: r.recurso_nome || null, tipo_perda_desc: r.tipo_perda_desc || r.motivo_desc || null, peso: r.peso || 0, quantidade: r.quantidade || 0, op: r.op || null, item_cod: r.item_cod || null, item_desc: r.item_desc || null }));
         for (let i = 0; i < regs.length; i += 500) { const { error } = await sb.from('ar_perdas').insert(regs.slice(i, i + 500)); if (error) throw error; }
         st.innerHTML = '<p class="desc" style="color:#1F7A46"><b>' + escapeHtml(arq.name) + '</b>: 643 · ' + regs.length + ' linhas gravadas.</p>';
+      } else if (/rsmi010/i.test(arq.name)) {
+        /* 20/08/2026 - RSMI010 "Ordens Simplificadas" mapeado a partir do bruto
+           que o João importou. Estrutura, por OS:
+             linha A: x28=OS · x56=prioridade · x80="abertura + encerramento +
+                      autor" grudados · x286=máquina · x318=nome · x464=tempo
+                      ("7h 10m" ou "4d 8h 10m") · x520=apontamento
+             linha B: cabeçalho fixo "Ativ. Motivo Detalhes Conclusão"
+             linha C: x40=atividade · x62=motivo · x90=detalhes · x342=conclusão
+           A máquina e a situação vêm do cabeçalho da página ("Máquina: 1504 - ..."
+           e "Situação OS: Fechada"), não de cada linha. */
+        const linhas = await RioParsers.extrairLinhas(pdf);
+        const col = (L, xa, xb) => (L.itens || []).filter(i => i.x >= xa && i.x < xb).map(i => i.s).join(' ').trim();
+        const dtISO = (d, h) => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d || ''); if (!m) return null; return m[3] + '-' + m[2] + '-' + m[1] + 'T' + (h || '00:00') + ':00-03:00'; };
+        const minutos = txt => { let t = 0; const d = /(\d+)\s*d/i.exec(txt || ''); const h = /(\d+)\s*h/i.exec(txt || ''); const mm = /(\d+)\s*m/i.exec(txt || '');
+          if (d) t += (+d[1]) * 1440; if (h) t += (+h[1]) * 60; if (mm) t += (+mm[1]); return t || null; };
+        let maqCod = null, maqNome = null, situacao = null;
+        const out = [];
+        for (let i = 0; i < linhas.length; i++) {
+          const t = String(linhas[i].texto || '');
+          const mm = /M[áa]quina:\s*(\d+)\s*-\s*([^]*?)(?:\s+Situa[çc][ãa]o OS:|$)/i.exec(t);
+          if (mm) { maqCod = mm[1]; maqNome = (mm[2] || '').trim(); }
+          const ms = /Situa[çc][ãa]o OS:\s*(\S+)/i.exec(t); if (ms) situacao = ms[1];
+          /* linha de OS: começa com 6 dígitos na coluna 28 e tem data no meio */
+          const osTxt = col(linhas[i], 20, 52);
+          if (!/^\d{5,7}$/.test(osTxt)) continue;
+          const datas = col(linhas[i], 70, 280);
+          const dd = datas.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/g) || [];
+          const p1 = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/.exec(dd[0] || '');
+          const p2 = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/.exec(dd[1] || '');
+          const autor = datas.replace(/\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}/g, '').trim();
+          /* a linha de detalhe vem 2 abaixo (entre elas o cabeçalho Ativ./Motivo) */
+          let det = null;
+          for (let k = i + 1; k <= i + 3 && k < linhas.length; k++) {
+            if (/^Ativ\.\s+Motivo/i.test(String(linhas[k].texto || ''))) { det = linhas[k + 1] || null; break; }
+          }
+          out.push({
+            os: osTxt, prioridade: col(linhas[i], 52, 70) || null,
+            abertura: p1 ? dtISO(p1[1], p1[2]) : null,
+            encerramento: p2 ? dtISO(p2[1], p2[2]) : null,
+            autor: autor || null,
+            recurso_cod: col(linhas[i], 280, 310) || maqCod,
+            recurso_nome: col(linhas[i], 310, 440) || maqNome,
+            minutos: minutos(col(linhas[i], 455, 512)),
+            apontamento: col(linhas[i], 512, 600) || null,
+            atividade: det ? (col(det, 34, 56) || null) : null,
+            motivo: det ? (col(det, 56, 84) || null) : null,
+            detalhes: det ? (col(det, 84, 336) || null) : null,
+            conclusao: det ? (col(det, 336, 600) || null) : null,
+            situacao: situacao, nome_arquivo: arq.name
+          });
+        }
+        if (!out.length) throw new Error('RSMI010 lido, mas nenhuma OS reconhecida');
+        for (let i = 0; i < out.length; i += 400) {
+          const { error } = await sb.from('ar_manut_os').upsert(out.slice(i, i + 400), { onConflict: 'os,recurso_cod' });
+          if (error) throw error;
+        }
+        const comTempo = out.filter(o => o.minutos).length;
+        st.innerHTML = '<p class="desc" style="color:#1F7A46"><b>' + escapeHtml(arq.name) + '</b>: RSMI010 · ' + out.length + ' OS gravadas (' + comTempo + ' com tempo).</p>';
       } else {
-        /* relatório fora do padrão (ex.: OS 005/010): guarda BRUTO para o parser
+        /* relatório fora do padrão (ex.: OS 005): guarda BRUTO para o parser
            ser construído em cima de um arquivo real, sem inventar formato. */
         const linhas = await RioParsers.extrairLinhas(pdf);
         const { error } = await sb.from('ar_manut_raw').insert({ recurso_cod: _arCod || ($('arCod') || {}).value || null, fonte: (res && res.rotina) || 'desconhecido', nome_arquivo: arq.name, linhas: linhas.slice(0, 4000) });
