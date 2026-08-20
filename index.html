@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.911.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.912.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.911.0';
+const APP_VER = '3.912.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27628,6 +27628,11 @@ function _arCruzaAnos() {
   const anos = {};
   const põe = (a, campo, v) => { if (!anos[a]) anos[a] = { ano: a, turnos: 0, kg: 0, hPar: 0, kgRef: 0, nOS: 0, diasOS: [], temPar: false, temRef: false, temOS: false }; anos[a][campo] += v; };
   _arRows.forEach(r => { const a = String(r.dia).slice(0, 4); if (a.length !== 4) return; põe(a, 'turnos', 1); põe(a, 'kg', +r.peso || 0); });
+  /* 20/08/2026 - MESMO ERRO DO DENOMINADOR, AGORA NO REFUGO (auditoria pedida
+     pelo João). O % saía como refugo do mês coberto ÷ produção do ANO INTEIRO.
+     Em 2023: 220 kg de refugo de dezembro sobre 111.176 kg do ano = 0,2%.
+     O certo é sobre os 1.928 kg de dezembro = 11,4%. Mesma armadilha, outra
+     conta — por isso vale auditar tudo que divide por período. */
   (_arParadas || []).forEach(r => { const a = String(r.dia).slice(0, 4); if (!anos[a]) return; anos[a].hPar += (+r.tempo_horas || 0); anos[a].temPar = true; });
   (_arPerdas || []).forEach(r => { const a = String(r.dia).slice(0, 4); if (!anos[a]) return; anos[a].kgRef += (+r.peso || 0); anos[a].temRef = true; });
   (_arOS || []).forEach(o => {
@@ -27641,12 +27646,15 @@ function _arCruzaAnos() {
   const jPar = _arJanela(_arParadas), jRef = _arJanela(_arPerdas), jOS = _arJanela(_arOS);
   return Object.values(anos).filter(x => x.turnos >= 20).sort((a, b) => a.ano.localeCompare(b.ano)).map(x => {
     const tPar = _arTurnosNaJanela(x.ano, jPar) || x.turnos;
+    let kgRefBase = 0;
+    if (jRef) (_arRows || []).forEach(r => { const d = String(r.dia).slice(0, 10); if (d.slice(0, 4) === x.ano && d >= jRef.de && d <= jRef.ate) kgRefBase += (+r.peso || 0); });
+    if (!kgRefBase) kgRefBase = x.kg;
     const parcial = (jPar && tPar < x.turnos * 0.7) || (jRef && _arTurnosNaJanela(x.ano, jRef) < x.turnos * 0.7);
     return {
       ano: x.ano, turnos: x.turnos, turnosCausa: tPar, parcial: !!parcial,
       kgTurno: x.kg / x.turnos,
       hParTurno: x.temPar ? x.hPar / tPar : null,
-      pctRef: x.temRef && x.kg > 0 ? x.kgRef / x.kg * 100 : null,
+      pctRef: x.temRef && kgRefBase > 0 ? x.kgRef / kgRefBase * 100 : null,
       nOS: x.temOS ? x.nOS : null,
       diasOS: x.diasOS.length ? x.diasOS.reduce((a2, b2) => a2 + b2, 0) / x.diasOS.length : null
     };
@@ -27840,7 +27848,17 @@ function arRender() {
     const linhas = ks.map(f => {
       const L = _arRows.filter(r => (+r.peso > 0 && +r.quantidade > 0) && (Math.round((+r.peso / +r.quantidade) / 0.25) * 0.25).toFixed(2) === f);
       const U = L.filter(r => String(r.dia).slice(0, 4) === ult);
-      const mU = U.length ? U.reduce((a, x) => a + (+x.quantidade || 0), 0) / U.length : 0;
+      /* 20/08/2026 (auditoria): família que SAIU DE LINHA aparecia como -100%,
+         do lado de quedas de ritmo reais — a 7,10 kg/cx parou em out/2025 e lia
+         "-100%", como se a máquina tivesse deixado de produzi-la mal. Produto
+         que não roda mais não é queda de produtividade: agora diz isso. */
+      if (!U.length) {
+        return '<tr><td class="nome">' + fams[f].pc.toFixed(2).replace('.', ',') + ' kg/cx</td><td><span class="cel neutra">' + fams[f].turnos + ' turnos</span></td>'
+          + '<td><span class="cel neutra">' + fmt(Math.round(fams[f].base), 0) + ' cx/turno</span></td>'
+          + '<td><span class="cel neutra">—</span></td>'
+          + '<td><span class="cel neutra" style="color:#5A6B7D;font-weight:800">saiu de linha<div style="font-size:10px;font-weight:600;opacity:.8">último: ' + fmtData(fams[f].ate + '-01') + '</div></span></td></tr>';
+      }
+      const mU = U.reduce((a, x) => a + (+x.quantidade || 0), 0) / U.length;
       const dif = fams[f].base > 0 ? (mU / fams[f].base - 1) * 100 : 0;
       const cor = dif <= -15 ? '#C0392B' : dif <= -5 ? '#B36B00' : '#1F7A46';
       return '<tr><td class="nome">' + fams[f].pc.toFixed(2).replace('.', ',') + ' kg/cx</td><td><span class="cel neutra">' + fams[f].turnos + ' turnos</span></td><td><span class="cel neutra">' + fmt(Math.round(fams[f].base), 0) + ' cx/turno</span></td><td><span class="cel neutra">' + fmt(Math.round(mU), 0) + ' cx/turno</span></td><td><span class="cel neutra" style="color:' + cor + ';font-weight:800">' + (dif >= 0 ? '+' : '') + Math.round(dif) + '%</span></td></tr>';
