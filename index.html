@@ -854,7 +854,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.933.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.934.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2853,7 +2853,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.933.0';
+const APP_VER = '3.934.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -17134,6 +17134,13 @@ function mudarPeriodoEstrat() {
   _estratRows = null;
   carregarEstrategia();
 }
+/* alcance da Análise de Tendência: período (padrão) ou ano inteiro */
+let _estratAnoTodo = false;
+function estratTrocaAlcance() {
+  _estratAnoTodo = !_estratAnoTodo;
+  _estratRows = null;
+  carregarEstrategia();
+}
 async function carregarEstrategia() {
   const box = $('estratConteudo'); if (!box) return;
   try { montarSeletorPeriodo(infoImports, 'estratPeriodo'); sincSetorGlobal(); } catch (_) {}
@@ -17144,11 +17151,28 @@ async function carregarEstrategia() {
   }
   box.innerHTML = '<div class="card"><p class="vazio-painel">Carregando histórico do 622…</p></div>';
   try {
+    /* 20/08/2026 (João: "página sem resposta... revise, priorize o mês").
+       Esta aba baixava o ANO INTEIRO do 622 para montar o universo de bocas:
+       110.868 linhas, 111 páginas de mil, com item_desc em cada uma. É o que
+       travava o navegador a ponto de o Chrome oferecer "sair da página" — e
+       para ver um mês, que tem 12.288 linhas, nove vezes menos.
+       Agora carrega o PERÍODO selecionado. O ano todo continua disponível, mas
+       por escolha explícita, no botão abaixo do gráfico. */
     const _ano = ((periodoSel && periodoSel.de) || new Date().toISOString().slice(0, 10)).slice(0, 4);
-    const de = _ano + '-01-01', ate = _ano + '-12-31';   // carrega o ANO todo (universo de bocas); o gráfico recorta o período
+    const de = _estratAnoTodo ? _ano + '-01-01' : ((periodoSel && periodoSel.de) || _ano + '-01-01');
+    const ate = _estratAnoTodo ? _ano + '-12-31' : ((periodoSel && periodoSel.ate) || _ano + '-12-31');
     const rows = await fetchTudo('producao', 'dia,data_inicio,turno,recurso_cod,item_cod,item_desc,quantidade,peso,unidade', de, ate);
     _estratRows = (rows || []).filter(r => r.item_cod && r.dia);
     renderEstrategia();
+    try {
+      const _n = _estratRows.length;
+      box.insertAdjacentHTML('beforeend', '<div class="card"><p class="desc" style="margin:0">'
+        + (_estratAnoTodo
+            ? '📚 Mostrando o <b>ano de ' + _ano + '</b> · ' + fmt(_n, 0) + ' apontamentos.'
+            : '📅 Mostrando <b>o período escolhido</b> · ' + fmt(_n, 0) + ' apontamentos. Bocas que só rodaram em outros meses não aparecem aqui.')
+        + ' <button class="btn btn-borda" style="width:auto;padding:5px 11px;font-size:12px;margin-left:6px" onclick="estratTrocaAlcance()">'
+        + (_estratAnoTodo ? 'voltar para o período' : 'carregar o ano todo') + '</button></p></div>');
+    } catch (_) {}
     try { setTimeout(() => scrollGraficosFim($('abaEstrategia')), 80); } catch (_) {}
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="vazio-painel">Erro ao carregar o 622: ' + escapeHtml(String((e && e.message) || e)) + '</p></div>';
@@ -28565,7 +28589,26 @@ async function cobCarregar() {
   try {
     const ate = (infoImports && infoImports.periodoAte) || hojeISO();
     const ano = String(ate).slice(0, 4), de = ano + '-01-01';
-    const res = await Promise.all(TAB.map(x => fetchTudo(x.t, 'dia', de, ate).then(a => a || []).catch(e => ({ erro: (e && e.message) || String(e) }))));
+    /* 20/08/2026 (revisão de lentidão pedida pelo João): isto baixava o ANO
+       INTEIRO de produção, parada, perda e consumo — cerca de 200 mil linhas —
+       só para descobrir QUAIS DIAS existem em cada tabela. Contar dia distinto
+       é trabalho de banco, não de celular. A view v_dias_por_tabela devolve um
+       registro por tabela e mês; são algumas dezenas de linhas no lugar de
+       duzentas mil. */
+    let res;
+    try {
+      const { data: dd, error: eD } = await sb.from('v_dias_por_tabela').select('tabela,mes,lista').gte('mes', String(de).slice(0, 7));
+      if (eD) throw eD;
+      const porTab = {};
+      (dd || []).forEach(r => {
+        const arr = porTab[r.tabela] || (porTab[r.tabela] = []);
+        (r.lista || []).forEach(d => { const x = String(d).slice(0, 10); if (x >= de && x <= ate) arr.push({ dia: x }); });
+      });
+      res = TAB.map(x => porTab[x.t] || []);
+    } catch (_) {
+      /* view indisponível: volta ao caminho antigo para não deixar o card vazio */
+      res = await Promise.all(TAB.map(x => fetchTudo(x.t, 'dia', de, ate).then(a => a || []).catch(e => ({ erro: (e && e.message) || String(e) }))));
+    }
     const sets = res.map(a => {
       if (a && a.erro) return { erro: a.erro };
       const S = new Set(); (a || []).forEach(r => { const d = String(r.dia || '').slice(0, 10); if (d.length === 10) S.add(d); });
