@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.912.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.913.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.912.0';
+const APP_VER = '3.913.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4558,10 +4558,24 @@ async function getTarefas() {
 let _topoAppUlt = -1;
 function medirTopoApp() {
   const t = $('topoFixo'); if (!t) return;
-  const h = t.offsetHeight;
-  if (Math.abs(h - _topoAppUlt) < 1) return;   // mesma altura: não mexe no CSS da página toda
+  /* 20/08/2026 (João: "ao dar zoom no monitor a barra cobre as abas").
+     offsetHeight arredonda para inteiro; com zoom a barra fica em altura
+     fracionada (ex.: 211,4px) e a diferença de meio pixel era descartada pelo
+     teste de "< 1", então o padding do main ficava menor que a barra e o
+     conteúdo passava por baixo. getBoundingClientRect dá o valor real, e o
+     limite caiu para 0,25px. Sobra ainda 2px de folga, porque zoom não bate
+     exato em pixel de tela. */
+  const h = Math.ceil(t.getBoundingClientRect().height) + 2;
+  if (Math.abs(h - _topoAppUlt) < 0.25) return;
   _topoAppUlt = h;
   document.documentElement.style.setProperty('--topo-app', h + 'px');
+}
+/* remede algumas vezes depois de um evento: fonte que carrega, aba que quebra
+   linha e o próprio zoom mudam a altura DEPOIS do evento, não durante. */
+function _remedirTopo() {
+  let n = 0;
+  const tick = () => { try { medirTopoApp(); } catch (_) {} if (++n < 12) setTimeout(tick, 120); };
+  tick();
 }
 /* a barra muda de altura sozinha (letreiro entra/sai, abas quebram linha, o
    celular gira). Sem remedir, o padding do main descola e some um pedaço do
@@ -4573,8 +4587,18 @@ function observarTopoApp() {
     window._obsTopo.observe(t);
   } catch (_) {}
 }
-window.addEventListener('resize', medirTopoApp);
-window.addEventListener('load', () => { try { medirTopoApp(); observarTopoApp(); } catch (_) {} });
+window.addEventListener('resize', _remedirTopo);
+window.addEventListener('orientationchange', _remedirTopo);
+/* o zoom do navegador no desktop dispara resize do visualViewport, e nem sempre
+   o resize da janela — era esse o evento que faltava escutar. */
+try {
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', _remedirTopo);
+    window.visualViewport.addEventListener('scroll', medirTopoApp);
+  }
+} catch (_) {}
+try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(_remedirTopo); } catch (_) {}
+window.addEventListener('load', () => { try { _remedirTopo(); observarTopoApp(); } catch (_) {} });
 window.addEventListener('resize', () => { try { const pf = $('pilPeriodoFix'), ph = $('pilPeriodoHost'); if (pf && ph && pf.offsetHeight) ph.style.height = (pf.offsetHeight + 8) + 'px'; } catch (_) {} });
 // registra que o responsável viu a tarefa (data/hora) — só quando ele abre a aba Tarefas
 async function marcarVistas() {
@@ -8633,6 +8657,7 @@ function trocarAba(qual) {
   $('abaConf').classList.toggle('oculto', qual !== 'conf');
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} } } }
   { const _cm = $('abaComercial'); if (_cm) { _cm.classList.toggle('oculto', qual !== 'comercial'); if (qual === 'comercial') { try { cmAbrir(); } catch (_) {} } } }
+  try { _remedirTopo(); } catch (_) {}
   { const _e = $('abaEstoque'); if (_e) _e.classList.toggle('oculto', qual !== 'estoque'); }
   { const _d = $('abaDemanda'); if (_d) _d.classList.toggle('oculto', qual !== 'demanda'); }
   $('abaProgramacao').classList.toggle('oculto', qual !== 'programacao');
