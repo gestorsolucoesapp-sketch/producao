@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.899.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.900.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2805,7 +2805,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.899.0';
+const APP_VER = '3.900.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23035,14 +23035,21 @@ async function carregarDepositoItem() {
    da tarja verde de "material pronto". Verde e laranja na mesma caixa se anulam
    — quem bate o olho le "pronto" e ignora o resto. Agora o estado preso TROCA a
    tarja inteira em vez de acrescentar um rodape nela. */
+/* 20/08/2026 - CORRIGIDO: RESERVADO É FATURÁVEL (João).
+   Ontem eu tratei o depósito 6 (PRODUTOS RESERVADOS) como material bloqueado e
+   pintei a tarja de laranja com "não dá para faturar". Estava errado: reservado
+   quer dizer material separado PARA aquele pedido, ou seja, exatamente o que
+   pode sair. Quem trava de verdade é qualidade, e mesmo assim como ressalva —
+   não como impedimento, porque quem libera é o CQ, não o app.
+   O depósito continua aparecendo na linha: saber ONDE está o material é útil,
+   o que não podia era o app decidir sozinho que aquilo não fatura. */
 function _depoEstado(itemCod) {
   if (!_depoItem) return null;
   const d = _depoItem.itens[String(itemCod)];
   if (!d || d.tot <= 0) return null;
-  const bloq = d.reserv + d.qual;
-  const rot = d.reserv >= d.qual ? 'reservado' : 'em qualidade';
-  return { preso: bloq >= d.tot * 0.999, parcial: bloq > 0.001 && bloq < d.tot * 0.999,
-           bloq, livre: Math.max(0, d.tot - bloq), tot: d.tot, rot, deps: d.deps };
+  return { preso: false, parcial: false, emQual: d.qual >= d.tot * 0.999,
+           bloq: d.qual, livre: Math.max(0, d.tot - d.qual), tot: d.tot,
+           rot: 'em qualidade', deps: d.deps };
 }
 function _depoOndeLinha(itemCod) {
   const e = _depoEstado(itemCod); if (!e || !e.deps.length) return '';
@@ -23063,7 +23070,7 @@ function _pedidoSuspeito(entrega) {
   return dias > 30 ? dias : 0;
 }
 function _depoPresas(linhas) {
-  return (linhas || []).filter(l => (l._falta || 0) <= 0.001 && (_depoEstado(l.item_cod) || {}).preso).length;
+  return (linhas || []).filter(l => (l._falta || 0) <= 0.001 && (_depoEstado(l.item_cod) || {}).emQual).length;
 }
 function _depoOnde(itemCod) {
   if (!_depoItem) return '';
@@ -24691,13 +24698,9 @@ function detPedido(num) {
       + (() => {
           const e = ok ? _depoEstado(l.item_cod) : null;
           const onde = ok ? `<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:3px;line-height:1.35">${_depoOndeLinha(l.item_cod)}</div>` : '';
-          if (e && e.preso) {
-            return `<td><span class="cel" style="background:#B36B00;color:#fff">🔒 ${e.rot === 'reservado' ? 'reservado' : 'em qualidade'}`
-              + `<div style="font-size:10.5px;font-weight:800;margin-top:1px">não dá para faturar</div>${onde}</span></td></tr>`;
-          }
-          if (e && e.parcial) {
-            return `<td><span class="cel ok">✓ ${kg(e.livre)} livre`
-              + `<div style="font-size:10px;font-weight:800;color:#7a4a00;margin-top:1px">🔒 ${kg(e.bloq)} ${e.rot}</div>${onde}</span></td></tr>`;
+          if (e && e.emQual) {
+            return `<td><span class="cel ok">✓ material pronto`
+              + `<div style="font-size:10px;font-weight:800;color:#7a4a00;margin-top:1px">⚠ em análise de qualidade</div>${onde}</span></td></tr>`;
           }
           return `<td><span class="cel ${ok ? 'ok' : 'baixo'}">${ok ? '✓ material pronto' : 'falta ' + kg(f)}`
             + (!ok && cx && need > 0 ? `<div style="font-size:10px;font-weight:700;opacity:.95">${fmt(Math.round(cx * f / need), 0)} cx</div>` : '')
@@ -24718,22 +24721,23 @@ function detPedido(num) {
           })()}</b>`
           + ` — <b>o caminhão só sai quando a última chegar</b>`
         : (() => {
-            /* 19/08/2026: a manchete tambem mentia. Pedido com material 100%
-               reservado lia "pode faturar" em verde no topo, e o cadeado ficava
-               so la embaixo na tabela. */
-            const pr = _depoPresas(L);
-            if (pr >= L.length) return ' · <b style="color:#B36B00">🔒 material existe, mas está reservado — não dá para faturar</b>';
-            if (pr > 0) return ` · <b style="color:var(--ok-2)">tudo em estoque</b> · <b style="color:#B36B00">🔒 ${pr} de ${L.length} linha(s) com material reservado</b>`;
+            /* 20/08/2026: reservado É faturável, então a manchete volta ao verde.
+               Só sobra ressalva quando o material está retido em qualidade. */
+            const pq = _depoPresas(L);
+            if (pq > 0) return ` · <b style="color:var(--ok-2)">tudo em estoque</b> · <b style="color:#B36B00">⚠ ${pq} linha(s) em análise de qualidade</b>`;
             return ' · <b style="color:var(--ok-2)">tudo em estoque — pode faturar</b>';
           })())
     + `${L[0].entrega ? ' · entrega ' + escapeHtml(fmtDataSem(L[0].entrega)) : ''}</p>`
     + (() => {
         const d = _pedidoSuspeito(L[0].entrega);
         if (!d) return '';
+        /* 20/08/2026: o texto anterior culpava o filtro do REST196, conclusão que
+           depois se mostrou errada — a emissão automática não traz pedido fechado,
+           ela PERDE pedido aberto. O aviso agora só constata o atraso, sem
+           inventar causa. */
         return `<div style="background:#FFF6E6;border-left:4px solid #B36B00;border-radius:9px;padding:8px 11px;margin:0 0 8px;font-size:12px;line-height:1.5">`
-          + `<b style="color:#B36B00">⚠ Entrega vencida há ${d} dias.</b> Pedido desse tempo costuma já estar encerrado ou cancelado no ERP. `
-          + `O REST196 automático das 06:30 vem <b>sem o filtro de \"Situação Pedido: Abertos\"</b>, então ele continua chegando aqui. `
-          + `Confirme no ERP antes de usar este pedido em qualquer conta.</div>`;
+          + `<b style="color:#B36B00">⚠ Entrega vencida há ${d} dias.</b> O material aparece como disponível, então vale confirmar com o comercial `
+          + `se o pedido segue de pé antes de programar carga.</div>`;
       })()
     + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas));
