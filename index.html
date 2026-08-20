@@ -834,7 +834,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.920.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.921.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2834,7 +2834,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.920.0';
+const APP_VER = '3.921.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24961,6 +24961,37 @@ function _selo196(k) {
     + (parada.length ? ' 🔧' : '') + (ini ? ` <span style="font-weight:500;opacity:.75">${escapeHtml(ini)}</span>` : '') + '</span>';
 }
 
+/* 20/08/2026 - COMBINAÇÃO DE SETORES DO PEDIDO, em um lugar só.
+   O card e a lista que abre ao clicar precisam do MESMO critério; antes eram
+   duas implementações do mesmo teste, e bastava mexer numa para os números
+   divergirem. Agora as duas chamam esta.
+   Pedido que usa mais de um setor não é empurrado para um deles: vira
+   'misto impresso / injetado'. Assim a soma das linhas fecha com o total da
+   faixa e a mistura fica visível em vez de escondida. */
+const _apelidoSetorG = st => {
+  const t = String(st || '').toLowerCase();
+  if (t.includes('impress')) return 'impresso';
+  if (t.includes('inje')) return 'injetado';
+  if (t.includes('termo')) return 'termoformado';
+  if (t.includes('extrus')) return 'extrudado';
+  if (t.includes('rotul')) return 'rotulado';
+  if (t.includes('sleeve') || t.includes('posimec')) return 'sleeve';
+  if (t.includes('embalad')) return 'embalado';
+  if (t.includes('compress')) return 'comprimido';
+  return st ? String(st).toLowerCase() : '';
+};
+const _COR_SETOR_G = { impresso: 'var(--azul-marca)', injetado: '#6A1B9A', termoformado: '#1F7A46',
+  extrudado: '#0E7C86', rotulado: '#B36B00', sleeve: '#C2185B', embalado: '#5A6B7D', comprimido: '#8D6E63' };
+function _comboSetorPed(p, travado) {
+  const chaves = travado ? [...p.blq] : (p.itens ? [...p.itens] : []);
+  const st = new Set();
+  chaves.forEach(k => { let s2 = ''; try { s2 = _apelidoSetorG(_setorDoItem(k)); } catch (_) {} if (s2) st.add(s2); });
+  const arr = [...st].sort();
+  if (!arr.length) return { k: 'sem setor', rot: 'setor não identificado', cor: 'var(--fraco-2)', n: 0 };
+  if (arr.length === 1) return { k: arr[0], rot: arr[0], cor: _COR_SETOR_G[arr[0]] || 'var(--fraco)', n: 1 };
+  if (arr.length <= 3) return { k: arr.join('+'), rot: 'misto ' + arr.join(' / '), cor: '#7B5CD6', n: arr.length };
+  return { k: 'misto' + arr.length, rot: 'misto (' + arr.length + ' setores)', cor: '#7B5CD6', n: arr.length };
+}
 function _setorDoItem(item) {
   const hs = (_itemMaqCache || {})[String(item)] || [];
   if (hs.length) return setorDe(hs[0].cod);
@@ -25171,15 +25202,22 @@ function detGrupoTravado(gid, filtro) {
       if (fa.d === null || fb.d === null) return b.kg - a.kg;
       return fa.d - fb.d || b.kg - a.kg;
     });
-  /* filtro 'imp' / 'dem': o mesmo critério da barra, para a lista bater com o
-     número que foi clicado. */
+  /* 20/08/2026: o filtro agora é a CHAVE da combinação de setores montada na
+     barra ('impresso', 'impresso+injetado', 'sem setor'...). Usa a mesma função
+     do card, então a lista bate com o número que foi clicado — antes eram duas
+     implementações do mesmo critério, e bastava mexer numa para divergirem. */
+  let _rotFiltro = '';
   if (filtro) {
-    const ehImp = k => { try { return _setorDoItem(k) === 'Impressão'; } catch (_) { return false; } };
-    const ehInj = k => { try { return _setorDoItem(k) === 'Injeção'; } catch (_) { return false; } };
-    const temImp = p => gid > 0 ? [...p.blq].some(ehImp) : (p.itens ? [...p.itens] : []).some(ehImp);
-    L = L.filter(p => filtro === 'imp' ? temImp(p) : !temImp(p));
+    const antes = L.length;
+    L = L.filter(p => {
+      const c = _comboSetorPed(p, gid > 0);
+      if (c.k === filtro) { _rotFiltro = c.rot; return true; }
+      return false;
+    });
+    if (!_rotFiltro) _rotFiltro = String(filtro);
+    if (!L.length && antes) _rotFiltro = String(filtro);
   }
-  const _sufT = filtro === 'imp' ? ' · 🖨️ Impressão' : filtro === 'dem' ? ' · demais setores' : '';
+  const _sufT = _rotFiltro ? ' · ' + _rotFiltro : '';
   const TIT = ['Material pronto — dá para faturar hoje' + _sufT, 'Travados por 1 item só' + _sufT, 'Travados por 2 itens' + _sufT, 'Travados por 3 ou mais' + _sufT, 'No prazo — falta produzir' + _sufT];
   if (!L.length) { abreDet(TIT[gid], '<p class="desc">Nenhum pedido neste grupo.</p>'); return; }
   const descItem = {};
@@ -25329,14 +25367,16 @@ function cardDestrava() {
      IMPRESSÃO. Para os travados, "impresso" = o item que trava é da Impressão;
      para os completos, = o pedido tem item que roda lá. O setor do item sai de
      _setorDoItem (histórico de máquina + fila), o mesmo critério do resto do card. */
-  /* 20/08/2026 (João): a separação passa a ser IMPRESSO · INJETADO · RESTANTE.
-     Ordem de prioridade: um pedido que tem item impresso E injetado conta em
-     Impresso, para não somar o mesmo pedido duas vezes e estourar o total. */
-  const _ehImp = k => _setorDoItem(k) === 'Impressão';
-  const _ehInj = k => { try { return _setorDoItem(k) === 'Injeção'; } catch (_) { return false; } };
-  const _chaves = (p, travado) => travado ? [...p.blq] : (p.itens ? [...p.itens] : []);
-  const _fatiaImp = (L, travado) => L.filter(p => _chaves(p, travado).some(_ehImp));
-  const _fatiaInj = (L, travado) => L.filter(p => !_chaves(p, travado).some(_ehImp) && _chaves(p, travado).some(_ehInj));
+  /* 20/08/2026 (João: "quando impresso e injetado põe misto, faça o mesmo com os
+     outros setores"). Saiu da regra de prioridade — que escondia a mistura ao
+     empurrar o pedido para Impresso — para a COMBINAÇÃO real de setores.
+     Cada pedido vira uma chave com os setores que ele de fato usa: 'impresso',
+     'injetado', 'misto impresso/injetado', 'misto impresso/termoformado', e
+     assim por diante. Nada é contado duas vezes e nada fica escondido: a soma
+     das linhas volta a ser exatamente o total da faixa.
+     Com 4 setores ou mais o rótulo vira 'misto (N setores)', senão o nome não
+     cabe na tela. */
+  const _comboSetor = _comboSetorPed;
 
   /* 19/08/2026 (João): "vc separou os itens impressos mas eles constam junto com
      o completo ainda". A barra fina de Impressão era uma FATIA de dentro da
@@ -25344,11 +25384,15 @@ function cardDestrava() {
      as duas partes SEPARADAS, cada uma com o seu total, e cada uma abre a sua
      própria lista. O total da faixa fica só como referência, em cinza. */
   const barra = (rot, L, cor, gid) => {
-    const imp = _fatiaImp(L, gid > 0);
-    const inj = _fatiaInj(L, gid > 0);
-    const setImp = new Set(imp.map(p => p.num));
-    const setInj = new Set(inj.map(p => p.num));
-    const dem = L.filter(p => !setImp.has(p.num) && !setInj.has(p.num));
+    const grupos = new Map();
+    L.forEach(p => {
+      const c = _comboSetor(p, gid > 0);
+      let g = grupos.get(c.k);
+      if (!g) { g = { rot: c.rot, cor: c.cor, n: c.n, arr: [] }; grupos.set(c.k, g); }
+      g.arr.push(p);
+    });
+    /* setor puro primeiro, misto depois, e dentro de cada bloco o maior em cima */
+    const ordem = [...grupos.entries()].sort((a, b) => (a[1].n - b[1].n) || (b[1].arr.length - a[1].arr.length));
     const mx = A.peds.length || 1;
     const linha = (rotulo, arr, c, gid2, filtro) => arr.length
       ? `<div style="margin-bottom:5px;cursor:pointer" onclick="detGrupoTravado(${gid2},'${filtro}')">`
@@ -25359,9 +25403,7 @@ function cardDestrava() {
     return `<div style="margin-bottom:11px;border-left:3px solid ${cor};padding-left:8px">`
       + `<div style="display:flex;font-size:11.5px;margin-bottom:4px"><span style="flex:1;font-weight:800;color:var(--txt-2)">${rot}</span>`
       + `<span style="color:var(--fraco);font-size:10.5px">total ${L.length} ped · ${kg(S(L))}</span></div>`
-      + linha('🖨️ impresso', imp, 'var(--azul-marca)', gid, 'imp')
-      + linha('🧪 injetado', inj, '#6A1B9A', gid, 'inj')
-      + linha('demais setores', dem, cor, gid, 'dem')
+      + ordem.map(([k, g]) => linha(g.rot, g.arr, g.cor, gid, k)).join('')
       + `</div>`;
   };
 
@@ -25385,7 +25427,7 @@ function cardDestrava() {
         /* servico/sem peso: fica fora da carteira inteira, nao so do palete */
         + ((_cart196 && _cart196.semPeso) ? ` · <span style="color:var(--laranja)">${_cart196.semPeso} linha(s) de serviço, sem peso, fora da carteira</span>` : '');
     })(),
-    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada em <b style="color:var(--azul-marca)">🖨️ impresso</b>, <b style="color:#6A1B9A">🧪 injetado</b> e <b>demais setores</b>. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
+    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada pelos <b>setores por onde o pedido passa</b>. Pedido que usa mais de um aparece como <b style="color:#7B5CD6">misto</b> — nunca contado duas vezes. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
     + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
     + barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
