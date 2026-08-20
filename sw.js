@@ -1,12 +1,21 @@
 // Produção Rioplastic — service worker (network-first no index; auto-update)
-const CACHE = 'producao-rioplastic-v3.927.0';
-const APP_SHELL = ['./logo_full.png', './logo_mark.png', './logo_splash.png', './vinheta.mp4', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
+const CACHE = 'producao-rioplastic-v3.928.0';
+/* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
+   1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
+      nunca era pré-guardado;
+   2) a lista tinha a vinheta de 641 KB, e o addAll é tudo-ou-nada: no 4G o
+      download da vinheta falhava e a gravação inteira ia junto — nenhuma imagem
+      ficava em cache, e toda abertura buscava tudo pela rede de novo.
+   Agora: só o que a tela precisa para pintar, sem o vídeo, e gravado um a um
+   para que a falha de um arquivo não derrube os outros. A vinheta e os ícones
+   grandes continuam sendo guardados, mas depois, quando forem pedidos. */
+const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();          // assume assim que instala, sem ficar em espera
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    try { await c.addAll(APP_SHELL); } catch (_) {}
+    await Promise.all(APP_SHELL.map(u => c.add(u).catch(() => {})));
     // index.html SEMPRE da rede, ignorando o cache HTTP do navegador.
     // (era aqui que entrava versão velha na casca nova)
     try {
@@ -49,7 +58,10 @@ self.addEventListener('fetch', e => {
       const cache = await caches.open(CACHE);
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 4500);
+        /* 4,5s era muito para 4G: a tela ficava em branco esperando 2,2 MB antes
+           de desistir e usar a cópia local. 2,2s mostra o app quase na hora e a
+           versão nova entra na próxima abertura. */
+        const t = setTimeout(() => ctrl.abort(), 2200);
         // consegue devolver uma cópia antiga guardada na borda.
         // ?t=agora: URL única a cada abertura. Com ?v=versão o SW velho pedia a
         // URL da versão velha e o CDN devolvia a cópia antiga da borda — ele
