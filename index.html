@@ -834,7 +834,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.917.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.918.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2834,7 +2834,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.917.0';
+const APP_VER = '3.918.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25051,9 +25051,18 @@ function cardPorCliente() {
   const arr = Object.values(cli).filter(a => a.kgTrav > 0).sort((a, b) => b.kgTrav - a.kgTrav);
   if (!arr.length) return '';
   const descItem = {};
+  /* mesmo índice, mesma razão do de pedido: era um filtro da carteira inteira
+     por cliente, dentro do laço dos 15 clientes. */
+  const _porCliente = new Map();
+  A.linhas.forEach(l => {
+    const k = String(l.cliente || '—');
+    let arr2 = _porCliente.get(k);
+    if (!arr2) { arr2 = []; _porCliente.set(k, arr2); }
+    arr2.push(l);
+  });
   A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
   const linhas = arr.slice(0, 15).map(a => {
-    const pal = _paletesPorItem(A.linhas.filter(l => String(l.cliente || '—') === a.c));
+    const pal = _paletesPorItem(_porCliente.get(String(a.c)) || []);
     const its = [...a.itens].map(k => _selo196(k)).join('');
     return `<tr><td class="nome" style="font-size:12px">${escapeHtml(a.c.slice(0, 30))}`
       + `<div style="font-size:10.5px;color:var(--fraco-2)">${a.travados} de ${a.peds} pedido(s) travado(s)`
@@ -25148,14 +25157,29 @@ function detGrupoTravado(gid, filtro) {
   let _faixaAnt = -1;
   const _totFaixa = {};
   L.forEach(p => { const f = _faixaDesvio(p.ent, gid === 0); _totFaixa[f.i] = (_totFaixa[f.i] || { n: 0, kg: 0 }); _totFaixa[f.i].n++; _totFaixa[f.i].kg += p.kg; });
+  /* 20/08/2026 (João: "o app está travando muito") — era isto, e a culpa é da
+     v3.893, quando pus o código do item na frente de cada linha.
+     Cada pedido varria as 4.198 linhas da carteira DUAS vezes (uma para o item,
+     outra para o palete). Com 297 pedidos na tela dava ~2,5 milhões de
+     comparações de string por abertura, tudo na thread da interface — daí o
+     congelamento. Agora o índice pedido→linhas é montado UMA vez, e cada pedido
+     lê a lista pronta. Passa a ser proporcional ao tamanho da carteira, não ao
+     produto dos dois. */
+  const _porPedido = new Map();
+  A.linhas.forEach(l => {
+    const k = String(l.pedido).split('/')[0];
+    let arr = _porPedido.get(k);
+    if (!arr) { arr = []; _porPedido.set(k, arr); }
+    arr.push(l);
+  });
   const linhas = L.map(p => {
-    const pal = _paletesPorItem(A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num));
+    const _lin = _porPedido.get(p.num) || [];
+    const pal = _paletesPorItem(_lin);
     const blq = [...p.blq].map(k => _selo196(k)).join('');
     /* codigo do item na frente: com 1 linha mostra o item; com varias, o de
        maior peso e o "+N" do resto — sem isso a lista obriga a abrir pedido por
        pedido so para saber do que se trata. */
-    const _lp = A.linhas.filter(l => String(l.pedido).split('/')[0] === p.num)
-      .sort((a, b) => (+b.peso_pendente || 0) - (+a.peso_pendente || 0));
+    const _lp = _lin.slice().sort((a, b) => (+b.peso_pendente || 0) - (+a.peso_pendente || 0));
     const _it = _lp.length
       ? '<span class="cod">' + escapeHtml(String(_lp[0].item_cod)) + '</span>' + (_lp.length > 1 ? ' <span style="font-size:10px;color:var(--fraco-2)">+' + (_lp.length - 1) + '</span>' : '')
       : '';
