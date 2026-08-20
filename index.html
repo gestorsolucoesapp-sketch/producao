@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.908.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.909.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.908.0';
+const APP_VER = '3.909.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27286,7 +27286,7 @@ function cmDetalhe(ped) {
   abreDet('🚚 Pedido ' + ped, h);
 }
 
-let _arCod = '', _arRows = null, _arPerdas = null, _arItens = null, _arParadas = null, _arFonte = null, _arGran = 'mes', _arQueda = null, _arQuedas = [], _arIdx = [];
+let _arCod = '', _arRows = null, _arPerdas = null, _arItens = null, _arParadas = null, _arOS = null, _arFonte = null, _arGran = 'mes', _arQueda = null, _arQuedas = [], _arIdx = [];
 function arAbrir() {
   arCobertura();
   arListarSnapshots();
@@ -27447,6 +27447,10 @@ async function arCarregar() {
     _arPerdas = await pega('ar_perdas', 'dia,tipo_perda_desc,peso');
     _arItens = await pega('ar_producao_item', 'dia,turno,item_cod,item_desc,quantidade,peso');
     _arParadas = await pega('ar_paradas', 'dia,motivo_desc,tempo_horas');
+    try {
+      const { data: _os } = await sb.from('ar_manut_os').select('os,abertura,encerramento,minutos,atividade,motivo,detalhes,conclusao').eq('recurso_cod', cod).limit(5000);
+      _arOS = _os || [];
+    } catch (_) { _arOS = []; }
     /* 20/08/2026 (Joao importou so o 622: "o 621 nao e preciso ja que o 622 tem
        todos os itens"). Ele tem razao — o 622 e o 621 detalhado. Entao, sem 621,
        a analise passa a montar a serie a partir do 622, somando os itens de cada
@@ -27593,6 +27597,48 @@ function _arRitmoItens(itens, mesQuebra) {
     out.push({ k, desc: bal[k].desc, turnos: L.length, de: meses[0], ate: meses[meses.length - 1], antes: a, depois: b, dif: b / a - 1, novo: mesQuebra ? meses[0] >= mesQuebra : false });
   });
   return out.sort((x, y) => y.turnos - x.turnos).slice(0, 8);
+}
+
+/* CRUZAMENTO ANO A ANO (20/08/2026). Junta as quatro fontes no mesmo eixo:
+   produção (622), parada (643), refugo (624) e OS de manutenção (RSMI010).
+   Tudo normalizado POR TURNO — sem isso, ano com menos turno parece melhor só
+   porque a máquina rodou menos. O ano só entra se tiver produção e pelo menos
+   uma das fontes de causa; ano sem dado de causa mostra travessão, não zero. */
+function _arCruzaAnos() {
+  if (!_arRows || !_arRows.length) return [];
+  const anos = {};
+  const põe = (a, campo, v) => { if (!anos[a]) anos[a] = { ano: a, turnos: 0, kg: 0, hPar: 0, kgRef: 0, nOS: 0, diasOS: [], temPar: false, temRef: false, temOS: false }; anos[a][campo] += v; };
+  _arRows.forEach(r => { const a = String(r.dia).slice(0, 4); if (a.length !== 4) return; põe(a, 'turnos', 1); põe(a, 'kg', +r.peso || 0); });
+  (_arParadas || []).forEach(r => { const a = String(r.dia).slice(0, 4); if (!anos[a]) return; anos[a].hPar += (+r.tempo_horas || 0); anos[a].temPar = true; });
+  (_arPerdas || []).forEach(r => { const a = String(r.dia).slice(0, 4); if (!anos[a]) return; anos[a].kgRef += (+r.peso || 0); anos[a].temRef = true; });
+  (_arOS || []).forEach(o => {
+    const a = String(o.abertura || '').slice(0, 4); if (!anos[a]) return;
+    anos[a].nOS++; anos[a].temOS = true;
+    if (o.abertura && o.encerramento) {
+      const d = (new Date(o.encerramento) - new Date(o.abertura)) / 86400000;
+      if (d >= 0 && d < 400) anos[a].diasOS.push(d);
+    }
+  });
+  return Object.values(anos).filter(x => x.turnos >= 20).sort((a, b) => a.ano.localeCompare(b.ano)).map(x => ({
+    ano: x.ano, turnos: x.turnos, kgTurno: x.kg / x.turnos,
+    hParTurno: x.temPar ? x.hPar / x.turnos : null,
+    pctRef: x.temRef && x.kg > 0 ? x.kgRef / x.kg * 100 : null,
+    nOS: x.temOS ? x.nOS : null,
+    diasOS: x.diasOS.length ? x.diasOS.reduce((a2, b2) => a2 + b2, 0) / x.diasOS.length : null
+  }));
+}
+/* top motivos/tipos por turno, ano a ano — o que cresceu de verdade */
+function _arTopPorAno(lista, campoRot, campoVal, anos, porTurno) {
+  const M = {};
+  (lista || []).forEach(r => {
+    const a = String(r.dia).slice(0, 4); const k = String(r[campoRot] || '—');
+    if (!M[k]) M[k] = {};
+    M[k][a] = (M[k][a] || 0) + (+r[campoVal] || 0);
+  });
+  const ult = anos[anos.length - 1];
+  return Object.entries(M).map(([k, v]) => ({
+    rot: k, vals: anos.map(a => { const t = (a && a.turnos) || 0; const x = v[a.ano] || 0; return porTurno ? (t ? x / t : 0) : x; })
+  })).sort((a, b) => b.vals[b.vals.length - 1] - a.vals[a.vals.length - 1]).slice(0, 6);
 }
 
 /* fallback: sem fam\u00edlia com lastro, usa kg/dia como antes (melhor que nada,
@@ -27800,6 +27846,57 @@ function arRender() {
     }
   }
 
+  /* CARD DO CRUZAMENTO: o que mudou, ano a ano */
+  let tabCruza = '';
+  {
+    const A = _arCruzaAnos().slice(-4);
+    if (A.length >= 2 && (A.some(x => x.hParTurno != null) || A.some(x => x.nOS != null))) {
+      const nd = v => v == null ? '<span style="color:var(--fraco-2)">—</span>' : v;
+      const cab = ['Indicador'].concat(A.map(x => x.ano));
+      const linhaM = (rot, vals, fmtv, pior) => {
+        const ult = vals[vals.length - 1], pri = vals.find(v => v != null);
+        const ruim = (ult != null && pri != null) && (pior === 'maior' ? ult > pri * 1.25 : ult < pri * 0.85);
+        return '<tr><td class="nome">' + rot + '</td>' + vals.map((v, i) => '<td><span class="cel ' + (i === vals.length - 1 && ruim ? 'baixo' : 'neutra') + '">' + (v == null ? '—' : fmtv(v)) + '</span></td>').join('') + '</tr>';
+      };
+      const linhas = ''
+        + linhaM('Ritmo <b>kg/turno</b>', A.map(x => x.kgTurno), v => fmtKg(v), 'menor')
+        + linhaM('Parada <b>por turno</b>', A.map(x => x.hParTurno), v => fmtHm(v), 'maior')
+        + linhaM('Refugo <b>%</b>', A.map(x => x.pctRef), v => v.toFixed(1).replace('.', ',') + '%', 'maior')
+        + linhaM('OS de manutenção', A.map(x => x.nOS), v => Math.round(v), 'menor')
+        + linhaM('Dias p/ <b>fechar OS</b>', A.map(x => x.diasOS), v => v.toFixed(1).replace('.', ',') + 'd', 'maior')
+        + '<tr><td class="nome" style="color:var(--fraco-2);font-size:11px">turnos apontados</td>' + A.map(x => '<td><span class="cel neutra">' + fmt(x.turnos, 0) + '</span></td>').join('') + '</tr>';
+      tabCruza = '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 2px">O que mudou \u2014 produção, parada, refugo e manutenção</div>'
+        + '<p class="desc" style="margin-bottom:4px">Tudo <b>por turno</b>. Ano que rodou menos não fica melhor só por isso. Travessão = relatório não cobre aquele ano.</p>'
+        + tabSimples(cab, linhas);
+
+      /* o que cresceu dentro de cada fonte */
+      const topPar = _arTopPorAno(_arParadas, 'motivo_desc', 'tempo_horas', A, true);
+      if (topPar.length) {
+        tabCruza += '<div style="font-weight:800;color:var(--navy);font-size:12.5px;margin:10px 0 2px">Motivos de parada \u2014 horas por turno</div>'
+          + tabSimples(cab, topPar.map(r => '<tr><td class="nome" style="font-size:11.5px">' + escapeHtml(String(r.rot).slice(0, 30)) + '</td>'
+            + r.vals.map((v, i) => { const cresceu = i === r.vals.length - 1 && r.vals[0] > 0 && v > r.vals[0] * 1.5;
+              return '<td><span class="cel ' + (cresceu ? 'baixo' : 'neutra') + '">' + (v > 0 ? fmtHm(v) : '—') + '</span></td>'; }).join('') + '</tr>').join(''));
+      }
+      const topRef = _arTopPorAno(_arPerdas, 'tipo_perda_desc', 'peso', A, false);
+      if (topRef.length) {
+        tabCruza += '<div style="font-weight:800;color:var(--navy);font-size:12.5px;margin:10px 0 2px">Refugo por tipo de perda</div>'
+          + tabSimples(cab, topRef.map(r => '<tr><td class="nome" style="font-size:11.5px">' + escapeHtml(String(r.rot).slice(0, 30)) + '</td>'
+            + r.vals.map(v => '<td><span class="cel neutra">' + (v > 0 ? fmtKg(v) : '—') + '</span></td>').join('') + '</tr>').join(''));
+      }
+      /* preventiva sumiu? */
+      const prev = (_arOS || []).filter(o => /lubrific|preventiv/i.test(String(o.detalhes || '') + ' ' + String(o.conclusao || '')));
+      if (prev.length) {
+        const ult = prev.map(o => String(o.abertura || '').slice(0, 10)).sort().pop();
+        const ref = (_arRows[_arRows.length - 1] || {}).dia || hojeISO();
+        const meses = Math.round((new Date(String(ref).slice(0, 10) + 'T12:00:00') - new Date(ult + 'T12:00:00')) / 86400000 / 30.4);
+        if (meses >= 4) {
+          tabCruza += '<div style="background:#FFF6E6;border-left:4px solid #B36B00;border-radius:0 10px 10px 0;padding:9px 11px;margin-top:10px;font-size:12.5px;line-height:1.55">'
+            + '<b style="color:#B36B00">\u26a0 Preventiva sumiu do registro.</b> Existem <b>' + prev.length + '</b> OS de lubrificação/preventiva nesta máquina, e a última foi em <b>' + fmtData(ult) + '</b> \u2014 há cerca de <b>' + meses + ' meses</b>. Vale confirmar com a manutenção se saiu do plano ou se parou de ser apontada.</div>';
+        }
+      }
+    }
+  }
+
   /* refugo: antes x depois do primeiro degrau */
   const perdasQ = (() => {
     if (!_arQueda || !(_arPerdas || []).length) return '';
@@ -27845,7 +27942,7 @@ function arRender() {
     + '<button class="btn" style="width:auto;padding:6px 13px;font-size:12px" onclick="arImprimir()">\ud83d\udda8 imprimir</button>'
     + '<button class="btn btn-verde" style="width:auto;padding:6px 13px;font-size:12px" onclick="arSalvar()">\ud83d\udcbe salvar retrato</button>'
     + '</div>'
-    + diag + svg + svgIdx + tabFam + tabItem
+    + diag + svg + svgIdx + tabCruza + tabFam + tabItem
     + '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:10px 0 4px">Ano a ano</div>'
     + tabSimples(['Ano', 'Dias c/ produ\u00e7\u00e3o', 'kg/dia', 'cx/dia', 'Total'], tabAnos)
     + '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:10px 0 3px">Conclus\u00e3o (vai junto no retrato salvo)</div>'
@@ -27889,7 +27986,7 @@ async function arApagar() {
     await sb.from('ar_producao_item').delete().gte('id', 0);
     await sb.from('ar_paradas').delete().gte('id', 0);
     await sb.from('ar_manut_raw').delete().gte('id', 0);
-    _arRows = null; _arPerdas = null; _arItens = null; _arParadas = null; _arFonte = null;
+    _arRows = null; _arPerdas = null; _arItens = null; _arParadas = null; _arOS = null; _arFonte = null;
     $('arConteudo').innerHTML = '';
     toast('🧹 Área limpa. Retratos preservados.');
     arCobertura(); arListarSnapshots();
