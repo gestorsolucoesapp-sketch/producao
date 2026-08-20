@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (network-first no index; auto-update)
-const CACHE = 'producao-rioplastic-v3.929.0';
+const CACHE = 'producao-rioplastic-v3.930.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -9,7 +9,11 @@ const CACHE = 'producao-rioplastic-v3.929.0';
    Agora: só o que a tela precisa para pintar, sem o vídeo, e gravado um a um
    para que a falha de um arquivo não derrube os outros. A vinheta e os ícones
    grandes continuam sendo guardados, mas depois, quando forem pedidos. */
-const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
+/* 20/08/2026 - a vinheta VOLTA para a lista. Tirei na 3.928 achando que ela só
+   pesava, mas a splash espera o vídeo: sem cache, ela baixava 641 KB pelo 4G
+   com a tela preta. O problema original era o addAll tudo-ou-nada, e esse já
+   está resolvido com o add individual abaixo. */
+const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest', './vinheta.mp4'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();          // assume assim que instala, sem ficar em espera

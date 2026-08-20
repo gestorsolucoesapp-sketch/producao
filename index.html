@@ -854,7 +854,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.929.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.930.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2848,7 +2848,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.929.0';
+const APP_VER = '3.930.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4382,23 +4382,51 @@ function revelarPosSplash() {
     vid.src = 'vinheta.mp4';
     vid.addEventListener('loadeddata', () => { sp && sp.classList.add('video-on'); }, { once: true });
     vid.addEventListener('ended', () => { window.pularVinheta && pularVinheta(); }, { once: true });
-    vid.addEventListener('error', () => { sp && sp.classList.remove('video-on'); }, { once: true });
+    vid.addEventListener('error', () => { sp && sp.classList.remove('video-on'); _semVideo(); }, { once: true });
     const p = vid.play();
-    if (p && p.catch) p.catch(() => { sp && sp.classList.remove('video-on'); });
+    if (p && p.catch) p.catch(() => { sp && sp.classList.remove('video-on'); _semVideo(); });
     SPLASH_MS = 8600;              // duração do vídeo + folga
     _vinhetaAtiva = true;
+    /* 20/08/2026 (João: "hora que volto está preto"). A splash reservava 8,6s
+       para o vídeo ANTES de saber se ele ia carregar. No 4G, com a vinheta fora
+       do cache, isso virava quase nove segundos de tela preta. Agora ela dá
+       1,8s para o vídeo aparecer; se não vier, segue pelo caminho rápido de
+       1,4s e o vídeo fica para a próxima abertura, já em cache. */
+    setTimeout(() => {
+      if (_vinhetaSaiu) return;
+      if (!vid.readyState || vid.readyState < 2) _semVideo();
+    }, 1800);
   }
-  sb.auth.getSession().then(({ data }) => {
-    _vinhetaSegue = () => {
-      sp && sp.classList.add('ir');           // começa a saída da vinheta
-      setTimeout(async () => {
-        fim();                                 // remove a vinheta
-        if (data.session) await posLogin();    // só então entra no app
-        else $('telaLogin').classList.remove('oculto');
-      }, 520);
-    };
-    _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, SPLASH_MS);
-  });
+  /* rede lenta não pode segurar a splash: o cronômetro de saída é armado JÁ, e
+     a sessão entra quando chegar. Antes ele só era armado depois do
+     getSession() responder — se a resposta demorasse, a tela ficava presa. */
+  let _sessao = null, _temSessao = false;
+  _vinhetaSegue = () => {
+    sp && sp.classList.add('ir');
+    setTimeout(async () => {
+      fim();
+      if (_temSessao && _sessao) { try { await posLogin(); } catch (_) {} }
+      else if (_temSessao) $('telaLogin').classList.remove('oculto');
+      else {
+        /* a sessão ainda não voltou: mostra o login e corrige quando chegar,
+           em vez de deixar o app em branco esperando. */
+        $('telaLogin').classList.remove('oculto');
+        try {
+          const { data } = await sb.auth.getSession();
+          if (data && data.session) { $('telaLogin').classList.add('oculto'); await posLogin(); }
+        } catch (_) {}
+      }
+    }, 520);
+  };
+  _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, SPLASH_MS);
+  sb.auth.getSession().then(({ data }) => { _sessao = data && data.session; _temSessao = true; })
+    .catch(() => { _temSessao = true; });
+}
+/* encurta a splash quando o vídeo não vai rolar */
+function _semVideo() {
+  if (_vinhetaSaiu) return;
+  if (_vinhetaTimer) { clearTimeout(_vinhetaTimer); _vinhetaTimer = null; }
+  _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; if (_vinhetaSegue) _vinhetaSegue(); }, 400);
 }
 if (document.readyState === 'complete') revelarPosSplash();
 else window.addEventListener('load', revelarPosSplash);
