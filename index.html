@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.914.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.915.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.914.0';
+const APP_VER = '3.915.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20615,7 +20615,45 @@ function kgParada(p) {
   const hb = hr[b]; const kgHora = hb > 0 ? (metas[b] || 0) / hb : 0; if (!(kgHora > 0)) return 0;
   return (p.tempo_horas || 0) * kgHora;
 }
-const _diaDeParada = p => p.dia || (p.inicio ? String(p.inicio).slice(0, 10) : null);
+/* 20/08/2026 (João: "turno da noite 10h03 se tem só 9") — ele estava certo, e a
+   causa é de atribuição de DIA, não de soma.
+   O ERP carimba a parada da madrugada no dia CIVIL em que ela aconteceu. Uma
+   parada às 03:14 do dia 19 vem com dia = 19. Mas pela regra da fábrica o dia
+   operacional vai das 06:00 às 05:59, então essa parada pertence à noite do
+   dia 18. Consequência: ao filtrar o dia 19, entravam DUAS noites no mesmo
+   bloco — o rabo da noite 18→19 e a noite inteira 19→20. Por isso 10h03 num
+   turno de 9h.
+   Na 702 em 19/08: a parada de 18/08 23:43→03:14 (3h30) somava com as 6h22 da
+   noite verdadeira e dava ~9h52.
+   Tamanho: 26.187 paradas de 2026 (17% do total, hora média 03:54) estavam no
+   dia errado. Agora o dia sai do horário real de início: antes das 06:00,
+   pertence ao dia anterior. Fica p.dia como reserva quando não há início. */
+const _diaOperacionalDe = ini => {
+  if (!ini) return null;
+  const hm = horaHHMMParada(ini);
+  if (!hm) return null;
+  let d = null;
+  const s2 = String(ini).trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(s2)) {
+    try {
+      const dt = new Date(s2);
+      if (!isNaN(dt.getTime())) {
+        const f = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(dt);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(f)) d = f;
+      }
+    } catch (_) {}
+  }
+  if (!d) { const m = s2.match(/^(\d{4}-\d{2}-\d{2})/); d = m ? m[1] : null; }
+  if (!d) return null;
+  if (+hm.slice(0, 2) < 6) {
+    const dt = new Date(d + 'T12:00:00');
+    dt.setDate(dt.getDate() - 1);
+    const p2 = n => String(n).padStart(2, '0');
+    return dt.getFullYear() + '-' + p2(dt.getMonth() + 1) + '-' + p2(dt.getDate());
+  }
+  return d;
+};
+const _diaDeParada = p => _diaOperacionalDe(p && p.inicio) || (p && p.dia) || null;
 // linha de valor com a conta pequena embaixo: "1,2 t" + "3,1h × 388kg/h"
 function celKgHoras(kg, h, cx) {
   const kgh = (h > 0) ? Math.round(kg / h) : null;
