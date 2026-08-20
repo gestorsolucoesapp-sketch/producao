@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.907.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.908.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.907.0';
+const APP_VER = '3.908.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27286,7 +27286,7 @@ function cmDetalhe(ped) {
   abreDet('🚚 Pedido ' + ped, h);
 }
 
-let _arCod = '', _arRows = null, _arPerdas = null, _arItens = null, _arGran = 'mes', _arQueda = null, _arQuedas = [], _arIdx = [];
+let _arCod = '', _arRows = null, _arPerdas = null, _arItens = null, _arParadas = null, _arFonte = null, _arGran = 'mes', _arQueda = null, _arQuedas = [], _arIdx = [];
 function arAbrir() {
   arCobertura();
   arListarSnapshots();
@@ -27446,8 +27446,28 @@ async function arCarregar() {
     _arRows = await pega('ar_producao', 'dia,turno,peso,quantidade,recurso_nome');
     _arPerdas = await pega('ar_perdas', 'dia,tipo_perda_desc,peso');
     _arItens = await pega('ar_producao_item', 'dia,turno,item_cod,item_desc,quantidade,peso');
+    _arParadas = await pega('ar_paradas', 'dia,motivo_desc,tempo_horas');
+    /* 20/08/2026 (Joao importou so o 622: "o 621 nao e preciso ja que o 622 tem
+       todos os itens"). Ele tem razao — o 622 e o 621 detalhado. Entao, sem 621,
+       a analise passa a montar a serie a partir do 622, somando os itens de cada
+       dia+turno. O resultado e o mesmo apontamento, so que reconstruido.
+       Uma ressalva que fica registrada: 621 e 622 divergem ~1,86% em peso no ERP
+       (diferenca conhecida e nunca explicada), entao numero vindo daqui pode nao
+       bater na terceira casa com o que o 621 mostrava antes. */
+    _arFonte = _arRows.length ? '621' : (_arItens.length ? '622' : null);
+    if (!_arRows.length && _arItens.length) {
+      const agg = {};
+      _arItens.forEach(r => {
+        const d = String(r.dia).slice(0, 10); if (d.length < 10) return;
+        const k = d + '|' + (r.turno == null ? '-' : r.turno);
+        if (!agg[k]) agg[k] = { dia: d, turno: r.turno, peso: 0, quantidade: 0, recurso_nome: null };
+        agg[k].peso += (+r.peso || 0);
+        agg[k].quantidade += (+r.quantidade || 0);
+      });
+      _arRows = Object.values(agg).sort((a, b) => a.dia.localeCompare(b.dia));
+    }
     if (!_arRows.length) {
-      box.innerHTML = '<div class="card"><p class="desc">Nenhuma linha do 621 para a máquina <b>' + escapeHtml(cod) + '</b> na área da análise. Importe os PDFs acima (a área é separada do app — o que já existe no restante do app não entra aqui de propósito, para a análise só usar o que você escolheu).</p></div>';
+      box.innerHTML = '<div class="card"><p class="desc">Nenhuma linha do 621 nem do 622 para a máquina <b>' + escapeHtml(cod) + '</b> na área da análise. Importe os PDFs acima (a área é separada do app — o que já existe no restante do app não entra aqui de propósito, para a análise só usar o que você escolheu).</p></div>';
       return;
     }
     arRender();
@@ -27819,7 +27839,7 @@ function arRender() {
 
   box.innerHTML = '<div class="card" id="arRelatorio">'
     + '<div class="titulo-sec">M\u00e1quina ' + escapeHtml(_arCod) + (nome ? ' \u00b7 ' + escapeHtml(nome) : '') + '</div>'
-    + '<p class="desc" style="margin:-2px 0 6px">' + fmt(_arRows.length, 0) + ' apontamentos carregados \u00b7 ' + fmtData(String(_arRows[0].dia).slice(0, 10)) + ' \u2192 ' + fmtData(String(_arRows[_arRows.length - 1].dia).slice(0, 10)) + '</p>'
+    + '<p class="desc" style="margin:-2px 0 6px">' + (_arFonte === '622' ? 'fonte 622 (621 n\u00e3o importado) \u00b7 ' : '') + fmt(_arRows.length, 0) + ' apontamentos carregados \u00b7 ' + fmtData(String(_arRows[0].dia).slice(0, 10)) + ' \u2192 ' + fmtData(String(_arRows[_arRows.length - 1].dia).slice(0, 10)) + '</p>'
     + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">' + gBtn('dia') + gBtn('mes') + gBtn('ano')
     + '<span style="margin-left:auto"></span>'
     + '<button class="btn" style="width:auto;padding:6px 13px;font-size:12px" onclick="arImprimir()">\ud83d\udda8 imprimir</button>'
@@ -27869,7 +27889,7 @@ async function arApagar() {
     await sb.from('ar_producao_item').delete().gte('id', 0);
     await sb.from('ar_paradas').delete().gte('id', 0);
     await sb.from('ar_manut_raw').delete().gte('id', 0);
-    _arRows = null; _arPerdas = null; _arItens = null;
+    _arRows = null; _arPerdas = null; _arItens = null; _arParadas = null; _arFonte = null;
     $('arConteudo').innerHTML = '';
     toast('🧹 Área limpa. Retratos preservados.');
     arCobertura(); arListarSnapshots();
