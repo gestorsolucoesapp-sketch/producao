@@ -872,7 +872,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.939.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.940.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2875,7 +2875,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.939.0';
+const APP_VER = '3.940.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25716,7 +25716,10 @@ function _cardDestravaBase(_semAlav) {
         /* servico/sem peso: fica fora da carteira inteira, nao so do palete */
         + ((_cart196 && _cart196.semPeso) ? ` · <span style="color:var(--laranja)">${_cart196.semPeso} linha(s) de serviço, sem peso, fora da carteira</span>` : '');
     })(),
-    '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada pelos <b>setores por onde o pedido passa</b>. Pedido que usa mais de um aparece como <b style="color:#7B5CD6">misto</b> — nunca contado duas vezes. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
+    (_semAlav ? '' : '<div style="display:flex;gap:6px;margin-bottom:9px">'
+      + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaImprimir(null)">\ud83d\udcc4 salvar tudo</button>'
+      + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaEscolher()">\u2611\ufe0f escolher setores</button></div>')
+    + '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada pelos <b>setores por onde o pedido passa</b>. Pedido que usa mais de um aparece como <b style="color:#7B5CD6">misto</b> — nunca contado duas vezes. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
     + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
     + barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
@@ -25734,6 +25737,172 @@ function _cardDestravaBase(_semAlav) {
     + (topPed ? '<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;font-weight:800;letter-spacing:.3px;text-transform:uppercase;margin-bottom:4px">Pedidos a um item de sair</div>'
       + tabSimples(['Pedido · cliente', 'Libera', 'Falta'], topPed) : '')),
     'O que destrava faturamento');
+}
+
+/* ===== DESTRAVA POR SETOR: SALVAR / ENVIAR (20/08/2026, pedido do Joao) =====
+   O card mostra a fabrica inteira, mas quem age e o lider de cada setor. Ele nao
+   precisa dos 660 itens da carteira: precisa dos itens do SETOR DELE e dos
+   pedidos que saem quando ele produzir. Entao o relatorio sai QUEBRADO POR
+   SETOR, uma pagina cada.
+   Um pedido cruza setores de proposito: ele aparece na pagina de todos os
+   setores que o seguram, porque cada um deles precisa saber que aquele pedido
+   depende dele. Somar as paginas da mais que o total da carteira, e esta certo
+   assim - a pagina do setor nao e uma fatia, e a lista de trabalho dele. */
+function _destravaSetores() {
+  const A = _alocarEstoque();
+  if (!A || !A.peds.length) return null;
+  const alav = {};
+  A.linhas.forEach(l => {
+    if (l._falta <= 0.001) return;
+    const k = String(l.item_cod);
+    const a = alav[k] || (alav[k] = { cod: k, falta: 0, desc: '', peds: 0, kgTrav: 0, so: 0, kgSo: 0, cxFalta: 0 });
+    a.falta += l._falta;
+    if (!a.desc && l.item_desc) a.desc = l.item_desc;
+    /* caixa so sai de linha medida em CX - MIL, UN e PC nao sao caixa e chutar
+       daria palete inventado. */
+    if (_ehCx(l.un)) { const need = +l.peso_pendente || 0, q = +l.qtd_pendente || 0; if (need > 0) a.cxFalta += q * (l._falta / need); }
+  });
+  A.peds.forEach(p => p.blq.forEach(k => {
+    const a = alav[String(k)]; if (!a) return;
+    a.peds++; a.kgTrav += p.kg;
+    if (p.blq.size === 1) { a.so++; a.kgSo += p.kg; }
+  }));
+  const M = new Map();
+  const stDe = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
+  Object.keys(alav).forEach(k => {
+    const st = stDe(k);
+    let g = M.get(st); if (!g) { g = { setor: st, itens: [], peds: [], kg: 0 }; M.set(st, g); }
+    g.itens.push(alav[k]);
+  });
+  A.peds.forEach(pd => {
+    if (!pd.blq.size) return;
+    const sts = new Set(); pd.blq.forEach(k => sts.add(stDe(k)));
+    sts.forEach(st => { const g = M.get(st); if (g) g.peds.push(pd); });
+  });
+  const out = [...M.values()].filter(g => g.itens.length);
+  out.forEach(g => {
+    g.itens.sort((a, b) => (b.kgSo - a.kgSo) || (b.kgTrav - a.kgTrav) || (b.falta - a.falta));
+    /* vencido primeiro: lista ordenada por tonelada joga o pedido pequeno que ja
+       estourou o prazo para o fim da folha. */
+    g.peds.sort((a, b) => ((b.atraso || 0) - (a.atraso || 0)) || (b.kg - a.kg));
+    g.kg = g.peds.reduce((x, pd) => x + pd.kg, 0);
+  });
+  out.sort((a, b) => b.kg - a.kg);
+  return out;
+}
+const _dsKg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+
+function _destravaPagina(g, quebra) {
+  const cab = quebra ? ' style="break-before:page;page-break-before:always"' : '';
+  const itens = g.itens.slice(0, 40).map(a => '<tr>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;font-weight:700">' + escapeHtml(a.cod) + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;font-size:11px">' + escapeHtml(String(a.desc || '').slice(0, 42)) + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;text-align:right;white-space:nowrap">' + _dsKg(a.falta)
+    + (a.cxFalta > 0 ? '<div style="font-size:10px;color:#5A6B7D">' + fmtNum(Math.round(a.cxFalta)) + ' cx · ' + _paletes(a.cxFalta) + ' pal</div>' : '') + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;text-align:right;font-weight:800">' + (a.so ? _dsKg(a.kgSo) + '<div style="font-size:10px;font-weight:600;color:#5A6B7D">' + a.so + ' ped</div>' : '—') + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;text-align:right">' + a.peds + '</td></tr>').join('');
+  const peds = g.peds.slice(0, 60).map(pd => '<tr>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1"><b>' + escapeHtml(pd.num) + '</b> ' + escapeHtml(String(pd.cli || '').slice(0, 28)) + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;text-align:right;white-space:nowrap">' + _dsKg(pd.kg) + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;font-size:11px;white-space:nowrap">' + (pd.ent ? escapeHtml(fmtDataSem(pd.ent)) : '—')
+    + (pd.atraso > 0 ? ' <b style="color:#C0392B">' + pd.atraso + 'd vencido</b>' : '') + '</td>'
+    + '<td style="padding:4px 6px;border-bottom:1px solid #E3EAF1;font-size:11px">' + [...pd.blq].map(k => escapeHtml(String(k))).join(' · ') + '</td></tr>').join('');
+  const th = 'padding:4px 6px;border-bottom:2px solid #0B2A4A;font-size:10.5px;color:#5A6B7D;text-transform:uppercase';
+  return '<div' + cab + '>'
+    + '<div class="rel-cab"><img src="logo_print.png" alt="Rioplastic"><div>'
+    + '<h1>O que destrava faturamento \u2014 ' + escapeHtml(g.setor) + '</h1>'
+    + '<p>' + escapeHtml(_foto196Txt() || '') + ' \u00b7 impresso em ' + new Date().toLocaleDateString('pt-BR') + '</p></div></div>'
+    + '<p style="font-size:12.5px;color:#0B2A4A;margin:0 0 10px"><b>' + g.itens.length + '</b> item(ns) deste setor est\u00e3o segurando <b>' + g.peds.length + '</b> pedido(s), somando <b>' + _dsKg(g.kg) + '</b>. '
+    + 'Produzir os itens da primeira tabela libera os pedidos da segunda.</p>'
+    + '<p style="font-size:10.5px;color:#5A6B7D;margin:0 0 10px">Pedido que passa por mais de um setor aparece na folha de <b>todos</b> eles \u2014 s\u00f3 fatura quando todos entregarem. Por isso somar as folhas d\u00e1 mais que a carteira.</p>'
+    + '<div style="font-size:11px;font-weight:800;color:#0B2A4A;text-transform:uppercase;margin:12px 0 4px">Itens a produzir \u2014 ordem por quanto cada um libera sozinho</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="' + th + ';text-align:left">Item</th><th style="' + th + ';text-align:left">Descri\u00e7\u00e3o</th><th style="' + th + ';text-align:right">Falta produzir</th><th style="' + th + ';text-align:right">Libera sozinho</th><th style="' + th + ';text-align:right">Ped.</th></tr>' + itens + '</table>'
+    + (g.itens.length > 40 ? '<p style="font-size:10.5px;color:#5A6B7D;margin:4px 0 0">Mostrando os 40 primeiros de ' + g.itens.length + '.</p>' : '')
+    + '<div style="font-size:11px;font-weight:800;color:#0B2A4A;text-transform:uppercase;margin:14px 0 4px">Pedidos que este setor est\u00e1 segurando</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="' + th + ';text-align:left">Pedido \u00b7 cliente</th><th style="' + th + ';text-align:right">Peso</th><th style="' + th + ';text-align:left">Entrega</th><th style="' + th + ';text-align:left">Itens que travam</th></tr>' + peds + '</table>'
+    + (g.peds.length > 60 ? '<p style="font-size:10.5px;color:#5A6B7D;margin:4px 0 0">Mostrando os 60 primeiros de ' + g.peds.length + '.</p>' : '')
+    + '</div>';
+}
+
+/* PDF no iPhone sai pela folha de impress\u00e3o: window.print() abre a pr\u00e9via e o
+   proprio iOS oferece "Salvar em Arquivos" e o bot\u00e3o de compartilhar. Nao existe
+   gerador de PDF embutido no app, e nao vale carregar biblioteca de 300 KB para
+   fazer pior o que o sistema ja faz. */
+function destravaImprimir(sel) {
+  const G = _destravaSetores();
+  if (!G) { toast('Importe o REST196 primeiro.'); return; }
+  const lista = (sel && sel.length) ? G.filter(g => sel.indexOf(g.setor) >= 0) : G;
+  if (!lista.length) { toast('Nenhum setor selecionado.'); return; }
+  let box = $('relImpr');
+  if (!box) { box = document.createElement('div'); box.id = 'relImpr'; document.body.appendChild(box); }
+  box.innerHTML = lista.map((g, i) => _destravaPagina(g, i > 0)).join('');
+  document.body.classList.add('imprimindo');
+  toast('\ud83d\udcc4 ' + lista.length + ' setor(es) \u00b7 use "Salvar em Arquivos" para o PDF');
+  window.print();
+  setTimeout(() => { document.body.classList.remove('imprimindo'); box.innerHTML = ''; }, 1500);
+}
+
+/* WhatsApp vai como TEXTO, nao como arquivo: o app nao tem como montar um PDF de
+   verdade para anexar, e mandar link de tela que precisa de login nao serve para
+   quem esta na maquina. Texto abre no celular de qualquer um. */
+function _destravaTexto(lista) {
+  const L = ['*O que destrava faturamento*', _foto196Txt() || ('Carteira de ' + new Date().toLocaleDateString('pt-BR'))];
+  lista.forEach(g => {
+    L.push('');
+    L.push('*' + g.setor.toUpperCase() + '* \u2014 ' + g.itens.length + ' item(ns) segurando ' + g.peds.length + ' pedido(s) \u00b7 ' + _dsKg(g.kg));
+    g.itens.slice(0, 8).forEach(a => {
+      L.push('\u2022 ' + a.cod + (a.desc ? ' ' + String(a.desc).slice(0, 28) : '')
+        + ' \u2014 falta ' + _dsKg(a.falta)
+        + (a.cxFalta > 0 ? ' (' + fmtNum(Math.round(a.cxFalta)) + ' cx)' : '')
+        + (a.so ? ' \u2192 libera ' + a.so + ' ped \u00b7 ' + _dsKg(a.kgSo) : ''));
+    });
+    if (g.itens.length > 8) L.push('  ...e mais ' + (g.itens.length - 8) + ' item(ns).');
+    const venc = g.peds.filter(pd => pd.atraso > 0);
+    if (venc.length) L.push('\u26a0 ' + venc.length + ' pedido(s) j\u00e1 vencido(s) \u00b7 ' + _dsKg(venc.reduce((x, pd) => x + pd.kg, 0)));
+  });
+  L.push('');
+  L.push('_Gerado no app de Produ\u00e7\u00e3o \u00b7 lista completa na aba Programa\u00e7\u00e3o._');
+  return L.join('\n');
+}
+function destravaWhats(sel) {
+  const G = _destravaSetores();
+  if (!G) { toast('Importe o REST196 primeiro.'); return; }
+  const lista = (sel && sel.length) ? G.filter(g => sel.indexOf(g.setor) >= 0) : G;
+  if (!lista.length) { toast('Nenhum setor selecionado.'); return; }
+  const txt = _destravaTexto(lista);
+  /* a folha de compartilhamento do iPhone j\u00e1 traz o WhatsApp e mant\u00e9m a pessoa
+     dentro do app; o wa.me e o plano B de quem nao tem a folha. */
+  if (navigator.share) {
+    navigator.share({ text: txt }).catch(() => { });
+    return;
+  }
+  try { window.open('https://wa.me/?text=' + encodeURIComponent(txt), '_blank'); }
+  catch (_) { toast('N\u00e3o consegui abrir o WhatsApp.'); }
+}
+
+function destravaEscolher() {
+  const G = _destravaSetores();
+  if (!G) { toast('Importe o REST196 primeiro.'); return; }
+  _detVoltar = null;
+  abreDet('Escolher setores',
+    '<p class="idet-desc">Cada setor marcado vira <b>uma p\u00e1gina</b>, com os itens que ele precisa produzir e os pedidos que saem quando produzir.</p>'
+    + G.map(g => '<label style="display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer">'
+      + '<input type="checkbox" class="dsSel" value="' + escapeHtml(g.setor) + '" checked style="width:18px;height:18px;margin-top:2px">'
+      + '<span><b style="color:' + (_COR_SETOR_G[g.setor] || 'var(--navy)') + '">' + escapeHtml(g.setor) + '</b>'
+      + '<div style="font-size:11.5px;color:var(--fraco)">' + g.itens.length + ' item(ns) \u00b7 ' + g.peds.length + ' pedido(s) \u00b7 ' + _dsKg(g.kg) + '</div></span></label>').join('')
+    + '<div style="display:flex;gap:8px;margin-top:14px">'
+    + '<button class="btn btn-navy" style="flex:1;padding:11px;font-size:14px" onclick="destravaAcao(\'pdf\')">\ud83d\udcc4 gerar PDF</button>'
+    + '<button class="btn btn-verde" style="flex:1;padding:11px;font-size:14px" onclick="destravaAcao(\'whats\')">\ud83d\udcf2 WhatsApp</button></div>'
+    + '<p class="desc" style="margin:8px 0 0">No PDF, o iPhone abre a pr\u00e9via de impress\u00e3o \u2014 escolha <b>Salvar em Arquivos</b> ou o bot\u00e3o de compartilhar. No WhatsApp vai um resumo em texto.</p>');
+}
+function _dsSelecionados() { return [].slice.call(document.querySelectorAll('.dsSel:checked')).map(x => x.value); }
+function destravaAcao(tipo) {
+  const sel = _dsSelecionados();
+  if (!sel.length) { toast('Marque ao menos um setor.'); return; }
+  /* fechar ANTES: a folha de impressao esconde os filhos diretos do body, e o
+     modal aberto por cima estragaria a previa. */
+  fecharTudoDet();
+  setTimeout(() => { if (tipo === 'pdf') destravaImprimir(sel); else destravaWhats(sel); }, 260);
 }
 /* 20/08/2026 (João: "separe do card de cima e tire da aba Comercial").
    A tabela de alavanca — qual item, se produzido, destrava mais pedido — é
