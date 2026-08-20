@@ -894,7 +894,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.941.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.942.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2897,7 +2897,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.941.0';
+const APP_VER = '3.942.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27184,6 +27184,30 @@ function detSetupTurno(t) {
     }).join(''))
     + '<p class="desc" style="margin:6px 0 0;font-size:10.5px">“Neste turno” é a fatia da parada que caiu aqui · “Total” é a parada inteira, mesmo que ela atravesse turnos.</p>');
 }
+/* ===== A DATA DE ENTREGA QUE VALE (20/08/2026) =====
+   Joao: "pq esse pedido esta 19/08 ele e para 31/08".
+   A fila (hoje alimentada pelo RPCP339) carrega a data de entrega de quando a
+   OP foi gerada e NAO acompanha reprogramacao de pedido. O 227811 da FROOTY foi
+   empurrado de 19/08 para 31/08 no REST196 do dia 18, e a fila continua dizendo
+   19/08 - a OP aparecia VENCIDA sem estar. Na foto de hoje sao 43 OPs assim.
+   Quem manda na data do cliente e o REST196, que e a carteira. A data da fila
+   continua na tela como origem, para a divergencia ficar EXPOSTA em vez de
+   sumir - se um dia for a carteira que estiver errada, da para ver. */
+function _entregaDoPedido(pedido, item) {
+  if (!_cart196 || !_cart196.pend) return null;
+  const num = String(pedido || '').split('/')[0];
+  if (!num) return null;
+  const it = String(item || '');
+  let melhor = null;
+  for (let i = 0; i < _cart196.pend.length; i++) {
+    const x = _cart196.pend[i];
+    if (String(x.pedido).split('/')[0] !== num) continue;
+    if (it && String(x.item_cod) !== it) continue;
+    const e = String(x.entrega || '').slice(0, 10);
+    if (e && (!melhor || e > melhor)) melhor = e;
+  }
+  return melhor;
+}
 async function detOP(op, cod) {
   op = String(op); cod = cod ? String(cod) : null;
   abreDet('OP ' + op, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
@@ -27226,7 +27250,17 @@ async function detOP(op, cod) {
   if (ult) h += `<p class="idet-desc"><span class="cod">${escapeHtml(String(ult.recurso_cod))}</span> ${escapeHtml(String(ult.recurso_nome || ''))} · ${escapeHtml(setor || '')}<br>`
     + `<b>${escapeHtml(String(ult.item_cod || ''))}</b> ${escapeHtml(String(ult.item_desc || '').slice(0, 44))}`
     + ((ult.cliente || ult.pedido) ? `<br><span style="color:var(--fraco-2)">${escapeHtml(String(ult.cliente || '').replace(/\s*\(.*$/, '').slice(0, 38))}</span>${_seloPedido(ult.pedido)}` : '')
-    + (ult.entrega ? ` · entrega <b${ult.entrega < hojeISO() ? ' style="color:var(--critico)"' : ''}>${fmtData(ult.entrega)}</b>${ult.entrega < hojeISO() ? ' VENCIDA' : ''}` : '') + '</p>';
+    + (() => {
+        const eFila = ult.entrega ? String(ult.entrega).slice(0, 10) : null;
+        const eCart = _entregaDoPedido(ult.pedido, ult.item_cod);
+        const ent = eCart || eFila;
+        if (!ent) return '</p>';   // sem data o par\u00e1grafo ainda precisa fechar
+        const venc = ent < hojeISO();
+        const mudou = eCart && eFila && eCart !== eFila;
+        return ` · entrega <b${venc ? ' style="color:var(--critico)"' : ''}>${fmtData(ent)}</b>${venc ? ' VENCIDA' : ''}`
+          + (mudou ? `<br><span style="font-size:11px;color:var(--laranja)" title="A fila do ERP guarda a data de quando a OP foi gerada e n\u00e3o acompanha reprograma\u00e7\u00e3o de pedido. Vale a carteira.">\u26a0 reprogramado \u2014 a fila ainda traz ${fmtData(eFila)}; quem vale \u00e9 a carteira (REST196 de ${fmtData(String((_cart196 && _cart196.dia) || '').slice(0, 10))})</span>` : '')
+          + '</p>';
+      })();
 
   h += `<div style="display:flex;gap:7px;margin:8px 0 12px">`
     + `<div style="flex:1;background:var(--leve-5);border:1px solid var(--borda);border-radius:10px;padding:7px 4px;text-align:center"><div style="font-size:9.5px;color:var(--fraco);text-transform:uppercase">Programado</div><div style="font-size:15px;font-weight:800">${fmtKg(progKg)}</div>${progCx && !semCx ? `<div style="font-size:9.5px;color:var(--fraco-2)">${nv(progCx)} cx</div>` : ''}</div>`
