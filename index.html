@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.910.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.911.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.910.0';
+const APP_VER = '3.911.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27604,6 +27604,25 @@ function _arRitmoItens(itens, mesQuebra) {
    Tudo normalizado POR TURNO — sem isso, ano com menos turno parece melhor só
    porque a máquina rodou menos. O ano só entra se tiver produção e pelo menos
    uma das fontes de causa; ano sem dado de causa mostra travessão, não zero. */
+/* 20/08/2026 (João: "esse motivo de paradas está muito pouco") — ele estava
+   certo. O denominador era o total de turnos DO ANO, mas o relatório de causa
+   nem sempre cobre o ano inteiro. Ele importou 643 e 624 a partir de
+   01/12/2023: em 2023 são 20 turnos cobertos contra 747 no ano. Dividir as
+   346,7 h de dezembro por 747 dava 28min/turno, quando o real é 17h20 — 37
+   vezes menor. O ano parecia ótimo justamente por ter pouco dado.
+   Agora cada fonte tem a janela dela e o denominador é só o turno DENTRO dessa
+   janela. Ano coberto por menos de 70% ganha marca de parcial. */
+function _arJanela(lista) {
+  let de = null, ate = null;
+  (lista || []).forEach(r => { const d = String(r.dia || r.abertura || '').slice(0, 10); if (d.length !== 10) return; if (!de || d < de) de = d; if (!ate || d > ate) ate = d; });
+  return de ? { de, ate } : null;
+}
+function _arTurnosNaJanela(ano, jan) {
+  if (!jan) return 0;
+  let n = 0;
+  (_arRows || []).forEach(r => { const d = String(r.dia).slice(0, 10); if (d.slice(0, 4) === ano && d >= jan.de && d <= jan.ate) n++; });
+  return n;
+}
 function _arCruzaAnos() {
   if (!_arRows || !_arRows.length) return [];
   const anos = {};
@@ -27619,13 +27638,19 @@ function _arCruzaAnos() {
       if (d >= 0 && d < 400) anos[a].diasOS.push(d);
     }
   });
-  return Object.values(anos).filter(x => x.turnos >= 20).sort((a, b) => a.ano.localeCompare(b.ano)).map(x => ({
-    ano: x.ano, turnos: x.turnos, kgTurno: x.kg / x.turnos,
-    hParTurno: x.temPar ? x.hPar / x.turnos : null,
-    pctRef: x.temRef && x.kg > 0 ? x.kgRef / x.kg * 100 : null,
-    nOS: x.temOS ? x.nOS : null,
-    diasOS: x.diasOS.length ? x.diasOS.reduce((a2, b2) => a2 + b2, 0) / x.diasOS.length : null
-  }));
+  const jPar = _arJanela(_arParadas), jRef = _arJanela(_arPerdas), jOS = _arJanela(_arOS);
+  return Object.values(anos).filter(x => x.turnos >= 20).sort((a, b) => a.ano.localeCompare(b.ano)).map(x => {
+    const tPar = _arTurnosNaJanela(x.ano, jPar) || x.turnos;
+    const parcial = (jPar && tPar < x.turnos * 0.7) || (jRef && _arTurnosNaJanela(x.ano, jRef) < x.turnos * 0.7);
+    return {
+      ano: x.ano, turnos: x.turnos, turnosCausa: tPar, parcial: !!parcial,
+      kgTurno: x.kg / x.turnos,
+      hParTurno: x.temPar ? x.hPar / tPar : null,
+      pctRef: x.temRef && x.kg > 0 ? x.kgRef / x.kg * 100 : null,
+      nOS: x.temOS ? x.nOS : null,
+      diasOS: x.diasOS.length ? x.diasOS.reduce((a2, b2) => a2 + b2, 0) / x.diasOS.length : null
+    };
+  });
 }
 /* top motivos/tipos por turno, ano a ano — o que cresceu de verdade */
 function _arTopPorAno(lista, campoRot, campoVal, anos, porTurno) {
@@ -27637,7 +27662,8 @@ function _arTopPorAno(lista, campoRot, campoVal, anos, porTurno) {
   });
   const ult = anos[anos.length - 1];
   return Object.entries(M).map(([k, v]) => ({
-    rot: k, vals: anos.map(a => { const t = (a && a.turnos) || 0; const x = v[a.ano] || 0; return porTurno ? (t ? x / t : 0) : x; })
+    /* mesmo denominador da tabela de cima: turno DENTRO da janela do relatório */
+    rot: k, vals: anos.map(a => { const t = (a && (a.turnosCausa || a.turnos)) || 0; const x = v[a.ano] || 0; return porTurno ? (t ? x / t : 0) : x; })
   })).sort((a, b) => b.vals[b.vals.length - 1] - a.vals[a.vals.length - 1]).slice(0, 6);
 }
 
@@ -27852,7 +27878,8 @@ function arRender() {
     const A = _arCruzaAnos().slice(-4);
     if (A.length >= 2 && (A.some(x => x.hParTurno != null) || A.some(x => x.nOS != null))) {
       const nd = v => v == null ? '<span style="color:var(--fraco-2)">—</span>' : v;
-      const cab = ['Indicador'].concat(A.map(x => x.ano));
+      const cab = ['Indicador'].concat(A.map(x => x.ano + (x.parcial ? ' *' : '')));
+      const temParcial = A.some(x => x.parcial);
       const linhaM = (rot, vals, fmtv, pior) => {
         const ult = vals[vals.length - 1], pri = vals.find(v => v != null);
         const ruim = (ult != null && pri != null) && (pior === 'maior' ? ult > pri * 1.25 : ult < pri * 0.85);
@@ -27866,8 +27893,10 @@ function arRender() {
         + linhaM('Dias p/ <b>fechar OS</b>', A.map(x => x.diasOS), v => v.toFixed(1).replace('.', ',') + 'd', 'maior')
         + '<tr><td class="nome" style="color:var(--fraco-2);font-size:11px">turnos apontados</td>' + A.map(x => '<td><span class="cel neutra">' + fmt(x.turnos, 0) + '</span></td>').join('') + '</tr>';
       tabCruza = '<div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 2px">O que mudou \u2014 produção, parada, refugo e manutenção</div>'
-        + '<p class="desc" style="margin-bottom:4px">Tudo <b>por turno</b>. Ano que rodou menos não fica melhor só por isso. Travessão = relatório não cobre aquele ano.</p>'
-        + tabSimples(cab, linhas);
+        + '<p class="desc" style="margin-bottom:4px">Tudo <b>por turno</b>. Ano que rodou menos não fica melhor só por isso. Travessão = relatório não cobre aquele ano.'
+        + (temParcial ? ' <b>*</b> = o relatório de parada/refugo cobre só parte do ano; a conta usa apenas os turnos cobertos, mas a base é pequena.' : '') + '</p>'
+        + tabSimples(cab, linhas)
+        + (temParcial ? '<p class="desc" style="margin-top:3px;color:#B36B00">' + A.filter(x => x.parcial).map(x => x.ano + ': ' + fmt(x.turnosCausa, 0) + ' de ' + fmt(x.turnos, 0) + ' turnos cobertos').join(' · ') + '</p>' : '');
 
       /* o que cresceu dentro de cada fonte */
       const topPar = _arTopPorAno(_arParadas, 'motivo_desc', 'tempo_horas', A, true);
