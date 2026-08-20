@@ -894,7 +894,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.942.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.943.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2897,7 +2897,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.942.0';
+const APP_VER = '3.943.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23485,6 +23485,7 @@ async function carregarFilaVenc() {
       .eq('dia_foto', dia).lt('termino', dia + 'T00:00:00').limit(600);
     if (error) throw error;
     _filaVenc = { dia, linhas: data || [] };
+    try { _corrigirEntregasPelaCarteira(_filaVenc.linhas); } catch (_) { }
   } catch (e) { _filaVenc = null; console.warn('filaVenc:', e && e.message); }
 }
 let _filaDesv = null;
@@ -23493,6 +23494,7 @@ async function carregarFilaDesvio() {
     const { data, error } = await sb.from('v_fila_desvio').select('*').limit(4000);
     if (error) throw error;
     _filaDesv = data || [];
+    try { _corrigirEntregasPelaCarteira(_filaDesv); } catch (_) { }
   } catch (e) { _filaDesv = null; console.warn('filaDesvio:', e && e.message); }
 }
 let _opSaiu = null;
@@ -23533,6 +23535,9 @@ async function carregarProgramacao(forcar) {
     if (error) throw error;
     _progDados = data || [];
     try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
+    /* a fila do ERP guarda a entrega de quando a OP foi gerada e não acompanha
+       reprogramação do pedido — sem isto, OP com prazo novo aparece VENCIDA. */
+    try { _entCorrigidas = _corrigirEntregasPelaCarteira(_progDados); } catch (_) { _entCorrigidas = 0; }
     /* onde o estoque esta - roda junto com a carteira, sem travar a tela */
     try { carregarDepositoItem(); } catch (_) {}
     try { await carregarPropostas(); } catch (e) { _prop = null; console.warn('propostas:', e && e.message); }
@@ -23555,6 +23560,16 @@ async function carregarProgramacao(forcar) {
   }
   _progMontarSeletores();
   renderProgramacao();
+}
+/* faixa de auditoria: quantas OPs tiveram a entrega corrigida nesta carga.
+   Sem isto a correcao seria invisivel e ninguem saberia do problema no ERP. */
+function _avisoEntregaCorrigida() {
+  if (!_entCorrigidas) return '';
+  return '<div style="background:#FFF6E6;border-left:4px solid #B36B00;border-radius:0 11px 11px 0;padding:9px 12px;margin-bottom:10px;font-size:12.5px">'
+    + '<b style="color:#7a4a00">\u26a0 ' + _entCorrigidas + ' ordem(ns) com a entrega desatualizada na fila</b>'
+    + '<p class="desc" style="margin:3px 0 0">A fila do ERP guarda a entrega de <b>quando a OP foi gerada</b> e n\u00e3o acompanha reprograma\u00e7\u00e3o do pedido. '
+    + 'O app est\u00e1 usando a data da carteira (REST196 de ' + escapeHtml(fmtData(String((_cart196 && _cart196.dia) || '').slice(0, 10))) + '), que \u00e9 a que vale para o cliente. '
+    + 'Sem essa corre\u00e7\u00e3o essas ordens apareceriam como <b>vencidas</b> sem estar.</p></div>';
 }
 function mudarSetorProg() { _progSetorSel = $('progSetor').value; _progMaqSel = ''; _progMontarSeletores(); renderProgramacao(); }
 function mudarMaqProg() { _progMaqSel = $('progMaq').value; renderProgramacao(); }
@@ -24177,6 +24192,20 @@ async function carregarCarteira196() {
     carregarItemMaquina()
   ]);
   _cart196 = { dia, hora: f.hora, pend: pend || [], est: est || [], hist: hist || {} };
+  /* ÍNDICE DE ENTREGA POR PEDIDO+ITEM (20/08/2026). Montado uma vez aqui em vez
+     de varrer as 4.220 linhas a cada consulta — a fila tem 1.166 OPs e isso
+     daria ~5 milhões de comparações por carregamento. */
+  try {
+    const ix = {};
+    (_cart196.pend || []).forEach(x => {
+      const e = String(x.entrega || '').slice(0, 10); if (!e) return;
+      const num = String(x.pedido || '').split('/')[0]; if (!num) return;
+      const k = num + '|' + String(x.item_cod || '');
+      if (!ix[k] || e > ix[k]) ix[k] = e;                 // pedido+item
+      if (!ix[num] || e > ix[num]) ix[num] = e;           // pedido inteiro, para quando o item não casa
+    });
+    _cart196.entIx = ix;
+  } catch (_) { _cart196.entIx = {}; }
   try { _limparMemoSetor(); } catch (_) {}
 }
 /* paginacao aceitando um filtro montado por quem chama */
@@ -27194,20 +27223,33 @@ function detSetupTurno(t) {
    continua na tela como origem, para a divergencia ficar EXPOSTA em vez de
    sumir - se um dia for a carteira que estiver errada, da para ver. */
 function _entregaDoPedido(pedido, item) {
-  if (!_cart196 || !_cart196.pend) return null;
-  const num = String(pedido || '').split('/')[0];
-  if (!num) return null;
+  const ix = _cart196 && _cart196.entIx; if (!ix) return null;
+  const num = String(pedido || '').split('/')[0]; if (!num) return null;
   const it = String(item || '');
-  let melhor = null;
-  for (let i = 0; i < _cart196.pend.length; i++) {
-    const x = _cart196.pend[i];
-    if (String(x.pedido).split('/')[0] !== num) continue;
-    if (it && String(x.item_cod) !== it) continue;
-    const e = String(x.entrega || '').slice(0, 10);
-    if (e && (!melhor || e > melhor)) melhor = e;
-  }
-  return melhor;
+  return (it && ix[num + '|' + it]) || ix[num] || null;
 }
+/* ===== CORREÇÃO NA FONTE (20/08/2026, João: "veja que isso não vai acontecer
+   mais") =====
+   Corrigir card por card seria vinte lugares para errar e um lugar novo errado
+   a cada tela que nascesse. A data e arrumada UMA vez, assim que a fila e a
+   carteira terminam de carregar: quem manda na entrega ao cliente e o REST196.
+   A data original da fila fica guardada em entrega_fila e a linha marcada com
+   reprogramado=true, para nenhum lugar perder a informacao - e para dar como
+   auditar quantas OPs estao nessa situacao. */
+function _corrigirEntregasPelaCarteira(linhas) {
+  const ix = _cart196 && _cart196.entIx;
+  if (!ix || !Array.isArray(linhas)) return 0;
+  let n = 0;
+  linhas.forEach(r => {
+    if (r.entrega_fila === undefined) r.entrega_fila = r.entrega ? String(r.entrega).slice(0, 10) : null;
+    const e = _entregaDoPedido(r.pedido, r.item_cod);
+    if (!e) return;
+    const atual = r.entrega ? String(r.entrega).slice(0, 10) : null;
+    if (e !== atual) { r.entrega = e; r.reprogramado = true; n++; }
+  });
+  return n;
+}
+let _entCorrigidas = 0;
 async function detOP(op, cod) {
   op = String(op); cod = cod ? String(cod) : null;
   abreDet('OP ' + op, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
@@ -27251,6 +27293,8 @@ async function detOP(op, cod) {
     + `<b>${escapeHtml(String(ult.item_cod || ''))}</b> ${escapeHtml(String(ult.item_desc || '').slice(0, 44))}`
     + ((ult.cliente || ult.pedido) ? `<br><span style="color:var(--fraco-2)">${escapeHtml(String(ult.cliente || '').replace(/\s*\(.*$/, '').slice(0, 38))}</span>${_seloPedido(ult.pedido)}` : '')
     + (() => {
+        /* detOP le direto de fila_producao, fora do caminho de
+           carregarProgramacao - entao aplica a mesma regra aqui. */
         const eFila = ult.entrega ? String(ult.entrega).slice(0, 10) : null;
         const eCart = _entregaDoPedido(ult.pedido, ult.item_cod);
         const ent = eCart || eFila;
@@ -27730,7 +27774,7 @@ function renderProgramacao() {
         + 'background:' + (on ? 'var(--tinta-s)' : '#fff') + ';color:' + (on ? '#fff' : 'var(--fraco-2s)') + '">'
         + escapeHtml(rot) + ' <span style="opacity:.7;font-weight:600">' + _grupos[k].length + '</span></button>';
     }).join('') + '</div>';
-  alvo.innerHTML = _chips + '<div class="card prog-grupo">' + _grupos[_progGrupoSel].join('') + '</div>';
+  alvo.innerHTML = _avisoEntregaCorrigida() + _chips + '<div class="card prog-grupo">' + _grupos[_progGrupoSel].join('') + '</div>';
 }
 
 /* ================= HISTÓRICO ================= */
