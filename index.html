@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.902.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.903.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2815,7 +2815,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.902.0';
+const APP_VER = '3.903.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22902,6 +22902,28 @@ async function gravar(id, substituir = false) {
     // fila_producao e HISTORICO (umo relatório por dia) e nao tem coluna 'dia':
     // a limpeza por periodo NAO roda aqui. Se rodasse, o delete em importacoes
     // levaria junto (ON DELETE CASCADE) a fila das outras maquinas do mesmo dia.
+    /* 20/08/2026 - CONFIABILIDADE DAS FOTOS. Cada relatorio se comporta de um
+       jeito e tratar todos igual ja causou erro dos dois lados:
+         REST196 ....... cada emissao e a carteira INTEIRA. Duas no mesmo dia
+                         nao se somam, a nova SUBSTITUI. Sem isso sobravam
+                         46.098 linhas orfas da emissao anterior (20/08).
+         fila_producao . chega em PEDACOS (uma hora_foto por bloco de maquinas).
+                         Somar e o certo; a view v_fila_atual tira OP repetida.
+         estoque_dep ... tambem chega em pedacos, por categoria. Em 19/08 o
+                         bloco das 06:30 tinha 'bobina' e 'vendido' e o das
+                         18:23 nao. Filtrar por hora perde categoria inteira.
+       Por isso a limpeza abaixo so vale para o 196. */
+    if (mapa.tabela === 'rest196_pendente') {
+      /* o dia da foto sai das proprias linhas gravadas — nao do periodo pedido
+         no ERP, que e o intervalo de ENTREGAS e nada tem a ver com a data de
+         emissao. */
+      const _dfo = (linhas[0] || {}).dia_foto || null;
+      if (_dfo) {
+        const { error: eF } = await sb.from('rest196_pendente').delete()
+          .eq('dia_foto', _dfo).neq('importacao_id', imp.id);
+        if (eF) console.warn('limpeza da foto do 196 falhou:', eF.message);
+      }
+    }
     if (mapa.tabela !== 'fila_producao' && mapa.tabela !== 'estoque_deposito' && mapa.tabela !== 'rest196_pendente' && mapa.tabela !== 'propostas' && r.periodo.de && r.periodo.ate) {
       const { error: eDel } = await sb.from(mapa.tabela).delete()
         .gte('dia', r.periodo.de).lte('dia', r.periodo.ate)
@@ -23015,13 +23037,17 @@ async function carregarDepositoItem() {
   try {
     /* mesmo problema da carteira: em 19/08 o deposito tem foto de 06:30 (1.216
        linhas) e de 18:23 (3.360). Somar as duas duplica o estoque. */
-    const { data: dd } = await sb.from('estoque_deposito').select('dia_foto,hora_foto').order('dia_foto', { ascending: false }).order('hora_foto', { ascending: false }).limit(1);
+    /* 20/08/2026 - REVERTIDO: aqui NAO se filtra por hora. O relatorio de
+       deposito chega em pedacos por categoria — em 19/08 o bloco das 06:30
+       trazia 'bobina' e 'vendido' e o das 18:23 nao trazia. Filtrando pela hora
+       mais recente eu perdia categorias inteiras, e foi isso que me fez achar
+       que o item 1605317 tinha saido do deposito: ele estava no outro pedaco. */
+    const { data: dd } = await sb.from('estoque_deposito').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
     const dia = dd && dd[0] && dd[0].dia_foto; if (!dia) { _depoItem = null; return; }
-    const hora = dd[0].hora_foto || null;
+    const hora = null;
     let linhas = [], de = 0;
     for (let g = 0; g < 40; g++) {
       let q = sb.from('estoque_deposito').select('item_cod,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia);
-      if (hora) q = q.eq('hora_foto', hora);
       const { data, error } = await q.range(de, de + 999);
       if (error) throw error;
       const d = data || []; linhas = linhas.concat(d);
