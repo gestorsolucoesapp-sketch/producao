@@ -812,7 +812,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.895.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.896.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2792,7 +2792,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.895.0';
+const APP_VER = '3.896.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12113,9 +12113,32 @@ function horaDecParada(inicio) {
 // converte o timestamp da parada em "HH:MM" SEM fuso e aplica a regra oficial de
 // turnos por horário (blocoPorHora): respeita T3=Manhã (13:37–15:10) e T4=Tarde,
 // além do sábado/feriado reduzido. É a mesma régua da produção.
+/* 19/08/2026 - PARADA APARECIA 3H ADIANTADA (achado do Joao: 14h17 de parada
+   num turno de 9h na 705).
+   O importador grava a hora do ERP com fuso explicito ('...T17:50:00-03:00'),
+   entao o Postgres guarda certo. Mas o PostgREST devolve em UTC
+   ('2026-08-17T20:50:00+00:00') e esta funcao lia os digitos crus do texto —
+   pegava 20:50 em vez de 17:50. Toda parada entrava 3 horas adiantada, e o
+   fatiamento por turno ficava errado junto:
+     · parada real 17:50->03:00 (Tarde 3h + Noite 6,15h) virava 9,12h TODA em Noite
+     · parada real 03:00->06:57 (Noite 2,98h + Manha 0,95h) virava 3,95h em Manha
+   Por isso a Noite somava mais horas do que o turno tem. Agora, quando a string
+   traz fuso, a hora e convertida para America/Sao_Paulo antes de ser lida.
+   String sem fuso (import antigo) continua sendo lida como esta — ja e local. */
 function horaHHMMParada(inicio) {
   if (!inicio) return null;
-  const m = String(inicio).match(/[T ](\d{2}):(\d{2})/);
+  const s = String(inicio).trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+    try {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        const f = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+        const mm = f.match(/(\d{1,2}):(\d{2})/);
+        if (mm) return String(mm[1]).padStart(2, '0') + ':' + mm[2];
+      }
+    } catch (_) {}
+  }
+  const m = s.match(/[T ](\d{2}):(\d{2})/);
   return m ? m[1] + ':' + m[2] : null;
 }
 /* rotulo do turno para EXIBIR: quando a parada atravessa o corte, mostra as
