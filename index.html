@@ -834,7 +834,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.918.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.919.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2834,7 +2834,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.918.0';
+const APP_VER = '3.919.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22971,6 +22971,28 @@ async function gravar(id, substituir = false) {
     }
     // 2) grava registros em lotes de 400
     const linhas = r.registros.map(reg => ({ importacao_id: imp.id, ...mapa.linha(reg) }));
+    /* 20/08/2026 - TRAVA DA EMISSÃO SEM FILTRO (João: "olha a discrepância").
+       O REST196 emitido sem "Situação Pedido: Abertos" traz o histórico inteiro:
+       50.302 linhas, 87,6% delas com pendente ZERO, contra ~4.200 linhas e 0,5%
+       de zeradas nas emissões normais. Uma dessas entrou como a foto de 19/08 e
+       arruinou a Evolução da Carteira: o dia saltou para 9.545 pedidos e o
+       gráfico de saiu×entrou mostrou 932 t entrando e 827 t saindo, nada disso
+       real. O app aceitou calado.
+       Agora ele mede a proporção de linhas sem saldo ANTES de gravar e pede
+       confirmação. Não bloqueia — só obriga a olhar, porque um dia pode haver
+       motivo legítimo. */
+    if (mapa.tabela === 'rest196_pendente' && linhas.length > 500) {
+      const _zer = linhas.filter(l => !((+l.peso_pendente || 0) > 0.001)).length;
+      const _pz = _zer / linhas.length * 100;
+      if (_pz > 40) {
+        const _ok = confirm('Atenção: ' + Math.round(_pz) + '% das ' + fmt(linhas.length, 0)
+          + ' linhas deste REST196 estão com pendente ZERO.\n\nEmissão normal da carteira tem menos de 1%. Isso indica relatório emitido SEM o filtro "Situação Pedido: Abertos" — ele traz pedido já atendido e distorce a carteira e a Evolução.\n\nImportar mesmo assim?');
+        if (!_ok) {
+          await sb.from('importacoes').delete().eq('id', imp.id);
+          throw new Error('Importação cancelada: emissão sem o filtro de Abertos (' + Math.round(_pz) + '% das linhas sem saldo).');
+        }
+      }
+    }
     for (let i = 0; i < linhas.length; i += 400) {
       // producao_resumo tem UNIQUE (dia,turno,recurso_cod,unidade): sem upsert, a linha nova
       // colide com a antiga (que ainda não foi removida) e a importação inteira falha.
