@@ -815,7 +815,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.898.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.899.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2805,7 +2805,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.898.0';
+const APP_VER = '3.899.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -21713,6 +21713,25 @@ async function rmSetor(nome) {
    coisas são diferentes: ciência é "vi o aviso", conclusão é "fiz a tarefa". */
 /* liga/desliga o acesso a faltas e atestados de um usuário */
 /* líder = pode lançar falta, feedback e observação no histórico da pessoa */
+/* 20/08/2026 - LIDER SEM A MARCA (Joao: Luis Eduardo e Lucineia nao viam falta).
+   O campo "setor" e texto livre, entao "lider Termoformagem" PARECE permissao e
+   nao e: quem libera ver e lancar falta e a marca eh_lider, num botao separado.
+   Dez pessoas estavam nesse buraco e so descobrimos porque reclamaram. Agora a
+   aba Usuarios acusa sozinha quem tem cargo de lideranca escrito no setor e
+   esta sem a marca. */
+const _RX_CARGO_LIDER = /l[ií]der|lideran|supervis|encarreg|coordena/i;
+function _faltaMarcaLider(u) {
+  return !!u && u.papel !== 'admin' && !u.eh_lider && _RX_CARGO_LIDER.test(String(u.setor || ''));
+}
+async function ligarMarcaLiderEmMassa(ids) {
+  const L = String(ids || '').split(',').filter(Boolean);
+  if (!L.length) return;
+  if (!confirm('Marcar ' + L.length + ' pessoa(s) como líder? Elas passam a VER e LANÇAR falta, feedback e observação.')) return;
+  const { error } = await sb.from('perfis').update({ eh_lider: true }).in('id', L);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(L.length + ' marcado(s) como líder — precisam sair e entrar de novo');
+  try { await carregarUsuarios(); } catch (_) {}
+}
 async function togLider(id, on) {
   try {
     const { error } = await sb.from('perfis').update({ eh_lider: on }).eq('id', id);
@@ -21873,8 +21892,17 @@ async function carregarUsuarios() {
     [u.nome, u.email, u.setor, u.papel].some(v => String(v || '').toLowerCase().includes(_f)));
   const vazio = (_f && !perfisVis.length)
     ? `<p class="vazio-painel">Ninguém encontrado para “${escapeHtml(_usrFiltro)}”.</p>` : '';
+  /* aviso no topo: sempre sobre a lista INTEIRA, nunca sobre o filtro — senão
+     o alerta some justo quando você está procurando outra pessoa. */
+  const _semMarca = (perfis || []).filter(_faltaMarcaLider);
+  const _avisoLider = !_semMarca.length ? '' : `<div style="background:#FFF6E6;border-left:4px solid #B36B00;border-radius:0 11px 11px 0;padding:10px 12px;margin-bottom:10px">
+      <div style="font-weight:800;color:#7a4a00;font-size:13.5px">⚠ ${_semMarca.length} pessoa(s) com cargo de liderança sem a marca de líder</div>
+      <p class="desc" style="margin:4px 0 7px">O setor é só um rótulo. Quem libera <b>ver e lançar falta</b> é a marca de líder, e estas estão sem ela:<br>${_semMarca.map(u => escapeHtml(u.nome || u.email) + ' <span style="opacity:.7">(' + escapeHtml(u.setor || '') + ')</span>').join(' · ')}</p>
+      <button class="btn btn-verde" style="width:auto;padding:7px 13px;font-size:12.5px" onclick="ligarMarcaLiderEmMassa('${_semMarca.map(u => u.id).join(',')}')">marcar ${_semMarca.length === 1 ? 'como líder' : 'todos como líderes'}</button>
+      <p class="desc" style="margin:6px 0 0">Depois de marcar, cada um precisa sair e entrar de novo no app.</p>
+    </div>`;
   const conta = _f ? `<p class="desc" style="margin:-6px 0 10px">${perfisVis.length} de ${perfis.length} cadastro(s)</p>` : '';
-  box.innerHTML = novosHtml + chartHtml + chartIA + barra + conta + vazio + perfisVis.map(u => {
+  box.innerHTML = novosHtml + _avisoLider + chartHtml + chartIA + barra + conta + vazio + perfisVis.map(u => {
     const admin = u.papel === 'admin';
     const eu = u.id === meuId;
     const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
@@ -21924,6 +21952,7 @@ async function carregarUsuarios() {
           <div class="usr-nome">${escapeHtml(u.nome)}${eu ? ' <span class="desc">(você)</span>' : ''}</div>
           <div class="usr-mail">${escapeHtml(u.email)}</div>
           <div class="usr-mail">🏭 ${u.setor ? escapeHtml(u.setor) : '<span style="color:var(--critico)">sem setor</span>'}</div>
+          ${_faltaMarcaLider(u) ? '<div style="margin-top:4px;background:#FFF6E6;border-left:3px solid #B36B00;border-radius:0 8px 8px 0;padding:4px 8px;font-size:11.5px;color:#7a4a00;font-weight:700">⚠ tem cargo de liderança no setor, mas <b>não está marcado como líder</b> — não vê nem lança falta</div>' : ''}
         </div>
         <div style="text-align:right">${tagPapel}<br>${tagStatus}</div>
       </div>
