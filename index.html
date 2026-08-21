@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.955.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.956.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.955.0';
+const APP_VER = '3.956.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25054,6 +25054,101 @@ async function _cartMovimento() {
     ${varHtml}${fluxoHtml}`;
 }
 
+/* 21/08/2026 (João: "quero clicar e mostra detalhes"). Estes três helpers eram
+   locais de _cartDiaLinhas(). Subiram para cá porque agora o detalhe por faixa
+   (detCartFluxo) monta a MESMA linha — e duas cópias da regra de selo iam
+   divergir na primeira vez que uma delas mudasse. */
+const _CF_LIM = 500;
+const _cfSelo = (txt, cor, bg) => `<span style="display:inline-block;background:${bg};color:${cor};border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800;margin-left:3px">${txt}</span>`;
+const _cfKg = v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' kg';
+function _cfPrazo(x) {
+  const d = x.dias_de_folga;
+  if (d == null) return '';
+  if (d < 0) return _cfSelo('atrasada ' + Math.abs(d) + 'd', '#fff', '#8A2B2B');
+  if (d === 0) return _cfSelo('no dia', '#fff', 'var(--ok-3)');
+  return _cfSelo(d + 'd de folga', '#fff', 'var(--ok-3)');
+}
+function _cfLinha(x, campo, cls) {
+  return `<tr onclick="detItem('${_jsAttr(x.item_cod)}')" style="cursor:pointer">
+    <td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(x.num || ''))}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(String(x.item_desc || x.item_cod || '').slice(0, 38))}</span> 🔎
+      <div style="font-size:10px;color:var(--fraco-2);font-weight:600">${escapeHtml(String(x.cliente || '').replace(/\s*\(.*$/, '').slice(0, 26))}${x.entrega ? ' · entrega ' + fmtData(x.entrega) : ''}</div>
+      ${campo === 'kg_saiu' ? `<div style="margin-top:2px">${x.travava_antes ? _cfSelo('destravou o pedido', '#fff', 'var(--ok-3)') : ''}${_cfPrazo(x)}${!x.sumiu ? _cfSelo('parcial', 'var(--fraco)', 'var(--leve-3)') : ''}</div>` : (x.nova ? `<div style="margin-top:2px">${_cfSelo('linha nova', '#fff', 'var(--verde)')}</div>` : '')}</td>
+    <td><span class="cel ${cls}">${_cfKg(x[campo])}</span></td></tr>`;
+}
+const _CF_COLS = 'pedido,num,item_cod,item_desc,cliente,entrega,kg_antes,kg_agora,kg_saiu,kg_entrou,sumiu,nova,travava_antes,dias_de_folga';
+
+/* DETALHE DE UMA FAIXA DO BLOCO "DESDE ...".
+   Até a 3.955 as cinco faixas de baixo eram <div> mortos: para ver o que entrou,
+   o João tinha que rolar 484 linhas de saída antes de chegar na lista de
+   entradas. Agora cada faixa abre a sua própria lista, já filtrada, e o X volta
+   para o resumo do dia. */
+async function detCartFluxo(dia, tipo) {
+  _detVoltar = () => detCarteiraDia(dia);
+  const T = {
+    saiu:      { t: '🔻 Saiu da carteira',            campo: 'kg_saiu',   cls: 'baixo' },
+    entrou:    { t: '🟢 Entrou na carteira',          campo: 'kg_entrou', cls: 'ok' },
+    saldo:     { t: '⚖️ Saldo do dia',                 campo: null,        cls: null },
+    prazo:     { t: '📅 Saíram depois da entrega',    campo: 'kg_saiu',   cls: 'baixo' },
+    destravou: { t: '🔓 Linhas que destravaram',      campo: 'kg_saiu',   cls: 'baixo' }
+  }[tipo] || { t: 'Detalhe', campo: 'kg_saiu', cls: 'baixo' };
+
+  abreDet(T.t + ' · ' + fmtData(dia), '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
+  let S = [], E = [];
+  try {
+    const q = c => sb.from('v_carteira_fluxo_linha').select(_CF_COLS).eq('dia_foto', dia);
+    if (tipo === 'entrou') {
+      const { data, error } = await q().gt('kg_entrou', 0.001).order('kg_entrou', { ascending: false }).limit(_CF_LIM);
+      if (error) throw error; E = data || [];
+    } else if (tipo === 'saldo') {
+      const [rs, re] = await Promise.all([
+        q().gt('kg_saiu', 0.001).order('kg_saiu', { ascending: false }).limit(_CF_LIM),
+        q().gt('kg_entrou', 0.001).order('kg_entrou', { ascending: false }).limit(_CF_LIM)
+      ]);
+      if (rs.error) throw rs.error;
+      S = rs.data || []; E = (re && re.data) || [];
+    } else {
+      const { data, error } = await q().gt('kg_saiu', 0.001).order('kg_saiu', { ascending: false }).limit(_CF_LIM);
+      if (error) throw error;
+      S = data || [];
+      /* filtro no cliente: dias_de_folga e travava_antes vêm calculados na view,
+         mas filtrar por eles no servidor exigiria índice que não existe. */
+      if (tipo === 'prazo') S = S.filter(x => x.dias_de_folga != null && x.dias_de_folga < 0);
+      if (tipo === 'destravou') S = S.filter(x => x.travava_antes);
+    }
+  } catch (e) { abreDet(T.t, '<p class="idet-desc">Não consegui buscar as linhas.</p>'); return; }
+
+  const somaS = S.reduce((a, x) => a + (+x.kg_saiu || 0), 0);
+  const somaE = E.reduce((a, x) => a + (+x.kg_entrou || 0), 0);
+  const nT = v => ((+v || 0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t';
+
+  let cab = '', corpo = '';
+  if (tipo === 'saldo') {
+    const liq = somaE - somaS;
+    cab = `<p class="idet-desc"><b style="color:var(--verde)">${nT(somaE)}</b> entrou · <b style="color:var(--critico)">${nT(somaS)}</b> saiu · saldo <b style="color:${liq >= 0 ? 'var(--verde)' : 'var(--critico)'}">${liq > 0 ? '+' : ''}${nT(liq)}</b></p>`;
+    corpo = (E.length ? `<div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Entraram · ${E.length} linha(s)</div>`
+        + tabSimples(['Pedido · item · cliente', 'Entrou'], E.map(x => _cfLinha(x, 'kg_entrou', 'ok')).join('')) : '')
+      + (S.length ? `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Saíram · ${S.length} linha(s)</div>`
+        + tabSimples(['Pedido · item · cliente', 'Saiu'], S.map(x => _cfLinha(x, 'kg_saiu', 'baixo')).join('')) : '');
+  } else if (tipo === 'entrou') {
+    if (!E.length) { abreDet(T.t + ' · ' + fmtData(dia), '<p class="idet-desc">Nenhuma linha entrou nesse dia.</p>'); return; }
+    const novas = E.filter(x => x.nova).length;
+    cab = `<p class="idet-desc"><b>${E.length}</b> linha(s) · <b style="color:var(--verde)">${nT(somaE)}</b> · ${novas} linha(s) nova(s)</p>
+      <p class="desc" style="margin:0 0 7px;font-size:11px">Entrou = o pendente daquele item <b>subiu</b> em relação ao relatório anterior: pedido novo, ou quantidade acrescentada num pedido que já existia.</p>`;
+    corpo = tabSimples(['Pedido · item · cliente', 'Entrou'], E.map(x => _cfLinha(x, 'kg_entrou', 'ok')).join(''));
+  } else {
+    if (!S.length) { abreDet(T.t + ' · ' + fmtData(dia), '<p class="idet-desc">Nenhuma linha nessa condição.</p>'); return; }
+    const extra = tipo === 'prazo'
+      ? '<p class="desc" style="margin:0 0 7px;font-size:11px">Linhas cuja saída aconteceu <b>depois</b> da data de entrega combinada. Saiu não é prova de faturamento — cancelamento e corte têm a mesma cara no relatório.</p>'
+      : tipo === 'destravou'
+        ? '<p class="desc" style="margin:0 0 7px;font-size:11px">Estes eram os itens que <b>seguravam</b> o pedido no relatório anterior. Ao saírem, liberaram o faturamento do resto do pedido junto.</p>'
+        : '<p class="desc" style="margin:0 0 7px;font-size:11px">Saiu = o pendente <b>caiu</b>. Pode ser faturamento, cancelamento, corte de quantidade ou reprogramação — no relatório os quatro têm a mesma cara.</p>';
+    cab = `<p class="idet-desc"><b>${S.length}</b> linha(s) · <b style="color:var(--critico)">${nT(somaS)}</b></p>` + extra;
+    corpo = tabSimples(['Pedido · item · cliente', 'Saiu'], S.map(x => _cfLinha(x, 'kg_saiu', 'baixo')).join(''));
+  }
+  const cortou = (S.length >= _CF_LIM || E.length >= _CF_LIM) ? `<p class="desc">mostrando ${_CF_LIM} linhas</p>` : '';
+  abreDet(T.t + ' · ' + fmtData(dia), cab + corpo + cortou);
+}
+
 /* Detalhe de um relatório: como estava a carteira e o que se mexeu desde a anterior. */
 async function detCarteiraDia(dia) {
   _detVoltar = null;
@@ -25062,7 +25157,7 @@ async function detCarteiraDia(dia) {
   const nT = v => ((+v || 0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t';
   const fx = (n, rot, cor, kg) => `<div onclick="detCarteiraFaixa('${dia}',${n})" style="cursor:pointer"><b style="color:${cor}">${n === 0 ? r.completos : n === 1 ? r.trav1 : n === 2 ? r.trav2 : r.trav3} 🔎</b><span>${rot} · ${nT(kg)}</span></div>`;
   abreDet('📋 Carteira de ' + fmtData(dia),
-    (r ? `<p class="idet-desc"><b>${(+r.pedidos).toLocaleString('pt-BR')}</b> pedido(s) · <b>${nT(r.kg_total)}</b> · toque numa faixa para ver os pedidos</p>
+    (r ? `<p class="idet-desc"><b>${(+r.pedidos).toLocaleString('pt-BR')}</b> pedido(s) · <b>${nT(r.kg_total)}</b> · toque em qualquer faixa 🔎 para ver as linhas</p>
      <div class="idet-grid">
        ${fx(0, 'completos', 'var(--verde)', r.kg_completos)}
        ${fx(4, 'no prazo', 'var(--azul-marca)', r.kg_prazo)}
@@ -25073,11 +25168,11 @@ async function detCarteiraDia(dia) {
     + (f ? `<div style="height:12px"></div>
      <div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Desde ${fmtData(f.dia_anterior)}</div>
      <div class="idet-grid">
-       <div><b style="color:var(--critico)">${nT(f.kg_saiu)}</b><span>saiu · ${f.pedidos_saiu} pedido(s) · ${f.linhas_sumiram} linha(s) zeradas, ${f.linhas_parciais} parcial(is)</span></div>
-       <div><b style="color:var(--verde)">${nT(f.kg_entrou)}</b><span>entrou · ${f.pedidos_entrou} pedido(s) · ${f.linhas_novas} linha(s) novas</span></div>
-       <div><b>${(+f.kg_liquido) > 0 ? '+' : ''}${nT(f.kg_liquido)}</b><span>saldo do dia</span></div>
-       <div><b style="color:${(+f.saiu_atrasado) > (+f.saiu_no_prazo) ? 'var(--critico)' : 'var(--ok-3)'}">${f.saiu_no_prazo} / ${(+f.saiu_no_prazo) + (+f.saiu_atrasado)}</b><span>linhas que saíram até a data de entrega</span></div>
-       <div><b style="color:var(--ok-3)">${f.linhas_destravaram}</b><span>linha(s) que estavam travando um pedido · ${nT(f.kg_destravado)}</span></div>
+       <div onclick="detCartFluxo('${dia}','saiu')" style="cursor:pointer"><b style="color:var(--critico)">${nT(f.kg_saiu)} 🔎</b><span>saiu · ${f.pedidos_saiu} pedido(s) · ${f.linhas_sumiram} linha(s) zeradas, ${f.linhas_parciais} parcial(is)</span></div>
+       <div onclick="detCartFluxo('${dia}','entrou')" style="cursor:pointer"><b style="color:var(--verde)">${nT(f.kg_entrou)} 🔎</b><span>entrou · ${f.pedidos_entrou} pedido(s) · ${f.linhas_novas} linha(s) novas</span></div>
+       <div onclick="detCartFluxo('${dia}','saldo')" style="cursor:pointer"><b>${(+f.kg_liquido) > 0 ? '+' : ''}${nT(f.kg_liquido)} 🔎</b><span>saldo do dia</span></div>
+       <div onclick="detCartFluxo('${dia}','prazo')" style="cursor:pointer"><b style="color:${(+f.saiu_atrasado) > (+f.saiu_no_prazo) ? 'var(--critico)' : 'var(--ok-3)'}">${f.saiu_no_prazo} / ${(+f.saiu_no_prazo) + (+f.saiu_atrasado)} 🔎</b><span>linhas que saíram até a data de entrega</span></div>
+       <div onclick="detCartFluxo('${dia}','destravou')" style="cursor:pointer"><b style="color:var(--ok-3)">${f.linhas_destravaram} 🔎</b><span>linha(s) que estavam travando um pedido · ${nT(f.kg_destravado)}</span></div>
      </div>` : '<p class="desc">Primeiro relatório guardado: não há dia anterior para comparar.</p>')
     + `<div style="height:12px"></div><div id="cartDiaBox" style="font-size:12px;color:var(--fraco)"><span class="spin"></span> buscando as linhas…</div>`);
   if (f) _cartDiaLinhas('cartDiaBox', dia);
@@ -25111,20 +25206,9 @@ async function _cartDiaLinhas(boxId, dia) {
     S = rs.data || []; E = (re && re.data) || [];
   } catch (e) { box.innerHTML = '<p style="margin:0">Não consegui buscar as linhas.</p>'; return; }
 
-  const kgf = v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' kg';
-  const selo = (txt, cor, bg) => `<span style="display:inline-block;background:${bg};color:${cor};border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800;margin-left:3px">${txt}</span>`;
-  const prazo = x => {
-    const d = x.dias_de_folga;
-    if (d == null) return '';
-    if (d < 0) return selo('atrasada ' + Math.abs(d) + 'd', '#fff', '#8A2B2B');
-    if (d === 0) return selo('no dia', '#fff', 'var(--ok-3)');
-    return selo(d + 'd de folga', '#fff', 'var(--ok-3)');
-  };
-  const lin = (x, campo, cls) => `<tr onclick="detItem('${_jsAttr(x.item_cod)}')" style="cursor:pointer">
-    <td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(x.num || ''))}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(String(x.item_desc || x.item_cod || '').slice(0, 38))}</span> 🔎
-      <div style="font-size:10px;color:var(--fraco-2);font-weight:600">${escapeHtml(String(x.cliente || '').replace(/\s*\(.*$/, '').slice(0, 26))}${x.entrega ? ' · entrega ' + fmtData(x.entrega) : ''}</div>
-      ${campo === 'kg_saiu' ? `<div style="margin-top:2px">${x.travava_antes ? selo('destravou o pedido', '#fff', 'var(--ok-3)') : ''}${prazo(x)}${!x.sumiu ? selo('parcial', 'var(--fraco)', 'var(--leve-3)') : ''}</div>` : (x.nova ? `<div style="margin-top:2px">${selo('linha nova', '#fff', 'var(--verde)')}</div>` : '')}</td>
-    <td><span class="cel ${cls}">${kgf(x[campo])}</span></td></tr>`;
+  /* 21/08/2026: selo/prazo/linha viraram _cfSelo/_cfPrazo/_cfLinha no escopo do
+     arquivo, para o detalhe por faixa montar a linha exatamente igual a esta. */
+  const lin = _cfLinha;
 
   const nDes = S.filter(x => x.travava_antes).length;
   const nAtr = S.filter(x => x.dias_de_folga != null && x.dias_de_folga < 0).length;
