@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.950.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.951.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.950.0';
+const APP_VER = '3.951.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26180,7 +26180,46 @@ function _destravaTabelas(lista) {
     'Situacao': pd.atraso > 0 ? 'VENCIDO' : (pd.ent && String(pd.ent) < hoje ? 'VENCIDO' : 'no prazo'),
     'Itens que travam': [...pd.blq].join(' | ')
   })));
-  return { resumo, itens, peds };
+  /* 21/08/2026 (Joao: "tem que ser todos os dados igual o pdf, pedido item
+     quant."). As tres primeiras abas sao resumo; esta e a carteira CRUA, linha a
+     linha, do jeito que saiu do REST196. E aqui que aparece a quantidade por
+     item dentro do pedido - o que nem o PDF mostra, porque em papel nao cabe.
+     Sem corte de 40 itens ou 60 pedidos: planilha nao tem limite de pagina. */
+  const _porSetor = new Map();
+  lista.forEach(g => g.itens.forEach(a => _porSetor.set(String(a.cod), g.setor)));
+  const detalhe = [];
+  const A = _alocarEstoque();
+  if (A) {
+    const setores = new Set(lista.map(g => g.setor));
+    const _st = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
+    A.linhas.forEach(l => {
+      const st = _st(String(l.item_cod));
+      if (!setores.has(st)) return;
+      const need = +l.peso_pendente || 0, q = +l.qtd_pendente || 0;
+      const faltaCx = (_ehCx(l.un) && need > 0) ? Math.round(q * (l._falta / need)) : '';
+      detalhe.push({
+        'Setor': st,
+        'Pedido': String(l.pedido).split('/')[0],
+        'Linha': String(l.pedido),
+        'Cliente': String(l.cliente || ''),
+        'Item': String(l.item_cod),
+        'Descricao': String(l.item_desc || ''),
+        'Unidade': String(l.un || ''),
+        'Qtd pendente': q,
+        'Peso pendente (kg)': Math.round(need),
+        'Em estoque (kg)': Math.round(Math.max(0, need - (+l._falta || 0))),
+        'Falta produzir (kg)': Math.round(+l._falta || 0),
+        'Falta produzir (cx)': faltaCx,
+        'Paletes a produzir': faltaCx ? _paletes(faltaCx) : '',
+        'Entrega': _dtBR(l.entrega),
+        'Dias vencido': +l.dias > 0 ? +l.dias : 0,
+        'Situacao': (+l._falta || 0) <= 0.001 ? 'material pronto'
+          : (String(l.entrega || '').slice(0, 10) < hoje ? 'TRAVANDO (vencido)' : 'no prazo, falta produzir')
+      });
+    });
+    detalhe.sort((a, b) => a.Setor.localeCompare(b.Setor) || a.Pedido.localeCompare(b.Pedido) || a.Item.localeCompare(b.Item));
+  }
+  return { resumo, itens, peds, detalhe };
 }
 
 function _baixarCSV(linhas, nome) {
@@ -26209,7 +26248,7 @@ async function destravaExcel(sel) {
   const ok = await _carregarXLSX();
   if (!ok) {
     toast('Sem conex\u00e3o para a planilha \u2014 saiu em CSV, que o Excel abre igual.');
-    _baixarCSV(T.itens, 'destrava-itens-' + dia + '.csv');
+    _baixarCSV(T.detalhe && T.detalhe.length ? T.detalhe : T.itens, 'destrava-carteira-' + dia + '.csv');
     return;
   }
   try {
@@ -26224,11 +26263,12 @@ async function destravaExcel(sel) {
     add(T.resumo, 'Resumo', [18, 14, 16, 17, 16]);
     add(T.itens, 'Itens a produzir', [16, 11, 40, 17, 17, 9, 20, 17, 16]);
     add(T.peds, 'Pedidos travados', [16, 10, 32, 11, 11, 12, 11, 30]);
+    add(T.detalhe, 'Carteira linha a linha', [14, 10, 12, 30, 11, 40, 8, 13, 18, 16, 19, 19, 18, 11, 12, 24]);
     XLSX.writeFile(wb, 'destrava-faturamento-' + dia + '.xlsx');
-    toast('\u2705 Planilha gerada \u00b7 ' + lista.length + ' setor(es)');
+    toast('\u2705 Planilha gerada \u00b7 ' + lista.length + ' setor(es) \u00b7 ' + T.detalhe.length + ' linha(s)');
   } catch (e) {
     toast('N\u00e3o consegui montar o xlsx \u2014 saiu em CSV.');
-    _baixarCSV(T.itens, 'destrava-itens-' + dia + '.csv');
+    _baixarCSV(T.detalhe && T.detalhe.length ? T.detalhe : T.itens, 'destrava-carteira-' + dia + '.csv');
   }
 }
 function destravaEscolher() {
