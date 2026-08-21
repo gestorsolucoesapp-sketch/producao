@@ -950,7 +950,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.979.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.980.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2976,7 +2976,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.979.0';
+const APP_VER = '3.980.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -29961,7 +29961,14 @@ function csRender(R, box) {
     const mediaDia = totDias > 0 ? totKg / totDias : 0;
     /* boca média do mês: ponderada pelo peso de cada semana, não média das
        médias — semana de 400 kg não pode pesar igual a uma de 7 t. */
-    const bocaMes = totKg > 0 ? S.reduce((s, x) => s + (+x.boca || 0) * (+x.kg || 0), 0) / totKg : 0;
+    /* boca predominante do MÊS: a que mais produziu somando as semanas — de novo
+       a que existe no chão, não uma média que nenhuma máquina rodou. */
+    const bocaMes = (() => {
+      const m = {};
+      S.forEach(x => { if (x.boca) m[x.boca] = (m[x.boca] || 0) + (+x.kg || 0); });
+      const top = Object.entries(m).sort((a, b) => b[1] - a[1])[0];
+      return top ? { b: top[0], pct: totKg > 0 ? Math.round(top[1] / totKg * 100) : 0 } : null;
+    })();
 
     const linhaSem = (rotulo, get, fmt, comDif) =>
       `<tr><td class="nome" style="font-size:11.5px;font-weight:700">${rotulo}</td>`
@@ -29973,8 +29980,14 @@ function csRender(R, box) {
         }).join('')
       + `<td style="text-align:right;font-size:12px;font-weight:800;background:var(--leve-2,#F4F7FA)">${fmt(get({ _t: 1 }, true))}</td></tr>`;
 
+    const totMil = S.reduce((s, x) => s + (+x.mil || 0), 0);
+    /* grama por peça do mês: kg ÷ milheiro do mês inteiro, NÃO a média das
+       gramas semanais — semana de 100 milheiros não pode pesar igual a uma de
+       1.454. */
+    const gMes = totMil > 0 ? totKg / totMil : 0;
+    const semMil = S.reduce((s, x) => s + (+x.sem_mil || 0), 0);
     const tot = { kg: totKg, cx: S.reduce((s, x) => s + (+x.cx || 0), 0), dias: totDias,
-                  boca: bocaMes, h_parada: totPar, kg_perda: totPer };
+                  mil: totMil, g_pc: gMes, h_parada: totPar, kg_perda: totPer };
 
     const tabela = `<div class="tab-rolagem"><table class="tab" style="min-width:${180 + sem.length * 78}px">
       <thead><tr><th style="text-align:left">semana</th>${rot.map(r => `<th style="text-align:right;font-size:11px">${r}</th>`).join('')}<th style="text-align:right;font-size:11px;background:var(--leve-2,#F4F7FA)">mês</th></tr></thead>
@@ -29983,7 +29996,19 @@ function csRender(R, box) {
         ${linhaSem('caixas', (x, t) => t ? tot.cx : x.cx, n0, true)}
         ${linhaSem('dias com apontamento', (x, t) => t ? tot.dias : x.dias, n0, false)}
         ${linhaSem('média por dia', (x, t) => t ? (tot.dias ? tot.kg / tot.dias : 0) : ((+x.dias || 0) ? x.kg / x.dias : 0), kg, true)}
-        ${linhaSem('boca média', (x, t) => t ? tot.boca : x.boca, v => (+v || 0) > 0 ? (+v).toFixed(1) : '—', false)}
+        ${linhaSem('milheiro', (x, t) => t ? tot.mil : x.mil, v => (+v || 0) > 0 ? fmtMil(+v) : '—', true)}
+        ${linhaSem('peso unitário', (x, t) => t ? tot.g_pc : x.g_pc, v => (+v || 0) > 0 ? (+v).toFixed(2) + ' g' : '—', true)}
+        ${(() => {
+          /* boca não é número que se soma nem se compara em %: é uma etiqueta.
+             Por isso sai da linhaSem() e vira linha própria, mostrando a boca e
+             a fatia dela na semana. */
+          const cel = (b, pct, nb) => b
+            ? `<b>${escapeHtml(String(b))}</b><div style="font-size:10px;color:var(--fraco-2)">${pct || 0}%${nb > 1 ? ' de ' + nb : ''}</div>`
+            : '<span style="color:var(--fraco-2)">—</span>';
+          return `<tr><td class="nome" style="font-size:11.5px;font-weight:700">boca predominante</td>`
+            + S.map(x => `<td style="text-align:right;font-size:12px;padding:3px 6px">${cel(x.boca, x.boca_pct, x.bocas)}</td>`).join('')
+            + `<td style="text-align:right;font-size:12px;background:var(--leve-2,#F4F7FA)">${bocaMes ? cel(bocaMes.b, bocaMes.pct, 0) : '—'}</td></tr>`;
+        })()}
         ${linhaSem('horas paradas', (x, t) => t ? tot.h_parada : x.h_parada, v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h', true)}
         ${linhaSem('refugo', (x, t) => t ? tot.kg_perda : x.kg_perda, kg, true)}
       </tbody></table></div>`;
@@ -30004,7 +30029,8 @@ function csRender(R, box) {
       <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:7px">
         <b style="font-size:16px;color:var(--navy)">${escapeHtml(M.cod)}</b>
         <span style="font-size:12.5px;color:var(--fraco);font-weight:600">${escapeHtml(M.nome || '')}</span>
-        <span style="margin-left:auto;font-size:12.5px;font-weight:800;color:var(--navy)">${kg(totKg)} · ${n0(tot.cx)} cx · média ${kg(mediaDia)}/dia · boca ${bocaMes > 0 ? bocaMes.toFixed(1) : '—'}</span>
+        <span style="margin-left:auto;font-size:12.5px;font-weight:800;color:var(--navy)">${kg(totKg)} · ${totMil > 0 ? fmtMil(totMil) + ' mil' : n0(tot.cx) + ' cx'} · ${gMes > 0 ? gMes.toFixed(2) + ' g/pç' : ''} · média ${kg(mediaDia)}/dia${bocaMes ? ' · boca ' + bocaMes.b : ''}</span>
+        ${semMil ? `<span style="flex-basis:100%;font-size:10.5px;color:var(--laranja)">⚠️ ${n0(semMil)} linha(s) sem a embalagem na descrição ficaram fora do milheiro e do peso unitário</span>` : ''}
       </div>
       ${tabela}
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:9px">
