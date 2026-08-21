@@ -962,7 +962,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.985.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.986.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2988,7 +2988,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.985.0';
+const APP_VER = '3.986.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13091,8 +13091,26 @@ async function fetchTudo(tabela, colunas, de, ate) {
   const arr = await _fetchTudoRaw(tabela, colunas, de, ate);
   return (typeof colunas === 'string' && colunas.indexOf('recurso_nome') >= 0) ? _fixNomeMaq(arr) : arr;
 }
+/* ==================== SINAL DE VIDA DO CARREGAMENTO ====================
+   21/08/2026. O João gravou um vídeo do Painel "travado": 6,8 segundos de
+   "Carregando dados…" e ele fecha o app. O Painel NÃO estava travado — o banco
+   responde em 346 ms. Ele estava baixando 45 mil linhas em doze requisições, e
+   a tela não dizia nada.
+
+   "Carregando" parado é indistinguível de travado. Sem isso, a pessoa desiste
+   antes de terminar, e todo mundo (inclusive eu) conclui que quebrou.
+
+   Este contador é atualizado pelo próprio laço de paginação. Não muda assinatura
+   de função nenhuma — foi exatamente mexer na assinatura do fetchTudo que
+   derrubou a v3.984.0 há vinte minutos. */
+let _carga = { tabela: '', linhas: 0, req: 0, ativo: false };
 async function _fetchTudoRaw(tabela, colunas, de, ate) {
   const TETO = 200000;
+  const _nome = { producao_resumo: 'produção', paradas: 'paradas', perdas: 'perdas',
+    producao: 'itens', consumo: 'consumo', mv_boca_maquina_dia: 'bocas' }[tabela] || tabela;
+  const _conta = n => {
+    try { _carga.tabela = _nome; _carga.linhas += n; _carga.req++; } catch (_) {}
+  };
   /* 12/08/2026 (João, "a análise demora muito para abrir"): a paginação era fixa
      em 1.000 linhas. Um mês do Análise+ são ~13.800 linhas (só paradas dá 9.136)
      = 14 idas ao servidor; no modo anual passa de 200 mil linhas.
@@ -13117,6 +13135,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
   try { r0 = await monta(0, PEDIDO - 1); } catch (e) { r0 = { error: e }; }
   if (r0.error) throw r0.error;
   const p0 = r0.data || [];
+  _conta(p0.length);
   // veio menos do que o pedido: ou acabou, ou o servidor tem teto próprio por página
   if (p0.length < PEDIDO) {
     if (p0.length === 0 || p0.length % 1000 !== 0) return p0;   // acabou de verdade
@@ -13145,6 +13164,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
       const r = await monta(ini, ini + passo - 1);
       if (r.error) throw r.error;
       const d = r.data || [];
+      _conta(d.length);
       tudo = tudo.concat(d);
       if (d.length < passo) break;
       ini += passo;
@@ -13162,6 +13182,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
       try {
         const r = await monta(a, b);
         if (r.error) throw r.error;
+        _conta((r.data || []).length);
         return r.data || [];
       } catch (e) {
         // uma página que falha não derruba a carga inteira: tenta menor
@@ -13284,7 +13305,22 @@ async function carregarPainel() {
     try { await getRegrasPerda(); classificarPerdas(dadosPainel.perdas); _regrasAplicadas = true; } catch (_) { }
   }
   if (!dadosPainel) {
-    box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> Carregando dados…</p>';
+    box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> <span id="pnCarga">Carregando dados…</span></p>';
+    /* 21/08/2026: o Painel passa a DIZER o que está fazendo. Ele baixa 45 mil
+       linhas em doze requisições; com a tela parada em "Carregando dados…" a
+       pessoa desiste aos 6 s achando que travou — foi exatamente o que o vídeo
+       do João mostrou. Agora aparece a tabela e o número de linhas subindo, e
+       depois de 12 s ele avisa que é volume, não travamento. */
+    _carga = { tabela: '', linhas: 0, req: 0, ativo: true };
+    const _t0carga = Date.now();
+    const _tick = setInterval(() => {
+      const el = $('pnCarga'); if (!el || !_carga.ativo) return;
+      const seg = Math.round((Date.now() - _t0carga) / 1000);
+      el.innerHTML = 'Carregando ' + (_carga.tabela ? '<b>' + escapeHtml(_carga.tabela) + '</b>' : 'dados')
+        + (_carga.linhas ? ' · ' + _carga.linhas.toLocaleString('pt-BR') + ' linhas' : '')
+        + (seg >= 12 ? '<div style="font-size:11px;margin-top:5px;color:var(--fraco)">É bastante dado — o mês inteiro tem ~45 mil linhas. Não travou.</div>' : '');
+    }, 400);
+    const _fimCarga = () => { _carga.ativo = false; clearInterval(_tick); };
     try {
       const imps = await carregarInfoImports();
       infoImports = imps;
@@ -13366,9 +13402,13 @@ async function carregarPainel() {
       if (prevSetor && [...sel.options].some(o => o.value === prevSetor)) sel.value = prevSetor;
       setTimeout(sincSetorGlobal, 0);
     } catch (e) {
-      box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar: ${escapeHtml(e.message)}</p></div>`;
+      _fimCarga();
+      /* o erro passa a dizer o que estava baixando quando quebrou — sem isso a
+         mensagem era só "Erro ao carregar" e não dava para saber de onde veio. */
+      box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar${_carga.tabela ? ' (' + escapeHtml(_carga.tabela) + ')' : ''}: ${escapeHtml((e && e.message) || String(e))}</p>
+        <p class="desc" style="text-align:center"><button class="btn btn-borda" style="width:auto;padding:7px 16px;font-size:12.5px" onclick="dadosPainel=null;carregarPainel()">tentar de novo</button></p></div>`;
       return;
-    }
+    } finally { _fimCarga(); }
   }
   try { await getMetaAtencao(); } catch (_) { }
   try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await getBocaFator(); await carregarMilImpressao(); } } catch (_) { }
