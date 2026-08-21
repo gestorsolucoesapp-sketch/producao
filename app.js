@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.967.0';
+const APP_VER = '3.968.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1884,7 +1884,21 @@ function modoLeve(on) {
   try { toast(v ? 'Modo leve ligado — sem animações' : 'Modo leve desligado'); } catch (_) {}
   return v;
 }
-function medirTopoApp() {
+/* 21/08/2026 — MEDIÇÃO EM CASCATA. O medidor de fluidez mostrou "topo 43" numa
+   única troca de aba: 43 getBoundingClientRect(), cada um obrigando o navegador
+   a recalcular o layout na hora, bem no momento do toque.
+   Vinham de todo lado ao mesmo tempo — sincSetorGlobal (2× por troca),
+   _remedirTopo (5×), o ResizeObserver do topo, o render do Painel e o
+   realinhamento das pílulas. E medirTopoApp escreve --topo-app, que muda o
+   padding do main, que faz o layout refluir, que redispara o ResizeObserver.
+   Agora só mede uma vez por quadro: as chamadas seguintes dentro do mesmo frame
+   são descartadas. Nenhuma delas teria medido altura diferente — o layout não
+   muda entre duas leituras do mesmo quadro. */
+let _topoFrame = -1;
+function medirTopoApp(forcar) {
+  const fr = (window.performance && performance.now) ? Math.floor(performance.now() / 16) : 0;
+  if (!forcar && fr === _topoFrame) return;
+  _topoFrame = fr;
   const t = $('topoFixo'); if (!t) return;
   /* 20/08/2026 (João: "ao dar zoom no monitor a barra cobre as abas").
      offsetHeight arredonda para inteiro; com zoom a barra fica em altura
