@@ -23931,14 +23931,23 @@ function _depoEstado(itemCod) {
    separado com dono. */
 function _depoOndeLinha(itemCod, precisaKg) {
   const e = _depoEstado(itemCod); if (!e || !e.deps.length) return '';
+  /* 21/08/2026: caixa junto do quilo. O depósito já guardava a quantidade em
+     `cx` — só não estava sendo mostrada. Quem separa carga conta caixa e palete,
+     não quilo, e era isso que faltava para a linha ser útil no chão. */
   const linhas = e.deps.map(x => {
     const res = _DEP_RESERV.includes(String(x.cod));
     const nome = escapeHtml(String(x.nome || x.cod).slice(0, 26));
-    return (res ? '<b>' + nome + '</b>' : nome) + ' · ' + fmtKg(x.kg);
+    const cx = +x.cx || 0;
+    return (res ? '<b>' + nome + '</b>' : nome) + ' · ' + fmtKg(x.kg)
+      + (cx > 0 ? ` · <b>${fmtNum(cx)} cx</b> · ${fmtNum(_paletes(cx))} pal` : '');
   }).join('<br>');
   const tot = e.deps.reduce((s, x) => s + (+x.kg || 0), 0);
+  const totCx = e.deps.reduce((s, x) => s + (+x.cx || 0), 0);
+  /* palete somado POR DEPÓSITO e não no geral: caixa que está em lugares
+     diferentes não empilha no mesmo palete. */
+  const totPal = e.deps.reduce((s, x) => s + ((+x.cx || 0) > 0 ? _paletes(x.cx) : 0), 0);
   const varios = e.deps.length > 1
-    ? `<div style="margin-top:2px;opacity:.75">⚠️ em <b>${e.deps.length} depósitos</b> · ${fmtKg(tot)} no total — a retirada é em mais de um lugar</div>` : '';
+    ? `<div style="margin-top:2px;opacity:.75">⚠️ em <b>${e.deps.length} depósitos</b> · ${fmtKg(tot)}${totCx > 0 ? ' · ' + fmtNum(totCx) + ' cx · ' + fmtNum(totPal) + ' pal' : ''} no total — a retirada é em mais de um lugar</div>` : '';
   /* 21/08/2026 (pedido do João, a partir do pedido 224462). O modal dizia
      "✓ material pronto" com 464 kg pendentes e mostrava 348 kg no depósito ao
      lado: números que não fecham, sem nada explicando.
@@ -23957,8 +23966,13 @@ function _depoOndeLinha(itemCod, precisaKg) {
      Mas avisa, para ninguém programar carga achando que está tudo num lugar só. */
   let falta = '';
   if (precisaKg > 0 && tot < precisaKg * 0.99) {
+    const dif = precisaKg - tot;
+    /* a caixa que falta sai pela proporção da própria linha (caixa ÷ kg do
+       depósito). Sem caixa no depósito, mostra só o quilo — não inventa
+       conversão onde o item nem é apontado em CX. */
+    const cxDif = (totCx > 0 && tot > 0) ? Math.round(dif * (totCx / tot)) : 0;
     falta = `<div style="margin-top:3px;background:#FDF0D5;border-radius:5px;padding:3px 5px;color:#7a4a00;font-weight:800;line-height:1.3">
-      ⚠️ confira: depósito tem <b>${fmtKg(precisaKg - tot)} a menos</b> do que a carteira aponta</div>`;
+      ⚠️ confira: depósito tem <b>${fmtKg(dif)}${cxDif > 0 ? ' · ' + fmtNum(cxDif) + ' cx' : ''} a menos</b> do que a carteira aponta</div>`;
   }
   return linhas + varios + falta;
 }
