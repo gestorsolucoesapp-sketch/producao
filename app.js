@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.969.0';
+const APP_VER = '3.970.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -487,6 +487,7 @@ function pintarLetreiro() {
 }
 /* recarrega os avisos e repinta SÓ a faixa — não chama renderPainel (evita ciclo) */
 async function atualizarLetreiro() {
+  if (diagPausado('bg:letreiro')) { const e = $('letreiro'); if (e) e.style.display = 'none'; return; }
   try { await carregarAvisos(); } catch (_) {}
   pintarLetreiro();
 }
@@ -913,6 +914,7 @@ async function posLogin() {
 let presCanal = null, presPronto = false, presUsuarios = {}, presMeuId = null;
 function iniciarPresenca(user) {
   if (presCanal) return;
+  if (diagPausado('bg:presenca')) { try { console.warn('presença pausada por diagnóstico'); } catch (_) {} return; }
   try {
     presMeuId = user.id;
     const nome = (perfil && perfil.nome) || (user.email || '').split('@')[0];
@@ -1386,7 +1388,8 @@ async function mostrarApp() {
      abria e a fila nunca era olhada. */
   setTimeout(function () { try { puxarDaFila(true); } catch (_) {} }, 4000);
   try {
-    if (!window._filaTimer) window._filaTimer = setInterval(function () {
+    if (diagPausado('bg:fila')) { try { console.warn('robô da fila pausado por diagnóstico'); } catch (_) {} }
+    else if (!window._filaTimer) window._filaTimer = setInterval(function () {
       if (document.hidden) return;             // aba escondida não gasta rede
       try { puxarDaFila(true); } catch (_) {}
     }, 5 * 60 * 1000);
@@ -1523,7 +1526,7 @@ function prepararSecoesRecolhiveis() {
 let _obsSecTimer = null;
 function observarSecoesRecolhiveis() {
   try {
-    if (window._obsSec) return;
+    if (window._obsSec || diagPausado('bg:observers')) return;
     window._obsSec = new MutationObserver(() => {
       clearTimeout(_obsSecTimer);
       _obsSecTimer = setTimeout(() => {
@@ -6034,8 +6037,71 @@ function medirFluidez(ligar) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lig); else lig();
 })();
 
-/* nome de tela, não o id interno: a aba Itens se chama 'analise' por dentro
-   desde a primeira versão, e o medidor mostrando "analise" confundia. */
+/* ==================== PAUSAR PARA DESCOBRIR O QUE TRAVA ====================
+   21/08/2026. João: "coloca uma opção de pausar aba nas configurações para eu
+   ver qual é que trava, tipo eu desabilito e vou testando".
+
+   É bissecção: desliga um por um até o travamento sumir, e o culpado aparece
+   sozinho. Muito melhor do que eu adivinhar por leitura de código — já errei
+   duas vezes hoje fazendo isso.
+
+   AS PAUSAS FICAM SÓ NESTE APARELHO (localStorage), nunca em app_config. Se
+   fossem para o banco, desligar uma aba aqui a desligaria para a fábrica
+   inteira — e alguém no chão de fábrica ficaria sem a tela sem entender por quê.
+
+   Pausar uma ABA não esconde a aba: ela abre normalmente e mostra um aviso no
+   lugar do conteúdo. Assim dá para comparar "abrir a aba" com "abrir e
+   desenhar", que é justamente onde estava o problema da aba Itens. */
+const DIAG_CH = 'rp_diag_pausas';
+let _diagPausas = new Set();
+try { _diagPausas = new Set(JSON.parse(localStorage.getItem(DIAG_CH) || '[]')); } catch (_) {}
+const diagPausado = k => _diagPausas.has(k);
+function diagTogglePausa(k) {
+  if (_diagPausas.has(k)) _diagPausas.delete(k); else _diagPausas.add(k);
+  try { localStorage.setItem(DIAG_CH, JSON.stringify([..._diagPausas])); } catch (_) {}
+  try { renderDiagPausa(); } catch (_) {}
+  toast(_diagPausas.has(k) ? '⏸️ ' + k + ' pausado' : '▶️ ' + k + ' voltou');
+}
+function diagLimparPausas() {
+  _diagPausas.clear();
+  try { localStorage.removeItem(DIAG_CH); } catch (_) {}
+  try { renderDiagPausa(); } catch (_) {}
+  toast('▶️ Tudo religado — recarregue para valer em tudo');
+}
+
+/* processos que rodam o tempo todo, fora das abas */
+const DIAG_FUNDO = [
+  ['presenca', 'Presença online', 'o contador de quem está no app; bate a cada 45 s'],
+  ['letreiro', 'Letreiro do topo', 'a faixa que rola sozinha, animação contínua'],
+  ['fila', 'Robô da fila', 'busca relatórios novos a cada 5 min'],
+  ['observers', 'Observadores de DOM', 'reagem a cada mudança de tela'],
+  ['animacao', 'Animação de troca de tela', 'os cards entrando ao trocar de aba']
+];
+
+function renderDiagPausa() {
+  const box = $('cardDiagPausa'); if (!box) return;
+  if (!souDevReal && !souAdmin) { box.classList.add('oculto'); return; }
+  box.classList.remove('oculto');
+  const pil = (k, nome, desc) => {
+    const p = diagPausado(k);
+    return `<label onclick="diagTogglePausa('${k}')" style="display:flex;gap:10px;align-items:flex-start;padding:9px 2px;border-bottom:1px solid var(--linha,#eef2f7);cursor:pointer">
+      <span style="flex:0 0 42px;height:24px;border-radius:12px;background:${p ? 'var(--critico,#C0392B)' : 'var(--leve-3,#dfe6ee)'};position:relative;transition:background .15s">
+        <span style="position:absolute;top:2px;left:${p ? '20px' : '2px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s"></span></span>
+      <span style="flex:1"><b style="font-size:13.5px;color:${p ? 'var(--critico-s,#8B2E2E)' : 'var(--navy)'}">${escapeHtml(nome)}${p ? ' — PAUSADO' : ''}</b>
+      <div style="font-size:11.5px;color:var(--fraco)">${escapeHtml(desc)}</div></span></label>`;
+  };
+  const abas = Object.keys(_FX_NOME).map(k => pil('aba:' + k, _FX_NOME[k], 'não desenha o conteúdo desta aba')).join('');
+  const fundo = DIAG_FUNDO.map(([k, n, d]) => pil('bg:' + k, n, d)).join('');
+  box.innerHTML = `<div class="titulo-sec">🔬 Diagnóstico · pausar para achar o que trava</div>
+    <p class="desc" style="margin-bottom:8px">Desligue um item, use o app e veja se melhorou. O que fizer a lentidão sumir é o culpado. <b>Vale só neste aparelho</b> — ninguém mais é afetado.</p>
+    <p class="desc" style="margin-bottom:10px;font-size:11.5px">Para medir com número, toque <b>5×</b> no selo de versão: aparece o medidor com o tempo de cada troca de aba.</p>
+    ${_diagPausas.size ? `<div style="background:var(--bg-danger,#FCEBEB);border-left:4px solid var(--critico,#C0392B);border-radius:0;padding:8px 10px;margin-bottom:10px;font-size:12.5px;font-weight:700;color:var(--critico-s,#8B2E2E)">
+      ${_diagPausas.size} item(ns) pausado(s) — o app não está no comportamento normal
+      <div onclick="diagLimparPausas()" style="margin-top:5px;font-weight:800;text-decoration:underline;cursor:pointer">▶️ religar tudo</div></div>` : ''}
+    <div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:10px 0 2px">Processos de fundo</div>${fundo}
+    <div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin:14px 0 2px">Conteúdo das abas</div>${abas}
+    <p class="desc" style="margin-top:10px;font-size:11.5px">Pausas de <b>processo de fundo</b> só valem depois de fechar e reabrir o app. Pausa de <b>aba</b> vale na hora.</p>`;
+}
 const _FX_NOME = { analise: 'Itens', analisemais: 'Análise+', estrategia: 'Análise de Tendência',
   painel: 'Painel', programacao: 'Programação', demanda: 'Demanda', tarefas: 'Tarefas',
   manut: 'Manutenção', oee: 'OEE', metas: 'Metas', usuarios: 'Usuários', conf: 'Conferência',
@@ -6141,6 +6207,14 @@ function _trocarAbaReal(qual) {
      o quadro da troca antes de a thread ser tomada de novo. */
   const _desenhar = () => {
     if (_abaAtual !== qual) return;   // já trocou de aba de novo: não desenha a antiga
+    /* pausa de diagnóstico: abre a aba mas não desenha, para isolar se o peso
+       está no roteador ou no conteúdo. Só vale neste aparelho. */
+    if (diagPausado('aba:' + qual)) {
+      const alvo = document.querySelector('#aba' + qual.charAt(0).toUpperCase() + qual.slice(1) + ' .card')
+        || document.querySelector('#aba' + qual.charAt(0).toUpperCase() + qual.slice(1));
+      if (alvo) alvo.innerHTML = '<div class="card"><p class="desc" style="padding:16px;text-align:center">⏸️ <b>Conteúdo pausado</b> para diagnóstico.<br>Religue em <b>Config./Acesso → Diagnóstico</b>.</p></div>';
+      return;
+    }
     if (qual === 'estoque') carregarEstoque();
     if (qual === 'demanda') carregarDemanda();
     if (qual === 'painel') carregarPainel();
@@ -6149,7 +6223,7 @@ function _trocarAbaReal(qual) {
     if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
     if (qual === 'historico') carregarHistorico();
     if (qual === 'ferramentas') ferrSub(_fSubAtual || 'caderno');
-    if (qual === 'usuarios')  carregarUsuarios();
+    if (qual === 'usuarios')  { carregarUsuarios(); try { renderDiagPausa(); } catch (_) {} }
     if (qual === 'metas')     { carregarMetas(); try { rpCarregar(); } catch (_) { } }
     if (qual === 'oee')       carregarOEE();
     if (qual === 'manut')     carregarManut();
@@ -14587,6 +14661,7 @@ async function rpSalvar(id) {
 
 function animTelaNova() { window._telaNova = true; }
 function animAplicar() {
+  if (diagPausado('bg:animacao')) { window._telaNova = false; return; }
   if (!window._telaNova) return;
   window._telaNova = false;
   const c = document.querySelector('main'); if (!c) return;
@@ -17551,6 +17626,7 @@ document.addEventListener('DOMContentLoaded', agendarScrollGraficos);
    observer só para ele agendar um timeout. Agora observa só o <main>, que é onde
    os gráficos com rolagem de fato vivem. */
 (function () {
+  if (diagPausado('bg:observers')) return;
   const alvo = document.querySelector('main') || document.documentElement;
   new MutationObserver(agendarScrollGraficos).observe(alvo, { childList: true, subtree: true });
 })();
