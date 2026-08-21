@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.960.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.961.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.960.0';
+const APP_VER = '3.961.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26596,7 +26596,74 @@ function _destravaTabelas(lista) {
     }
   }
 
-  return { resumo, itens, peds, detalhe, reserv };
+  /* ===== ABA "PRONTO PARA FATURAR" — 21/08/2026 (pedido do João) =====
+     100% pronto = pedido em que NENHUMA linha tem falta: o material de todos os
+     itens já está no estoque. É o `temFalta` que o _alocarEstoque() já marcava —
+     e a régua é a estrita, de propósito. Um pedido só fatura inteiro; listar
+     "quase pronto" aqui viraria promessa que não se cumpre, que é exatamente o
+     erro corrigido em 19/08 (o card prometia 1.175 t faturáveis quando o pronto
+     de verdade era ~332 t).
+
+     A coluna "Em qualidade (kg)" vem junto porque é a única ressalva de
+     verdade: o material está lá, mas retido no CQ. Não muda a classificação —
+     quem libera é o CQ, não o app —, só evita que a lista seja lida como
+     garantia. */
+  const pronto = [];
+  if (A) {
+    const setoresSel = new Set(lista.map(g => g.setor));
+    const _stP = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
+    const cand = (A.peds || []).filter(p => !p.temFalta && (+p.kg || 0) > 0.001);
+    const linhasP = [];
+    cand.forEach(p => {
+      const sts = [...new Set([...p.itens].map(k => _stP(String(k))))].sort();
+      if (!sts.some(s => setoresSel.has(s))) return;
+      let res = 0, qual = 0;
+      if (_depoItem && _depoItem.itens) {
+        p.itens.forEach(k => { const d = _depoItem.itens[String(k)]; if (d) { res += d.reserv || 0; qual += d.qual || 0; } });
+      }
+      linhasP.push({ p, sts, res, qual });
+    });
+    /* entrega mais apertada primeiro: é o que fatura antes. Sem data vai para o
+       fim, não para o começo — pedido sem prazo não é urgente por omissão. */
+    linhasP.sort((a, b) => String(a.p.ent || '9999-99-99').localeCompare(String(b.p.ent || '9999-99-99')) || (b.p.kg - a.p.kg));
+
+    linhasP.forEach(({ p, sts, res, qual }) => {
+      const venc = (+p.atraso || 0) > 0 || (p.ent && String(p.ent).slice(0, 10) < hoje);
+      pronto.push({
+        'Pedido': String(p.num),
+        'Cliente': String(p.cli || ''),
+        'Setores': sts.join(' | '),
+        'Linhas': p.linhas || 0,
+        'Itens': p.itens ? p.itens.size : 0,
+        'Peso (kg)': Math.round(p.kg || 0),
+        'Caixas': (+p.cx || 0) > 0 ? Math.round(p.cx) : '',
+        'Paletes': (+p.cx || 0) > 0 ? _paletes(p.cx) : '',
+        'Entrega': _dtBR(p.ent),
+        'Dias vencido': (+p.atraso || 0) > 0 ? +p.atraso : 0,
+        'Situacao': venc ? 'PRONTO E VENCIDO — fatura hoje' : 'pronto, no prazo',
+        'Reservado (kg)': res > 0 ? Math.round(res) : '',
+        'Em qualidade (kg)': qual > 0 ? Math.round(qual) : '',
+        '_tot': 0
+      });
+    });
+    if (pronto.length) {
+      const tKg = linhasP.reduce((a, x) => a + (+x.p.kg || 0), 0);
+      const tCx = linhasP.reduce((a, x) => a + (+x.p.cx || 0), 0);
+      const tLin = linhasP.reduce((a, x) => a + (x.p.linhas || 0), 0);
+      const nVen = pronto.filter(r => String(r.Situacao).indexOf('VENCIDO') >= 0).length;
+      pronto.push({
+        'Pedido': 'TOTAL', 'Cliente': pronto.length + ' pedido(s) prontos · ' + nVen + ' já vencido(s)',
+        'Setores': '', 'Linhas': tLin, 'Itens': '',
+        'Peso (kg)': Math.round(tKg),
+        'Caixas': tCx > 0 ? Math.round(tCx) : '',
+        'Paletes': tCx > 0 ? _paletes(tCx) : '',
+        'Entrega': '', 'Dias vencido': '', 'Situacao': '',
+        'Reservado (kg)': '', 'Em qualidade (kg)': '', '_tot': 2
+      });
+    }
+  }
+
+  return { resumo, itens, peds, detalhe, reserv, pronto };
 }
 
 /* ==================== BAIXAR ARQUIVO (com plano B) ====================
@@ -26707,14 +26774,49 @@ async function _montarPlanilha(T, lista) {
 
   const _iso = t => { const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(t || '')); return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null; };
 
+  /* ===== ESTRUTURA DE TODA ABA — reescrita em 21/08/2026 =====
+     João: "faça a soma do total em cima na linha 1 e 2".
+       linha 1 = nome de cada coluna que soma
+       linha 2 = a soma dela
+       linha 3 = cabeçalho de verdade
+       linha 4+ = os dados
+     As três primeiras ficam CONGELADAS: rolando 4 mil linhas o total continua
+     na tela, que é o ponto de ter o total em cima.
+
+     A soma ignora as linhas de subtotal (_tot > 0), senão contaria o mesmo
+     quilo duas vezes. */
   const aba = (dados, nome, larguras, colsNum, colData, ehVencida) => {
-    const ws = wb.addWorksheet(nome, { views: [{ state: 'frozen', ySplit: 1 }] });
+    const ws = wb.addWorksheet(nome, { views: [{ state: 'frozen', ySplit: 3 }] });
     if (!dados.length) { ws.addRow(['Nenhum registro para os setores selecionados.']); return; }
-    /* 21/08/2026: "_tot" é campo de controle da aba Reservado (0 = item,
-       1 = subtotal de setor, 2 = total geral). Não vira coluna na planilha —
-       só decide o destaque da linha. */
+    /* "_tot" é campo de controle (0 = item, 1 = subtotal de setor, 2 = total
+       geral). Não vira coluna — só decide o destaque da linha. */
     const cols = Object.keys(dados[0]).filter(c => c !== '_tot');
-    ws.columns = cols.map((c, i) => ({ header: c, key: c, width: larguras[i] || 16 }));
+    // sem 'header' aqui: as linhas são todas montadas na mão, para o cabeçalho
+    // poder ficar na 3 em vez da 1.
+    ws.columns = cols.map((c, i) => ({ key: c, width: larguras[i] || 16 }));
+
+    const soDados = dados.filter(d => !(+d._tot || 0));
+    const somaDe = c => soDados.reduce((a, d) => a + (typeof d[c] === 'number' ? d[c] : 0), 0);
+
+    const l1 = ws.addRow(cols.map((c, i) => colsNum.indexOf(c) >= 0 ? c : (i === 0 ? 'TOTAIS' : '')));
+    const l2 = ws.addRow(cols.map((c, i) => colsNum.indexOf(c) >= 0 ? somaDe(c) : (i === 0 ? soDados.length + ' linha(s)' : '')));
+    l1.eachCell({ includeEmpty: true }, cel => {
+      cel.font = { bold: true, size: 9.5, color: { argb: 'FF5A6B7D' } };
+      cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F7FA' } };
+      cel.alignment = { vertical: 'bottom', horizontal: 'right', wrapText: true };
+    });
+    l1.height = 24;
+    l2.eachCell({ includeEmpty: true }, cel => {
+      cel.font = { bold: true, size: 12, color: { argb: 'FF0B2A4A' } };
+      cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EFF7' } };
+      cel.alignment = { horizontal: 'right' };
+      cel.border = { bottom: { style: 'medium', color: { argb: NAVY } } };
+    });
+    l2.height = 20;
+    l1.getCell(1).alignment = { vertical: 'bottom', horizontal: 'left' };
+    l2.getCell(1).alignment = { horizontal: 'left' };
+
+    const cab = ws.addRow(cols);
 
     dados.forEach(d => {
       const lin = ws.addRow(cols.map(c => {
@@ -26740,25 +26842,29 @@ async function _montarPlanilha(T, lista) {
       }
     });
 
-    const cab = ws.getRow(1);
+    /* formato de coluna ANTES do estilo do cabeçalho: numFmt e alinhamento à
+       direita valem para a coluna inteira e sobrescreveriam o cabeçalho. */
+    cols.forEach((c, i) => {
+      const col = ws.getColumn(i + 1);
+      if (colsNum.indexOf(c) >= 0) { col.numFmt = '#,##0'; col.alignment = { horizontal: 'right' }; }
+      if (colData.indexOf(c) >= 0) { col.numFmt = 'dd/mm/yyyy'; col.alignment = { horizontal: 'center' }; }
+    });
     cab.height = 22;
     cab.eachCell(cel => {
       cel.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
       cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
       cel.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     });
-    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
-
-    cols.forEach((c, i) => {
-      const col = ws.getColumn(i + 1);
-      if (colsNum.indexOf(c) >= 0) { col.numFmt = '#,##0'; col.alignment = { horizontal: 'right' }; }
-      if (colData.indexOf(c) >= 0) { col.numFmt = 'dd/mm/yyyy'; col.alignment = { horizontal: 'center' }; }
-    });
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
     ws.eachRow({ includeEmpty: false }, lin => {
+      if (lin.number <= 3) return;
       lin.eachCell({ includeEmpty: true }, cel => {
-        cel.border = { bottom: { style: 'thin', color: { argb: BORDA } } };
+        if (!cel.border) cel.border = { bottom: { style: 'thin', color: { argb: BORDA } } };
       });
     });
+    /* o l1/l2 herdaram o alinhamento de coluna acima; devolve o da coluna 1 */
+    l1.getCell(1).alignment = { vertical: 'bottom', horizontal: 'left' };
+    l2.getCell(1).alignment = { horizontal: 'left' };
   };
 
   const NUM = ['Itens a produzir', 'Pedidos travados', 'Peso travado (kg)', 'Pedidos vencidos',
@@ -26767,7 +26873,7 @@ async function _montarPlanilha(T, lista) {
     'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)',
     'Reservado (cx)', 'Pendente na carteira (kg)',
     'Pedidos na carteira', 'Linhas na carteira', 'Itens diferentes', 'Peso pendente (kg)',
-    'Maior atraso travado (dias)'];
+    'Maior atraso travado (dias)', 'Linhas', 'Itens', 'Caixas'];
   const DATA = ['Entrega', 'Entrega mais proxima', 'Entrega mais proxima (travados)'];
   const venc = d => (+d['Dias vencido'] || 0) > 0 || String(d['Situacao'] || '').indexOf('VENC') >= 0 || String(d['Situacao'] || '').indexOf('TRAVANDO') >= 0;
 
@@ -26776,6 +26882,10 @@ async function _montarPlanilha(T, lista) {
   aba(T.peds, 'Pedidos travados', [14, 10, 32, 11, 12, 12, 20, 30], NUM, DATA, venc);
   /* 21/08/2026: a aba Reservado entra logo depois do Resumo — é consulta rápida
      ("o que já está separado?"), não anexo de conferência. */
+  /* Pronto para faturar vem antes do Reservado: é a aba de ação — o que dá para
+     mandar hoje. O Reservado é consulta de onde está o material. */
+  aba(T.pronto, 'Pronto para faturar', [11, 30, 26, 10, 9, 14, 12, 9, 13, 13, 27, 15, 17], NUM, DATA,
+    d => String(d.Situacao || '').indexOf('VENCIDO') >= 0);
   aba(T.reserv, 'Reservado', [18, 11, 44, 15, 15, 9, 30, 20, 20, 12], NUM, DATA, null);
   aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 15, 17, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
 
