@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.952.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.953.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.952.0';
+const APP_VER = '3.953.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8886,8 +8886,10 @@ function trocarAba(qual) {
   $('abaOEE').classList.toggle('oculto', qual !== 'oee');
   $('abaManut').classList.toggle('oculto', qual !== 'manut');
   $('abaAnaliseMais').classList.toggle('oculto', qual !== 'analisemais');
-  { const _es = $('abaEstrategia'); if (_es) { try { _estratPreencheSetores(); } catch (_) {} } }
-  { const _es = $('abaEstrategia'); if (_es) { _es.classList.toggle('oculto', qual !== 'estrategia'); if (qual === 'estrategia') { try { montarSeletorPeriodo(infoImports, 'estratPeriodo'); const _ss = $('estratSetor'); if (_ss) _ss.value = 'Termoformagem'; } catch (_) {} } } }
+  /* 21/08/2026: _estratPreencheSetores() rodava em TODA troca de aba, mesmo indo
+     para o Painel ou a Manutenção — remontava os <option> do seletor da
+     Estratégia à toa. Agora só roda quando a Estratégia é quem vai aparecer. */
+  { const _es = $('abaEstrategia'); if (_es) { _es.classList.toggle('oculto', qual !== 'estrategia'); if (qual === 'estrategia') { try { _estratPreencheSetores(); } catch (_) {} try { montarSeletorPeriodo(infoImports, 'estratPeriodo'); const _ss = $('estratSetor'); if (_ss) _ss.value = 'Termoformagem'; } catch (_) {} } } }
   $('abaOrganograma').classList.toggle('oculto', qual !== 'organograma');
   $('abaRH').classList.toggle('oculto', qual !== 'rh');
   $('abaConf').classList.toggle('oculto', qual !== 'conf');
@@ -8921,7 +8923,11 @@ function trocarAba(qual) {
   if (qual === 'programacao') carregarProgramacao(true);   // entrar na aba sempre busca fila nova
   sincSetorGlobal();
   try { atualizarRecorteTarja(); } catch (_) {}
-  setTimeout(sincSetorGlobal, 400); setTimeout(sincSetorGlobal, 1500);
+  /* 21/08/2026: eram TRÊS passadas por toque (na hora, 400ms e 1500ms). A de
+     400ms não pegava nada que a de 1500ms não pegasse depois — o que ela cobria
+     era o render assíncrono da aba, que raramente termina antes disso. Ficaram
+     duas: a imediata e a de 1200ms. */
+  setTimeout(sincSetorGlobal, 1200);
   setTimeout(() => { try { medirTopoApp(); } catch (_) {} }, 120);
 }
 
@@ -10489,8 +10495,15 @@ function tempoDesde(iso) {
   const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   return h ? `${h}h ${String(m).padStart(2, '0')}min` : `${m}min`;
 }
-// atualiza os cronômetros na tela a cada 30s
+/* atualiza os cronômetros na tela a cada 30s.
+   21/08/2026: até a 3.952 este querySelectorAll varria o documento INTEIRO de
+   30 em 30 segundos, com o app em qualquer aba e até com a tela apagada — e na
+   maioria das vezes não achava nenhum [data-cron], porque cronômetro só existe
+   na aba Manutenção. Agora sai fora cedo se a aba estiver escondida ou se
+   Manutenção não estiver na frente. */
 setInterval(() => {
+  if (document.hidden) return;
+  if (typeof _abaAtual !== 'undefined' && _abaAtual !== 'manut') return;
   document.querySelectorAll('[data-cron]').forEach(el => { el.textContent = tempoDesde(el.dataset.cron); });
 }, 30000);
 async function pegarOS(id) {
@@ -16279,6 +16292,11 @@ function sparkSVG(vals, cor, w, hh) {
       moveu = true;
       if (e.cancelable) e.preventDefault();
       const w = el.offsetWidth, h = el.offsetHeight;
+      /* 21/08/2026: estas duas linhas NÃO existiam. O código usava `x` e `y` sem
+         nunca calcular a posição a partir do dedo — viravam global implícita com
+         NaN e o botão não seguia o toque. */
+      let x = (e.touches ? e.touches[0] : e).clientX - dx;
+      let y = (e.touches ? e.touches[0] : e).clientY - dy;
       x = Math.max(4, Math.min(window.innerWidth - w - 4, x));
       y = Math.max(4, Math.min(window.innerHeight - h - 4, y));
       el.style.left = (x / window.innerWidth * 100).toFixed(2) + '%';
@@ -29971,6 +29989,25 @@ function avisaVersaoNova() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', avisaVersaoNova);
 else avisaVersaoNova();
 
+/* 21/08/2026: com o SW abrindo do cache (stale-while-revalidate), a versão nova
+   entra na abertura seguinte. Esta faixa aparece assim que a revalidação de
+   fundo encontra uma versão diferente no servidor: o João toca e recarrega na
+   hora, sem esperar. Só aparece uma vez por versão. */
+function faixaVersaoNova(v) {
+  if (!v || v === APP_VER) return;
+  if (window._faixaVer === v) return; window._faixaVer = v;
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);' +
+    'top:calc(env(safe-area-inset-top) + 10px);z-index:99999;background:#0B2A4A;color:#fff;' +
+    'padding:10px 16px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.25);' +
+    'display:flex;align-items:center;gap:10px;max-width:92vw;cursor:pointer';
+  el.innerHTML = '<span>⬆️ Versão ' + v + ' disponível</span>' +
+    '<span style="opacity:.85;font-weight:400;font-size:12px">tocar para atualizar</span>';
+  el.onclick = () => location.reload();
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.transition = 'opacity .4s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, 15000);
+}
+
 /* ===== Análise+ → imagem por máquina para WhatsApp (sem nome de auxiliar) ===== */
 let _mtSnap = null;
 
@@ -30379,9 +30416,17 @@ if ('serviceWorker' in navigator) {
     // procura atualização assim que abre e quando volta o foco/online
     const checar = () => reg.update().catch(() => {});
     checar();
+    /* 21/08/2026: procura atualização ao abrir, ao voltar o foco e ao voltar a
+       rede — que é quando de fato pode ter mudado alguma coisa. O
+       `setInterval(checar, 60000)` que existia até a 3.952 saiu: batia na rede
+       de minuto em minuto o dia inteiro com o app aberto no chão de fábrica,
+       sem nunca achar nada (o João publica poucas vezes por dia). */
     document.addEventListener('visibilitychange', () => { if (!document.hidden) checar(); });
     window.addEventListener('online', checar);
-    setInterval(checar, 60 * 1000); // e a cada 1 min enquanto aberto
+    /* o SW avisa quando a revalidação de fundo achou versão nova no servidor */
+    navigator.serviceWorker.addEventListener('message', ev => {
+      if (ev.data && ev.data.tipo === 'VERSAO_NOVA') { try { faixaVersaoNova(ev.data.versao); } catch (_) {} }
+    });
 
     // quando um SW novo assumir o controle, recarrega uma única vez
     let recarregou = false;
