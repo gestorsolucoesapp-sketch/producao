@@ -21,7 +21,7 @@ const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/scrip
 const temAppJs = fs.existsSync('app.js');
 const appJs = temAppJs ? fs.readFileSync('app.js', 'utf8') : '';
 if (!inline.length && !temAppJs) falha('nenhum JS encontrado (nem inline nem app.js)');
-if (!temAppJs) aviso('app.js não existe — o JS ainda está inline no index.html');
+if (!temAppJs) aviso('app.js não existe — o JS está inline no index.html (revertido em 21/08: a extração fazia cada deploy rebaixar 2,2 MB)');
 const js = [appJs].concat(inline).join('\n;\n');
 fs.writeFileSync('/tmp/_app.js', js);
 
