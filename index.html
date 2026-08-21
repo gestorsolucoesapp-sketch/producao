@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.956.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.957.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.956.0';
+const APP_VER = '3.957.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23673,6 +23673,32 @@ function _depoTotKg(itemCod) {
   const d = _depoItem.itens[String(itemCod)];
   return (d && d.tot > 0) ? Math.round(d.tot) : '';
 }
+/* 21/08/2026 (João: "tem como informar o que está no reservado?"). O RESERVADO
+   é o depósito 6 — material já separado PARA um pedido. Vale lembrar a decisão
+   de 20/08: reservado É faturável, não é bloqueio; a coluna existe para dizer
+   quanto do saldo já tem dono, não para marcar o item como preso.
+
+   Junto vai a coluna de QUALIDADE (depósitos 13, 14, 26, 36, 70 e 113), que é o
+   que de fato pode não sair — e mesmo assim como ressalva, porque quem libera é
+   o CQ, não o app. Sem essa coluna ao lado, um "Reservado: 0" seria lido como
+   "está tudo livre" mesmo com o saldo inteiro retido no CQ. */
+function _depoReservKg(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  return (d && d.reserv > 0) ? Math.round(d.reserv) : '';
+}
+function _depoQualKg(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  return (d && d.qual > 0) ? Math.round(d.qual) : '';
+}
+/* quanto do saldo não está nem reservado nem retido no CQ */
+function _depoLivreKg(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  if (!d || d.tot <= 0) return '';
+  return Math.round(Math.max(0, d.tot - d.reserv - d.qual));
+}
 
 let _filaVenc = null;
 async function carregarFilaVenc() {
@@ -26325,6 +26351,9 @@ function _destravaTabelas(lista) {
          tem material parado em algum depósito — quem levava a folha pro chão de
          fábrica tinha que abrir o app pra descobrir. Agora vem junto. */
       'Em deposito (kg)': _depoTotKg(a.cod),
+      'Reservado (kg)': _depoReservKg(a.cod),
+      'Em qualidade (kg)': _depoQualKg(a.cod),
+      'Livre (kg)': _depoLivreKg(a.cod),
       'Onde esta no deposito': _depoOndeTxt(a.cod)
     });
   }));
@@ -26367,6 +26396,8 @@ function _destravaTabelas(lista) {
         'Em estoque (kg)': Math.round(Math.max(0, need - (+l._falta || 0))),
         /* 21/08/2026: "Em estoque (kg)" já dizia QUANTO tem, mas não ONDE.
            Esta coluna responde o resto da pergunta. */
+        'Reservado (kg)': _depoReservKg(l.item_cod),
+        'Em qualidade (kg)': _depoQualKg(l.item_cod),
         'Onde esta no deposito': _depoOndeTxt(l.item_cod),
         'Falta produzir (kg)': Math.round(+l._falta || 0),
         'Falta produzir (cx)': faltaCx,
@@ -26536,14 +26567,14 @@ async function _montarPlanilha(T, lista) {
   const NUM = ['Itens a produzir', 'Pedidos travados', 'Peso travado (kg)', 'Pedidos vencidos',
     'Maior atraso (dias)', 'Dias vencido', 'Falta produzir (kg)', 'Falta produzir (cx)', 'Paletes',
     'Libera sozinho (pedidos)', 'Libera sozinho (kg)', 'Pedidos que trava', 'Peso (kg)',
-    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)'];
+    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)'];
   const DATA = ['Entrega', 'Entrega mais proxima'];
   const venc = d => (+d['Dias vencido'] || 0) > 0 || String(d['Situacao'] || '').indexOf('VENC') >= 0 || String(d['Situacao'] || '').indexOf('TRAVANDO') >= 0;
 
   aba(T.resumo, 'Resumo', [18, 14, 16, 17, 16, 20, 18], NUM, DATA, null);
-  aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16, 16, 46], NUM, DATA, venc);
+  aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16, 16, 15, 17, 12, 46], NUM, DATA, venc);
   aba(T.peds, 'Pedidos travados', [14, 10, 32, 11, 12, 12, 20, 30], NUM, DATA, venc);
-  aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
+  aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 15, 17, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
 
   return await wb.xlsx.writeBuffer();
 }
