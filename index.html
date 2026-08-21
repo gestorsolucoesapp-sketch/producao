@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.959.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.960.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.959.0';
+const APP_VER = '3.960.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26313,18 +26313,110 @@ const _dtBR = d => { const x = String(d || '').slice(0, 10); return x ? x.slice(
 
 function _destravaTabelas(lista) {
   const hoje = (_cart196 && _cart196.dia) || hojeISO();
-  const resumo = lista.map(g => {
-    let ent = null;
-    g.peds.forEach(pd => { if (pd.ent && (!ent || String(pd.ent) < String(ent))) ent = pd.ent; });
-    return {
-      'Setor': g.setor, 'Itens a produzir': g.itens.length,
+
+  /* ===== RESUMO — reescrito em 21/08/2026 =====
+     João: "data de entrega também, está faltando informação, deixe esse
+     relatório o mais completo possível."
+
+     O resumo antigo só enxergava o que estava TRAVADO. Por isso a Impressão
+     saía com "286 itens a produzir" e zero em todo o resto da linha: os itens
+     dela faltam produzir, mas nenhum pedido está preso só por eles — então
+     pedidos travados, peso, entrega e atraso vinham todos vazios. A folha
+     parecia quebrada quando na verdade estava respondendo outra pergunta.
+
+     Agora cada setor traz as duas leituras lado a lado:
+       - a CARTEIRA INTEIRA que passa por ele (pedidos, peso pendente, estoque
+         alocado, falta produzir, entrega mais próxima, maior atraso);
+       - e, depois, o RECORTE TRAVADO que já existia.
+     Mais o que está parado em depósito (reservado e qualidade).
+
+     CUIDADO COM O TOTAL GERAL: pedido que passa por dois setores é contado nos
+     dois. Somar coluna de PEDIDO entre setores dá mais que a carteira — por
+     isso o total geral preenche só as colunas que somam por item (peso, falta,
+     estoque, reservado) e deixa as de pedido em branco, de propósito. */
+  const _stK = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
+  const porSetor = {};
+  const _S = st => porSetor[st] || (porSetor[st] = {
+    peds: new Set(), pendKg: 0, estKg: 0, faltaKg: 0, faltaCx: 0,
+    ent: null, atraso: 0, linhas: 0, itensCarteira: new Set()
+  });
+  const _Ares = _alocarEstoque();
+  ((_Ares && _Ares.linhas) || []).forEach(l => {
+    const s = _S(_stK(String(l.item_cod)));
+    const need = +l.peso_pendente || 0, falta = +l._falta || 0;
+    s.peds.add(String(l.pedido).split('/')[0]);
+    s.itensCarteira.add(String(l.item_cod));
+    s.linhas++;
+    s.pendKg += need;
+    s.estKg += Math.max(0, need - falta);
+    s.faltaKg += falta;
+    if (_ehCx(l.un) && need > 0) s.faltaCx += (+l.qtd_pendente || 0) * (falta / need);
+    if (l.entrega && (!s.ent || String(l.entrega) < String(s.ent))) s.ent = l.entrega;
+    if ((+l.dias || 0) > s.atraso) s.atraso = +l.dias || 0;
+  });
+  /* reservado e qualidade por setor, do REST241 */
+  const depSetor = {};
+  if (_depoItem && _depoItem.itens) {
+    Object.keys(_depoItem.itens).forEach(cod => {
+      const d = _depoItem.itens[cod];
+      if (!d) return;
+      const st = _stK(cod);
+      const o = depSetor[st] || (depSetor[st] = { reserv: 0, qual: 0 });
+      o.reserv += d.reserv || 0; o.qual += d.qual || 0;
+    });
+  }
+
+  const resumo = [];
+  let tPend = 0, tEst = 0, tFalta = 0, tFaltaCx = 0, tItens = 0, tRes = 0, tQual = 0, tLin = 0;
+  lista.forEach(g => {
+    let entT = null;
+    g.peds.forEach(pd => { if (pd.ent && (!entT || String(pd.ent) < String(entT))) entT = pd.ent; });
+    const s = porSetor[g.setor] || { peds: new Set(), pendKg: 0, estKg: 0, faltaKg: 0, faltaCx: 0, ent: null, atraso: 0, linhas: 0, itensCarteira: new Set() };
+    const dep = depSetor[g.setor] || { reserv: 0, qual: 0 };
+    resumo.push({
+      'Setor': g.setor,
+      'Pedidos na carteira': s.peds.size,
+      'Linhas na carteira': s.linhas,
+      'Itens diferentes': s.itensCarteira.size,
+      'Peso pendente (kg)': Math.round(s.pendKg),
+      'Em estoque (kg)': Math.round(s.estKg),
+      'Falta produzir (kg)': Math.round(s.faltaKg),
+      'Falta produzir (cx)': s.faltaCx > 0 ? Math.round(s.faltaCx) : '',
+      'Paletes a produzir': s.faltaCx > 0 ? _paletes(s.faltaCx) : '',
+      'Itens a produzir': g.itens.length,
+      'Reservado (kg)': dep.reserv > 0 ? Math.round(dep.reserv) : '',
+      'Em qualidade (kg)': dep.qual > 0 ? Math.round(dep.qual) : '',
+      'Entrega mais proxima': _dtBR(s.ent),
+      'Maior atraso (dias)': s.atraso > 0 ? s.atraso : 0,
       'Pedidos travados': g.peds.length,
       'Peso travado (kg)': Math.round(g.kg),
       'Pedidos vencidos': g.peds.filter(pd => pd.atraso > 0).length,
-      'Entrega mais proxima': _dtBR(ent),
-      'Maior atraso (dias)': g.peds.reduce((m, pd) => Math.max(m, pd.atraso || 0), 0)
-    };
+      'Entrega mais proxima (travados)': _dtBR(entT),
+      'Maior atraso travado (dias)': g.peds.reduce((m, pd) => Math.max(m, pd.atraso || 0), 0),
+      '_tot': 0
+    });
+    tPend += s.pendKg; tEst += s.estKg; tFalta += s.faltaKg; tFaltaCx += s.faltaCx;
+    tItens += g.itens.length; tRes += dep.reserv; tQual += dep.qual; tLin += s.linhas;
   });
+  if (resumo.length) {
+    resumo.push({
+      'Setor': 'TOTAL GERAL',
+      /* em branco de propósito: pedido em dois setores contaria duas vezes */
+      'Pedidos na carteira': '', 'Linhas na carteira': tLin, 'Itens diferentes': '',
+      'Peso pendente (kg)': Math.round(tPend),
+      'Em estoque (kg)': Math.round(tEst),
+      'Falta produzir (kg)': Math.round(tFalta),
+      'Falta produzir (cx)': tFaltaCx > 0 ? Math.round(tFaltaCx) : '',
+      'Paletes a produzir': tFaltaCx > 0 ? _paletes(tFaltaCx) : '',
+      'Itens a produzir': tItens,
+      'Reservado (kg)': tRes > 0 ? Math.round(tRes) : '',
+      'Em qualidade (kg)': tQual > 0 ? Math.round(tQual) : '',
+      'Entrega mais proxima': '', 'Maior atraso (dias)': '',
+      'Pedidos travados': '', 'Peso travado (kg)': '', 'Pedidos vencidos': '',
+      'Entrega mais proxima (travados)': '', 'Maior atraso travado (dias)': '',
+      '_tot': 2
+    });
+  }
   /* 21/08/2026 (Joao: "abas itens a produzir falta o pedido" e "esta faltando a
      data de entrega"). Um item costuma segurar VARIOS pedidos, entao a coluna
      lista todos. E a entrega que importa aqui e a MAIS APERTADA entre eles: e
@@ -26673,11 +26765,13 @@ async function _montarPlanilha(T, lista) {
     'Maior atraso (dias)', 'Dias vencido', 'Falta produzir (kg)', 'Falta produzir (cx)', 'Paletes',
     'Libera sozinho (pedidos)', 'Libera sozinho (kg)', 'Pedidos que trava', 'Peso (kg)',
     'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)',
-    'Reservado (cx)', 'Pendente na carteira (kg)'];
-  const DATA = ['Entrega', 'Entrega mais proxima'];
+    'Reservado (cx)', 'Pendente na carteira (kg)',
+    'Pedidos na carteira', 'Linhas na carteira', 'Itens diferentes', 'Peso pendente (kg)',
+    'Maior atraso travado (dias)'];
+  const DATA = ['Entrega', 'Entrega mais proxima', 'Entrega mais proxima (travados)'];
   const venc = d => (+d['Dias vencido'] || 0) > 0 || String(d['Situacao'] || '').indexOf('VENC') >= 0 || String(d['Situacao'] || '').indexOf('TRAVANDO') >= 0;
 
-  aba(T.resumo, 'Resumo', [18, 14, 16, 17, 16, 20, 18], NUM, DATA, null);
+  aba(T.resumo, 'Resumo', [17, 15, 14, 13, 16, 14, 16, 16, 14, 13, 14, 15, 18, 15, 14, 15, 14, 21, 18], NUM, DATA, null);
   aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16, 16, 15, 17, 12, 46], NUM, DATA, venc);
   aba(T.peds, 'Pedidos travados', [14, 10, 32, 11, 12, 12, 20, 30], NUM, DATA, venc);
   /* 21/08/2026: a aba Reservado entra logo depois do Resumo — é consulta rápida
