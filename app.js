@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.963.0';
+const APP_VER = '3.964.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22199,13 +22199,32 @@ function _cfPrazo(x) {
   return _cfSelo(d + 'd de folga', '#fff', 'var(--ok-3)');
 }
 function _cfLinha(x, campo, cls) {
+  const cx = _cfCx(x, campo);
   return `<tr onclick="detItem('${_jsAttr(x.item_cod)}')" style="cursor:pointer">
     <td class="nome" style="font-size:11.5px"><span class="cod">${escapeHtml(String(x.num || ''))}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(String(x.item_desc || x.item_cod || '').slice(0, 38))}</span> 🔎
       <div style="font-size:10px;color:var(--fraco-2);font-weight:600">${escapeHtml(String(x.cliente || '').replace(/\s*\(.*$/, '').slice(0, 26))}${x.entrega ? ' · entrega ' + fmtData(x.entrega) : ''}</div>
       ${campo === 'kg_saiu' ? `<div style="margin-top:2px">${x.travava_antes ? _cfSelo('destravou o pedido', '#fff', 'var(--ok-3)') : ''}${_cfPrazo(x)}${!x.sumiu ? _cfSelo('parcial', 'var(--fraco)', 'var(--leve-3)') : ''}</div>` : (x.nova ? `<div style="margin-top:2px">${_cfSelo('linha nova', '#fff', 'var(--verde)')}</div>` : '')}</td>
-    <td><span class="cel ${cls}">${_cfKg(x[campo])}</span></td></tr>`;
+    <td><span class="cel ${cls}">${_cfKg(x[campo])}</span>${cx > 0
+      ? `<div style="font-size:10px;color:var(--fraco-2);font-weight:700;margin-top:2px;white-space:nowrap">${fmtNum(cx)} cx · ${_paletes(cx)} pal</div>`
+      : ''}</td></tr>`;
 }
-const _CF_COLS = 'pedido,num,item_cod,item_desc,cliente,entrega,kg_antes,kg_agora,kg_saiu,kg_entrou,sumiu,nova,travava_antes,dias_de_folga';
+/* 21/08/2026 (João: "mostre a saída em cx e paletes"). `un`, `qtd_antes` e
+   `qtd_agora` entraram no select — a view já tinha as três, o app é que só pedia
+   os quilos. Com elas dá para calcular a saída em caixa sem consulta nova. */
+const _CF_COLS = 'pedido,num,item_cod,item_desc,cliente,entrega,un,kg_antes,kg_agora,qtd_antes,qtd_agora,kg_saiu,kg_entrou,sumiu,nova,travava_antes,dias_de_folga';
+
+/* Caixas que saíram (ou entraram) numa linha.
+   Só conta linha medida em CX: MIL, UN e PC não são caixa, e transformar
+   milheiro em caixa é o erro que já corrigimos no card de itens do dia. A conta
+   é a diferença de quantidade entre os dois relatórios, no mesmo sentido do
+   quilo — assim o parcial mostra só o pedaço que saiu, não o total da linha. */
+function _cfCx(x, campo) {
+  if (!_ehCx(x.un)) return 0;
+  const d = campo === 'kg_saiu'
+    ? (+x.qtd_antes || 0) - (+x.qtd_agora || 0)
+    : (+x.qtd_agora || 0) - (+x.qtd_antes || 0);
+  return d > 0 ? Math.round(d) : 0;
+}
 
 /* DETALHE DE UMA FAIXA DO BLOCO "DESDE ...".
    Até a 3.955 as cinco faixas de baixo eram <div> mortos: para ver o que entrou,
@@ -22249,12 +22268,24 @@ async function detCartFluxo(dia, tipo) {
 
   const somaS = S.reduce((a, x) => a + (+x.kg_saiu || 0), 0);
   const somaE = E.reduce((a, x) => a + (+x.kg_entrou || 0), 0);
+  /* 21/08/2026: caixa e palete do total. O palete é somado POR ITEM e só depois
+     no geral — arredondar caixa por caixa e dividir no fim daria menos palete do
+     que a fábrica movimenta de verdade (a mesma regra do card de depósito). */
+  const _cxTot = (arr, campo) => arr.reduce((a, x) => a + _cfCx(x, campo), 0);
+  const _palTot = (arr, campo) => {
+    const porItem = {};
+    arr.forEach(x => { const c = _cfCx(x, campo); if (c > 0) porItem[String(x.item_cod)] = (porItem[String(x.item_cod)] || 0) + c; });
+    return Object.values(porItem).reduce((s, c) => s + _paletes(c), 0);
+  };
+  const cxS = _cxTot(S, 'kg_saiu'), palS = _palTot(S, 'kg_saiu');
+  const cxE = _cxTot(E, 'kg_entrou'), palE = _palTot(E, 'kg_entrou');
+  const _mais = (cx, pal) => cx > 0 ? ` · <b>${fmtNum(cx)} cx</b> · <b>${fmtNum(pal)} palete(s)</b>` : '';
   const nT = v => ((+v || 0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t';
 
   let cab = '', corpo = '';
   if (tipo === 'saldo') {
     const liq = somaE - somaS;
-    cab = `<p class="idet-desc"><b style="color:var(--verde)">${nT(somaE)}</b> entrou · <b style="color:var(--critico)">${nT(somaS)}</b> saiu · saldo <b style="color:${liq >= 0 ? 'var(--verde)' : 'var(--critico)'}">${liq > 0 ? '+' : ''}${nT(liq)}</b></p>`;
+    cab = `<p class="idet-desc"><b style="color:var(--verde)">${nT(somaE)}</b> entrou${_mais(cxE, palE)} · <b style="color:var(--critico)">${nT(somaS)}</b> saiu${_mais(cxS, palS)} · saldo <b style="color:${liq >= 0 ? 'var(--verde)' : 'var(--critico)'}">${liq > 0 ? '+' : ''}${nT(liq)}</b></p>`;
     corpo = (E.length ? `<div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Entraram · ${E.length} linha(s)</div>`
         + tabSimples(['Pedido · item · cliente', 'Entrou'], E.map(x => _cfLinha(x, 'kg_entrou', 'ok')).join('')) : '')
       + (S.length ? `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Saíram · ${S.length} linha(s)</div>`
@@ -22262,7 +22293,7 @@ async function detCartFluxo(dia, tipo) {
   } else if (tipo === 'entrou') {
     if (!E.length) { abreDet(T.t + ' · ' + fmtData(dia), '<p class="idet-desc">Nenhuma linha entrou nesse dia.</p>'); return; }
     const novas = E.filter(x => x.nova).length;
-    cab = `<p class="idet-desc"><b>${E.length}</b> linha(s) · <b style="color:var(--verde)">${nT(somaE)}</b> · ${novas} linha(s) nova(s)</p>
+    cab = `<p class="idet-desc"><b>${E.length}</b> linha(s) · <b style="color:var(--verde)">${nT(somaE)}</b>${_mais(cxE, palE)} · ${novas} linha(s) nova(s)</p>
       <p class="desc" style="margin:0 0 7px;font-size:11px">Entrou = o pendente daquele item <b>subiu</b> em relação ao relatório anterior: pedido novo, ou quantidade acrescentada num pedido que já existia.</p>`;
     corpo = tabSimples(['Pedido · item · cliente', 'Entrou'], E.map(x => _cfLinha(x, 'kg_entrou', 'ok')).join(''));
   } else {
@@ -22272,7 +22303,7 @@ async function detCartFluxo(dia, tipo) {
       : tipo === 'destravou'
         ? '<p class="desc" style="margin:0 0 7px;font-size:11px">Estes eram os itens que <b>seguravam</b> o pedido no relatório anterior. Ao saírem, liberaram o faturamento do resto do pedido junto.</p>'
         : '<p class="desc" style="margin:0 0 7px;font-size:11px">Saiu = o pendente <b>caiu</b>. Pode ser faturamento, cancelamento, corte de quantidade ou reprogramação — no relatório os quatro têm a mesma cara.</p>';
-    cab = `<p class="idet-desc"><b>${S.length}</b> linha(s) · <b style="color:var(--critico)">${nT(somaS)}</b></p>` + extra;
+    cab = `<p class="idet-desc"><b>${S.length}</b> linha(s) · <b style="color:var(--critico)">${nT(somaS)}</b>${_mais(cxS, palS)}</p>` + extra;
     corpo = tabSimples(['Pedido · item · cliente', 'Saiu'], S.map(x => _cfLinha(x, 'kg_saiu', 'baixo')).join(''));
   }
   const cortou = (S.length >= _CF_LIM || E.length >= _CF_LIM) ? `<p class="desc">mostrando ${_CF_LIM} linhas</p>` : '';
@@ -22327,7 +22358,7 @@ async function _cartDiaLinhas(boxId, dia) {
   const LIM = 500;
   let S = [], E = [];
   try {
-    const cols = 'pedido,num,item_cod,item_desc,cliente,entrega,kg_antes,kg_agora,kg_saiu,kg_entrou,sumiu,nova,travava_antes,dias_de_folga';
+    const cols = _CF_COLS;   // 21/08/2026: usa a mesma lista do detalhe por faixa (já traz un/qtd para a caixa)
     const [rs, re] = await Promise.all([
       sb.from('v_carteira_fluxo_linha').select(cols).eq('dia_foto', dia).gt('kg_saiu', 0.001).order('kg_saiu', { ascending: false }).limit(LIM),
       sb.from('v_carteira_fluxo_linha').select(cols).eq('dia_foto', dia).gt('kg_entrou', 0.001).order('kg_entrou', { ascending: false }).limit(LIM)
@@ -22343,14 +22374,27 @@ async function _cartDiaLinhas(boxId, dia) {
   const nDes = S.filter(x => x.travava_antes).length;
   const nAtr = S.filter(x => x.dias_de_folga != null && x.dias_de_folga < 0).length;
   const nPra = S.filter(x => x.dias_de_folga != null && x.dias_de_folga >= 0).length;
+  /* 21/08/2026: caixa e palete também aqui. Palete somado por item antes do
+     total — arredondar linha a linha daria menos palete do que a fábrica move. */
+  const _cxT = (arr, campo) => arr.reduce((a, x) => a + _cfCx(x, campo), 0);
+  const _palT = (arr, campo) => {
+    const p = {};
+    arr.forEach(x => { const c = _cfCx(x, campo); if (c > 0) p[String(x.item_cod)] = (p[String(x.item_cod)] || 0) + c; });
+    return Object.values(p).reduce((s, c) => s + _paletes(c), 0);
+  };
+  const _res = (arr, campo) => {
+    const kg = arr.reduce((a, x) => a + (+x[campo] || 0), 0);
+    const cx = _cxT(arr, campo);
+    return _cfKg(kg) + (cx > 0 ? ` · ${fmtNum(cx)} cx · ${fmtNum(_palT(arr, campo))} palete(s)` : '');
+  };
 
   box.innerHTML = (S.length
-    ? `<div style="font-size:11px;color:#8A97A6;margin:0 0 3px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Saíram · ${S.length} linha(s)</div>`
+    ? `<div style="font-size:11px;color:#8A97A6;margin:0 0 3px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Saíram · ${S.length} linha(s) · ${_res(S, 'kg_saiu')}</div>`
       + `<p class="desc" style="margin:0 0 5px;font-size:11px">${nDes} destravaram um pedido · ${nPra} saíram até a data de entrega · <b style="color:#8A2B2B">${nAtr} depois da data</b></p>`
       + tabSimples(['Pedido · item · cliente', 'Saiu'], S.map(x => lin(x, 'kg_saiu', 'baixo')).join(''))
       + (S.length >= LIM ? `<p class="desc">mostrando ${LIM} linhas</p>` : '')
     : '<p style="margin:0">Nenhuma linha saiu nesse dia.</p>')
-    + (E.length ? `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Entraram · ${E.length} linha(s)</div>`
+    + (E.length ? `<div style="height:12px"></div><div style="font-size:11px;color:#8A97A6;margin:0 0 4px;font-weight:800;letter-spacing:.3px;text-transform:uppercase">Entraram · ${E.length} linha(s) · ${_res(E, 'kg_entrou')}</div>`
       + tabSimples(['Pedido · item · cliente', 'Entrou'], E.map(x => lin(x, 'kg_entrou', 'ok')).join(''))
       + (E.length >= LIM ? `<p class="desc">mostrando ${LIM} linhas</p>` : '') : '');
 }
