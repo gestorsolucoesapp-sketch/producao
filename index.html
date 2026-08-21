@@ -946,7 +946,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.976.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.977.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1654,6 +1654,16 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
     </section>
 
     <section id="abaAnRec" class="oculto">
+      <div class="card">
+        <div class="titulo-sec">📅 Comparar máquinas por semana<span id="cmpSemIco"></span></div>
+        <p class="desc" style="margin-bottom:9px">Várias máquinas, uma embaixo da outra, quebradas em semanas do mês. Aceita intervalo (<b>702-710</b>), lista (<b>702, 705, 708</b>) ou o nome do setor (<b>impressão</b>).</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input id="csMaq" placeholder="702-710  ·  ou: impressão" style="flex:1;min-width:190px;font-size:16px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px" onkeydown="if(event.key==='Enter')csCarregar()">
+          <select id="csMes" style="font-size:15px;padding:8px 10px;border:1px solid var(--borda);border-radius:10px"></select>
+          <button class="btn btn-navy" style="width:auto;padding:8px 16px;font-size:13px" onclick="csCarregar()">comparar</button>
+        </div>
+        <div id="csBox" style="margin-top:12px"></div>
+      </div>
       <div class="card">
         <div class="titulo-sec">🩻 Análise de Recurso — raio-X da máquina<span id="anrecIco"></span></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
@@ -2954,7 +2964,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.976.0';
+const APP_VER = '3.977.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9148,7 +9158,7 @@ function _trocarAbaReal(qual) {
   $('abaOrganograma').classList.toggle('oculto', qual !== 'organograma');
   $('abaRH').classList.toggle('oculto', qual !== 'rh');
   $('abaConf').classList.toggle('oculto', qual !== 'conf');
-  { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} 
+  { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
             const a2 = $('anrecImpIco'); if (a2 && !a2.innerHTML) a2.innerHTML = ico('anrecimp'); } catch (_) {} } } }
   { const _cm = $('abaComercial'); if (_cm) { _cm.classList.toggle('oculto', qual !== 'comercial'); if (qual === 'comercial') { try { cmAbrir(); } catch (_) {} } } }
@@ -29839,6 +29849,161 @@ async function arCobertura() {
       : '<p class="desc">Área da análise vazia — importe o primeiro <b>622</b> acima.</p>';
   } catch (_) { box.innerHTML = ''; }
 }
+/* ==================== COMPARAR MÁQUINAS POR SEMANA ====================
+   21/08/2026 (João: "quero avaliar várias máquinas de uma vez, ex 702...710,
+   uma embaixo da outra, só de um mês — produção por semana, diferença de uma
+   semana pra outra, média e boca das semanas, principais paradas e perdas").
+
+   A conta inteira roda NO BANCO, na função analise_semanal_maquinas(). Isso é
+   deliberado: a aba Análise+ baixa 23.964 linhas cruas e leva 2,5 s parada no
+   iPhone montando o mesmo tipo de resumo. Aqui as nove máquinas do mês voltam
+   em 88 ms e 10 KB, já somadas. O celular só desenha.
+
+   SEMANA é de segunda a domingo, recortada pelo mês — a semana civil que o
+   pessoal usa na reunião, não blocos de 7 dias contados do dia 1. Por isso a
+   primeira e a última "semana" do mês costumam ser quebradas, e o app mostra as
+   datas de cada uma em vez de "semana 1, 2, 3". */
+function csMeses() {
+  const s = $('csMes'); if (!s || s.options.length) return;
+  const hoje = new Date();
+  const op = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const v = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    op.push(`<option value="${v}">${d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}</option>`);
+  }
+  s.innerHTML = op.join('');
+}
+
+/* aceita "702-710", "702, 705, 708", "impressão" ou os três misturados */
+function csLerMaquinas(txt) {
+  const t = String(txt || '').trim();
+  if (!t) return [];
+  const out = new Set();
+  const semAcento = x => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  t.split(/[,;]+/).forEach(pedaco => {
+    const p = pedaco.trim(); if (!p) return;
+    const setor = Object.keys(SETOR_MAQ).find(s => semAcento(s) === semAcento(p));
+    if (setor) { SETOR_MAQ[setor].forEach(c => out.add(String(c))); return; }
+    /* intervalo: 702-710 e também 702...710, do jeito que o João escreveu */
+    const faixa = /^(\d+)\s*(?:-|\.{2,}|a|até)\s*(\d+)$/i.exec(p);
+    if (faixa) {
+      const de = +faixa[1], ate = +faixa[2];
+      if (ate >= de && ate - de <= 60) { for (let c = de; c <= ate; c++) out.add(String(c)); return; }
+    }
+    p.split(/\s+/).forEach(x => { if (/^\d+$/.test(x)) out.add(x); });
+  });
+  return [...out].sort((a, b) => +a - +b);
+}
+
+async function csCarregar() {
+  const box = $('csBox'); if (!box) return;
+  const maqs = csLerMaquinas($('csMaq').value);
+  if (!maqs.length) { box.innerHTML = '<p class="desc">Digite as máquinas: <b>702-710</b>, <b>702, 705</b> ou o setor (<b>impressão</b>).</p>'; return; }
+  if (maqs.length > 40) { box.innerHTML = '<p class="desc">São ' + maqs.length + ' máquinas — limite 40 por comparação.</p>'; return; }
+  const mes = $('csMes').value || '';
+  const [ano, m] = mes.split('-').map(Number);
+  const de = `${ano}-${String(m).padStart(2, '0')}-01`;
+  const ate = new Date(ano, m, 0).toISOString().slice(0, 10);
+
+  box.innerHTML = `<p class="desc"><span class="spin"></span> somando ${maqs.length} máquina(s) no servidor…</p>`;
+  let R = null;
+  try {
+    const { data, error } = await sb.rpc('analise_semanal_maquinas', { p_maquinas: maqs, p_de: de, p_ate: ate });
+    if (error) throw error;
+    R = data;
+  } catch (e) {
+    box.innerHTML = `<p class="desc" style="color:var(--critico)">Não consegui buscar: ${escapeHtml((e && e.message) || String(e))}</p>`;
+    return;
+  }
+  csRender(R, box);
+}
+
+function csRender(R, box) {
+  if (!R || !R.semanas || !R.semanas.length) { box.innerHTML = '<p class="desc">Sem dado nesse mês.</p>'; return; }
+  const kg = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  const n0 = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const dm = s => String(s).slice(8, 10) + '/' + String(s).slice(5, 7);
+  const sem = R.semanas;
+  const rot = sem.map(s => dm(s.ini) === dm(s.fim) ? dm(s.ini) : dm(s.ini) + '–' + dm(s.fim));
+
+  /* variação de uma semana para a outra, em % sobre a anterior. Só compara
+     semana que teve produção nas duas pontas: sair de zero não é "+100%", é
+     máquina que estava parada e voltou — e isso o número de dias já conta. */
+  const dif = (a, b) => {
+    if (!(b > 0) || !(a > 0)) return null;
+    return (a - b) / b * 100;
+  };
+  const selo = d => d === null ? '<span style="color:var(--fraco-2)">—</span>'
+    : `<b style="color:${d >= 0 ? 'var(--ok-4,#1E6B3A)' : 'var(--critico)'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(0)}%</b>`;
+
+  const blocos = (R.maquinas || []).map(M => {
+    const S = M.semanas || [];
+    const totKg = S.reduce((s, x) => s + (+x.kg || 0), 0);
+    if (!totKg) return `<div class="card" style="padding:10px 12px;margin-bottom:9px;opacity:.6">
+      <b style="color:var(--navy)">${escapeHtml(M.cod)}</b> ${escapeHtml(M.nome || '')}
+      <span style="font-size:11.5px;color:var(--fraco)"> · sem produção no mês</span></div>`;
+    const totDias = S.reduce((s, x) => s + (+x.dias || 0), 0);
+    const totPar = S.reduce((s, x) => s + (+x.h_parada || 0), 0);
+    const totPer = S.reduce((s, x) => s + (+x.kg_perda || 0), 0);
+    const mediaDia = totDias > 0 ? totKg / totDias : 0;
+    /* boca média do mês: ponderada pelo peso de cada semana, não média das
+       médias — semana de 400 kg não pode pesar igual a uma de 7 t. */
+    const bocaMes = totKg > 0 ? S.reduce((s, x) => s + (+x.boca || 0) * (+x.kg || 0), 0) / totKg : 0;
+
+    const linhaSem = (rotulo, get, fmt, comDif) =>
+      `<tr><td class="nome" style="font-size:11.5px;font-weight:700">${rotulo}</td>`
+      + S.map((x, i) => {
+          const v = get(x);
+          const d = comDif && i > 0 ? dif(v, get(S[i - 1])) : null;
+          return `<td style="text-align:right;font-size:12px;padding:3px 6px">${fmt(v)}`
+            + (comDif && i > 0 ? `<div style="font-size:10px">${selo(d)}</div>` : '') + '</td>';
+        }).join('')
+      + `<td style="text-align:right;font-size:12px;font-weight:800;background:var(--leve-2,#F4F7FA)">${fmt(get({ _t: 1 }, true))}</td></tr>`;
+
+    const tot = { kg: totKg, cx: S.reduce((s, x) => s + (+x.cx || 0), 0), dias: totDias,
+                  boca: bocaMes, h_parada: totPar, kg_perda: totPer };
+
+    const tabela = `<div class="tab-rolagem"><table class="tab" style="min-width:${180 + sem.length * 78}px">
+      <thead><tr><th style="text-align:left">semana</th>${rot.map(r => `<th style="text-align:right;font-size:11px">${r}</th>`).join('')}<th style="text-align:right;font-size:11px;background:var(--leve-2,#F4F7FA)">mês</th></tr></thead>
+      <tbody>
+        ${linhaSem('produção', (x, t) => t ? tot.kg : x.kg, kg, true)}
+        ${linhaSem('caixas', (x, t) => t ? tot.cx : x.cx, n0, true)}
+        ${linhaSem('dias com apontamento', (x, t) => t ? tot.dias : x.dias, n0, false)}
+        ${linhaSem('média por dia', (x, t) => t ? (tot.dias ? tot.kg / tot.dias : 0) : ((+x.dias || 0) ? x.kg / x.dias : 0), kg, true)}
+        ${linhaSem('boca média', (x, t) => t ? tot.boca : x.boca, v => (+v || 0) > 0 ? (+v).toFixed(1) : '—', false)}
+        ${linhaSem('horas paradas', (x, t) => t ? tot.h_parada : x.h_parada, v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h', true)}
+        ${linhaSem('refugo', (x, t) => t ? tot.kg_perda : x.kg_perda, kg, true)}
+      </tbody></table></div>`;
+
+    const lista = (arr, titulo, campo, fmtv, unid) => {
+      if (!arr || !arr.length) return `<div style="flex:1;min-width:190px"><div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin-bottom:3px">${titulo}</div><p class="desc" style="margin:0;font-size:11.5px">nenhuma no mês</p></div>`;
+      const mx = Math.max(...arr.map(x => +x[campo] || 0)) || 1;
+      return `<div style="flex:1;min-width:190px"><div style="font-size:11px;color:#8A97A6;font-weight:800;text-transform:uppercase;margin-bottom:3px">${titulo}</div>`
+        + arr.map(x => `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;padding:2px 0">
+            <span style="flex:1;color:var(--navy);font-weight:600">${escapeHtml(String(x.m || x.t).slice(0, 30))}</span>
+            <span style="width:52px;height:7px;background:var(--leve-3,#dfe6ee);border-radius:4px;overflow:hidden"><i style="display:block;height:100%;width:${((+x[campo] || 0) / mx * 100).toFixed(0)}%;background:${unid === 'h' ? 'var(--laranja)' : 'var(--critico)'}"></i></span>
+            <b style="min-width:62px;text-align:right">${fmtv(x[campo])}</b>
+            <span style="min-width:34px;text-align:right;font-size:10px;color:var(--fraco-2)">${n0(x.n)}×</span></div>`).join('')
+        + '</div>';
+    };
+
+    return `<div class="card" style="padding:11px 12px;margin-bottom:11px">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:7px">
+        <b style="font-size:16px;color:var(--navy)">${escapeHtml(M.cod)}</b>
+        <span style="font-size:12.5px;color:var(--fraco);font-weight:600">${escapeHtml(M.nome || '')}</span>
+        <span style="margin-left:auto;font-size:12.5px;font-weight:800;color:var(--navy)">${kg(totKg)} · ${n0(tot.cx)} cx · média ${kg(mediaDia)}/dia · boca ${bocaMes > 0 ? bocaMes.toFixed(1) : '—'}</span>
+      </div>
+      ${tabela}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:9px">
+        ${lista(M.paradas, '⏸️ principais paradas', 'h', v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h', 'h')}
+        ${lista(M.perdas, '🗑️ principais perdas', 'kg', kg, 'kg')}
+      </div></div>`;
+  }).join('');
+
+  box.innerHTML = `<p class="desc" style="margin-bottom:9px">${R.maquinas.length} máquina(s) · ${dm(R.de)} a ${dm(R.ate)} · ${sem.length} semana(s). A coluna <b>mês</b> é o total, não a soma das variações. O <b>▲▼</b> compara com a semana anterior.</p>${blocos}`;
+}
+
 async function arCarregar() {
   const cod = String(($('arCod') || {}).value || '').trim();
   if (!cod) { toast('Informe o código da máquina.'); return; }
