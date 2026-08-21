@@ -962,7 +962,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.982.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.983.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2988,7 +2988,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.982.0';
+const APP_VER = '3.983.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6915,7 +6915,13 @@ function renderAnaliseMais(cache) {
     topTipos.length ? tabSimples(['Ofensor', 'Impacto', 'Prioridade', ''], linMat) : '<p class="desc">Sem dados suficientes.</p>');
 
   try { html += cardMaquinaTurno(E); } catch (e) { console.warn('máquina×turno:', e); }
-  box.innerHTML = html;
+  /* 21/08/2026 (João: "resumo via WhatsApp deve ser padrão na Análise+").
+     O botão vai no TOPO, antes dos cards: quem quer mandar o resumo não quer
+     rolar oito cards para achar o botão. */
+  box.innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">'
+    + '<button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:12.5px" onclick="enviarTexto(amTexto())">📲 enviar resumo por WhatsApp</button></div>'
+    + html;
+  window._amEscopoAtual = E;
   const ck = $('amCustoKg'); // mantém foco não é necessário
 }
 
@@ -26945,6 +26951,8 @@ function csTexto() {
       const d = (i > 0 && ant > 0 && v > 0) ? Math.round((v - ant) / ant * 100) : null;
       return t(v) + (d === null ? '' : (d >= 0 ? ' ▲' : ' ▼') + Math.abs(d) + '%');
     }).join('  |  '));
+    const totMeta = S.reduce((s, x) => s + (+x.meta || 0), 0);
+    if (totMeta > 0) L.push('  meta ' + t(totMeta) + ' · atingiu *' + Math.round(totKg / totMeta * 100) + '%*');
     L.push('  paradas ' + totPar.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h · refugo ' + t(totPer));
     if (M.paradas && M.paradas[0]) L.push('  maior parada: ' + M.paradas[0].m + ' (' + M.paradas[0].h + ' h)');
     L.push('');
@@ -30093,6 +30101,114 @@ async function csCarregar() {
   csRender(R, box);
 }
 
+/* ===== O QUE A TABELA ESTÁ DIZENDO — 21/08/2026 (pedido do João) =====
+   Um parágrafo por máquina, embaixo dos números. Não é enfeite: a tabela tem
+   doze linhas por sete colunas e ninguém lê isso em pé no chão de fábrica. Aqui
+   sai só o que salta — a semana mais fraca, a tendência, a grama fora da curva,
+   a parada que domina.
+
+   Regra que segui: cada frase é um FATO com o número ao lado, sem adjetivo e sem
+   diagnóstico. "O refugo subiu 42%" o app sabe; "porque o material estava ruim"
+   ele não sabe, e chutar isso é pior do que calar. */
+function csLeitura(M, S, tot, temMeta, rot, kg) {
+  const com = S.map((x, i) => ({ ...x, i })).filter(x => (+x.kg || 0) > 0);
+  if (com.length < 2) return '';
+  const F = [];
+  const pct = (a, b) => b > 0 ? Math.round((a - b) / b * 100) : null;
+
+  /* TENDÊNCIA POR RITMO, NÃO POR TOTAL — e isso não é detalhe.
+     A primeira e a última semana do mês quase sempre são quebradas: em agosto a
+     primeira tem 2 dias. Comparando totais, a 702 "subiu 777%" de 431 kg para
+     3,8 t — número verdadeiro e completamente sem sentido, porque o que mudou
+     foi a quantidade de dias, não o desempenho.
+     Usando kg/dia a comparação fica justa, e a mesma máquina mostra o que de
+     fato aconteceu: o ritmo caiu. */
+  const cheias = com.filter(x => (+x.dias || 0) >= 3);
+  if (cheias.length >= 2) {
+    const p = cheias[0], u = cheias[cheias.length - 1];
+    const rp = p.kg / p.dias, ru = u.kg / u.dias;
+    const dR = pct(ru, rp);
+    if (dR !== null && Math.abs(dR) >= 8)
+      F.push(`Ritmo ${dR >= 0 ? 'subiu' : 'caiu'} <b style="color:${dR >= 0 ? 'var(--ok-4,#1E6B3A)' : 'var(--critico)'}">${Math.abs(dR)}%</b> — de <b>${kg(rp)}/dia</b> em ${rot[p.i]} para <b>${kg(ru)}/dia</b> em ${rot[u.i]}.`
+        + (cheias.length < com.length ? ' <span style="color:var(--fraco-2)">(semanas quebradas ficam fora desta comparação)</span>' : ''));
+  }
+
+  // a semana mais fraca por ritmo, não por total (semana curta produz menos e não é notícia)
+  const rit = com.map(x => ({ ...x, r: (+x.dias || 0) ? (+x.kg) / x.dias : 0 })).filter(x => x.r > 0);
+  if (rit.length >= 2) {
+    const pior = rit.slice().sort((a, b) => a.r - b.r)[0];
+    const melhor = rit.slice().sort((a, b) => b.r - a.r)[0];
+    if (pior.i !== melhor.i && melhor.r > 0 && (melhor.r - pior.r) / melhor.r >= 0.15)
+      F.push(`Melhor ritmo em <b>${rot[melhor.i]}</b> (${kg(melhor.r)}/dia); pior em <b>${rot[pior.i]}</b> (${kg(pior.r)}/dia).`);
+  }
+
+  if (temMeta) {
+    const am = tot.meta > 0 ? Math.round(tot.kg / tot.meta * 100) : null;
+    const abaixo = com.filter(x => x.ating != null && x.ating < 100).length;
+    if (am != null)
+      F.push(`No mês ficou em <b style="color:${am >= 100 ? 'var(--ok-4,#1E6B3A)' : 'var(--critico)'}">${am}%</b> da meta dos turnos que rodou`
+        + (abaixo ? ` — <b>${abaixo}</b> de ${com.length} semana(s) abaixo de 100%.` : '.'));
+  }
+
+  // grama por peça fora da curva: sinal de mix ou de gramatura
+  const g = com.filter(x => (+x.g_pc || 0) > 0);
+  if (g.length >= 3) {
+    const med = g.reduce((s, x) => s + (+x.g_pc), 0) / g.length;
+    const fora = g.filter(x => Math.abs((+x.g_pc) - med) / med >= 0.15);
+    if (fora.length && fora.length < g.length)
+      F.push(`Peso unitário oscilou: ${fora.map(x => `<b>${(+x.g_pc).toFixed(2)} g</b> em ${rot[x.i]}`).join(', ')} contra média de ${med.toFixed(2)} g. Vale conferir se é mix de item ou gramatura.`);
+  }
+
+  // parada e refugo pesando
+  if (M.paradas && M.paradas[0] && tot.h_parada > 0) {
+    const f = M.paradas[0], fatia = Math.round(f.h / tot.h_parada * 100);
+    if (fatia >= 25) F.push(`<b>${escapeHtml(f.m)}</b> respondeu por <b>${fatia}%</b> das ${tot.h_parada.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h paradas (${f.n}×).`);
+  }
+  if (tot.kg_perda > 0 && tot.kg > 0) {
+    const r = tot.kg_perda / (tot.kg + tot.kg_perda) * 100;
+    F.push(`Refugo de <b>${kg(tot.kg_perda)}</b> — <b style="color:${r >= 3 ? 'var(--critico)' : 'var(--fraco)'}">${r.toFixed(1)}%</b> do que passou pela máquina.`);
+  }
+  if (!F.length) return '';
+  return `<div style="margin-top:10px;padding:9px 11px;background:var(--leve-2,#F4F7FA);border-left:3px solid var(--azul-marca,#1E5AA8);border-radius:0 8px 8px 0">
+    <div style="font-size:10px;font-weight:800;color:#8A97A6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">o que a tabela diz</div>
+    <ul style="margin:0;padding-left:16px;font-size:12px;line-height:1.55;color:var(--navy)">${F.map(f => '<li>' + f + '</li>').join('')}</ul></div>`;
+}
+
+/* 21/08/2026 (João: "resumo via WhatsApp deve ser padrão na Análise+").
+   Sai o que cabe numa mensagem: produção, refugo com a fatia, paradas com o
+   maior ofensor e as falhas. O detalhe fica no app — mensagem que precisa de
+   rolagem no WhatsApp ninguém lê. */
+function amTexto() {
+  const E = window._amEscopoAtual;
+  if (!E) return '';
+  const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  const kgProd = (E.prod || []).reduce((s, r) => s + (+r.peso || 0), 0);
+  const kgPerd = (E.perd || []).reduce((s, r) => s + (+r.peso || 0), 0);
+  const hPar = (E.par || []).reduce((s, r) => s + (+r.tempo_horas || 0), 0);
+  const soma = (arr, chave, val) => {
+    const m = {};
+    (arr || []).forEach(r => { const k = String(r[chave] || '—').trim() || '—'; m[k] = (m[k] || 0) + (+r[val] || 0); });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  };
+  const topPerda = soma(E.perd, 'tipo_perda_desc', 'peso').slice(0, 3);
+  const topPar = soma(E.par, 'motivo_desc', 'tempo_horas').slice(0, 3);
+  const rRef = (kgProd + kgPerd) > 0 ? (kgPerd / (kgProd + kgPerd) * 100) : 0;
+  const L = ['*ANÁLISE+ · ' + String(E.rotulo || '').toUpperCase() + '*', ''];
+  L.push('*Produção* ' + t(kgProd));
+  L.push('*Refugo* ' + t(kgPerd) + ' (' + rRef.toFixed(1) + '%)');
+  L.push('*Paradas* ' + hPar.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' h');
+  if (topPar.length) {
+    L.push('', '*Maiores paradas*');
+    topPar.forEach(([k, v]) => L.push('• ' + String(k).slice(0, 28) + ' — ' + v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h'));
+  }
+  if (topPerda.length) {
+    L.push('', '*Maiores perdas*');
+    topPerda.forEach(([k, v]) => L.push('• ' + String(k).slice(0, 28) + ' — ' + t(v)));
+  }
+  L.push('', '_Gerado no app de Produção · Análise+._');
+  return L.join('\n');
+}
+
 function csRender(R, box) {
   if (!R || !R.semanas || !R.semanas.length) { box.innerHTML = '<p class="desc">Sem dado nesse mês.</p>'; return; }
   const kg = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
@@ -30148,18 +30264,47 @@ function csRender(R, box) {
        1.454. */
     const gMes = totMil > 0 ? totKg / totMil : 0;
     const semMil = S.reduce((s, x) => s + (+x.sem_mil || 0), 0);
+    const totTurnos = S.reduce((s, x) => s + (+x.turnos || 0), 0);
+    const totMeta = S.reduce((s, x) => s + (+x.meta || 0), 0);
+    const temMeta = !!M.tem_meta && totMeta > 0;
     const tot = { kg: totKg, cx: S.reduce((s, x) => s + (+x.cx || 0), 0), dias: totDias,
+                  turnos: totTurnos, meta: totMeta,
                   mil: totMil, g_pc: gMes, h_parada: totPar, kg_perda: totPer };
+    /* 21/08/2026 (João: "milheiro, caixas e kg devem ficar juntos"). A tabela
+       tinha nove linhas soltas em ordem de implementação. Agora vem em três
+       blocos com um cabeçalho fino separando: VOLUME (kg, caixa, milheiro, grama
+       por peça), RITMO E META, e PERDAS E PARADAS. As três medidas de volume
+       são a mesma produção contada de jeitos diferentes — separá-las obrigava a
+       pular linha para comparar. */
+    const grupo = titulo => `<tr><td colspan="${sem.length + 2}" style="padding:7px 0 2px;font-size:10px;font-weight:800;color:#8A97A6;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--linha,#eef2f7)">${titulo}</td></tr>`;
 
     const tabela = `<div class="tab-rolagem"><table class="tab" style="min-width:${180 + sem.length * 78}px">
       <thead><tr><th style="text-align:left">semana</th>${rot.map(r => `<th style="text-align:right;font-size:11px">${r}</th>`).join('')}<th style="text-align:right;font-size:11px;background:var(--leve-2,#F4F7FA)">mês</th></tr></thead>
       <tbody>
-        ${linhaSem('produção', (x, t) => t ? tot.kg : x.kg, kg, true)}
+        ${grupo('volume produzido')}
+        ${linhaSem('kg', (x, t) => t ? tot.kg : x.kg, kg, true)}
         ${linhaSem('caixas', (x, t) => t ? tot.cx : x.cx, n0, true)}
-        ${linhaSem('dias com apontamento', (x, t) => t ? tot.dias : x.dias, n0, false)}
-        ${linhaSem('média por dia', (x, t) => t ? (tot.dias ? tot.kg / tot.dias : 0) : ((+x.dias || 0) ? x.kg / x.dias : 0), kg, true)}
         ${linhaSem('milheiro', (x, t) => t ? tot.mil : x.mil, v => (+v || 0) > 0 ? fmtMil(+v) : '—', true)}
         ${linhaSem('peso unitário', (x, t) => t ? tot.g_pc : x.g_pc, v => (+v || 0) > 0 ? (+v).toFixed(2) + ' g' : '—', true)}
+        ${grupo('ritmo e meta')}
+        ${linhaSem('dias com apontamento', (x, t) => t ? tot.dias : x.dias, n0, false)}
+        ${linhaSem('turnos', (x, t) => t ? tot.turnos : x.turnos, n0, false)}
+        ${linhaSem('média por dia', (x, t) => t ? (tot.dias ? tot.kg / tot.dias : 0) : ((+x.dias || 0) ? x.kg / x.dias : 0), kg, true)}
+        ${linhaSem('média por turno', (x, t) => t ? (tot.turnos ? tot.kg / tot.turnos : 0) : ((+x.turnos || 0) ? x.kg / x.turnos : 0), kg, true)}
+        ${temMeta ? `${linhaSem('meta dos turnos', (x, t) => t ? tot.meta : x.meta, kg, false)}
+        ${(() => {
+          /* atingimento não leva ▲▼ de variação: o que importa é a distância
+             da meta, e essa já é a própria porcentagem. Empilhar "58% ▲3%" faria
+             a pessoa ler o 3% como se fosse o resultado. */
+          const cor = a => a == null ? 'var(--fraco-2)' : a >= 100 ? 'var(--ok-4,#1E6B3A)' : a >= 85 ? '#8A5A00' : 'var(--critico)';
+          const cel = a => a == null ? '<span style="color:var(--fraco-2)">—</span>'
+            : `<b style="color:${cor(a)}">${a}%</b>`;
+          const am = tot.meta > 0 ? Math.round(tot.kg / tot.meta * 100) : null;
+          return `<tr><td class="nome" style="font-size:11.5px;font-weight:700">atingimento</td>`
+            + S.map(x => `<td style="text-align:right;font-size:13px;padding:3px 6px">${cel(x.ating)}</td>`).join('')
+            + `<td style="text-align:right;font-size:13px;background:var(--leve-2,#F4F7FA)">${cel(am)}</td></tr>`;
+        })()}` : ''}
+        ${grupo('perdas e paradas')}
         ${(() => {
           /* boca não é número que se soma nem se compara em %: é uma etiqueta.
              Por isso sai da linhaSem() e vira linha própria, mostrando a boca e
@@ -30198,7 +30343,8 @@ function csRender(R, box) {
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:9px">
         ${lista(M.paradas, '⏸️ principais paradas', 'h', v => (+v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h', 'h')}
         ${lista(M.perdas, '🗑️ principais perdas', 'kg', kg, 'kg')}
-      </div></div>`;
+      </div>
+      ${csLeitura(M, S, tot, temMeta, rot, kg)}</div>`;
   }).join('');
 
   box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px">
