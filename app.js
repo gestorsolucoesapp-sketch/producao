@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.968.0';
+const APP_VER = '3.969.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6034,16 +6034,28 @@ function medirFluidez(ligar) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lig); else lig();
 })();
 
+/* nome de tela, não o id interno: a aba Itens se chama 'analise' por dentro
+   desde a primeira versão, e o medidor mostrando "analise" confundia. */
+const _FX_NOME = { analise: 'Itens', analisemais: 'Análise+', estrategia: 'Análise de Tendência',
+  painel: 'Painel', programacao: 'Programação', demanda: 'Demanda', tarefas: 'Tarefas',
+  manut: 'Manutenção', oee: 'OEE', metas: 'Metas', usuarios: 'Usuários', conf: 'Conferência',
+  anrec: 'Análise de Recurso', comercial: 'Comercial', estoque: 'Estoque', rh: 'Gestão de Pessoas',
+  organograma: 'Organograma', importar: 'Importar', historico: 'Histórico', ferramentas: 'Ferramentas' };
+
 function trocarAba(qual) {
   const _t0 = _fx ? performance.now() : 0;
   _trocarAbaReal(qual);
   if (_fx) {
     _fx.troca = performance.now() - _t0;
-    _fx.aba = qual; _fx.mut = 0; _fx.topo = 0; _fx.t0 = Date.now();
-    const _t1 = performance.now();
-    /* o render da aba é assíncrono; esta medida pega o tempo até a thread
-       voltar a ficar livre, que é o que a pessoa sente. */
-    requestAnimationFrame(() => { if (_fx) _fx.render = performance.now() - _t1; });
+    _fx.aba = _FX_NOME[qual] || qual; _fx.mut = 0; _fx.topo = 0; _fx.t0 = Date.now();
+    _fx.render = 0;
+    /* o desenho agora acontece dois quadros depois, de propósito. Esta medida
+       espera ele começar e cronometra até a thread voltar a ficar livre — que é
+       o tempo em que a tela fica congelada mostrando o conteúdo velho. */
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const _t1 = performance.now();
+      requestAnimationFrame(() => { if (_fx) _fx.render = performance.now() - _t1; });
+    }));
   }
 }
 
@@ -6110,24 +6122,45 @@ function _trocarAbaReal(qual) {
   $('abaProgramacao').classList.toggle('oculto', qual !== 'programacao');
   { const _f = $('abaFerramentas'); if (_f) _f.classList.toggle('oculto', qual !== 'ferramentas'); }
   _aplicarFiltroPainel(qual);   // o filtro do Painel vale para todas as abas (menos Programação)
-  if (qual === 'estoque') carregarEstoque();
-  if (qual === 'demanda') carregarDemanda();
-  if (qual === 'painel') carregarPainel();
-  if (qual === 'analise') carregarAnalise();
-  if (qual === 'tarefas') carregarTarefas();
-  if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
-  if (qual === 'historico') carregarHistorico();
-  if (qual === 'ferramentas') ferrSub(_fSubAtual || 'caderno');
-  if (qual === 'usuarios')  carregarUsuarios();
-  if (qual === 'metas')     { carregarMetas(); try { rpCarregar(); } catch (_) { } }
-  if (qual === 'oee')       carregarOEE();
-  if (qual === 'manut')     carregarManut();
-  if (qual === 'analisemais') carregarAnaliseMais();
-  if (qual === 'estrategia') carregarEstrategia();
-  if (qual === 'organograma') { carregarOrganograma(); try { gpSub(_gpSubAtual || 'org'); } catch (_) { } }
-  if (qual === 'rh') carregarRH();
-  if (qual === 'conf') carregarConf();
-  if (qual === 'programacao') carregarProgramacao(true);   // entrar na aba sempre busca fila nova
+  /* ===== O DESENHO SAI DA FRENTE DO TOQUE — 21/08/2026 =====
+     João: "quando clico numa aba fica pesado, não mostra que está clicando e
+     parece travado". O medidor deu o número: aba Itens com troca de 218 ms e
+     render de só 30 ms. Ou seja, o trabalho estava todo AQUI, no bloco síncrono
+     do clique.
+
+     O motivo: carregar*() é async, mas só solta a thread no primeiro await.
+     Quando os dados já estão em cache — que é o caso comum, a segunda vez que
+     você entra na aba — não há await nenhum, e renderAnalise() monta a tela
+     inteira ainda dentro do handler do toque. O navegador não consegue nem
+     pintar o estado "pressionado" do botão antes de terminar.
+
+     Agora os toggles de classe acontecem na hora (a aba troca visualmente e o
+     toque responde) e o desenho vai para o quadro seguinte. Uma única troca de
+     frame — ninguém percebe atraso, mas o toque deixa de engasgar.
+     requestAnimationFrame e não setTimeout: garante que o navegador já pintou
+     o quadro da troca antes de a thread ser tomada de novo. */
+  const _desenhar = () => {
+    if (_abaAtual !== qual) return;   // já trocou de aba de novo: não desenha a antiga
+    if (qual === 'estoque') carregarEstoque();
+    if (qual === 'demanda') carregarDemanda();
+    if (qual === 'painel') carregarPainel();
+    if (qual === 'analise') carregarAnalise();
+    if (qual === 'tarefas') carregarTarefas();
+    if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
+    if (qual === 'historico') carregarHistorico();
+    if (qual === 'ferramentas') ferrSub(_fSubAtual || 'caderno');
+    if (qual === 'usuarios')  carregarUsuarios();
+    if (qual === 'metas')     { carregarMetas(); try { rpCarregar(); } catch (_) { } }
+    if (qual === 'oee')       carregarOEE();
+    if (qual === 'manut')     carregarManut();
+    if (qual === 'analisemais') carregarAnaliseMais();
+    if (qual === 'estrategia') carregarEstrategia();
+    if (qual === 'organograma') { carregarOrganograma(); try { gpSub(_gpSubAtual || 'org'); } catch (_) { } }
+    if (qual === 'rh') carregarRH();
+    if (qual === 'conf') carregarConf();
+    if (qual === 'programacao') carregarProgramacao(true);   // entrar na aba sempre busca fila nova
+  };
+  requestAnimationFrame(() => requestAnimationFrame(_desenhar));
   sincSetorGlobal();
   try { atualizarRecorteTarja(); } catch (_) {}
   /* 21/08/2026: eram TRÊS passadas por toque (na hora, 400ms e 1500ms). A de
