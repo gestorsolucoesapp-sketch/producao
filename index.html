@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.961.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.962.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.961.0';
+const APP_VER = '3.962.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3039,7 +3039,7 @@ async function salvarRegraFer() {
   if (!souAdmin) { toast('Só admin pode editar a regra.'); return; }
   const txt = ($('regraFerTxt') ? $('regraFerTxt').value : '').trim();
   try {
-    const { error } = await sb.from('app_config').upsert({ chave: 'regra_feriados_texto', valor: txt }, { onConflict: 'chave' });
+    const { error } = await cfgGravar('regra_feriados_texto', txt);
     if (error) throw error;
     regraFeriadosTexto = txt; toast('✅ Regra salva — o assistente já usa.');
   } catch (e) { toast('❌ ' + (e.message || e)); }
@@ -3700,7 +3700,7 @@ async function toggleAbaOculta(id) {
   const i = _abasOcultas.indexOf(id);
   if (i >= 0) _abasOcultas.splice(i, 1); else _abasOcultas.push(id);
   try {
-    const { error } = await sb.from('app_config').upsert({ chave: 'abas_ocultas', valor: JSON.stringify(_abasOcultas) }, { onConflict: 'chave' });
+    const { error } = await cfgGravar('abas_ocultas', _abasOcultas);
     if (error) throw error;
     toast(i >= 0 ? '👁 ' + id + ' liberada para a equipe' : '🚧 ' + id + ' escondida — só você vê');
   } catch (e) { toast('❌ ' + (e.message || e)); }
@@ -3783,7 +3783,7 @@ async function getTelasSetor() {
   return telasSetor;
 }
 const salvarCfg = async (chave, valor) => {
-  const { error } = await sb.from('app_config').upsert({ chave, valor: JSON.stringify(valor) }, { onConflict: 'chave' });
+  const { error } = await cfgGravar(chave, valor);
   return !error;
 };
 let acessoId = null;      // id do registro de acesso atual
@@ -4487,20 +4487,56 @@ async function togGrafico(k) {
      escondia o card do painel de TODA a fabrica. Agora so o gestor persiste;
      para os demais o recolher vale so na sessao, sem afetar ninguem. */
   if (souAdmin) {
-    try { await sb.from('app_config').upsert({ chave: 'graficos_ocultos', valor: JSON.stringify([..._grafOcultos]) }, { onConflict: 'chave' }); } catch (_) {}
+    try { await cfgGravar('graficos_ocultos', [..._grafOcultos]); } catch (_) {}
   }
   toast(ficaOculto ? 'Recolhido — virou padrão' : 'Aberto — virou padrão');
 }
 function mostrarTodosGraficos() {
   if (!_grafOcultos || !_grafOcultos.size) { toast('Nenhum gráfico escondido'); return; }
   _grafOcultos.clear();
-  sb.from('app_config').upsert({ chave: 'graficos_ocultos', valor: '[]' }, { onConflict: 'chave' }).then(() => {}, () => {});
+  cfgGravar('graficos_ocultos', '[]', true);
   document.querySelectorAll('.pbloco.oculto-graf').forEach(e => e.classList.remove('oculto-graf'));
   toast('Todos os gráficos voltaram');
 }
 
 async function carregarPosFabs() { try { const { data } = await sb.from('app_config').select('valor').eq('chave', 'fab_pos').maybeSingle(); _posFabs = data && data.valor ? JSON.parse(data.valor) : {}; } catch (_) { _posFabs = {}; } aplicarPosFabs(); }
-async function salvarPosFab(id, left, top) { if (!_posFabs) _posFabs = {}; _posFabs[id] = { left, top }; try { await sb.from('app_config').upsert({ chave: 'fab_pos', valor: JSON.stringify(_posFabs) }, { onConflict: 'chave' }); } catch (_) {} }
+/* ==================== GRAVAR CONFIGURAÇÃO (sem falhar calado) ============
+   21/08/2026. Auditoria do banco achou no log:
+     "new row violates row-level security policy for table app_config"
+   O app tem 24 pontos que gravam em app_config com `.upsert(...)` dentro de um
+   try/catch — e o try/catch NÃO PEGA NADA, porque o supabase-js não lança
+   exceção: ele devolve `{ error }`. Ou seja, quando a RLS barra a gravação, o
+   app segue em frente e mostra o toast de sucesso. A pessoa mexe na
+   configuração, o app diz que salvou, e no dia seguinte está tudo como antes.
+
+   Detalhe que explica por que barra mesmo quem tem direito de editar: `upsert`
+   no PostgREST vira INSERT ... ON CONFLICT DO UPDATE, e o Postgres avalia a
+   policy de INSERT mesmo quando a linha já existe e a operação seria só um
+   UPDATE. Quem só tem policy de UPDATE leva 42501 do mesmo jeito.
+
+   Este helper devolve true/false e avisa na tela quando não deu. Não muda
+   permissão nenhuma — só para de mentir. */
+async function cfgGravar(chave, valor, silencioso) {
+  try {
+    const { error } = await sb.from('app_config')
+      .upsert({ chave, valor: typeof valor === 'string' ? valor : JSON.stringify(valor) }, { onConflict: 'chave' });
+    if (!error) return true;
+    if (!silencioso) {
+      const semPermissao = String(error.code) === '42501' || /row-level security|permission/i.test(error.message || '');
+      toast(semPermissao
+        ? '🔒 Não salvou: seu usuário não tem permissão para mudar "' + chave + '".'
+        : '❌ Não salvou "' + chave + '": ' + (error.message || 'erro desconhecido'));
+    }
+    console.warn('cfgGravar', chave, error);
+    return false;
+  } catch (e) {
+    if (!silencioso) toast('❌ Não salvou "' + chave + '": ' + ((e && e.message) || e));
+    console.warn('cfgGravar', chave, e);
+    return false;
+  }
+}
+
+async function salvarPosFab(id, left, top) { if (!_posFabs) _posFabs = {}; _posFabs[id] = { left, top }; await cfgGravar('fab_pos', _posFabs, true); }
 let _vinhetaTimer = null, _vinhetaAtiva = false, _vinhetaSaiu = false;
 function pularVinheta() {
   if (_vinhetaSaiu) return;
@@ -5713,7 +5749,7 @@ async function getPrecoFonte() {
 }
 async function salvarPrecoFonte(v) {
   _amPrecoFonte = String(v || '').trim();
-  try { await sb.from('app_config').upsert({ chave: 'preco_pp_fonte', valor: _amPrecoFonte }, { onConflict: 'chave' }); } catch (_) {}
+  try { await cfgGravar('preco_pp_fonte', _amPrecoFonte); } catch (_) {}
 }
 function ppToggleOlho() {
   _amPrecoOculto = !_amPrecoOculto;
@@ -5770,8 +5806,8 @@ async function salvarCustoKg(v) {
   hist.sort((a, b) => a.data < b.data ? -1 : 1);
   _amPrecoHist = hist;
   try {
-    await sb.from('app_config').upsert({ chave: 'custo_kg_refugo', valor: String(v) }, { onConflict: 'chave' });
-    await sb.from('app_config').upsert({ chave: 'preco_pp_hist', valor: JSON.stringify(hist) }, { onConflict: 'chave' });
+    await cfgGravar('custo_kg_refugo', String(v));
+    await cfgGravar('preco_pp_hist', hist);
   } catch (_) {}
   getPrecoFonte();
   renderAnaliseMais();
@@ -8123,7 +8159,7 @@ async function estCarregaIgnorar() {
   return _estIgnorar;
 }
 async function estSalvaIgnorar() {
-  try { await sb.from('app_config').upsert({ chave: 'estoque_desvio_ignorar', valor: JSON.stringify([...(_estIgnorar || [])]) }, { onConflict: 'chave' }); } catch (_) {}
+  try { await cfgGravar('estoque_desvio_ignorar', [...(_estIgnorar || [])]); } catch (_) {}
 }
 async function estIgnorarDesvio(dep, fam) {
   await estCarregaIgnorar();
@@ -11952,7 +11988,7 @@ async function salvarBocaFator() {
     if (t !== '' && !isNaN(v) && v > 0 && v !== 1) novo[b] = v;
   });
   try {
-    const { error } = await sb.from('app_config').upsert({ chave: 'boca_fator', valor: JSON.stringify(novo) }, { onConflict: 'chave' });
+    const { error } = await cfgGravar('boca_fator', novo);
     if (error) throw error;
     bocaFator = novo;
     toast('✅ Fator por boca salvo');
@@ -14895,7 +14931,7 @@ async function salvarPerdaCfg(silencioso) {
   // o supabase-js NAO lanca quando o RLS recusa: devolve { error }. Sem checar,
   // o toast diria "salvas" e o numero voltaria ao antigo no proximo carregamento.
   try {
-    const { error } = await sb.from('app_config').upsert({ chave: 'perda_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    const { error } = await cfgGravar('perda_cfg', cfg);
     if (error) throw error;
     perdaCfg = Object.assign(_perdaCfgPadrao(), cfg);
     if (!silencioso) { toast('Metas de perda salvas'); try { renderPainel(); } catch (_) { } }
@@ -14943,7 +14979,7 @@ async function salvarSetupCfg() {
      o numero novo ate o proximo carregamento e entao voltava o antigo.
      Foi o que aconteceu com a meta da Embaladeiras. */
   try {
-    const { error } = await sb.from('app_config').upsert({ chave: 'setup_cfg', valor: JSON.stringify(cfg) }, { onConflict: 'chave' });
+    const { error } = await cfgGravar('setup_cfg', cfg);
     if (error) throw error;
     setupCfg = Object.assign(_setupCfgPadrao(), cfg);
     toast('Metas de setup salvas');
@@ -19181,9 +19217,9 @@ async function salvarBriefingDest() {
   const auto = ($('briefAuto') && $('briefAuto').checked) ? '1' : '0';
   const st = $('briefStatus'); st.textContent = 'Salvando…';
   try {
-    await sb.from('app_config').upsert({ chave: 'briefing_dest', valor: JSON.stringify(ids) }, { onConflict: 'chave' });
-    await sb.from('app_config').upsert({ chave: 'briefing_auto', valor: auto }, { onConflict: 'chave' });
-    if (h != null) await sb.from('app_config').upsert({ chave: 'briefing_hora', valor: String(h) }, { onConflict: 'chave' });
+    await cfgGravar('briefing_dest', ids);
+    await cfgGravar('briefing_auto', auto);
+    if (h != null) await cfgGravar('briefing_hora', String(h));
     _briefDest = ids;
     st.innerHTML = auto === '0'
       ? '✅ Salvo. Envio automático DESLIGADO — só sai quando você mandar.'
@@ -19227,7 +19263,7 @@ async function gerarBriefingTarefa() {
       prioridade: 'media', descricao: _semMd(corpo)
     }));
     const { error } = await sb.from('tarefas').insert(linhas);
-    if (!error) await sb.from('app_config').upsert({ chave: 'briefing_ultimo', valor: ud }, { onConflict: 'chave' });
+    if (!error) await cfgGravar('briefing_ultimo', ud);
   } catch (_) { /* silencioso: nunca trava o painel */ }
 }
 // ===== MANUAIS DAS MÁQUINAS =====
@@ -22904,11 +22940,9 @@ async function carregarHorariosImport() {
 
 async function salvarHorariosImport(arr) {
   _horariosImport = arr.slice().sort();
-  try {
-    await sb.from('app_config').upsert(
-      { chave: 'import_horarios', valor: JSON.stringify(_horariosImport) },
-      { onConflict: 'chave' });
-  } catch (e) { toast('❌ Não consegui salvar: ' + (e.message || e)); }
+  /* 21/08/2026: era um try/catch em volta do upsert — que nunca disparava,
+     porque o supabase-js devolve { error } em vez de lançar. */
+  await cfgGravar('import_horarios', _horariosImport);
   renderHorariosImport();
 }
 
@@ -30974,7 +31008,7 @@ async function orgCarregaMaqOcultas() {
   catch (_) { orgMaqOcultas = new Set(); }
 }
 async function orgSalvaMaqOcultas() {
-  try { await sb.from('app_config').upsert({ chave: 'org_maq_ocultas', valor: JSON.stringify([...orgMaqOcultas]) }, { onConflict: 'chave' }); } catch (_) {}
+  try { await cfgGravar('org_maq_ocultas', [...orgMaqOcultas]); } catch (_) {}
 }
 async function orgExcluirMaq(cod) {
   cod = String(cod);
@@ -32008,7 +32042,7 @@ async function apoioTrocaCat(id) {
     await apoioCarregaCats();
     if (!_apoioCats.includes(nome) && !APOIO_CATS_PADRAO.includes(nome)) {
       _apoioCats.push(nome);
-      try { await sb.from('app_config').upsert({ chave: APOIO_CHAVE_CATS, valor: JSON.stringify(_apoioCats) }, { onConflict: 'chave' }); }
+      try { await cfgGravar(APOIO_CHAVE_CATS, _apoioCats); }
       catch (e) { toast('Categoria não salvou: ' + (e.message || e)); }
     }
     v = nome;
@@ -35359,7 +35393,7 @@ async function faTrocaTipo() {
     await faCarregaTipos();
     if (!ORG_TIPOS.includes(nome) && !_faTipos.includes(nome)) {
       _faTipos.push(nome);
-      try { await sb.from('app_config').upsert({ chave: FA_CHAVE_TIPOS, valor: JSON.stringify(_faTipos) }, { onConflict: 'chave' }); }
+      try { await cfgGravar(FA_CHAVE_TIPOS, _faTipos); }
       catch (e) { toast('Tipo não salvou: ' + (e.message || e)); }
     }
     const opt = document.createElement('option');
@@ -35928,7 +35962,7 @@ async function faCarregaCats() {
   return _faCats;
 }
 async function faSalvaCats() {
-  try { await sb.from('app_config').upsert({ chave: FA_CHAVE_CATS, valor: JSON.stringify(_faCats) }, { onConflict: 'chave' }); }
+  try { await cfgGravar(FA_CHAVE_CATS, _faCats); }
   catch (e) { toast('Categoria não salvou: ' + (e.message || e)); }
 }
 // lista final = padrão + criadas + as que já foram usadas nos lançamentos
