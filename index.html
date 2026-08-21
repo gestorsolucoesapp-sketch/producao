@@ -950,7 +950,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.980.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.981.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2976,7 +2976,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.980.0';
+const APP_VER = '3.981.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26312,7 +26312,8 @@ function destravaReserva(qual) {
         ${qual === 'parcial' ? `<div style="font-size:10px;font-weight:800;opacity:.95">separar ${kg(p._faltaRes)}</div>` : ''}</span></td></tr>`;
   }).join('');
   const nota = qual === 'parcial'
-    ? `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Estes pedidos <b>vão faturar</b> — o material existe. Mas parte dele ainda <b>não foi movida para o depósito reservado</b>, então alguém precisa separar antes de carregar. É a lista de trabalho do depósito.</p>`
+    ? `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Estes pedidos <b>vão faturar</b> — o material existe. Mas parte dele ainda <b>não foi movida para o depósito reservado</b>, então alguém precisa separar antes de carregar. É a lista de trabalho do depósito.</p>
+       <button class="btn btn-borda" style="width:100%;padding:9px;font-size:13px;margin-bottom:9px" onclick="enviarTexto(reservaTexto())">📲 mandar a lista de separação por WhatsApp</button>`
     : `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Material já separado no depósito reservado, na quantidade que o pedido pede. <b>Pode chamar carga.</b></p>`;
   abreDet(tit,
     `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(totKg)}</b>`
@@ -26832,6 +26833,101 @@ function _destravaTexto(lista) {
   L.push('_Gerado no app de Produ\u00e7\u00e3o \u00b7 lista completa na aba Programa\u00e7\u00e3o._');
   return L.join('\n');
 }
+/* ==================== ENVIAR TEXTO (WhatsApp e afins) ====================
+   21/08/2026: o app já mandava o destrava por WhatsApp; a mesma mecânica passa a
+   ser um helper, porque agora três telas usam. No iPhone abre a folha de
+   compartilhamento (que traz WhatsApp, e-mail e o resto sem sair do app); no
+   computador cai no wa.me.
+
+   O corte em 1.800 caracteres não é enfeite: wa.me passa o texto na URL, e URL
+   muito longa é descartada em silêncio pelo navegador — a pessoa toca, abre o
+   WhatsApp e a mensagem chega vazia. Melhor mandar o começo com um aviso do que
+   mandar nada. Pela folha de compartilhamento não há esse limite. */
+function enviarTexto(txt, rotulo) {
+  if (!txt) { toast('Nada para enviar.'); return; }
+  if (navigator.share) {
+    navigator.share({ text: txt }).catch(() => {});
+    return;
+  }
+  let t = txt;
+  if (t.length > 1800) t = t.slice(0, 1750) + '\n\n_(cortado — veja o restante no app)_';
+  try { window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank'); }
+  catch (_) { toast('Não consegui abrir o WhatsApp.'); }
+  if (txt.length > 1800) toast('Texto longo: mandei o começo. No celular vai inteiro.');
+}
+
+/* texto do comparativo semanal de máquinas */
+function csTexto() {
+  const R = window._csDados;
+  if (!R || !R.maquinas) return '';
+  const dm = s => String(s).slice(8, 10) + '/' + String(s).slice(5, 7);
+  const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0) + ' kg';
+  const L = ['*COMPARATIVO SEMANAL POR MÁQUINA*', dm(R.de) + ' a ' + dm(R.ate), ''];
+  R.maquinas.forEach(M => {
+    const S = M.semanas || [];
+    const totKg = S.reduce((s, x) => s + (+x.kg || 0), 0);
+    if (!totKg) return;
+    const totMil = S.reduce((s, x) => s + (+x.mil || 0), 0);
+    const totPar = S.reduce((s, x) => s + (+x.h_parada || 0), 0);
+    const totPer = S.reduce((s, x) => s + (+x.kg_perda || 0), 0);
+    const g = totMil > 0 ? (totKg / totMil).toFixed(2) + ' g/pç' : '';
+    L.push('*' + M.cod + '* ' + String(M.nome || '').slice(0, 24));
+    L.push('  ' + t(totKg) + (totMil > 0 ? ' · ' + fmtMil(totMil) + ' mil' : '') + (g ? ' · ' + g : ''));
+    /* semana a semana em uma linha só: no WhatsApp tabela não alinha, então vai
+       a sequência com a seta de variação, que é o que se lê no celular. */
+    L.push('  ' + S.map((x, i) => {
+      const v = +x.kg || 0, ant = i > 0 ? (+S[i - 1].kg || 0) : 0;
+      const d = (i > 0 && ant > 0 && v > 0) ? Math.round((v - ant) / ant * 100) : null;
+      return t(v) + (d === null ? '' : (d >= 0 ? ' ▲' : ' ▼') + Math.abs(d) + '%');
+    }).join('  |  '));
+    L.push('  paradas ' + totPar.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h · refugo ' + t(totPer));
+    if (M.paradas && M.paradas[0]) L.push('  maior parada: ' + M.paradas[0].m + ' (' + M.paradas[0].h + ' h)');
+    L.push('');
+  });
+  L.push('_Gerado no app de Produção · Análise de Recurso._');
+  return L.join('\n');
+}
+
+/* texto da lista de separação — o que o depósito precisa mover */
+function reservaTexto() {
+  const A = _alocarEstoque();
+  if (!A || !_depoItem || !_depoItem.itens) return '';
+  const kg = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0) + ' kg';
+  const comp = A.peds.filter(p => !p.blq.size && !p.temFalta);
+  const saldo = {};
+  Object.keys(_depoItem.itens).forEach(k => { saldo[k] = _depoItem.itens[k].reserv || 0; });
+  const porPed = {};
+  (A.linhas || []).forEach(l => {
+    const n = String(l.pedido).split('/')[0];
+    (porPed[n] || (porPed[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0 });
+  });
+  const fila = comp.slice().sort((a, b) =>
+    String(a.ent || '9999-99-99').localeCompare(String(b.ent || '9999-99-99')) || (b.kg - a.kg));
+  const pa = [];
+  fila.forEach(p => {
+    let falta = 0;
+    (porPed[String(p.num)] || []).forEach(l => {
+      const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
+      saldo[l.item] = d - pega; falta += Math.max(0, l.kg - pega);
+    });
+    if (falta > 0.001) { p._faltaRes = falta; pa.push(p); }
+  });
+  if (!pa.length) return '*SEPARAÇÃO*\n\nTudo que está pronto já está reservado. Nada a separar. ✅';
+  const tot = pa.reduce((s, p) => s + p._faltaRes, 0);
+  const L = ['*PEDIDOS A SEPARAR NO DEPÓSITO*',
+    'Material existe e o pedido pode faturar — falta mover para o reservado.', '',
+    '*' + pa.length + ' pedido(s) · ' + kg(tot) + ' a separar*', ''];
+  /* ordenado por entrega: quem vence primeiro é quem separa primeiro */
+  pa.slice(0, 25).forEach(p => {
+    L.push('• *' + p.num + '* ' + String(p.cli || '').slice(0, 22)
+      + '\n   separar ' + kg(p._faltaRes) + (p.ent ? ' · entrega ' + fmtDataSem(p.ent) : '')
+      + ((+p.atraso || 0) > 0 ? ' · *' + p.atraso + 'd VENCIDO*' : ''));
+  });
+  if (pa.length > 25) L.push('', '_… e mais ' + (pa.length - 25) + ' pedido(s). Lista completa no app._');
+  L.push('', '_Gerado no app de Produção._');
+  return L.join('\n');
+}
+
 function destravaWhats(sel) {
   const G = _destravaSetores();
   if (!G) { toast('Importe o REST196 primeiro.'); return; }
@@ -29928,6 +30024,7 @@ async function csCarregar() {
     box.innerHTML = `<p class="desc" style="color:var(--critico)">Não consegui buscar: ${escapeHtml((e && e.message) || String(e))}</p>`;
     return;
   }
+  window._csDados = R;   // guardado para o envio por WhatsApp montar o texto
   csRender(R, box);
 }
 
@@ -30039,7 +30136,10 @@ function csRender(R, box) {
       </div></div>`;
   }).join('');
 
-  box.innerHTML = `<p class="desc" style="margin-bottom:9px">${R.maquinas.length} máquina(s) · ${dm(R.de)} a ${dm(R.ate)} · ${sem.length} semana(s). A coluna <b>mês</b> é o total, não a soma das variações. O <b>▲▼</b> compara com a semana anterior.</p>${blocos}`;
+  box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px">
+      <p class="desc" style="margin:0;flex:1;min-width:220px">${R.maquinas.length} máquina(s) · ${dm(R.de)} a ${dm(R.ate)} · ${sem.length} semana(s). A coluna <b>mês</b> é o total, não a soma das variações. O <b>▲▼</b> compara com a semana anterior.</p>
+      <button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:12.5px;white-space:nowrap" onclick="enviarTexto(csTexto())">📲 enviar por WhatsApp</button>
+    </div>${blocos}`;
 }
 
 /* 21/08/2026: origem do raio-X. Guarda no aparelho para não ter que reescolher
