@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.953.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.954.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.953.1';
+const APP_VER = '3.954.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23655,6 +23655,24 @@ function _depoOnde(itemCod) {
   if (!d || !d.deps.length) return '';
   return '<div style="font-size:10px;color:var(--fraco-2);margin-top:2px">' + d.deps.slice(0, 3).map(x => escapeHtml(String(x.nome).slice(0, 26)) + ': ' + fmtKg(x.kg)).join(' · ') + '</div>';
 }
+/* 21/08/2026 (João: "no botão exportar Excel tem como ele indicar o depósito?").
+   Mesmo dado que a tela já mostra em _depoOnde(), só que em texto puro: planilha
+   não renderiza HTML e não pode levar escapeHtml, senão um "&" vira "&amp;"
+   dentro da célula. Traz até 3 depósitos, do maior saldo para o menor, no
+   formato "NOME (cód): 1.234 kg". Volta '' quando o REST241 não foi importado —
+   coluna vazia é honesta, "sem estoque" seria mentira. */
+function _depoOndeTxt(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  if (!d || !d.deps.length) return '';
+  return d.deps.slice(0, 3).map(x => String(x.nome || x.cod).trim() + ' (' + x.cod + '): ' + Math.round(x.kg).toLocaleString('pt-BR') + ' kg').join(' · ');
+}
+/* total parado em depósito, para a coluna numérica ao lado */
+function _depoTotKg(itemCod) {
+  if (!_depoItem) return '';
+  const d = _depoItem.itens[String(itemCod)];
+  return (d && d.tot > 0) ? Math.round(d.tot) : '';
+}
 
 let _filaVenc = null;
 async function carregarFilaVenc() {
@@ -26218,7 +26236,12 @@ function _destravaTabelas(lista) {
       'Paletes': a.cxFalta > 0 ? _paletes(a.cxFalta) : '',
       'Libera sozinho (pedidos)': a.so || 0,
       'Libera sozinho (kg)': Math.round(a.kgSo || 0),
-      'Pedidos que trava': a.peds || 0
+      'Pedidos que trava': a.peds || 0,
+      /* 21/08/2026: a planilha dizia QUANTO falta produzir mas não dizia se já
+         tem material parado em algum depósito — quem levava a folha pro chão de
+         fábrica tinha que abrir o app pra descobrir. Agora vem junto. */
+      'Em deposito (kg)': _depoTotKg(a.cod),
+      'Onde esta no deposito': _depoOndeTxt(a.cod)
     });
   }));
   const peds = [];
@@ -26258,6 +26281,9 @@ function _destravaTabelas(lista) {
         'Qtd pendente': q,
         'Peso pendente (kg)': Math.round(need),
         'Em estoque (kg)': Math.round(Math.max(0, need - (+l._falta || 0))),
+        /* 21/08/2026: "Em estoque (kg)" já dizia QUANTO tem, mas não ONDE.
+           Esta coluna responde o resto da pergunta. */
+        'Onde esta no deposito': _depoOndeTxt(l.item_cod),
         'Falta produzir (kg)': Math.round(+l._falta || 0),
         'Falta produzir (cx)': faltaCx,
         'Paletes a produzir': faltaCx ? _paletes(faltaCx) : '',
@@ -26291,10 +26317,14 @@ async function destravaExcel(sel) {
   const lista = (sel && sel.length) ? G.filter(g => sel.indexOf(g.setor) >= 0) : G;
   if (!lista.length) { toast('Nenhum setor selecionado.'); return; }
 
+  /* 21/08/2026: _depoItem só era carregado por cmAbrir() (aba Comercial). Tocando
+     o botão pela Programação ele vinha null e a coluna de depósito saía vazia na
+     planilha inteira. Agora busca sob demanda — uma vez só, fica em cache. */
+  if (!_depoItem) { toast('\ud83d\udce6 Buscando os dep\u00f3sitos\u2026'); try { await carregarDepositoItem(); } catch (_) {} }
+
   const T = _destravaTabelas(lista);
   const dia = String((_cart196 && _cart196.dia) || hojeISO()).slice(0, 10).split('-').reverse().join('-');
   toast('\ud83d\udcca Montando a planilha\u2026');
-
   const ok = await _carregarExcelJS();
   if (!ok) {
     toast('Sem conex\u00e3o para a planilha \u2014 saiu em CSV, que o Excel abre igual.');
@@ -26379,14 +26409,14 @@ async function _montarPlanilha(T, lista) {
   const NUM = ['Itens a produzir', 'Pedidos travados', 'Peso travado (kg)', 'Pedidos vencidos',
     'Maior atraso (dias)', 'Dias vencido', 'Falta produzir (kg)', 'Falta produzir (cx)', 'Paletes',
     'Libera sozinho (pedidos)', 'Libera sozinho (kg)', 'Pedidos que trava', 'Peso (kg)',
-    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir'];
+    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)'];
   const DATA = ['Entrega', 'Entrega mais proxima'];
   const venc = d => (+d['Dias vencido'] || 0) > 0 || String(d['Situacao'] || '').indexOf('VENC') >= 0 || String(d['Situacao'] || '').indexOf('TRAVANDO') >= 0;
 
   aba(T.resumo, 'Resumo', [18, 14, 16, 17, 16, 20, 18], NUM, DATA, null);
-  aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16], NUM, DATA, venc);
+  aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16, 16, 46], NUM, DATA, venc);
   aba(T.peds, 'Pedidos travados', [14, 10, 32, 11, 12, 12, 20, 30], NUM, DATA, venc);
-  aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
+  aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
 
   return await wb.xlsx.writeBuffer();
 }
