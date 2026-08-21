@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.957.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.958.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.957.0';
+const APP_VER = '3.958.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23588,7 +23588,7 @@ async function carregarDepositoItem() {
     const hora = null;
     let linhas = [], de = 0;
     for (let g = 0; g < 40; g++) {
-      let q = sb.from('estoque_deposito').select('item_cod,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia);
+      let q = sb.from('estoque_deposito').select('item_cod,item_desc,deposito_cod,deposito_nome,quantidade,peso').eq('dia_foto', dia);
       const { data, error } = await q.range(de, de + 999);
       if (error) throw error;
       const d = data || []; linhas = linhas.concat(d);
@@ -23598,9 +23598,13 @@ async function carregarDepositoItem() {
     const m = {};
     linhas.forEach(r => {
       const k = String(r.item_cod), kg = +r.peso || 0;
-      if (!m[k]) m[k] = { tot: 0, reserv: 0, qual: 0, deps: [] };
+      if (!m[k]) m[k] = { tot: 0, reserv: 0, reservCx: 0, qual: 0, desc: '', deps: [] };
       m[k].tot += kg;
-      if (_DEP_RESERV.includes(String(r.deposito_cod))) m[k].reserv += kg;
+      /* 21/08/2026: guarda a descrição e as CAIXAS do reservado — a aba
+         "Reservado" da planilha precisa das duas, e sem isso teria que cruzar
+         com a carteira só para achar o nome do item. */
+      if (!m[k].desc && r.item_desc) m[k].desc = String(r.item_desc);
+      if (_DEP_RESERV.includes(String(r.deposito_cod))) { m[k].reserv += kg; m[k].reservCx += (+r.quantidade || 0); }
       if (_DEP_QUAL.includes(String(r.deposito_cod))) m[k].qual += kg;
       if (kg > 0) m[k].deps.push({ cod: String(r.deposito_cod), nome: r.deposito_nome || '', kg, cx: +r.quantidade || 0 });
     });
@@ -26410,7 +26414,75 @@ function _destravaTabelas(lista) {
     });
     detalhe.sort((a, b) => a.Setor.localeCompare(b.Setor) || a.Pedido.localeCompare(b.Pedido) || a.Item.localeCompare(b.Item));
   }
-  return { resumo, itens, peds, detalhe };
+
+  /* ===== ABA "RESERVADO" — 21/08/2026 (pedido do João) =====
+     SÓ o depósito 6 (PRODUTOS RESERVADOS). O que estiver em controle de
+     qualidade (13, 14, 26, 36, 70, 113) fica de fora: na coluna "Onde esta no
+     deposito" os dois apareciam na mesma célula e a leitura embolava.
+
+     Escopo: todo item com saldo reservado cujo setor esteja entre os
+     selecionados — inclusive item que NÃO está travando pedido nenhum. Reservado
+     é material já separado e pronto para sair; limitar à carteira travada
+     esconderia justamente o que dá para faturar hoje.
+
+     Ordenado por setor e, dentro dele, do maior saldo para o menor, com
+     subtotal por setor e TOTAL GERAL no fim. */
+  const reserv = [];
+  if (_depoItem && _depoItem.itens) {
+    const setoresSel = new Set(lista.map(g => g.setor));
+    const _stDe = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
+    const linhas = [];
+    Object.keys(_depoItem.itens).forEach(cod => {
+      const d = _depoItem.itens[cod];
+      if (!d || !(d.reserv > 0.001)) return;
+      const st = _stDe(cod);
+      if (!setoresSel.has(st)) return;
+      const w = _pedsDoItem[String(cod)] || { nums: [], ent: null, atraso: 0 };
+      linhas.push({
+        st, cod, desc: d.desc || '',
+        kg: d.reserv, cx: d.reservCx || 0,
+        peds: w.nums, ent: w.ent, atraso: w.atraso
+      });
+    });
+    linhas.sort((a, b) => a.st.localeCompare(b.st) || b.kg - a.kg);
+
+    let totKg = 0, totCx = 0, sKg = 0, sCx = 0, sN = 0, stAtual = null;
+    const fechaSetor = () => {
+      if (stAtual === null) return;
+      reserv.push({
+        'Setor': stAtual, 'Item': '', 'Descricao': 'TOTAL ' + stAtual.toUpperCase() + ' \u00b7 ' + sN + ' item(ns)',
+        'Reservado (kg)': Math.round(sKg), 'Reservado (cx)': sCx > 0 ? Math.round(sCx) : '',
+        'Paletes': sCx > 0 ? _paletes(sCx) : '',
+        'Pedidos que esperam': '', 'Entrega mais proxima': '', 'Dias vencido': '', '_tot': 1
+      });
+      sKg = 0; sCx = 0; sN = 0;
+    };
+    linhas.forEach(l => {
+      if (l.st !== stAtual) { fechaSetor(); stAtual = l.st; }
+      reserv.push({
+        'Setor': l.st, 'Item': l.cod, 'Descricao': l.desc,
+        'Reservado (kg)': Math.round(l.kg),
+        'Reservado (cx)': l.cx > 0 ? Math.round(l.cx) : '',
+        'Paletes': l.cx > 0 ? _paletes(l.cx) : '',
+        'Pedidos que esperam': l.peds.join(' | '),
+        'Entrega mais proxima': _dtBR(l.ent),
+        'Dias vencido': l.atraso > 0 ? l.atraso : 0,
+        '_tot': 0
+      });
+      sKg += l.kg; sCx += l.cx; sN++; totKg += l.kg; totCx += l.cx;
+    });
+    fechaSetor();
+    if (reserv.length) {
+      reserv.push({
+        'Setor': '', 'Item': '', 'Descricao': 'TOTAL GERAL RESERVADO',
+        'Reservado (kg)': Math.round(totKg), 'Reservado (cx)': totCx > 0 ? Math.round(totCx) : '',
+        'Paletes': totCx > 0 ? _paletes(totCx) : '',
+        'Pedidos que esperam': '', 'Entrega mais proxima': '', 'Dias vencido': '', '_tot': 2
+      });
+    }
+  }
+
+  return { resumo, itens, peds, detalhe, reserv };
 }
 
 /* ==================== BAIXAR ARQUIVO (com plano B) ====================
@@ -26524,7 +26596,10 @@ async function _montarPlanilha(T, lista) {
   const aba = (dados, nome, larguras, colsNum, colData, ehVencida) => {
     const ws = wb.addWorksheet(nome, { views: [{ state: 'frozen', ySplit: 1 }] });
     if (!dados.length) { ws.addRow(['Nenhum registro para os setores selecionados.']); return; }
-    const cols = Object.keys(dados[0]);
+    /* 21/08/2026: "_tot" é campo de controle da aba Reservado (0 = item,
+       1 = subtotal de setor, 2 = total geral). Não vira coluna na planilha —
+       só decide o destaque da linha. */
+    const cols = Object.keys(dados[0]).filter(c => c !== '_tot');
     ws.columns = cols.map((c, i) => ({ header: c, key: c, width: larguras[i] || 16 }));
 
     dados.forEach(d => {
@@ -26532,7 +26607,15 @@ async function _montarPlanilha(T, lista) {
         if (colData.indexOf(c) >= 0) { const dt = _iso(d[c]); return dt || (d[c] || ''); }
         return d[c];
       }));
-      if (ehVencida && ehVencida(d)) {
+      const nivel = +d._tot || 0;
+      if (nivel) {
+        const bg = nivel === 2 ? 'FFD9E4F0' : 'FFEDF2F8';
+        lin.eachCell({ includeEmpty: true }, cel => {
+          cel.font = { bold: true, size: nivel === 2 ? 11.5 : 11 };
+          cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+          cel.border = { top: { style: 'thin', color: { argb: NAVY } } };
+        });
+      } else if (ehVencida && ehVencida(d)) {
         lin.eachCell({ includeEmpty: true }, cel => {
           cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERM } };
         });
@@ -26567,13 +26650,17 @@ async function _montarPlanilha(T, lista) {
   const NUM = ['Itens a produzir', 'Pedidos travados', 'Peso travado (kg)', 'Pedidos vencidos',
     'Maior atraso (dias)', 'Dias vencido', 'Falta produzir (kg)', 'Falta produzir (cx)', 'Paletes',
     'Libera sozinho (pedidos)', 'Libera sozinho (kg)', 'Pedidos que trava', 'Peso (kg)',
-    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)'];
+    'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)',
+    'Reservado (cx)'];
   const DATA = ['Entrega', 'Entrega mais proxima'];
   const venc = d => (+d['Dias vencido'] || 0) > 0 || String(d['Situacao'] || '').indexOf('VENC') >= 0 || String(d['Situacao'] || '').indexOf('TRAVANDO') >= 0;
 
   aba(T.resumo, 'Resumo', [18, 14, 16, 17, 16, 20, 18], NUM, DATA, null);
   aba(T.itens, 'Itens a produzir', [14, 11, 42, 26, 20, 12, 17, 17, 9, 20, 18, 16, 16, 15, 17, 12, 46], NUM, DATA, venc);
   aba(T.peds, 'Pedidos travados', [14, 10, 32, 11, 12, 12, 20, 30], NUM, DATA, venc);
+  /* 21/08/2026: a aba Reservado entra logo depois do Resumo — é consulta rápida
+     ("o que já está separado?"), não anexo de conferência. */
+  aba(T.reserv, 'Reservado', [18, 11, 44, 15, 15, 9, 26, 20, 12], NUM, DATA, null);
   aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 15, 17, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
 
   return await wb.xlsx.writeBuffer();
