@@ -936,7 +936,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.949.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.950.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2943,7 +2943,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.949.0';
+const APP_VER = '3.950.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25965,7 +25965,8 @@ function _cardDestravaBase(_semAlav) {
     })(),
     (_semAlav ? '' : '<div style="display:flex;gap:6px;margin-bottom:9px">'
       + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaImprimir(null)">\ud83d\udcc4 salvar tudo</button>'
-      + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaEscolher()">\u2611\ufe0f escolher setores</button></div>')
+      + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaExcel(null)">\ud83d\udcca Excel</button>'
+      + '<button class="btn btn-borda" style="flex:1;padding:9px 6px;font-size:12.5px" onclick="destravaEscolher()">\u2611\ufe0f escolher</button></div>')
     + '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada pelos <b>setores por onde o pedido passa</b>. Pedido que usa mais de um aparece como <b style="color:#7B5CD6">misto</b> — nunca contado duas vezes. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
     + '<div class="dfx-grade">'
     + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
@@ -26129,6 +26130,107 @@ function destravaWhats(sel) {
   catch (_) { toast('N\u00e3o consegui abrir o WhatsApp.'); }
 }
 
+
+/* ===== EXPORTAR PARA EXCEL (21/08/2026, pedido do Joao) =====
+   Decisao de formato que vale explicar: em vez de uma aba por setor, saem TRES
+   abas com o setor virando COLUNA. Planilha achatada e o que o Excel sabe fazer
+   bem - filtrar, ordenar, tabela dinamica. Uma aba por setor obriga a pessoa a
+   abrir treze abas para somar a fabrica, e ninguem faz isso.
+   A biblioteca so e baixada quando o botao e tocado; se a internet do chao de
+   fabrica nao deixar, cai para CSV, que o Excel abre igual. */
+function _carregarXLSX() {
+  if (window.XLSX) return Promise.resolve(true);
+  return new Promise(res => {
+    let pronto = false;
+    const fim = ok => { if (!pronto) { pronto = true; res(ok); } };
+    const el = document.createElement('script');
+    el.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    el.onload = () => fim(!!window.XLSX);
+    el.onerror = () => fim(false);
+    document.head.appendChild(el);
+    setTimeout(() => fim(!!window.XLSX), 9000);
+  });
+}
+const _dtBR = d => { const x = String(d || '').slice(0, 10); return x ? x.slice(8, 10) + '/' + x.slice(5, 7) + '/' + x.slice(0, 4) : ''; };
+
+function _destravaTabelas(lista) {
+  const hoje = (_cart196 && _cart196.dia) || hojeISO();
+  const resumo = lista.map(g => ({
+    'Setor': g.setor, 'Itens a produzir': g.itens.length,
+    'Pedidos travados': g.peds.length,
+    'Peso travado (kg)': Math.round(g.kg),
+    'Pedidos vencidos': g.peds.filter(pd => pd.atraso > 0).length
+  }));
+  const itens = [];
+  lista.forEach(g => g.itens.forEach(a => itens.push({
+    'Setor': g.setor, 'Item': a.cod, 'Descricao': a.desc || '',
+    'Falta produzir (kg)': Math.round(a.falta),
+    'Falta produzir (cx)': a.cxFalta > 0 ? Math.round(a.cxFalta) : '',
+    'Paletes': a.cxFalta > 0 ? _paletes(a.cxFalta) : '',
+    'Libera sozinho (pedidos)': a.so || 0,
+    'Libera sozinho (kg)': Math.round(a.kgSo || 0),
+    'Pedidos que trava': a.peds || 0
+  })));
+  const peds = [];
+  lista.forEach(g => g.peds.forEach(pd => peds.push({
+    'Setor': g.setor, 'Pedido': pd.num, 'Cliente': String(pd.cli || ''),
+    'Peso (kg)': Math.round(pd.kg),
+    'Entrega': _dtBR(pd.ent),
+    'Dias vencido': pd.atraso > 0 ? pd.atraso : 0,
+    'Situacao': pd.atraso > 0 ? 'VENCIDO' : (pd.ent && String(pd.ent) < hoje ? 'VENCIDO' : 'no prazo'),
+    'Itens que travam': [...pd.blq].join(' | ')
+  })));
+  return { resumo, itens, peds };
+}
+
+function _baixarCSV(linhas, nome) {
+  if (!linhas.length) { toast('Nada para exportar.'); return; }
+  const cols = Object.keys(linhas[0]);
+  const esc = v => { const t = String(v == null ? '' : v); return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  /* ponto e virgula e BOM: e o que o Excel em portugues abre sem perguntar nada
+     e sem comer os acentos. */
+  const txt = '\ufeff' + [cols.join(';')].concat(linhas.map(l => cols.map(c => esc(l[c])).join(';'))).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8;' }));
+  a.download = nome; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+async function destravaExcel(sel) {
+  const G = _destravaSetores();
+  if (!G) { toast('Importe o REST196 primeiro.'); return; }
+  const lista = (sel && sel.length) ? G.filter(g => sel.indexOf(g.setor) >= 0) : G;
+  if (!lista.length) { toast('Nenhum setor selecionado.'); return; }
+
+  const T = _destravaTabelas(lista);
+  const dia = String((_cart196 && _cart196.dia) || hojeISO()).slice(0, 10).split('-').reverse().join('-');
+  toast('\ud83d\udcca Montando a planilha\u2026');
+
+  const ok = await _carregarXLSX();
+  if (!ok) {
+    toast('Sem conex\u00e3o para a planilha \u2014 saiu em CSV, que o Excel abre igual.');
+    _baixarCSV(T.itens, 'destrava-itens-' + dia + '.csv');
+    return;
+  }
+  try {
+    const wb = XLSX.utils.book_new();
+    const add = (dados, nome, larguras) => {
+      const ws = XLSX.utils.json_to_sheet(dados);
+      ws['!cols'] = larguras.map(w => ({ wch: w }));
+      ws['!autofilter'] = { ref: ws['!ref'] };   // filtro ja ligado no cabecalho
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, ws, nome);
+    };
+    add(T.resumo, 'Resumo', [18, 14, 16, 17, 16]);
+    add(T.itens, 'Itens a produzir', [16, 11, 40, 17, 17, 9, 20, 17, 16]);
+    add(T.peds, 'Pedidos travados', [16, 10, 32, 11, 11, 12, 11, 30]);
+    XLSX.writeFile(wb, 'destrava-faturamento-' + dia + '.xlsx');
+    toast('\u2705 Planilha gerada \u00b7 ' + lista.length + ' setor(es)');
+  } catch (e) {
+    toast('N\u00e3o consegui montar o xlsx \u2014 saiu em CSV.');
+    _baixarCSV(T.itens, 'destrava-itens-' + dia + '.csv');
+  }
+}
 function destravaEscolher() {
   const G = _destravaSetores();
   if (!G) { toast('Importe o REST196 primeiro.'); return; }
@@ -26142,6 +26244,7 @@ function destravaEscolher() {
     + '<div style="display:flex;gap:8px;margin-top:14px">'
     + '<button class="btn btn-navy" style="flex:1;padding:11px;font-size:14px" onclick="destravaAcao(\'pdf\')">\ud83d\udcc4 gerar PDF</button>'
     + '<button class="btn btn-verde" style="flex:1;padding:11px;font-size:14px" onclick="destravaAcao(\'whats\')">\ud83d\udcf2 WhatsApp</button></div>'
+    + '<div style="margin-top:8px"><button class="btn btn-borda" style="width:100%;padding:11px;font-size:14px" onclick="destravaAcao(\'excel\')">\ud83d\udcca baixar em Excel</button></div>'
     + '<p class="desc" style="margin:8px 0 0">No PDF, o iPhone abre a pr\u00e9via de impress\u00e3o \u2014 escolha <b>Salvar em Arquivos</b> ou o bot\u00e3o de compartilhar. No WhatsApp vai um resumo em texto.</p>');
 }
 function _dsSelecionados() { return [].slice.call(document.querySelectorAll('.dsSel:checked')).map(x => x.value); }
@@ -26151,7 +26254,11 @@ function destravaAcao(tipo) {
   /* fechar ANTES: a folha de impressao esconde os filhos diretos do body, e o
      modal aberto por cima estragaria a previa. */
   fecharTudoDet();
-  setTimeout(() => { if (tipo === 'pdf') destravaImprimir(sel); else destravaWhats(sel); }, 260);
+  setTimeout(() => {
+    if (tipo === 'pdf') destravaImprimir(sel);
+    else if (tipo === 'excel') destravaExcel(sel);
+    else destravaWhats(sel);
+  }, 260);
 }
 /* 20/08/2026 (João: "separe do card de cima e tire da aba Comercial").
    A tabela de alavanca — qual item, se produzido, destrava mais pedido — é
