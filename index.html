@@ -213,9 +213,12 @@ nav{background:var(--topo)}
 .abas-env::after{right:0;background:linear-gradient(270deg,var(--navy) 15%,transparent)}
 .abas-env.tem-esq::before{opacity:1}
 .abas-env.tem-dir::after{opacity:1}
-.abas{display:flex;max-width:1100px;margin:0 auto;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;scroll-snap-type:x proximity}
+/* 21/08/2026 (João: "quebra no Importar"). O scroll-snap prendia a faixa numa
+   aba do meio e o resto ficava cortado sem chegar ao fim. Sai o snap: rolagem
+   livre, que é o que funciona com vinte abas numa linha só. */
+.abas{display:flex;max-width:1100px;margin:0 auto;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;padding-right:14px}
 .abas::-webkit-scrollbar{display:none}
-.aba{flex:0 0 auto;padding:7px 13px;text-align:center;color:var(--fraco-3);font-size:14px;font-weight:600;border-bottom:3px solid transparent;white-space:nowrap;scroll-snap-align:center;background:none;border-left:none;border-right:none;border-top:none;cursor:pointer}
+.aba{flex:0 0 auto;padding:7px 13px;text-align:center;color:var(--fraco-3);font-size:14px;font-weight:600;border-bottom:3px solid transparent;white-space:nowrap;background:none;border-left:none;border-right:none;border-top:none;cursor:pointer}
 /* 20/08/2026 (João: "sumiu a aba Painel e a Diagnóstico RH"). São 20 abas numa
    linha só dentro de max-width:1100px — o que passava disso era cortado nas
    duas pontas, e no monitor sumiam Painel e Itens à esquerda e Diagnóstico RH à
@@ -962,7 +965,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.988.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.989.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2988,7 +2991,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.988.0';
+const APP_VER = '3.989.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4882,6 +4885,40 @@ let _topoAppUlt = -1;
   window.addEventListener('pagehide', sinc);
   window.addEventListener('pageshow', sinc);
   sinc();
+
+  /* ==================== TELA PRETA AO VOLTAR ====================
+     21/08/2026 (João: "quando saio da tela do app e volto fica preto").
+
+     Não é bug de CSS: é o iOS DESCARTANDO a página. Quando falta memória, o
+     WebKit mata o processo de renderização das abas em segundo plano. Ao voltar,
+     o normal seria o Safari recarregar sozinho — em PWA instalado ele às vezes
+     só mostra a moldura vazia, e é o preto que ele viu.
+
+     É o sintoma final da pressão de memória que a gente vem cortando hoje: o
+     Painel carregava 47 mil linhas. Enquanto o consumo não cai o suficiente,
+     isto pelo menos faz o app se levantar sozinho em vez de ficar preto.
+
+     A checagem é concreta — o <main> perdeu altura — e recarrega UMA vez por
+     sessão. Sem o trinco, uma falha de render viraria recarga em laço. */
+  let _jaRessuscitou = false;
+  const conferir = () => {
+    if (document.hidden || _jaRessuscitou) return;
+    setTimeout(() => {
+      try {
+        const m = document.querySelector('main');
+        const vazio = !m || m.getBoundingClientRect().height < 40;
+        const logado = !!(document.getElementById('telaLogin') || {}).classList
+          && document.getElementById('telaLogin').classList.contains('oculto');
+        if (vazio && logado) {
+          _jaRessuscitou = true;
+          try { console.warn('página descartada pelo sistema — recarregando'); } catch (_) {}
+          location.reload();
+        }
+      } catch (_) {}
+    }, 900);   // dá tempo do WebKit repintar antes de decidir que morreu
+  };
+  document.addEventListener('visibilitychange', conferir);
+  window.addEventListener('pageshow', conferir);
 })();
 function modoLeve(on) {
   const v = (on == null) ? !document.documentElement.classList.contains('leve') : !!on;
@@ -7050,7 +7087,31 @@ function sincMetGlobal() {
   if (esp) { _pilLiga(g, esp.innerHTML); g.value = esp.value || 'peso'; return; }
   _pilNA(g);
 }
-function mudarMetricaGlobal(v) {
+async function mudarMetricaGlobal(v) {
+  /* 21/08/2026: o 622 deixou de vir sempre — ele só existe para a métrica
+     milheiro. Ao escolher milheiro pela primeira vez, busca agora. Nas outras
+     métricas nada muda, e o Painel deixa de carregar 13.209 linhas à toa. */
+  if (String(v) === 'milheiro' && dadosPainelFull && !(dadosPainelFull.prod622 || []).length) {
+    const box = $('painelConteudo');
+    const antes = box ? box.innerHTML : '';
+    if (box) box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin"></span> Buscando os itens para o milheiro…</p>';
+    try {
+      const de = periodoSel ? periodoSel.de : null, ate = periodoSel ? periodoSel.ate : null;
+      const ateX = ate ? addDiasISO(ate, 1) : ate;
+      let p622 = await fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX);
+      aplicarDiaOperacional(p622, 'turno');
+      p622 = filtraPeriodoOperacional(p622, de, ate);
+      dadosPainelFull.prod622 = p622;
+      /* refaz o recorte pela máquina do filtro global, com a MESMA função que o
+         app usa — inventar um filtro paralelo aqui é como as duas visões passam
+         a divergir. */
+      dadosPainel = _maqSel ? recorteMaq(dadosPainelFull, _maqSel) : dadosPainelFull;
+    } catch (e) {
+      if (box) box.innerHTML = antes;
+      toast('Não consegui buscar os itens: ' + ((e && e.message) || e));
+      return;
+    }
+  }
   const esp = _selMetDaAba();
   if (esp) { esp.value = String(v || ''); esp.dispatchEvent(new Event('change')); return; }
   try { renderPainel(); } catch (_) { }
@@ -13378,8 +13439,16 @@ async function carregarPainel() {
            mostrava a coluna de caixas toda com "—", mesmo com o dado no banco.
            Mesmo tipo de erro do 621, que nao tem item nem OP. */
         fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso,quantidade,unidade,op,item_cod,item_desc', de, ateX),   // item_desc: sem ele o detalhe da perda mostrava só o código
-        // o 622 é o único com item_desc: sem ele não há como converter caixa em peça
-        fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX),
+        /* o 622 é o único com item_desc: sem ele não há como converter caixa em peça.
+           21/08/2026 — SÓ QUANDO A MÉTRICA FOR MILHEIRO. São 13.209 linhas no mês,
+           um terço de tudo que o Painel baixa, e o próprio comentário abaixo já
+           dizia "só essa métrica usa o 622". Com a métrica em Kg (o padrão) elas
+           eram baixadas, guardadas na memória e nunca lidas.
+           Trocando para milheiro, mudarMetricaGlobal() busca na hora — uma espera
+           de segundos quando a pessoa escolhe, em vez de sempre. */
+        (($('fMetrica') && $('fMetrica').value) === 'milheiro'
+          ? fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
+          : Promise.resolve([])),
         // boca (cavidades) por maquina e dia — usada para mostrar a boca predominante
         /* 20/08/2026 (Joao: "Carregando dados... e nao passa") - ESTE ERA O TRAVAMENTO.
            fetchTudo pagina; a view calculada refazia 8 expressoes regulares sobre as
