@@ -962,7 +962,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.986.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.987.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2988,7 +2988,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.986.0';
+const APP_VER = '3.987.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13087,9 +13087,38 @@ function filtraPeriodoOperacional(rows, de, ate) {
    não desfaz. Para adicionar outra correção, é só pôr no mapa. */
 const NOME_MAQ_FIX = { '1805': 'EMBALADEIRA OK! 05' };
 const _fixNomeMaq = arr => { try { if (Array.isArray(arr)) arr.forEach(r => { if (r && r.recurso_cod != null) { const f = NOME_MAQ_FIX[String(r.recurso_cod)]; if (f) r.recurso_nome = f; } }); } catch (_) {} return arr; };
-async function fetchTudo(tabela, colunas, de, ate) {
-  const arr = await _fetchTudoRaw(tabela, colunas, de, ate);
-  return (typeof colunas === 'string' && colunas.indexOf('recurso_nome') >= 0) ? _fixNomeMaq(arr) : arr;
+/* ==================== REAPROVEITAR TEXTO REPETIDO ====================
+   21/08/2026. O Painel guarda ~45 mil linhas cruas e nunca solta. O desperdício
+   está no texto: as 15.808 paradas guardam 15.808 cópias do nome da máquina e do
+   motivo, mas existem só 58 nomes e 131 motivos distintos.
+   Aqui cada texto repetido passa a ser a MESMA instância. Valor idêntico
+   (comparação, filtro e exibição não mudam), sem dezenas de milhares de cópias.
+   Só campos de baixa variedade: 'op' e 'item_cod' são quase únicos por linha e
+   internar esses gastaria mais com o mapa do que economizaria. */
+const _CAMPOS_REPETIDOS = ['recurso_nome', 'recurso_cod', 'motivo_desc', 'tipo_perda_desc',
+  'componente_desc', 'item_desc', 'unidade', 'motivo_cod', 'tipo_perda_cod', 'dia', 'etapa', 'cliente'];
+function _reusarTexto(arr) {
+  if (!Array.isArray(arr) || arr.length < 500 || !arr[0]) return arr;
+  const pool = new Map();
+  const campos = _CAMPOS_REPETIDOS.filter(c => Object.prototype.hasOwnProperty.call(arr[0], c));
+  if (!campos.length) return arr;
+  for (let i = 0; i < arr.length; i++) {
+    const o = arr[i]; if (!o) continue;
+    for (let k = 0; k < campos.length; k++) {
+      const c = campos[k], v = o[c];
+      if (typeof v === 'string' && v) {
+        const j = pool.get(v);
+        if (j !== undefined) o[c] = j; else pool.set(v, v);
+      }
+    }
+  }
+  return arr;
+}
+
+async function fetchTudo(tabela, colunas, de, ate, filtroExtra) {
+  const arr = await _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra);
+  const out = (typeof colunas === 'string' && colunas.indexOf('recurso_nome') >= 0) ? _fixNomeMaq(arr) : arr;
+  return _reusarTexto(out);
 }
 /* ==================== SINAL DE VIDA DO CARREGAMENTO ====================
    21/08/2026. O João gravou um vídeo do Painel "travado": 6,8 segundos de
@@ -13104,8 +13133,17 @@ async function fetchTudo(tabela, colunas, de, ate) {
    de função nenhuma — foi exatamente mexer na assinatura do fetchTudo que
    derrubou a v3.984.0 há vinte minutos. */
 let _carga = { tabela: '', linhas: 0, req: 0, ativo: false };
-async function _fetchTudoRaw(tabela, colunas, de, ate) {
+async function _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra) {
   const TETO = 200000;
+  /* aplica o filtro extra do PostgREST ("coluna.op.valor"). Uma função só, usada
+     TANTO nas páginas QUANTO na contagem — foi separar os dois que estragou a
+     v3.984.0: as páginas vinham filtradas (1.511) e o count vinha sem filtro
+     (8.058), então o laço pedia páginas que não existiam. */
+  const _aplicaExtra = q => {
+    if (!filtroExtra) return q;
+    const p = String(filtroExtra).split('.');
+    return q.filter(p[0], p[1], p.slice(2).join('.'));
+  };
   const _nome = { producao_resumo: 'produção', paradas: 'paradas', perdas: 'perdas',
     producao: 'itens', consumo: 'consumo', mv_boca_maquina_dia: 'bocas' }[tabela] || tabela;
   const _conta = n => {
@@ -13124,6 +13162,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
     let q = sb.from(tabela).select(colunas);
     if (de) q = q.gte('dia', de);
     if (ate) q = q.lte('dia', ate);
+    q = _aplicaExtra(q);
     // ORDEM ESTÁVEL é obrigatória (sem ORDER BY o range() repete/perde linhas).
     // Ordenar por 'dia,id' faz o Postgres usar o índice (dia,id) e filtrar por data
     // sem varrer a tabela toda — evita o statement timeout.
@@ -13150,6 +13189,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate) {
     let qc = sb.from(tabela).select('id', { count: 'exact', head: true });
     if (de) qc = qc.gte('dia', de);
     if (ate) qc = qc.lte('dia', ate);
+    qc = _aplicaExtra(qc);   // <- o que faltava na v3.984.0
     const rc = await qc;
     if (!rc.error && typeof rc.count === 'number') total = Math.min(rc.count, TETO);
   } catch (_) {}
@@ -13330,7 +13370,10 @@ async function carregarPainel() {
       let [producao, paradas, consumo, perdas, prod622, boca] = await Promise.all([
         fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
         fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX),
-        fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX),
+        /* 21/08/2026: só BOBINA. Os OITO lugares que leem D.consumo filtram
+           /BOBINA/i antes de qualquer conta — as outras 6.547 linhas do mês
+           (81% do total) eram baixadas, guardadas e nunca lidas. */
+        fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX, 'componente_desc.ilike.%BOBINA%'),
         /* 04/08/2026: faltavam quantidade e unidade — sem elas o detalhe de perdas
            mostrava a coluna de caixas toda com "—", mesmo com o dado no banco.
            Mesmo tipo de erro do 621, que nao tem item nem OP. */
