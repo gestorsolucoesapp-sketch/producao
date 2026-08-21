@@ -945,7 +945,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.974.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.975.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2953,7 +2953,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.974.0';
+const APP_VER = '3.975.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26247,6 +26247,56 @@ function _seloDesvio(entrega, pronto) {
   if (d === 0) return '<span style="background:#EAF1FB;color:#2F6FED;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">fecha hoje</span>';
   return '<span style="background:#FCF3F3;color:#C0392B;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:9px;white-space:nowrap">▼ ' + Math.abs(d) + 'd ' + (pronto ? 'na entrega' : 'atrasado') + '</span>';
 }
+/* 21/08/2026 (pedido do João): lista dos pedidos prontos separada por reserva.
+   Reaproveita a MESMA alocação do card — não recalcula por outro caminho, senão
+   a lista diverge do número que foi tocado, que já aconteceu antes neste app. */
+function destravaReserva(qual) {
+  const A = _alocarEstoque();
+  if (!A) { toast('Importe o REST196 primeiro'); return; }
+  if (!_depoItem || !_depoItem.itens) { toast('Importe o REST241 (depósito) para ver a reserva'); return; }
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const comp = A.peds.filter(p => !p.blq.size && !p.temFalta);
+  const saldo = {};
+  Object.keys(_depoItem.itens).forEach(k => { saldo[k] = _depoItem.itens[k].reserv || 0; });
+  const porPed = {};
+  (A.linhas || []).forEach(l => {
+    const n = String(l.pedido).split('/')[0];
+    (porPed[n] || (porPed[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0 });
+  });
+  const fila = comp.slice().sort((a, b) =>
+    String(a.ent || '9999-99-99').localeCompare(String(b.ent || '9999-99-99')) || (b.kg - a.kg));
+  const ok = [], pa = [];
+  fila.forEach(p => {
+    let falta = 0;
+    (porPed[String(p.num)] || []).forEach(l => {
+      const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
+      saldo[l.item] = d - pega; falta += Math.max(0, l.kg - pega);
+    });
+    p._faltaRes = falta;
+    (falta > 0.001 ? pa : ok).push(p);
+  });
+  const L = qual === 'parcial' ? pa : ok;
+  const tit = qual === 'parcial' ? '⚠️ Pronto · reserva parcial' : '✅ Pronto · reserva completa';
+  if (!L.length) { abreDet(tit, '<p class="idet-desc">Nenhum pedido nessa condição.</p>'); return; }
+  const totKg = L.reduce((s, p) => s + (+p.kg || 0), 0);
+  const totFalta = L.reduce((s, p) => s + (+p._faltaRes || 0), 0);
+  const linhas = L.map(p => {
+    const venc = (+p.atraso || 0) > 0;
+    return `<tr style="cursor:pointer" onclick="detPedido('${_jsAttr(p.num)}')">
+      <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} 🔎
+        <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}${venc ? ' · <b style="color:var(--critico)">' + p.atraso + 'd vencido</b>' : ''}</div></td>
+      <td><span class="cel ${qual === 'parcial' ? 'baixo' : 'ok'}">${kg(p.kg)}
+        ${qual === 'parcial' ? `<div style="font-size:10px;font-weight:800;opacity:.95">separar ${kg(p._faltaRes)}</div>` : ''}</span></td></tr>`;
+  }).join('');
+  const nota = qual === 'parcial'
+    ? `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Estes pedidos <b>vão faturar</b> — o material existe. Mas parte dele ainda <b>não foi movida para o depósito reservado</b>, então alguém precisa separar antes de carregar. É a lista de trabalho do depósito.</p>`
+    : `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Material já separado no depósito reservado, na quantidade que o pedido pede. <b>Pode chamar carga.</b></p>`;
+  abreDet(tit,
+    `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(totKg)}</b>`
+    + (qual === 'parcial' ? ` · falta separar <b style="color:var(--critico)">${kg(totFalta)}</b>` : '') + '</p>'
+    + nota + tabSimples(['Pedido · cliente', qual === 'parcial' ? 'Pedido / separar' : 'Pedido'], linhas));
+}
+
 function detGrupoTravado(gid, filtro) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
@@ -26351,6 +26401,48 @@ function _cardDestravaBase(_semAlav) {
   if (!A || !A.peds.length) return '';
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
   const comp = A.peds.filter(p => !p.blq.size && !p.temFalta);
+
+  /* ===== RESERVA COMPLETA × RESERVA PARCIAL — 21/08/2026 (pedido do João) =====
+     "Material pronto" hoje quer dizer só uma coisa: o REST196 diz que existe
+     estoque para todas as linhas. Não diz se o material já foi SEPARADO. E a
+     conferência do pedido 224462 mostrou que a diferença é real — os dois potes
+     tinham 60 caixas no reservado contra as 80 que o pedido pede.
+
+     Reservar é ato manual: alguém move o material para o depósito 6 no ERP. O
+     REST196 enxerga o saldo esteja ele onde estiver. Então dentro de "pronto"
+     convivem dois casos muito diferentes na prática:
+       - reserva completa  -> chama o caminhão, está separado;
+       - reserva parcial   -> vai faturar, mas alguém precisa separar antes.
+
+     O reservado é alocado como o estoque: item por item, na ordem de entrega,
+     descontando conforme atende. Somar o reservado do item inteiro em cada
+     pedido contaria o mesmo quilo várias vezes e diria que está tudo coberto. */
+  const _resDiv = (() => {
+    const vazio = { ok: [], parcial: [], temDep: false, faltaKg: 0 };
+    if (!_depoItem || !_depoItem.itens) return vazio;
+    const saldo = {};
+    Object.keys(_depoItem.itens).forEach(k => { saldo[k] = _depoItem.itens[k].reserv || 0; });
+    const porPed = {};
+    (A.linhas || []).forEach(l => {
+      const n = String(l.pedido).split('/')[0];
+      (porPed[n] || (porPed[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0 });
+    });
+    const fila = comp.slice().sort((a, b) =>
+      String(a.ent || '9999-99-99').localeCompare(String(b.ent || '9999-99-99')) || (b.kg - a.kg));
+    const ok = [], parcial = [];
+    let faltaKg = 0;
+    fila.forEach(p => {
+      let falta = 0;
+      (porPed[String(p.num)] || []).forEach(l => {
+        const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
+        saldo[l.item] = d - pega;
+        falta += Math.max(0, l.kg - pega);
+      });
+      if (falta > 0.001) { p._faltaRes = falta; parcial.push(p); faltaKg += falta; }
+      else { p._faltaRes = 0; ok.push(p); }
+    });
+    return { ok, parcial, temDep: true, faltaKg };
+  })();
   const prazo = A.peds.filter(p => !p.blq.size && p.temFalta);
   const t1 = A.peds.filter(p => p.blq.size === 1);
   const t2 = A.peds.filter(p => p.blq.size === 2);
@@ -26534,6 +26626,28 @@ function _cardDestravaBase(_semAlav) {
     + '<div style="font-size:10.5px;color:var(--fraco);margin-bottom:8px">Cada faixa vem separada pelos <b>setores por onde o pedido passa</b>. Pedido que usa mais de um aparece como <b style="color:#7B5CD6">misto</b> — nunca contado duas vezes. Toque em qualquer uma para ver a lista completa de pedidos.</div>'
     + '<div class="dfx-grade">'
     + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
+    /* 21/08/2026: a divisão entra LOGO ABAIXO do material pronto, dentro da
+       mesma grade, porque é um recorte dele — não uma sexta faixa. Fica em
+       destaque: é a diferença entre "chama o caminhão" e "manda separar". */
+    + (_resDiv.temDep && comp.length ? (() => {
+        const nOk = _resDiv.ok.length, nPa = _resDiv.parcial.length;
+        const kgOk = S(_resDiv.ok), kgPa = S(_resDiv.parcial);
+        const palOk = pal(_resDiv.ok), palPa = pal(_resDiv.parcial);
+        const cx = (rot, n, kgv, palv, cor, sub, gid) =>
+          `<div onclick="destravaReserva('${gid}')" style="flex:1;min-width:150px;cursor:pointer;background:${cor.bg};border-left:4px solid ${cor.b};border-radius:9px;padding:10px 11px">
+             <div style="font-size:22px;font-weight:900;color:${cor.t};line-height:1.1">${n} <span style="font-size:12px;font-weight:700">pedido(s)</span></div>
+             <div style="font-size:14px;font-weight:800;color:${cor.t};margin-top:1px">${kg(kgv)} · ${plt(palv)}</div>
+             <div style="font-size:12px;font-weight:800;color:${cor.t};margin-top:4px">${rot} 🔎</div>
+             <div style="font-size:10.5px;color:var(--fraco);margin-top:2px;line-height:1.35">${sub}</div>
+           </div>`;
+        return `<div class="dfx-bloco" style="border-left:3px solid var(--verde);grid-column:1/-1">
+          <div class="dfx-cab"><b>📦 Do material pronto, o que já está separado</b><span>total ${comp.length} ped · ${kg(S(comp))}</span></div>
+          <p class="desc" style="margin:0 0 8px;font-size:11px">Reservar é ato manual — alguém move o material para o depósito no ERP. O <b>REST196</b> enxerga o saldo esteja ele onde estiver, então dentro de "pronto" cabem os dois casos abaixo.</p>
+          <div style="display:flex;gap:9px;flex-wrap:wrap">
+            ${cx('reserva completa', nOk, kgOk, palOk, { bg: 'var(--ok-1,#E8F6EE)', b: 'var(--verde)', t: 'var(--ok-4,#1E6B3A)' }, 'material separado no depósito · pode chamar carga', 'ok')}
+            ${cx('reserva parcial', nPa, kgPa, palPa, { bg: 'var(--bg-warn,#FFF6E5)', b: 'var(--laranja)', t: '#8A5A00' }, nPa ? `faltam <b>${kg(_resDiv.faltaKg)}</b> para separar antes de carregar` : 'nenhum pedido nessa condição', 'parcial')}
+          </div></div>`;
+      })() : '')
     + barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4)
     + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
     + barra('Travados por 2 itens', t2, '#c96a1f', 2)
