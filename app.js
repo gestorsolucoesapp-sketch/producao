@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.966.0';
+const APP_VER = '3.967.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -1531,7 +1531,9 @@ function observarSecoesRecolhiveis() {
         try { prepararSecoesRecolhiveis(); } catch (_) {}
       }, 350);
     });
-    window._obsSec.observe(document.body, { childList: true, subtree: true });
+    /* 21/08/2026: era document.body. Seção recolhível só existe dentro do main —
+       observar o body fazia este callback acordar a cada toast, modal e faixa. */
+    window._obsSec.observe(document.querySelector('main') || document.body, { childList: true, subtree: true });
   } catch (_) {}
 }
 async function togGrafico(k) {
@@ -1891,6 +1893,7 @@ function medirTopoApp() {
      conteúdo passava por baixo. getBoundingClientRect dá o valor real, e o
      limite caiu para 0,25px. Sobra ainda 2px de folga, porque zoom não bate
      exato em pixel de tela. */
+  if (_fx) _fx.topo++;
   const h = Math.ceil(t.getBoundingClientRect().height) + 2;
   if (Math.abs(h - _topoAppUlt) < 0.25) return;
   _topoAppUlt = h;
@@ -1904,8 +1907,20 @@ function medirTopoApp() {
 /* remede algumas vezes depois de um evento: fonte que carrega, aba que quebra
    linha e o próprio zoom mudam a altura DEPOIS do evento, não durante. */
 function _remedirTopo() {
+  /* 21/08/2026: eram 12 passadas de 120 ms = 1,44 s de getBoundingClientRect
+     forçando recálculo de layout DEPOIS de cada troca de aba — bem em cima do
+     momento em que a pessoa está tocando na tela. As últimas passadas nunca
+     achavam altura diferente: o que muda a barra é a fonte carregar e a linha de
+     abas quebrar, e isso acontece nos primeiros 400 ms.
+     Ficaram 5 passadas com intervalo crescente, e a leitura vai para dentro do
+     requestAnimationFrame — assim o navegador mede uma vez por quadro em vez de
+     no meio dele. */
   let n = 0;
-  const tick = () => { try { medirTopoApp(); } catch (_) {} if (++n < 12) setTimeout(tick, 120); };
+  const espera = [0, 60, 150, 350, 700];
+  const tick = () => {
+    requestAnimationFrame(() => { try { medirTopoApp(); } catch (_) {} });
+    if (++n < espera.length) setTimeout(tick, espera[n]);
+  };
   tick();
 }
 /* a barra muda de altura sozinha (letreiro entra/sai, abas quebram linha, o
@@ -5942,7 +5957,83 @@ function detEstoqueDep(cod) {
     + (itens.length > LIM ? `<p class="desc">mostrando os ${LIM} maiores de ${itens.length}</p>` : ''));
 }
 
+/* ==================== MEDIDOR DE FLUIDEZ (21/08/2026) ====================
+   João: "está lento até para clicar nas abas, não está fluido".
+
+   Eu já errei uma vez hoje apontando culpado por leitura de código — e as
+   estatísticas do banco acumulavam 52 dias, o que me fez acusar coisa velha.
+   Aqui não dá para adivinhar: o travamento é na thread que pinta a tela do
+   iPhone, e eu só vejo print. Então o app passa a se medir.
+
+   Liga e desliga digitando medirFluidez() no console, ou tocando 5× no selo de
+   versão. Mostra uma faixa com:
+     - troca: quanto tempo a troca de aba segurou a thread (o clique só responde
+       depois disso);
+     - render: quanto o desenho da aba levou;
+     - mut/s: quantas mutações de DOM os observers tiveram que processar —
+       há dois vigiando o documento inteiro, e o app tem 438 pontos que trocam
+       innerHTML;
+     - topo: quantas medições de altura forçaram recálculo de layout.
+   Nada disso roda com o medidor desligado. */
+let _fx = null;
+function medirFluidez(ligar) {
+  if (ligar === false || (_fx && ligar === undefined)) {
+    if (_fx) { try { _fx.obs && _fx.obs.disconnect(); _fx.box && _fx.box.remove(); } catch (_) {} }
+    _fx = null; try { toast('Medidor desligado'); } catch (_) {}
+    return;
+  }
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:6px;bottom:calc(env(safe-area-inset-bottom) + 6px);' +
+    'z-index:99999;background:#0B2A4A;color:#fff;padding:7px 10px;border-radius:10px;' +
+    'font:600 11px/1.5 ui-monospace,Menlo,monospace;max-width:94vw;white-space:pre;opacity:.94';
+  box.onclick = () => medirFluidez(false);
+  document.body.appendChild(box);
+  _fx = { box, troca: 0, render: 0, mut: 0, topo: 0, aba: '', obs: null, t0: Date.now() };
+  try {
+    _fx.obs = new MutationObserver(recs => { _fx.mut += recs.length; });
+    _fx.obs.observe(document.documentElement, { childList: true, subtree: true });
+  } catch (_) {}
+  const pinta = () => {
+    if (!_fx) return;
+    const seg = Math.max(1, (Date.now() - _fx.t0) / 1000);
+    _fx.box.textContent =
+      'aba ' + (_fx.aba || '—') + '\n' +
+      'troca  ' + _fx.troca.toFixed(0) + ' ms' + (_fx.troca > 120 ? '  ← trava aqui' : '') + '\n' +
+      'render ' + _fx.render.toFixed(0) + ' ms\n' +
+      'mut/s  ' + Math.round(_fx.mut / seg) + '   topo ' + _fx.topo + '\n' +
+      '(toque para fechar)';
+    requestAnimationFrame(() => setTimeout(pinta, 500));
+  };
+  pinta();
+  try { toast('📏 Medidor ligado — troque de aba'); } catch (_) {}
+}
+/* atalho sem console: 5 toques no selo de versão em até 3 s */
+(function () {
+  let n = 0, t = null;
+  const lig = () => {
+    const el = document.getElementById('verBadge'); if (!el) { setTimeout(lig, 800); return; }
+    el.addEventListener('click', () => {
+      clearTimeout(t); n++; t = setTimeout(() => { n = 0; }, 3000);
+      if (n >= 5) { n = 0; try { medirFluidez(); } catch (_) {} }
+    });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lig); else lig();
+})();
+
 function trocarAba(qual) {
+  const _t0 = _fx ? performance.now() : 0;
+  _trocarAbaReal(qual);
+  if (_fx) {
+    _fx.troca = performance.now() - _t0;
+    _fx.aba = qual; _fx.mut = 0; _fx.topo = 0; _fx.t0 = Date.now();
+    const _t1 = performance.now();
+    /* o render da aba é assíncrono; esta medida pega o tempo até a thread
+       voltar a ficar livre, que é o que a pessoa sente. */
+    requestAnimationFrame(() => { if (_fx) _fx.render = performance.now() - _t1; });
+  }
+}
+
+function _trocarAbaReal(qual) {
   /* anima só na troca de TELA. Salvar apontamento não passa por aqui, então
      gravação não faz a tela piscar — que era o requisito.
      O disparo é feito AQUI com atraso, e não no fim de cada render: só o Painel
@@ -17407,7 +17498,15 @@ window.addEventListener('touchmove', _marcaRolagem, { passive: true });
 let _asgT = null;
 function agendarScrollGraficos() { clearTimeout(_asgT); _asgT = setTimeout(ajustarScrollGraficos, 60); }
 document.addEventListener('DOMContentLoaded', agendarScrollGraficos);
-new MutationObserver(agendarScrollGraficos).observe(document.documentElement, { childList: true, subtree: true });
+/* 21/08/2026: era document.documentElement — TODA mutação de TODO nó da página,
+   incluindo o <head>, os modais e a barra de topo. O app troca innerHTML em 438
+   lugares, então cada render de aba entregava milhares de MutationRecords a este
+   observer só para ele agendar um timeout. Agora observa só o <main>, que é onde
+   os gráficos com rolagem de fato vivem. */
+(function () {
+  const alvo = document.querySelector('main') || document.documentElement;
+  new MutationObserver(agendarScrollGraficos).observe(alvo, { childList: true, subtree: true });
+})();
 
 function ajustarScrollGraficos() {
   document.querySelectorAll('.svg-scroll[data-fim="1"]').forEach(el => {
