@@ -10,15 +10,29 @@ const aviso = m => avisos.push(m);
 const html = fs.readFileSync('index.html', 'utf8');
 const sw = fs.readFileSync('sw.js', 'utf8');
 
-// ---------- 1) o <script> inline tem que ser JS válido ----------
-const blocos = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-if (!blocos.length) falha('nenhum <script> inline encontrado no index.html');
-const js = blocos.sort((a, b) => b.length - a.length)[0];
+/* ---------- 1) juntar TODO o JS do app ----------
+   21/08/2026: o JS saiu do index.html e virou app.js. Este verificador lia só o
+   maior <script> inline — depois da mudança ele passaria a analisar o bloco dos
+   parsers (58 KB) achando que era o app inteiro, e daria "tudo certo" sem ter
+   olhado 2,2 MB de código. Agora lê o app.js e os inline juntos: a checagem de
+   variável sem declaração e a de onclick órfão precisam enxergar os dois, senão
+   acusam falso positivo em tudo que um chama do outro. */
+const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+const temAppJs = fs.existsSync('app.js');
+const appJs = temAppJs ? fs.readFileSync('app.js', 'utf8') : '';
+if (!inline.length && !temAppJs) falha('nenhum JS encontrado (nem inline nem app.js)');
+if (!temAppJs) aviso('app.js não existe — o JS ainda está inline no index.html');
+const js = [appJs].concat(inline).join('\n;\n');
 fs.writeFileSync('/tmp/_app.js', js);
 
 // ---------- 2) BUMP TRIPLO ----------
 // v3.605 subiu pela metade; o Pareto quebrou por falta de conferência.
-const mVer = html.match(/APP_VER\s*=\s*'([\d.]+)'/);
+/* 21/08/2026: o APP_VER mudou de casa — agora mora no app.js. E nasceu um
+   QUARTO lugar para bater: a query da tag <script src="app.js?v=X.Y.Z">. Se ela
+   ficar para trás, o navegador serve do cache o app.js da versão anterior e o
+   deploy simplesmente não chega no celular — sem erro nenhum na tela. */
+const mVer = (appJs + html).match(/APP_VER\s*=\s*'([\d.]+)'/);
+const mSrc = html.match(/<script src="app\.js\?v=([\d.]+)"/);
 const mSelo = html.match(/>v([\d.]+)<small id="verData"/);
 const mCache = sw.match(/CACHE\s*=\s*'producao-rioplastic-v([\d.]+)'/);
 if (!mVer) falha('APP_VER não encontrado');
@@ -26,6 +40,9 @@ if (!mSelo) falha('selo de versão (>vX.Y.Z<small id="verData") não encontrado'
 if (!mCache) falha('CACHE não encontrado no sw.js');
 if (mVer && mSelo && mVer[1] !== mSelo[1]) falha(`bump incompleto: APP_VER ${mVer[1]} mas o selo diz ${mSelo[1]}`);
 if (mVer && mCache && mVer[1] !== mCache[1]) falha(`bump incompleto: APP_VER ${mVer[1]} mas o CACHE do sw.js diz ${mCache[1]}`);
+if (temAppJs && !mSrc) falha('a tag <script src="app.js?v=X.Y.Z"> sumiu do index.html — o app não carrega');
+if (mVer && mSrc && mVer[1] !== mSrc[1]) falha(`bump incompleto: APP_VER ${mVer[1]} mas a tag do app.js pede v${mSrc[1]} — o celular continuaria na versão velha`);
+if (temAppJs && html.indexOf('rel="preload" as="script" href="app.js') < 0) aviso('o preload do app.js sumiu do <head> — a abertura fica mais lenta');
 if (mVer) console.log('versão:', mVer[1]);
 
 // ---------- 3) VARIÁVEL USADA SEM DECLARAR ----------
@@ -55,7 +72,11 @@ try {
      'CanvasRenderingContext2D','SpeechSynthesisUtterance','speechSynthesis','getComputedStyle','matchMedia','structuredClone',
      'XMLHttpRequest','FileReader','FormData','Image','CustomEvent','MutationObserver','IntersectionObserver','ResizeObserver',
      'TextDecoder','TextEncoder','btoa','atob','crypto','performance','history','screen','queueMicrotask','AbortController',
-     'supabase','pdfjsLib','Tesseract','RioParsers','XLSX','Sortable','arguments']));
+     'supabase','pdfjsLib','Tesseract','RioParsers','XLSX','Sortable','arguments',
+     /* 21/08/2026: entraram quando o verificador passou a ler o bloco dos parsers
+        junto com o app.js. RioParsers é UMD e testa `module`/`self` para saber se
+        está no Node ou no navegador — os dois são globais legítimos. */
+     'module','self','exports','globalThis']));
   const faltando = new Map();
   walk.ancestor(ast, { Identifier(n, anc) {
     const pai = anc[anc.length - 2]; if (!pai) return;
