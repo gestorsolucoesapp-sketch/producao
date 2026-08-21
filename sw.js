@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v3.962.0';
+const CACHE = 'producao-rioplastic-v3.963.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -30,6 +30,20 @@ const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png
    controllerchange recarrega. O caminho do deploy é o mesmo de sempre. */
 
 const IDX = './index.html';
+/* 21/08/2026 — O JS SAIU DO INDEX.
+   Até a 3.962 o index.html tinha 2,4 MB, dos quais 2,2 MB eram um <script>
+   inline. Isso obrigava o Safari a PARSEAR E COMPILAR 2,2 MB de JavaScript em
+   toda abertura: o cache de bytecode do navegador é por URL de script, e script
+   inline não tem URL própria — ele morre junto com o HTML, que muda a cada
+   versão. Era esse o 1,5 a 3 s de tela parada no iPhone.
+
+   Agora o JS é app.js?v=X.Y.Z. A URL só muda quando a versão muda, então:
+     - o Safari guarda o bytecode compilado e reaproveita nas próximas aberturas;
+     - o app.js cai na regra cache-first lá embaixo e nem vai à rede;
+     - e o index.html, que é o arquivo revalidado a cada abertura, passou de
+       2,4 MB para 189 KB.
+   O app.js NÃO entra no APP_SHELL: ele é gravado no cache no primeiro pedido,
+   e assim uma versão velha nunca fica presa no pré-carregamento. */
 const VERK = './__appver';   // chave interna: guarda a versão que está no cache
 
 const lerVer = txt => { const m = /APP_VER\s*=\s*'([^']+)'/.exec(txt || ''); return m ? m[1] : ''; };
