@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v3.970.0';
+const CACHE = 'producao-rioplastic-v3.971.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -10,7 +10,25 @@ const CACHE = 'producao-rioplastic-v3.970.0';
 /* 20/08/2026 - a vinheta VOLTA para a lista. Tirei na 3.928 achando que ela só
    pesava, mas a splash espera o vídeo: sem cache, ela baixava 641 KB pelo 4G
    com a tela preta. */
-const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest', './vinheta.mp4'];
+/* 21/08/2026 — DOIS CACHES, E ESTE É O CONSERTO QUE FALTAVA.
+   Até aqui havia um cache só, com o nome carregando a versão do app. O activate
+   apaga todo cache cujo nome não seja o atual — então CADA publicação jogava
+   fora o logo, os ícones, o manifest, a vinheta E os 2,2 MB do app.js, e a
+   abertura seguinte rebaixava tudo. Publiquei dezoito versões em 21/08: foram
+   dezoito faxinas completas. Era isso que deixava a tela preta esperando o logo.
+
+   Agora:
+     CACHE_ASSET  — imagens, ícones e manifest. O nome NÃO tem a versão do app,
+                    porque esses arquivos não mudam quando o código muda. Sobrevive
+                    a qualquer número de deploys.
+     CACHE        — index.html e app.js, que mudam a cada versão. Este sim é
+                    limpo no activate.
+
+   E a vinheta.mp4 (641 KB) SAIU da lista: o vídeo foi removido da splash na
+   v3.207.0 e a tela de abertura é HTML puro desde então. O arquivo continuava
+   sendo pré-baixado em toda instalação, sem nada para reproduzir. */
+const CACHE_ASSET = 'producao-rioplastic-assets-v1';
+const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
 
 /* 21/08/2026 (João: "está travando muito") — A CAUSA PRINCIPAL ESTAVA AQUI.
    Até a 3.952 a navegação era NETWORK-FIRST com `cache:'no-store'` e
@@ -75,8 +93,13 @@ async function revalidarIndex(c, avisar) {
 self.addEventListener('install', e => {
   self.skipWaiting();          // assume assim que instala, sem ficar em espera
   e.waitUntil((async () => {
+    const ca = await caches.open(CACHE_ASSET);
+    /* só baixa o que ainda não está guardado — numa versão nova do app, nada
+       aqui precisa ser buscado de novo. */
+    await Promise.all(APP_SHELL.map(async u => {
+      try { if (!(await ca.match(u))) await ca.add(u); } catch (_) {}
+    }));
     const c = await caches.open(CACHE);
-    await Promise.all(APP_SHELL.map(u => c.add(u).catch(() => {})));
     // index SEMPRE da rede na instalação: é o que faz o deploy chegar no celular.
     // (era aqui que entrava versão velha na casca nova)
     try {
@@ -98,7 +121,8 @@ self.addEventListener('message', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      /* CACHE_ASSET fica: é o que impede a faxina de imagens a cada versão */
+      .then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== CACHE_ASSET).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -148,7 +172,10 @@ self.addEventListener('fetch', e => {
 
   // demais assets: cache-first com revalidação garantida (e.waitUntil segura o SW vivo)
   e.respondWith((async () => {
-    const cache = await caches.open(CACHE);
+    /* imagem/ícone/manifest vai para o cache que sobrevive ao deploy; o resto
+       (app.js) para o cache da versão. */
+    const ehAsset = /\.(png|jpg|jpeg|svg|webp|ico|mp4|webmanifest)$/i.test(url.pathname);
+    const cache = await caches.open(ehAsset ? CACHE_ASSET : CACHE);
     const cacheado = await cache.match(e.request);
     const rede = fetch(e.request).then(r => {
       if (r && r.ok) cache.put(e.request, r.clone());
