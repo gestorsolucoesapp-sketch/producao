@@ -9,7 +9,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.965.0';
+const APP_VER = '3.966.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23757,54 +23757,108 @@ function _destravaTabelas(lista) {
     const setoresSel = new Set(lista.map(g => g.setor));
     const _stP = k => { let x = ''; try { x = _apelidoSetorG(_setorDoItem(k)); } catch (_) { } return x || 'sem setor'; };
     const cand = (A.peds || []).filter(p => !p.temFalta && (+p.kg || 0) > 0.001);
+
+    /* ===== PRONTO PARA CARREGAR × PRONTO MAS SEM RESERVA — 21/08/2026 =====
+       João: "os que estão prontos para carregar estão 100% no reservado e o
+       restante que está pronto mas ainda não está no reservado".
+
+       Por que a separação existe: a faixa "pronto" nasce do REST196 — o campo de
+       estoque do próprio relatório de carteira, que enxerga o saldo esteja ele em
+       que depósito estiver. Já o RESERVADO é o depósito 6 do REST241, e só entra
+       lá material que ALGUÉM MOVEU no ERP. Reservar é ato manual. Por isso os
+       dois números divergem: em 21/08 o reservado cobria 285 t dos 353 t prontos.
+       Os 68 t restantes não são problema de dado — é material que existe e pode
+       faturar, mas ainda não foi separado. Essa é a lista de trabalho do
+       depósito.
+
+       O reservado é alocado como o estoque: item por item, na ordem de entrega,
+       descontando conforme atende. Somar o reservado do item inteiro em cada
+       pedido contaria o mesmo quilo várias vezes e diria que está tudo coberto. */
+    const porPedido = {};
+    (A.linhas || []).forEach(l => {
+      const n = String(l.pedido).split('/')[0];
+      (porPedido[n] || (porPedido[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0 });
+    });
+    const saldoRes = {};
+    if (_depoItem && _depoItem.itens) {
+      Object.keys(_depoItem.itens).forEach(k => { saldoRes[k] = _depoItem.itens[k].reserv || 0; });
+    }
+    const temDep = !!(_depoItem && _depoItem.itens);
+
     const linhasP = [];
     cand.forEach(p => {
       const sts = [...new Set([...p.itens].map(k => _stP(String(k))))].sort();
       if (!sts.some(s => setoresSel.has(s))) return;
-      let res = 0, qual = 0;
-      if (_depoItem && _depoItem.itens) {
-        p.itens.forEach(k => { const d = _depoItem.itens[String(k)]; if (d) { res += d.reserv || 0; qual += d.qual || 0; } });
-      }
-      linhasP.push({ p, sts, res, qual });
+      linhasP.push({ p, sts });
     });
-    /* entrega mais apertada primeiro: é o que fatura antes. Sem data vai para o
-       fim, não para o começo — pedido sem prazo não é urgente por omissão. */
+    /* entrega mais apertada primeiro: é o que fatura antes, e é quem tem
+       prioridade no material reservado. Sem data vai para o fim, não para o
+       começo — pedido sem prazo não é urgente por omissão. */
     linhasP.sort((a, b) => String(a.p.ent || '9999-99-99').localeCompare(String(b.p.ent || '9999-99-99')) || (b.p.kg - a.p.kg));
 
-    linhasP.forEach(({ p, sts, res, qual }) => {
+    /* segunda passada, já na ordem certa: consome o reservado */
+    linhasP.forEach(o => {
+      let res = 0, semRes = 0, qual = 0;
+      (porPedido[String(o.p.num)] || []).forEach(l => {
+        const disp = saldoRes[l.item] || 0;
+        const pega = Math.min(disp, l.kg);
+        saldoRes[l.item] = disp - pega;
+        res += pega;
+        semRes += Math.max(0, l.kg - pega);
+      });
+      if (temDep) o.p.itens.forEach(k => { const d = _depoItem.itens[String(k)]; if (d) qual += d.qual || 0; });
+      o.res = res; o.semRes = semRes; o.qual = qual;
+      o.carregar = temDep && semRes <= 0.001;
+    });
+
+    /* dois blocos na mesma aba: primeiro o que já dá para carregar, depois o
+       que só espera alguém separar. Cada um com o seu subtotal. */
+    const _linha = (o, grupo) => {
+      const p = o.p;
       const venc = (+p.atraso || 0) > 0 || (p.ent && String(p.ent).slice(0, 10) < hoje);
-      pronto.push({
+      return {
+        'Situacao': grupo,
         'Pedido': String(p.num),
         'Cliente': String(p.cli || ''),
-        'Setores': sts.join(' | '),
+        'Setores': o.sts.join(' | '),
         'Linhas': p.linhas || 0,
-        'Itens': p.itens ? p.itens.size : 0,
         'Peso (kg)': Math.round(p.kg || 0),
+        'Reservado (kg)': o.res > 0 ? Math.round(o.res) : '',
+        'Falta reservar (kg)': o.semRes > 0.001 ? Math.round(o.semRes) : '',
         'Caixas': (+p.cx || 0) > 0 ? Math.round(p.cx) : '',
         'Paletes': (+p.cx || 0) > 0 ? _paletes(p.cx) : '',
         'Entrega': _dtBR(p.ent),
         'Dias vencido': (+p.atraso || 0) > 0 ? +p.atraso : 0,
-        'Situacao': venc ? 'PRONTO E VENCIDO — fatura hoje' : 'pronto, no prazo',
-        'Reservado (kg)': res > 0 ? Math.round(res) : '',
-        'Em qualidade (kg)': qual > 0 ? Math.round(qual) : '',
+        'Prazo': venc ? 'VENCIDO' : 'no prazo',
+        'Em qualidade (kg)': o.qual > 0 ? Math.round(o.qual) : '',
         '_tot': 0
-      });
-    });
-    if (pronto.length) {
-      const tKg = linhasP.reduce((a, x) => a + (+x.p.kg || 0), 0);
-      const tCx = linhasP.reduce((a, x) => a + (+x.p.cx || 0), 0);
-      const tLin = linhasP.reduce((a, x) => a + (x.p.linhas || 0), 0);
-      const nVen = pronto.filter(r => String(r.Situacao).indexOf('VENCIDO') >= 0).length;
-      pronto.push({
-        'Pedido': 'TOTAL', 'Cliente': pronto.length + ' pedido(s) prontos · ' + nVen + ' já vencido(s)',
-        'Setores': '', 'Linhas': tLin, 'Itens': '',
-        'Peso (kg)': Math.round(tKg),
-        'Caixas': tCx > 0 ? Math.round(tCx) : '',
-        'Paletes': tCx > 0 ? _paletes(tCx) : '',
-        'Entrega': '', 'Dias vencido': '', 'Situacao': '',
-        'Reservado (kg)': '', 'Em qualidade (kg)': '', '_tot': 2
-      });
-    }
+      };
+    };
+    const _sub = (arr, rot, nivel) => {
+      const kg = arr.reduce((s, x) => s + (+x.p.kg || 0), 0);
+      const cx = arr.reduce((s, x) => s + (+x.p.cx || 0), 0);
+      const lin = arr.reduce((s, x) => s + (x.p.linhas || 0), 0);
+      const res = arr.reduce((s, x) => s + x.res, 0);
+      const sem = arr.reduce((s, x) => s + x.semRes, 0);
+      const ven = arr.filter(x => (+x.p.atraso || 0) > 0 || (x.p.ent && String(x.p.ent).slice(0, 10) < hoje)).length;
+      return {
+        'Situacao': rot, 'Pedido': '', 'Cliente': arr.length + ' pedido(s) \u00b7 ' + ven + ' vencido(s)',
+        'Setores': '', 'Linhas': lin, 'Peso (kg)': Math.round(kg),
+        'Reservado (kg)': res > 0 ? Math.round(res) : '',
+        'Falta reservar (kg)': sem > 0.001 ? Math.round(sem) : '',
+        'Caixas': cx > 0 ? Math.round(cx) : '', 'Paletes': cx > 0 ? _paletes(cx) : '',
+        'Entrega': '', 'Dias vencido': '', 'Prazo': '', 'Em qualidade (kg)': '', '_tot': nivel
+      };
+    };
+
+    const carregar = linhasP.filter(o => o.carregar);
+    const separar = linhasP.filter(o => !o.carregar);
+
+    carregar.forEach(o => pronto.push(_linha(o, 'PRONTO PARA CARREGAR')));
+    if (carregar.length) pronto.push(_sub(carregar, 'TOTAL PRONTO PARA CARREGAR', 1));
+    separar.forEach(o => pronto.push(_linha(o, temDep ? 'falta reservar' : 'pronto (sem REST241)')));
+    if (separar.length) pronto.push(_sub(separar, temDep ? 'TOTAL FALTA RESERVAR' : 'TOTAL (sem REST241)', 1));
+    if (pronto.length) pronto.push(_sub(linhasP, 'TOTAL GERAL PRONTO', 2));
   }
 
   return { resumo, itens, peds, detalhe, reserv, pronto };
@@ -24015,7 +24069,7 @@ async function _montarPlanilha(T, lista) {
     'Maior atraso (dias)', 'Dias vencido', 'Falta produzir (kg)', 'Falta produzir (cx)', 'Paletes',
     'Libera sozinho (pedidos)', 'Libera sozinho (kg)', 'Pedidos que trava', 'Peso (kg)',
     'Qtd pendente', 'Peso pendente (kg)', 'Em estoque (kg)', 'Paletes a produzir', 'Em deposito (kg)', 'Reservado (kg)', 'Em qualidade (kg)', 'Livre (kg)',
-    'Reservado (cx)', 'Pendente na carteira (kg)',
+    'Reservado (cx)', 'Pendente na carteira (kg)', 'Falta reservar (kg)',
     'Pedidos na carteira', 'Linhas na carteira', 'Itens diferentes', 'Peso pendente (kg)',
     'Maior atraso travado (dias)', 'Linhas', 'Itens', 'Caixas'];
   const DATA = ['Entrega', 'Entrega mais proxima', 'Entrega mais proxima (travados)'];
@@ -24028,8 +24082,10 @@ async function _montarPlanilha(T, lista) {
      ("o que já está separado?"), não anexo de conferência. */
   /* Pronto para faturar vem antes do Reservado: é a aba de ação — o que dá para
      mandar hoje. O Reservado é consulta de onde está o material. */
-  aba(T.pronto, 'Pronto para faturar', [11, 30, 26, 10, 9, 14, 12, 9, 13, 13, 27, 15, 17], NUM, DATA,
-    d => String(d.Situacao || '').indexOf('VENCIDO') >= 0);
+  /* 21/08/2026: destaque vermelho passou a ser a coluna 'Prazo' — 'Situacao'
+     agora diz o GRUPO (carregar × falta reservar), não o prazo. */
+  aba(T.pronto, 'Pronto para faturar', [24, 11, 28, 24, 9, 13, 14, 16, 11, 9, 12, 12, 11, 16], NUM, DATA,
+    d => String(d.Prazo || '') === 'VENCIDO');
   aba(T.reserv, 'Reservado', [18, 11, 44, 15, 15, 9, 30, 20, 20, 12], NUM, DATA, null);
   aba(T.detalhe, 'Carteira linha a linha', [13, 10, 12, 30, 11, 42, 8, 13, 18, 16, 15, 17, 46, 19, 19, 18, 12, 12, 24], NUM, DATA, venc);
 
