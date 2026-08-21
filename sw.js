@@ -1,30 +1,78 @@
-// Produção Rioplastic — service worker (network-first no index; auto-update)
-const CACHE = 'producao-rioplastic-v3.952.0';
+// Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
+const CACHE = 'producao-rioplastic-v3.953.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
    2) a lista tinha a vinheta de 641 KB, e o addAll é tudo-ou-nada: no 4G o
       download da vinheta falhava e a gravação inteira ia junto — nenhuma imagem
       ficava em cache, e toda abertura buscava tudo pela rede de novo.
-   Agora: só o que a tela precisa para pintar, sem o vídeo, e gravado um a um
-   para que a falha de um arquivo não derrube os outros. A vinheta e os ícones
-   grandes continuam sendo guardados, mas depois, quando forem pedidos. */
+   Agora: gravado um a um para que a falha de um arquivo não derrube os outros. */
 /* 20/08/2026 - a vinheta VOLTA para a lista. Tirei na 3.928 achando que ela só
    pesava, mas a splash espera o vídeo: sem cache, ela baixava 641 KB pelo 4G
-   com a tela preta. O problema original era o addAll tudo-ou-nada, e esse já
-   está resolvido com o add individual abaixo. */
+   com a tela preta. */
 const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest', './vinheta.mp4'];
+
+/* 21/08/2026 (João: "está travando muito") — A CAUSA PRINCIPAL ESTAVA AQUI.
+   Até a 3.952 a navegação era NETWORK-FIRST com `cache:'no-store'` e
+   `?t=Date.now()`. Isso quer dizer: TODA abertura do app baixava o index.html
+   inteiro (680 KB gzipado, 2,4 MB crus) do zero, sem aproveitar nem o cache
+   HTTP, nem a borda do CDN do GitHub, nem o cache de bytecode do Safari — a URL
+   era diferente a cada vez. Na 4G da fábrica isso era o timeout de 2,2s de tela
+   parada em cada abertura, mais o parse de 2,1 MB de JS logo em seguida.
+
+   Agora é STALE-WHILE-REVALIDATE: responde do cache na hora (abertura
+   instantânea) e revalida atrás com `cache:'no-cache'` — que manda o ETag e
+   recebe 304 sem corpo quando nada mudou. Ou seja: abertura normal passou de
+   680 KB para ~200 bytes de rede.
+
+   O auto-update NÃO se perde: quando o João publica, o sw.js muda, o
+   `reg.update()` detecta, o install abaixo já grava o index novo no cache e o
+   controllerchange recarrega. O caminho do deploy é o mesmo de sempre. */
+
+const IDX = './index.html';
+const VERK = './__appver';   // chave interna: guarda a versão que está no cache
+
+const lerVer = txt => { const m = /APP_VER\s*=\s*'([^']+)'/.exec(txt || ''); return m ? m[1] : ''; };
+
+async function verNoCache(c) {
+  try { const r = await c.match(VERK); return r ? await r.text() : ''; } catch (_) { return ''; }
+}
+
+/* busca o index e grava se mudou. Devolve a versão nova, ou '' se nada mudou. */
+async function revalidarIndex(c, avisar) {
+  try {
+    // no-cache (e não no-store): revalida por ETag. Igual = 304 sem corpo.
+    const r = await fetch(IDX, { cache: 'no-cache' });
+    if (!r || !r.ok) return '';
+    const txt = await r.clone().text();
+    const nova = lerVer(txt);
+    const atual = await verNoCache(c);
+    if (nova && atual && nova === atual) return '';   // nada mudou, não regrava
+    await c.put(IDX, r.clone());
+    if (nova) await c.put(VERK, new Response(nova, { headers: { 'Content-Type': 'text/plain' } }));
+    if (avisar && atual && nova && nova !== atual) {
+      const cls = await self.clients.matchAll({ type: 'window' });
+      cls.forEach(cl => { try { cl.postMessage({ tipo: 'VERSAO_NOVA', versao: nova }); } catch (_) {} });
+    }
+    return nova;
+  } catch (_) { return ''; }
+}
 
 self.addEventListener('install', e => {
   self.skipWaiting();          // assume assim que instala, sem ficar em espera
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
     await Promise.all(APP_SHELL.map(u => c.add(u).catch(() => {})));
-    // index.html SEMPRE da rede, ignorando o cache HTTP do navegador.
+    // index SEMPRE da rede na instalação: é o que faz o deploy chegar no celular.
     // (era aqui que entrava versão velha na casca nova)
     try {
-      const r = await fetch('./index.html?t=' + Date.now(), { cache: 'no-store' });
-      if (r && r.ok) await c.put('./index.html', r.clone());
+      const r = await fetch(IDX, { cache: 'reload' });
+      if (r && r.ok) {
+        const txt = await r.clone().text();
+        await c.put(IDX, r.clone());
+        const v = lerVer(txt);
+        if (v) await c.put(VERK, new Response(v, { headers: { 'Content-Type': 'text/plain' } }));
+      }
     } catch (_) {}
   })());
 });
@@ -56,30 +104,29 @@ self.addEventListener('fetch', e => {
     url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
 
   if (ehNavegacao) {
-    // NETWORK-FIRST com timeout: online = sempre a versão publicada;
-    // offline/lento = cai no cache. Nunca mais volta de versão.
     e.respondWith((async () => {
-      const cache = await caches.open(CACHE);
+      const c = await caches.open(CACHE);
+      const guardado = await c.match(IDX);
+      if (guardado) {
+        // pinta AGORA com a cópia local e confere a versão atrás, sem segurar a tela
+        e.waitUntil(revalidarIndex(c, true));
+        return guardado;
+      }
+      // primeira abertura (ou cache limpo): não tem jeito, precisa da rede
       try {
-        const ctrl = new AbortController();
-        /* 4,5s era muito para 4G: a tela ficava em branco esperando 2,2 MB antes
-           de desistir e usar a cópia local. 2,2s mostra o app quase na hora e a
-           versão nova entra na próxima abertura. */
-        const t = setTimeout(() => ctrl.abort(), 2200);
-        // consegue devolver uma cópia antiga guardada na borda.
-        // ?t=agora: URL única a cada abertura. Com ?v=versão o SW velho pedia a
-        // URL da versão velha e o CDN devolvia a cópia antiga da borda — ele
-        // nunca recebia o HTML novo que o tiraria do impasse.
-        const r = await fetch('./index.html?t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
-        clearTimeout(t);
+        const r = await fetch(IDX, { cache: 'reload' });
         if (r && r.ok) {
-          e.waitUntil(cache.put('./index.html', r.clone()));
+          const txt = await r.clone().text();
+          e.waitUntil((async () => {
+            await c.put(IDX, r.clone());
+            const v = lerVer(txt);
+            if (v) await c.put(VERK, new Response(v, { headers: { 'Content-Type': 'text/plain' } }));
+          })());
           return r;
         }
         throw new Error('resposta ruim');
       } catch (_) {
-        const c = await cache.match('./index.html');
-        return c || new Response('Sem conexão e sem cópia local.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        return new Response('Sem conexão e sem cópia local.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       }
     })());
     return;
