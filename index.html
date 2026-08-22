@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.033.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.035.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.033.0';
+const APP_VER = '4.035.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31687,7 +31687,7 @@ async function csImagem() {
 
     const COL0 = 150, COLW = Math.max(96, Math.min(130, 760 / (S.length + 1)));
     const W = COL0 + COLW * (S.length + 1) + 36;
-    const LH = 34, CAB = 132, RODA = 96;
+    const LH = 34, CAB = 150, RODA = 96;   // +18: a linha da previsão entrou na faixa azul
     const H = CAB + L.length * LH + RODA + (M.paradas && M.paradas.length ? 30 + M.paradas.slice(0, 3).length * 26 : 0);
     const esc = 2;
     const cv = document.createElement('canvas');
@@ -31695,12 +31695,18 @@ async function csImagem() {
     const x = cv.getContext('2d'); x.scale(esc, esc);
 
     x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
-    x.fillStyle = '#0B2A4A'; x.fillRect(0, 0, W, CAB - 34);
+    x.fillStyle = '#0B2A4A'; x.fillRect(0, 0, W, CAB - 28);
     x.fillStyle = '#fff'; x.font = F(26, 800); x.textAlign = 'left';
     x.fillText(M.cod + '  ' + String(M.nome || '').slice(0, 26), 18, 40);
     x.fillStyle = '#9FC0DE'; x.font = F(16, 600);
     x.fillText(t(totKg) + (totMil > 0 ? '  ·  ' + fmtMil(totMil) + ' mil' : '') + (gMes > 0 ? '  ·  ' + gMes.toFixed(2) + ' g/pç' : ''), 18, 68);
-    x.fillText(dm(R.de) + ' a ' + dm(R.ate) + '  ·  ' + S.length + ' semanas', 18, 90);
+    x.fillText(dm(R.de) + ' a ' + dm(R.ate) + '  ·  ' + S.length + ' semana' + (S.length > 1 ? 's' : '')
+      + '  ·  período da análise', 18, 90);
+    { const pv = _csPrevisao(R, S);
+      if (pv) {
+        x.fillStyle = '#FFD98A'; x.font = F(15, 800);
+        x.fillText('previsão do mês ' + t(pv.prev) + '  ·  ' + t(pv.feito) + ' até aqui  ·  faltam ' + pv.faltam + ' dia' + (pv.faltam === 1 ? '' : 's'), 18, 112);
+      } }
 
     let y = CAB;
     x.font = F(13, 800); x.fillStyle = '#5C7186'; x.textAlign = 'right';
@@ -31763,6 +31769,36 @@ async function csImagem() {
     return;
   }
   _mtAbrirGaleria(imgs.map(i => ({ cod: i.cod, url: i.cv.toDataURL('image/jpeg', 0.93) })), 'semanal');
+}
+
+/* ===== PREVISÃO DO MÊS POR MÁQUINA — 22/08/2026 (pedido do João) =====
+   "quero previsão mensal, total produzido até agora e previsto pela média, no
+   período da análise e não o mês inteiro, porque estamos no dia 21".
+
+   Usa a MESMA régua de dias-equivalentes do letreiro e do Painel — dia útil
+   vale 1, sábado a fração da jornada reduzida, domingo 0 — em vez de uma
+   regra nova só para este card. Duas réguas para a mesma pergunta é como as
+   telas passam a discordar entre si.
+
+   Só aparece no mês corrente: em mês fechado não há o que prever, o total já é
+   o mês. E devolve também quantos dias ainda faltam, porque previsão sem o
+   prazo que falta não dá para julgar. */
+function _csPrevisao(R, S) {
+  try {
+    if (!R || !R.ate) return null;
+    const ym = String(R.ate).slice(0, 7);
+    if (ym !== hojeISO().slice(0, 7)) return null;
+    const kgFeito = (S || []).reduce((s, x) => s + (+x.kg || 0), 0);
+    if (!(kgFeito > 0)) return null;
+    let eqDecorr = 0, eqTotal = 0, faltam = 0;
+    _diasDoMes(ym).forEach(d => {
+      eqTotal += equivDiaCal(d);
+      if (d <= String(R.ate)) eqDecorr += equivDia(d);
+      else if (equivDiaCal(d) > 0) faltam++;
+    });
+    if (eqDecorr <= 0) return null;
+    return { prev: kgFeito / eqDecorr * eqTotal, feito: kgFeito, faltam, porDiaEq: kgFeito / eqDecorr };
+  } catch (_) { return null; }
 }
 
 function csRender(R, box) {
@@ -31916,6 +31952,19 @@ function csRender(R, box) {
         <b style="font-size:16px;color:var(--navy)">${escapeHtml(M.cod)}</b>
         <span style="font-size:12.5px;color:var(--fraco);font-weight:600">${escapeHtml(M.nome || '')}</span>
         <span style="margin-left:auto;font-size:12.5px;font-weight:800;color:var(--navy)">${kg(totKg)} · ${totMil > 0 ? fmtMil(totMil) + ' mil' : n0(tot.cx) + ' cx'} · ${gMes > 0 ? gMes.toFixed(2) + ' g/pç' : ''} · média ${kg(mediaDia)}/dia${bocaMes ? ' · boca ' + bocaMes.b : ''}</span>
+        ${(() => {
+          const pv = _csPrevisao(R, S);
+          if (!pv) return '';
+          /* na tela a previsão ganha faixa própria, azul como o cabeçalho da
+             impressão: é a linha que responde "vamos fechar o mês em quanto?",
+             e ela não pode disputar espaço com o total já realizado. */
+          return `<div style="flex-basis:100%;margin-top:6px;background:var(--navy);color:#fff;border-radius:8px;padding:7px 10px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline">
+            <span style="font-size:12.5px;font-weight:800">📈 previsão do mês <b style="color:#FFD98A;font-size:14px">${kg(pv.prev)}</b></span>
+            <span style="font-size:11.5px;opacity:.9">${kg(pv.feito)} até ${escapeHtml(dm(R.ate))}</span>
+            <span style="font-size:11.5px;opacity:.9">ritmo ${kg(pv.porDiaEq)}/dia</span>
+            <span style="font-size:11.5px;opacity:.75">faltam ${pv.faltam} dia${pv.faltam === 1 ? '' : 's'} de produção</span>
+          </div>`;
+        })()}
         ${semMil ? `<span style="flex-basis:100%;font-size:10.5px;color:var(--laranja)">⚠️ ${n0(semMil)} linha(s) sem a embalagem na descrição ficaram fora do milheiro e do peso unitário</span>` : ''}
       </div>
       ${tabela}
