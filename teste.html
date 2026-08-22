@@ -24,7 +24,7 @@
      O supabase-js vinha do cdn.jsdelivr.net numa tag de script SEM defer, no byte 938
      do arquivo: antes do CSS, antes do <body>
 <div style="position:fixed;left:0;right:0;top:0;z-index:99999;background:#8A5A00;color:#fff;text-align:center;font:800 12px system-ui;padding:4px 8px;pointer-events:none">
-  ⚗️ PÁGINA DE TESTE v4.042.0 — não é o app da equipe
+  ⚗️ PÁGINA DE TESTE v4.050.0 — não é o app da equipe
 </div>, antes de tudo. Script externo
      bloqueante no <head> impede QUALQUER pintura — o navegador não desenha um
      pixel até resolver DNS, fechar TLS com o CDN e executar 212 KB de JS. Na 4G
@@ -1028,7 +1028,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">TESTE v4.042.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">TESTE v4.050.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1998,6 +1998,9 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        Com uma marca só, um relatório poderia ser confundido com outro — e ler o
        643 como se fosse 624 gravaria parada na tabela de refugo. */
     const tem = rx => linhas.some(l => rx.test(l.texto));
+    /* RVEN002 — duas marcas, como as outras: o cabeçalho de Região e a linha de
+       Pedido com Vendedor. Sozinha, "Região:" apareceria em outros relatórios. */
+    if (tem(/^Regi[ãa]o:\s*\d/) && tem(/^Pedido:\s*\d+.*Vendedor:/)) return 'RVEN002';
     // 643 — paradas: motivo como grupo, e as colunas com Início/Fim/Tempo
     if (tem(/^Motivo Parada:\s*\d+/) && tem(/^Data\s+Ordem\s+Recurso\s+In[ií]cio\s+Fim\s+Tempo/)) return '643';
     // 622 — itens: Item e Turno como grupo, e as colunas de produção
@@ -2290,6 +2293,64 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   }
 
   // ---------- RPCP643: paradas Motivo x OP x Dia x Item ----------
+  /* ===== RVEN002 — Documentos por Região × Sub-Região (22/08/2026) =====
+     Serve de TRADUTOR: pedido → UF, região, sub-região e representante. Essa
+     informação não existe em nenhum outro relatório do app, e é o que falta para
+     desenhar o mapa. Peso, cliente e situação de reserva já vêm do REST196 e do
+     REST241 — aqui não se lê nada disso.
+
+     Por isso ele lê SÓ OS CABEÇALHOS e ignora as linhas de item. O arquivo do
+     João tem 1.771 páginas; ler item a item seria baixar um caminhão para
+     carregar um envelope. Uma linha por pedido, e pronto. */
+  function parseRVEN002(linhas, periodo) {
+    const out = [];
+    let regiao = null, sub = null;
+    const vis = new Set();
+    linhas.forEach(l => {
+      const t = (l.texto || '').trim();
+      let m;
+      if ((m = /^Região:\s*(.+?)\s*$/.exec(t)) && !/Sub-Regi/.test(t)) { regiao = m[1].trim(); return; }
+      if ((m = /^Sub-Região:\s*(.+?)\s*$/.exec(t))) { sub = m[1].trim(); return; }
+      /* o cabeçalho do pedido vem tudo numa linha só, com rótulos fixos. Pego
+         cada campo pelo rótulo em vez de contar posição: o ERP muda largura de
+         coluna sem avisar, e já quebrou três leitores hoje por isso. */
+      if (/^Pedido:/.test(t)) {
+        const ped = (/Pedido:\s*([\d]+)/.exec(t) || [])[1];
+        if (!ped || vis.has(ped)) return;
+        const emi = (/Emiss[ãa]o:\s*(\d{2}\/\d{2}\/\d{4})/.exec(t) || [])[1];
+        const cid = (/Cidade\s*\/\s*UF:\s*(.+?)\s{2,}|Cidade\s*\/\s*UF:\s*(.+?)\s+Fluxo/.exec(t) || [])[1];
+        const cid2 = cid || (/Cidade\s*\/\s*UF:\s*(.+)$/.exec(t) || [])[1] || '';
+        const flx = (/Fluxo\/Situa[çc][ãa]o:\s*(.+?)\s{2,}|Fluxo\/Situa[çc][ãa]o:\s*(.+?)\s+Vendedor/.exec(t) || []).slice(1).find(Boolean) || '';
+        const ven = (/Vendedor:\s*(.+?)\s*$/.exec(t) || [])[1] || '';
+        const mv = /^(\d+)\s*-\s*(.+)$/.exec(ven.trim());
+        // "GOIANIA - GO" → cidade e UF; a UF é o que o mapa usa
+        /* "VARGEM GRANDE DO SUL - " aparece sem a UF em alguns pedidos. Sem UF o
+           ponto não tem onde ser pintado no mapa; limpo o traço solto para o
+           nome da cidade não ficar sujo e deixo a UF nula — quem não tem estado
+           vai para um contador de "sem UF" em vez de sumir calado. */
+        const cidLimpa = String(cid2).trim().replace(/\s*-\s*$/, '');
+        const mc = /^(.*?)\s*-\s*([A-Z]{2})\s*$/.exec(cidLimpa);
+        vis.add(ped);
+        out.push({
+          pedido: ped, emissao: dataBR(emi) || null,
+          cidade: mc ? mc[1].trim() : (cidLimpa || null),
+          uf: mc ? mc[2] : null,
+          regiao, sub_regiao: sub,
+          vendedor_cod: mv ? mv[1] : null, vendedor_nome: mv ? mv[2].trim() : (ven.trim() || null),
+          situacao: flx.trim() || null,
+          cliente_cod: null, cliente_nome: null, _i: out.length
+        });
+        return;
+      }
+      // o cliente vem na linha seguinte e completa o último pedido lido
+      if ((m = /^Cliente:\s*(\d+)\s*-\s*(.+?)\s*$/.exec(t)) && out.length) {
+        const u = out[out.length - 1];
+        if (!u.cliente_cod) { u.cliente_cod = m[1]; u.cliente_nome = m[2].trim(); }
+      }
+    });
+    return out.map(o => { delete o._i; return o; });
+  }
+
   function parse643(linhas, periodo) {
     const out = [];
     let motivo = null, op = null, diaRef = null, item = null;
@@ -2449,7 +2510,8 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     '339': 'Fila de produção por Data/Pedido (todas as máquinas num arquivo)',
     '241': 'Saldos de Estoque por Depósito',
     '196': 'Saldos de Estoque × Pedidos (carteira em aberto)',
-    'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)'
+    'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)',
+    'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)'
   };
 
 
@@ -3075,6 +3137,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       case '241': registros = parse241(linhas, periodo); break;
       case '196': registros = parse196(linhas, periodo); break;
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
+      case 'RVEN002': registros = parseRVEN002(linhas, periodo); break;
     }
     /* PDF DE UM DIA SO, SEM CABECALHO. O RPCP624 gerado dia a dia sai sem o bloco
        "Período:" — entao acharPeriodo devolve vazio e nao da para saber o dia pelo
@@ -3132,7 +3195,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.042.0';
+const APP_VER = '4.050.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6245,6 +6308,14 @@ async function carregarAnaliseMais() {
   try {
     await getCustoKg(); await getPrecoHist(); await getMtBlocos();
     const c = await getCacheAM();
+    /* 22/08, 17h — o registro do João pegou renderAnaliseMais gastando 3.925 ms
+       com ele na aba COMERCIAL. Esta função é assíncrona: entre o começo e o
+       fim ela espera quatro buscas, e nesse tempo a pessoa já trocou de aba.
+       Quando o await volta, ela desenha uma tela que ninguém está vendo — e o
+       desenho é o mais caro do app.
+       A regra é a mesma que vale para qualquer trabalho assíncrono: ao voltar,
+       confira se ainda faz sentido. */
+    if (_abaAtual !== 'analisemais') return;
     renderAnaliseMais(c);
   } catch (e) { box.innerHTML = '<p class="vazio-painel">Não consegui carregar: ' + escapeHtml(e.message || String(e)) + '</p>'; }
 }
@@ -6703,7 +6774,17 @@ async function _mtCarregarMes() {
       const ds = Object.keys(porBloco[k]).sort();
       if (ds.length >= 2) _mtSerieMesBloco[k] = ds.map(d => porBloco[k][d]);
     });
-    try { if (typeof renderAnaliseMais === 'function' && _mtSnap) renderAnaliseMais(); } catch (_) { }
+    /* 22/08, 15h45 — AQUI ESTAVA. O registro do João marcou 4,8 s travado na aba
+       MANUTENÇÃO, e o culpado era renderAnaliseMais rodando 4.808 ms numa
+       chamada só. Ele estava em outra aba: a Análise+ era desenhada inteira,
+       com todas as máquinas e mostradores, para uma tela que ninguém estava
+       vendo. A série do mês chega depois, em segundo plano, e mandava redesenhar
+       sem perguntar onde a pessoa está.
+       Agora só redesenha se a Análise+ estiver na frente. Se não estiver, ela
+       será desenhada quando ele abrir — com a série já pronta. */
+    try {
+      if (typeof renderAnaliseMais === 'function' && _mtSnap && _abaAtual === 'analisemais') renderAnaliseMais();
+    } catch (_) { }
   } catch (_) { _mtSerieMes = null; _mtSerieMesBloco = null; }
 }
 /* sparkline do MÊS por turno — igual ao do cabeçalho, também ignora o filtro.
@@ -7031,6 +7112,9 @@ function mtFaixaTurno(bl, extra) {
 const MT_BG_T = b => (b === 'Manhã' ? '#FDF5E6' : b === 'Tarde' ? '#EDF7EF' : '#EDF3FA');
 
 function renderAnaliseMais(cache) {
+  /* rede de segurança: são SETE lugares que chamam este desenho. Em vez de
+     confiar que todos vão lembrar de checar a aba, quem checa é ele. */
+  if (typeof _abaAtual !== 'undefined' && _abaAtual !== 'analisemais') return;
   cache = cache || _amCacheAtual();
   const box = $('anmConteudo'); if (!box || !cache) return;
   _amSetToggle();
@@ -7286,7 +7370,14 @@ document.addEventListener('touchstart', e => {
          registra travadas de 400-900 ms, que ninguém sente, e ficou atrapalhando
          a leitura. O registro continua sendo feito por baixo: para ver, basta
          chamar verTravadas() no console. */
-      if (!souDevReal || !window._verTrava) return;
+      /* 22/08, fim da tarde: religado. Eu tinha escondido o chip às 12h porque
+         ele só registrava travadas de 400-900 ms e virou ruído — mas aí mandei o
+         João "tocar no 🧊" para diagnosticar o 643 e não havia mais 🧊 nenhum.
+         Ferramenta de diagnóstico não pode sumir bem quando o diagnóstico
+         começa. Continua só para o dono, e agora só aparece a partir de 1,5 s:
+         nessa faixa é travamento que a pessoa sente, não hesitação de tela. */
+      if (!souDevReal) return;
+      if (atraso < 1500 && !_tvLog.some(r => r.ms >= 1500)) return;
       let c = document.getElementById('chipTrava');
       if (!c) {
         c = document.createElement('button');
@@ -7308,11 +7399,36 @@ document.addEventListener('touchstart', e => {
    todas as chamadas feitas depois — nenhuma linha delas precisou ser tocada.
    Quando um desenho passa de 1 s, as três mais caras entram no registro do 🧊,
    com nome e número de chamadas. Aí o conserto é mirado. */
+/* 22/08, 15h30 — A REDE ESTAVA CURTA. O registro do João marcou 4,4 s de tela
+   travada e as funções medidas somaram 354 ms: 8% do tempo. Os outros 92%
+   estavam em código que eu não tinha embrulhado. Sem medir tudo, o cronômetro
+   aponta o inocente que por acaso estava sendo observado.
+   Entram agora as telas de configuração (onde ele estava quando travou), o
+   desenho das outras abas e as funções de agregação pesada. */
 const _PROF_ALVOS = ['renderPainel', 'cardAbaixoMeta', 'kgPerdidoParadas', 'computeOEE',
   'analiseTurnoCompleta', 'cardSetupsMaquina', 'aplicarMaqGlobal', 'classificarPerdas',
-  'aplicarDiaOperacional', 'filtraPeriodoOperacional'];
+  'aplicarDiaOperacional', 'filtraPeriodoOperacional',
+  'renderParadasChave', 'renderLimpaRotina', 'renderDiagPausa', 'carregarUsuarios',
+  'renderAnaliseMais', 'renderOEE', 'carregarPainel', 'recarregarAbaAtual',
+  'cardParadasTotais', 'cardPerdaMeta', 'cardMilSemRegra', 'gMaqPeso',
+  'paretoSVG', 'paretoHorizontal', 'renderProgramacao', 'cardDestrava',
+  '_alocarEstoque', 'aplicarPadraoParadas', 'medirTopoApp', 'trocarAba'];
 let _prof = {};
 function _profZera() { _prof = {}; }
+/* O innerHTML volta rápido e o navegador só DEPOIS monta e posiciona tudo —
+   esse custo não cai em cronômetro de função nenhuma, e é o principal suspeito
+   dos 92% que faltavam. Isto mede o intervalo entre o fim do desenho e o quadro
+   seguinte da tela, que é exatamente o tempo de montagem e posicionamento. */
+let _profPintura = 0;
+function _medePintura(marca) {
+  try {
+    const t0 = performance.now();
+    requestAnimationFrame(() => {
+      const d = performance.now() - t0;
+      if (d > 80) { _profPintura = Math.max(_profPintura, d); _prof['🎨 pintar a tela' + (marca ? ' (' + marca + ')' : '')] = { ms: d, n: 1 }; }
+    });
+  } catch (_) { }
+}
 function _profTop(n) {
   return Object.entries(_prof).sort((a, b) => b[1].ms - a[1].ms).slice(0, n || 3)
     .map(([k, v]) => k + ' ' + Math.round(v.ms) + 'ms×' + v.n);
@@ -9608,11 +9724,71 @@ function diagLimparPausas() {
    surpresa por uma tela travada; quem quiser as paradas liga em Config./Acesso.
    Desligada, a pista de paradas nem sai para o banco: não é filtro de tela, é
    requisição que não acontece. */
+/* ===== 643 BLOCO A BLOCO — 22/08/2026 (plano do João) =====
+   "mapeia quais pontos do Painel precisam do 643, desativa tudo e vai ativando
+   um a um que eu vou testando".
+   É a forma certa de achar: em vez de eu adivinhar qual conta pesa, cada
+   consumidor tem a sua chave e ele liga um, usa, e sente. Quem travar, travou
+   sozinho — não há mais dúvida sobre qual dos oito era.
+   Todos NASCEM DESLIGADOS. Com todos desligados o 643 nem é baixado. */
+const P643 = {
+  kpi:     ['Horas paradas no topo', 'o número grande de horas paradas e a linha do briefing'],
+  meta:    ['Desempenho × meta', 'o "principal motivo" de cada máquina abaixo da meta'],
+  totais:  ['Paradas totais', 'o quadro de paradas por motivo com o total do período'],
+  maquina: ['Paradas por máquina', 'a barra de horas paradas por máquina'],
+  pareto:  ['Pareto de paradas', 'a curva de motivos que mais param, geral e por setor'],
+  setup:   ['Análise de setup', 'tempo e quantidade de troca por máquina'],
+  perdida: ['Produção perdida por parada', 'quanto deixou de produzir por causa das paradas'],
+  oee:     ['OEE', 'disponibilidade, desempenho e qualidade']
+};
+const P643_CH = 'rp_643_blocos';
+let _p643 = (() => {
+  try {
+    const v = localStorage.getItem(P643_CH);
+    // sem escolha gravada = tudo ligado; a lista existe para ISOLAR, não para esconder
+    return v === null ? new Set(Object.keys(P643)) : new Set(JSON.parse(v || '[]'));
+  } catch (_) { return new Set(Object.keys(P643)); }
+})();
+function p643(k) { return _paradasLigado && _p643.has(k); }
+function p643Toggle(k) {
+  if (_p643.has(k)) _p643.delete(k); else _p643.add(k);
+  try { localStorage.setItem(P643_CH, JSON.stringify([..._p643])); } catch (_) { }
+  try { renderParadasChave(); } catch (_) { }
+  try { if (_abaAtual === 'painel') renderPainel(); } catch (_) { }
+}
+function p643Todos(liga) {
+  _p643 = new Set(liga ? Object.keys(P643) : []);
+  try { localStorage.setItem(P643_CH, JSON.stringify([..._p643])); } catch (_) { }
+  try { renderParadasChave(); } catch (_) { }
+  /* 22/08, 15h30 — o registro do João mostrou renderPainel rodando CINCO vezes
+     enquanto ele estava na aba Acesso, mexendo nas chaves. Desenhar o Painel
+     estando em outra aba é trabalho jogado fora: ninguém está vendo. Aqui só
+     invalida o cache; o desenho acontece quando ele voltar para o Painel. */
+  try { limparCachesDados(); } catch (_) { }
+  try { if (_abaAtual === 'painel') carregarPainel(); } catch (_) { }
+}
 const PARADAS_CH = 'rp_paradas_on';
-let _paradasLigado = (() => { try { return localStorage.getItem(PARADAS_CH) === '1'; } catch (_) { return false; } })();
+/* 22/08, 17h30 — NASCEM LIGADAS. Elas nasceram desligadas de manhã porque o
+   643 travava a tela e eu não queria a equipe pega de surpresa. A causa apareceu
+   e não era o 643: era a Análise+ sendo desenhada inteira em segundo plano, com
+   a pessoa em outra aba. Sem esse peso, esconder parada de todo mundo passou a
+   custar mais do que protege — OEE e Pareto zerados são pior informação do que
+   tela um pouco mais lenta. Quem já mexeu na chave continua com a sua escolha. */
+let _paradasLigado = (() => {
+  try { const v = localStorage.getItem(PARADAS_CH); return v === null ? true : v === '1'; } catch (_) { return true; }
+})();
 function paradasToggle() {
   _paradasLigado = !_paradasLigado;
   try { localStorage.setItem(PARADAS_CH, _paradasLigado ? '1' : '0'); } catch (_) { }
+  /* 22/08, 17h (João: "está ligado e não aparecem as paradas no painel").
+     Culpa minha: eu fiz DOIS níveis de chave — a mestra e uma por bloco — e os
+     blocos nascem desligados. Ligar a mestra não mostrava nada, o que parece
+     defeito e não escolha. Agora ligar a mestra liga tudo; quem quiser isolar
+     um bloco desliga os outros na lista abaixo. */
+  if (_paradasLigado && _p643.size === 0) {
+    _p643 = new Set(Object.keys(P643));
+    try { localStorage.setItem(P643_CH, JSON.stringify([..._p643])); } catch (_) { }
+  }
   try { renderParadasChave(); } catch (_) { }
   toast(_paradasLigado ? '▶️ Paradas ligadas — recarregando' : '⏸️ Paradas desligadas');
   try { recarregarPainel(); } catch (_) { }
@@ -9630,7 +9806,22 @@ function renderParadasChave() {
     + '<span style="flex:1"><b style="font-size:14px;color:' + (on ? 'var(--ok-4,#1E6B3A)' : 'var(--tinta-s)') + '">'
     + (on ? 'LIGADAS — o app carrega as paradas' : 'DESLIGADAS — o app não carrega as paradas') + '</b>'
     + '<div style="font-size:11.5px;color:var(--fraco)">' + (on ? 'OEE, Pareto de paradas e horas paradas funcionam. A tela pode demorar mais para abrir.' : 'OEE, Pareto de paradas e horas paradas ficam em zero. A tela abre mais rápido.') + '</div></span></label>'
-    + (on ? '' : '<p class="desc" style="margin:4px 0 0;font-size:11.5px;color:#8A5A00">⚠️ Com as paradas desligadas, todo número de <b>parada</b> na tela é zero — inclusive o OEE. Não é a fábrica sem parar: é o app sem os dados.</p>');
+    + (on ? '' : '<p class="desc" style="margin:4px 0 0;font-size:11.5px;color:#8A5A00">⚠️ Com as paradas desligadas, todo número de <b>parada</b> na tela é zero — inclusive o OEE. Não é a fábrica sem parar: é o app sem os dados.</p>')
+    + (!on ? '' : '<div style="margin-top:12px;border-top:1px solid var(--linha,#eef2f7);padding-top:10px">'
+      + '<div style="font-size:12.5px;font-weight:800;color:var(--tinta-s)">Quais partes usam as paradas</div>'
+      + '<p class="desc" style="margin:2px 0 8px;font-size:11.5px">Ligue <b>uma de cada vez</b> e use o app. A que travar, travou sozinha.</p>'
+      + '<div style="display:flex;gap:8px;margin-bottom:8px">'
+      + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="p643Todos(false)">desligar todas</button>'
+      + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="p643Todos(true)">ligar todas</button></div>'
+      + Object.entries(P643).map(([k, v]) => {
+          const a = _p643.has(k);
+          return '<label onclick="p643Toggle(\'' + k + '\')" style="display:flex;gap:10px;align-items:flex-start;padding:7px 2px;cursor:pointer;border-top:1px solid var(--linha,#f2f5f8)">'
+            + '<span style="flex:0 0 38px;height:22px;border-radius:11px;background:' + (a ? 'var(--verde)' : 'var(--leve-3,#dfe6ee)') + ';position:relative">'
+            + '<span style="position:absolute;top:2px;left:' + (a ? '18px' : '2px') + ';width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3)"></span></span>'
+            + '<span style="flex:1"><b style="font-size:13px;color:' + (a ? 'var(--ok-4,#1E6B3A)' : 'var(--fraco)') + '">' + escapeHtml(v[0]) + '</b>'
+            + '<div style="font-size:11px;color:var(--fraco-2)">' + escapeHtml(v[1]) + '</div></span></label>';
+        }).join('')
+      + '</div>');
 }
 
 const DIAG_FUNDO = [
@@ -9682,7 +9873,7 @@ const ROT_NOME = {
   '621': 'Produção (resumo)', '622': 'Produção detalhada / itens', '624': 'Refugo',
   '054': 'Perda por cliente', '643': 'Paradas', '646': 'Consumo de componentes',
   '196': 'REST196 · carteira', '241': 'REST241 · estoque', '264': 'Fila por recurso',
-  '339': 'Fila por data/pedido'
+  '339': 'Fila por data/pedido', 'RVEN002': 'RVEN002 · região e representante'
 };
 async function renderLimpaRotina() {
   const box = $('cardLimpaRot'); if (!box) return;
@@ -14317,6 +14508,7 @@ async function carregarPainel() {
   }
   _pnEtapa = 'pronto';
   _pnCaoLimpa();
+  try { _medePintura('painel'); } catch (_) { }
 }
 /* ==================== FASE 2 — O RESTO, EM SEGUNDO PLANO ====================
    21/08/2026. Paradas (15.808 linhas no mês), refugo (4.218), consumo de bobina
@@ -14438,7 +14630,9 @@ async function _carregarResto(de, ate, ateX, imps, seq) {
   };
 
   _promParadas = pista('paradas', async () => {
-    if (typeof _paradasLigado !== 'undefined' && !_paradasLigado) {
+    /* nenhum bloco ligado = ninguém vai olhar parada nesta tela: não baixa. */
+    const _algumBloco = (typeof _p643 !== 'undefined' && _p643 && _p643.size > 0);
+    if (typeof _paradasLigado !== 'undefined' && (!_paradasLigado || !_algumBloco)) {
       if (guarda()) { dadosPainelFull.paradas = []; aplicarMaqGlobal(); }
       return;   // desligado em Config./Acesso: nem sai a requisição
     }
@@ -22983,7 +23177,7 @@ function cardPerdaMeta(D, setor) {
 function cardAbaixoMeta(D, setor) {
   try {
     const parMaqMot = {};
-    filtraParadas(D.paradas).forEach(p => {
+    (p643('meta') ? filtraParadas(D.paradas) : []).forEach(p => {
       const c = String(p.recurso_cod); if (setor && setorDe(c) !== setor) return;
       const m = p.motivo_desc || '\u2014';
       const alvo = (parMaqMot[c] = parMaqMot[c] || {});
@@ -23356,7 +23550,7 @@ function renderPainel() {
     const _prodAg = D.producao.filter(somaAgregado);
     const totalV = _prodAg.reduce((a, r) => a + val(r), 0);
     const dias = [...new Set(_prodAg.map(r => r.dia))];
-    const horasParada = filtraParadas(D.paradas).filter(somaAgregado).reduce((a, p) => a + (p.tempo_horas || 0), 0);
+    const horasParada = p643('kpi') ? filtraParadas(D.paradas).filter(somaAgregado).reduce((a, p) => a + (p.tempo_horas || 0), 0) : 0;
     const pesoProd = _prodAg.reduce((a, r) => a + (r.peso || 0), 0);
     const pesoPerda = D.perdas.filter(perdaConta).filter(somaAgregado).reduce((a, r) => a + (r.peso || 0), 0);
     const perdaPct = (pesoProd + pesoPerda) > 0 ? pesoPerda / (pesoProd + pesoPerda) * 100 : null;
@@ -23423,18 +23617,18 @@ function renderPainel() {
     });
 
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5) · todos os setores' + (metrica === 'peso' ? ' · linha preta = meta do turno · verde bateu, vermelho não' : ''), gTurnoPeso(D.producao, val, fmtBar, '', '', metrica === 'peso'));
-    try { html += cardParadasTotais(D, setor || null); } catch (_) {}
+    try { if (p643('totais')) html += cardParadasTotais(D, setor || null); } catch (_) {}
 
     // produção por máquina — TODAS as máquinas de todos os setores
     const todasMaq = Object.values(SETOR_MAQ).flat();
     html += card('Produção por máquina · todos os setores', (metrica === 'peso' ? 'peso' : 'cxs') + ' — todas as máquinas, Extrusão incluída',
       gMaqPeso(D.producao, val, uni, todasMaq, D.nomeMaq));
-    try { html += cardSetupsMaquina(D, null); } catch (_) {}
+    try { if (p643('setup')) html += cardSetupsMaquina(D, null); } catch (_) {}
     // um card por setor: meta de tempo e corte minimo sao proprios de cada um
-    try { SETORES_AVAL.forEach(st => { html += cardSetupsMaquina(D, st) || ''; }); } catch (_) {}
+    try { if (p643('setup')) SETORES_AVAL.forEach(st => { html += cardSetupsMaquina(D, st) || ''; }); } catch (_) {}
 
     // ⏱️ Produção perdida por PARADA (baseado na meta kg/h de cada máquina)
-    { const kp = kgPerdidoParadas(D);
+    if (p643('perdida')) { const kp = kgPerdidoParadas(D);
       if (kp && kp.porMaq.length) {
         html += card('⏱️ Produção perdida por parada · por máquina',
           'toque numa máquina para ver os motivos · descarta só INTERROMPIDA · total ' + fmtKg(kp.total) + (kp.totalCx > 0 ? ' \u00b7 \u2248 ' + fmtNum(Math.round(kp.totalCx)) + ' cxs' : '') + ' em ' + fmtHoras(kp.horasTot),
@@ -23453,7 +23647,7 @@ function renderPainel() {
 
     // Pareto de paradas (todos os setores) — com família de motivo
 
-    const _parF = filtraParadas(D.paradas);
+    const _parF = (p643('pareto') || p643('maquina')) ? filtraParadas(D.paradas) : [];
     const porMotivo = somaPor(_parF, p => familiaMotivo(p), p => p.tempo_horas || 0);
     { const dd = Object.keys(porMotivo).map(m => ({ l: /^SETUP$/i.test(m) ? m + ' · …×' : m, v: porMotivo[m], click: `detMotivoParada('','${m.replace(/'/g, '&#39;')}')` }));
       html += card('Pareto de paradas · todos os setores', 'horas · toque numa barra para ver o resumo',
@@ -23507,7 +23701,7 @@ function renderPainel() {
     box.innerHTML = comPer(html + card('', '', '<p class="vazio-painel">Sem dados de produção para ' + escapeHtml(setor) + '.</p>'));
     return;
   }
-  const parS = noSetor(filtraParadas(D.paradas), setor);
+  const parS = (p643('pareto') || p643('maquina')) ? noSetor(filtraParadas(D.paradas), setor) : [];
   const perS = D.perdas.filter(r => setorPerda(r) === setor && perdaVisivel(r));
   const ehTermo = setor === 'Termoformagem';
   const bobS = D.consumo.filter(c => ehBobina(c) && setorDe(c.recurso_cod) === 'Termoformagem');
@@ -23558,7 +23752,7 @@ function renderPainel() {
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq,
       clickCel: (c, b) => `detProdMaqTurno('${c}','${b}')` }));
-  try { html += cardSetupsMaquina(D, setor); } catch (_) {}
+  try { if (p643('setup')) html += cardSetupsMaquina(D, setor); } catch (_) {}
 
   // paradas por máquina (período)
   if (parS.length) {
@@ -23567,7 +23761,7 @@ function renderPainel() {
     const _diaUnico = (diasS && diasS.length === 1) ? diasS[0] : '';
     const arr = Object.keys(pm).map(c => ({ l: c, v: pm[c], click: `detMaquina('${c}'${_diaUnico ? `,'${_diaUnico}'` : ''})` }));
     html += card('Paradas por máquina', 'horas · toque numa barra para ver o resumo', paretoSVG(arr, fmtHoras, corGrafTurno(null)) + paretoHorizontal(arr, fmtHoras, corGrafTurno(null)));
-    try { html += cardParadasTotais(D, setor); } catch (_) {}
+    try { if (p643('totais')) html += cardParadasTotais(D, setor); } catch (_) {}
     // Pareto de paradas por MOTIVO do setor (o resumo geral "todos" tinha; ao filtrar
     // setor sumia porque este bloco só existia no ramo !setor). Mesma lógica, com parS.
     try {
@@ -23588,7 +23782,7 @@ function renderPainel() {
     } catch (_) {}
   }
   // ⏱️ produção perdida por parada — do setor (kg = horas × meta kg/h)
-  { const kp = kgPerdidoParadas(D, (SETOR_MAQ[setor] || []).map(String));
+  if (p643('perdida')) { const kp = kgPerdidoParadas(D, (SETOR_MAQ[setor] || []).map(String));
     if (kp && kp.porMaq.length) {
       html += card('⏱️ Produção perdida por parada · por máquina',
         'toque numa máquina para ver os motivos · descarta só INTERROMPIDA · total ' + fmtKg(kp.total) + (kp.totalCx > 0 ? ' \u00b7 \u2248 ' + fmtNum(Math.round(kp.totalCx)) + ' cxs' : '') + ' em ' + fmtHoras(kp.horasTot),
@@ -23636,7 +23830,7 @@ function renderPainel() {
   }
   // OEE do período (resumo do setor)
   try { if (setor === 'Impressão') { const mm = cardMetaMilheiro(); if (mm) html += mm; } } catch (e) { console.warn('metaMil:', e); }
-  { const R = computeOEE(setor);
+  if (p643('oee')) { const R = computeOEE(setor);
     /* 04/08/2026: este card mostrava sempre o OEE do PERIODO INTEIRO, mesmo com
        um turno selecionado na barra — Manha, Tarde e Noite davam o mesmo 49,8%,
        enquanto o card de Perdas logo acima mudava certo. O computeOEE ja calcula
@@ -24352,6 +24546,11 @@ async function comecarDoZero() {
 /* ================= IMPORTAÇÃO ================= */
 // mapeia registro do parser -> linha da tabela
 const MAPA = {
+  'RVEN002': { tabela: 'pedidos_regiao', linha: r => ({
+      pedido: r.pedido, emissao: r.emissao, cidade: r.cidade, uf: r.uf,
+      regiao: r.regiao, sub_regiao: r.sub_regiao,
+      vendedor_cod: r.vendedor_cod, vendedor_nome: r.vendedor_nome,
+      cliente_cod: r.cliente_cod, cliente_nome: r.cliente_nome, situacao: r.situacao }) },
   '621': { tabela: 'producao_resumo', linha: r => ({ dia: r.dia, turno: r.turno, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '622': { tabela: 'producao', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, ident: r.ident, data_inicio: r.data_inicio, data_fim: r.data_fim, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '624': { tabela: 'perdas', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, data: r.data, ordem: r.ordem, acessorio: r.acessorio, tipo_perda_cod: r.tipo_perda_cod, tipo_perda_desc: r.tipo_perda_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
