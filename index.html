@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.003.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.004.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.003.0';
+const APP_VER = '4.004.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4447,7 +4447,6 @@ function ligarRevalidacaoPermissoes() {
 async function mostrarApp() {
   $('splash') && $('splash').remove();
   rotularAbas();   // antes de qualquer medida de altura: muda a quantidade de linhas da faixa
-  setTimeout(verTempos, 400);
   $('telaEspera').classList.add('oculto');
   $('telaLogin').classList.add('oculto');
   $('telaApp').classList.remove('oculto');
@@ -7230,9 +7229,12 @@ window.addEventListener('unhandledrejection', e => {
   _mostrarErro('promessa rejeitada: ' + ((r && (r.message || r.msg)) || r), (r && r.stack) ? String(r.stack).split('\n')[1] : '');
 });
 
+/* 22/08: DESLIGADO a pedido do João — a abertura já está resolvida (5.008 → 1.238 ms)
+   e a caixa não pode ficar na frente da tela. A função e as marcas continuam no
+   código; para ligar de novo basta chamar verTempos() no console. */
 function verTempos() {
   try {
-    if (!souDevReal) return;   // ferramenta de obra: só o dono vê
+    if (!souDevReal || !window._verTempos) return;
     const B = window._B; if (!B || document.getElementById('cxTempos')) return;
     B.m('app');
     const t = B.t, n = (performance.getEntriesByType('navigation') || [])[0] || {};
@@ -13791,7 +13793,30 @@ function mudarPeriodoAnalise() { aplicarPeriodo($('anPeriodo').value); carregarA
    Agora as duas so acontecem quando ha motivo: na primeira montagem, ou quando
    voce toca em atualizar (que limpa os caches). Reabrir a aba nao busca nada. */
 let _regrasAplicadas = false;
+let _pnEtapa = '', _pnCao = null;
+function _pnCaoLimpa() { if (_pnCao) { clearTimeout(_pnCao); _pnCao = null; } }
+/* 22/08 — o cão de guarda da 4.003 tinha um furo meu: ele só latia se a CARGA
+   ainda estivesse ativa. Só que o finally desliga a carga assim que os fetches
+   terminam — então, no caso de hoje (tudo do cache, travou depois), ele nascia
+   desarmado. Agora ele é armado na ENTRADA e só é desligado quando o painel
+   termina de desenhar. Não importa onde pare: em 40 s a tela diz onde parou. */
+function _pnCaoArma() {
+  _pnCaoLimpa();
+  _pnCao = setTimeout(() => {
+    const el = $('painelConteudo'); if (!el || _pnEtapa === 'pronto') return;
+    try { _carga.ativo = false; } catch (_) { }
+    el.innerHTML = '<div class="card"><p class="vazio-painel">⏳ O painel parou em: <b>' + escapeHtml(_pnEtapa || '—') + '</b></p>'
+      + '<p class="desc" style="text-align:center;font-size:12px">'
+      + (_carga.tabela ? 'última tabela: <b>' + escapeHtml(_carga.tabela) + '</b> · ' : '')
+      + (_carga.linhas || 0).toLocaleString('pt-BR') + ' linhas · ' + (_carga.req || 0) + ' pedidos'
+      + (_carga.falhas ? ' · ' + _carga.falhas + ' sem resposta' : '')
+      + (_carga.ultErro ? '<br>' + escapeHtml(_carga.ultErro) : '') + '</p>'
+      + '<button class="btn btn-verde" style="margin-top:8px" onclick="recarregarPainel()">🔄 Tentar de novo</button></div>';
+  }, 40000);
+}
 async function carregarPainel() {
+  _pnCaoArma();
+  _pnEtapa = 'mix de boca';
   setTimeout(travarSetores, 0);
   const box = $('painelConteudo');
   const _primeira = !dadosPainel;
@@ -13801,6 +13826,7 @@ async function carregarPainel() {
   if (dadosPainel && dadosPainel.perdas && !_regrasAplicadas) {
     try { await getRegrasPerda(); classificarPerdas(dadosPainel.perdas); _regrasAplicadas = true; } catch (_) { }
   }
+  _pnEtapa = 'preparando';
   if (!dadosPainel) {
     box.innerHTML = '<p class="desc" style="padding:20px;text-align:center"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> <span id="pnCarga">Carregando dados…</span></p>';
     /* 21/08/2026: o Painel passa a DIZER o que está fazendo. Ele baixa 45 mil
@@ -13823,18 +13849,7 @@ async function carregarPainel() {
        possível: a tela fica "Carregando" para sempre, sem dizer nada. Depois de
        40 s isto assume e mostra o estado real, com botão de refazer. Sair da
        tela parada é obrigação; adivinhar o motivo, não. */
-    const _cao = setTimeout(() => {
-      if (!_carga.ativo) return;
-      const el = $('painelConteudo'); if (!el) return;
-      _carga.ativo = false; clearInterval(_tick);
-      el.innerHTML = '<div class="card"><p class="vazio-painel">⏳ A carga não terminou em 40 s.</p>'
-        + '<p class="desc" style="text-align:center;font-size:12px">último: <b>' + escapeHtml(_carga.tabela || '—') + '</b> · '
-        + (_carga.linhas || 0).toLocaleString('pt-BR') + ' linhas · ' + (_carga.req || 0) + ' pedidos'
-        + (_carga.falhas ? ' · ' + _carga.falhas + ' sem resposta' : '')
-        + (_carga.ultErro ? '<br>' + escapeHtml(_carga.ultErro) : '') + '</p>'
-        + '<button class="btn btn-verde" style="margin-top:8px" onclick="recarregarPainel()">🔄 Tentar de novo</button></div>';
-    }, 40000);
-    const _fimCarga = () => { _carga.ativo = false; clearInterval(_tick); clearTimeout(_cao); };
+    const _fimCarga = () => { _carga.ativo = false; clearInterval(_tick); };
     try {
       const imps = await carregarInfoImports();
       infoImports = imps;
@@ -13849,6 +13864,7 @@ async function carregarPainel() {
          boca) e paradas, refugo e consumo entram ATRÁS, em segundo plano.
          Enquanto não chegam, uma tarja fixa avisa que parada e perda estão
          incompletas — número errado na tela é pior que tela lenta. */
+      _pnEtapa = 'baixando produção';
       _veioDoCache = 0;
       let [producao, boca] = await Promise.all([
         fetchCache('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
@@ -13914,6 +13930,7 @@ async function carregarPainel() {
         lista.map(s => `<option value="${s}">${s}</option>`).join('');
       if (prevSetor && [...sel.options].some(o => o.value === prevSetor)) sel.value = prevSetor;
       setTimeout(sincSetorGlobal, 0);
+      _pnEtapa = 'metas e configurações';
       /* sinal na tela de que a cópia local foi usada. Serve para conferir que
          está funcionando — e para ninguém achar que o app ficou rápido por
          mágica quando na verdade está lendo do aparelho. */
@@ -13926,11 +13943,25 @@ async function carregarPainel() {
          mensagem era só "Erro ao carregar" e não dava para saber de onde veio. */
       box.innerHTML = `<div class="grafico"><p class="vazio-painel">Erro ao carregar${_carga.tabela ? ' (' + escapeHtml(_carga.tabela) + ')' : ''}: ${escapeHtml((e && e.message) || String(e))}</p>
         <p class="desc" style="text-align:center"><button class="btn btn-borda" style="width:auto;padding:7px 16px;font-size:12.5px" onclick="dadosPainel=null;carregarPainel()">tentar de novo</button></p></div>`;
+      _pnEtapa = 'pronto'; _pnCaoLimpa();   // já mostrou o erro na tela: o cão não precisa latir por cima
       return;
     } finally { _fimCarga(); }
   }
+  /* 22/08 — O PRINT DAS 06:22 MATOU A DÚVIDA. A tela dizia "Carregando dados…"
+     SEM nome de tabela e SEM contagem de linhas, com o toast "mês carregado do
+     aparelho" na tela. Ler isso: a carga não estava rodando — ela já tinha
+     acabado, veio inteira do aparelho. O travamento é AQUI, depois do último
+     fetch e antes do desenho. Cada passo agora deixa rastro. */
+  _pnEtapa = 'meta de atenção';
   try { await getMetaAtencao(); } catch (_) { }
-  try { if (($('fSetor') && $('fSetor').value) === 'Impressão') { await getVelNom(); await getBocaFator(); await carregarMilImpressao(); } } catch (_) { }
+  try {
+    if (($('fSetor') && $('fSetor').value) === 'Impressão') {
+      _pnEtapa = 'velocidade nominal'; await getVelNom();
+      _pnEtapa = 'fator de boca'; await getBocaFator();
+      _pnEtapa = 'milheiro Impressão'; await carregarMilImpressao();
+    }
+  } catch (_) { }
+  _pnEtapa = 'desenhando o painel';
   /* FALHA SILENCIOSA: se renderPainel estourava, ninguem escrevia no
      painelConteudo e a tela ficava em "Carregando dados..." para sempre, sem
      erro nenhum. Agora o erro aparece na tela, com a linha que quebrou. */
@@ -13944,6 +13975,8 @@ async function carregarPainel() {
       + '<button class="btn btn-verde" style="margin-top:8px" onclick="recarregarPainel()">🔄 Recarregar painel</button></div>';
     try { console.error('renderPainel', e); } catch (_) {}
   }
+  _pnEtapa = 'pronto';
+  _pnCaoLimpa();
 }
 /* ==================== FASE 2 — O RESTO, EM SEGUNDO PLANO ====================
    21/08/2026. Paradas (15.808 linhas no mês), refugo (4.218), consumo de bobina
