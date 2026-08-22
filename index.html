@@ -1019,7 +1019,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.015.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.016.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3093,7 +3093,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.015.0';
+const APP_VER = '4.016.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14203,7 +14203,13 @@ let _cargaResto = null, _restoSeq = 0, _restoPend = false;
    da fase 2: disponibilidade com zero parada dá 100%, que é um número errado
    com cara de número certo. Elas esperam. O Painel não espera — ele mostra a
    produção, que é o que a fábrica abre o app para ver. */
-async function esperarResto() { if (_restoPend && _cargaResto) { try { await _cargaResto; } catch (_) { } } }
+/* 22/08: era esperar a fase 2 INTEIRA. Agora espera só a pista de PARADAS, que
+   é a única de que OEE e Conferência dependem — refugo, bobina e perda por
+   cliente não seguram mais essas duas abas. */
+async function esperarResto() {
+  if (_promParadas) { try { await _promParadas; } catch (_) { } return; }
+  if (_restoPend && _cargaResto) { try { await _cargaResto; } catch (_) { } }
+}
 
 /* 22/08/2026 — A TARJA QUE NÃO SAÍA. Ela nasceu como aviso honesto ("parada e
    perda ainda estão zeradas"), mas ficou SEM PRAZO: se a fase 2 emperrasse, ela
@@ -14213,6 +14219,15 @@ async function esperarResto() { if (_restoPend && _cargaResto) { try { await _ca
    anda), desiste em 45 s, e no lugar do "carregando" aparece um botão de tentar
    de novo. */
 let _tarjaT = null, _tarjaCao = null;
+/* chamada quando uma pista termina: a tarja passa a citar só o que ainda falta.
+   Com todas prontas ela sai sozinha, sem esperar o Promise.all. */
+function _tarjaFalta() {
+  try {
+    if (!_restoFalta || !_restoFalta.size) { _tarjaResto(false); return; }
+    const el = document.getElementById('tarjaResto');
+    if (el && el.dataset.erro !== '1' && _tarjaT) { /* o próprio intervalo repinta */ }
+  } catch (_) { }
+}
 function _tarjaResto(ligar) {
   try {
     if (_tarjaT) { clearInterval(_tarjaT); _tarjaT = null; }
@@ -14229,9 +14244,10 @@ function _tarjaResto(ligar) {
       + 'display:flex;gap:9px;align-items:center;';
     el.style.cssText = base + 'background:#8a4b00;pointer-events:none';
     const pinta = () => {
+      const falta = (_restoFalta && _restoFalta.size) ? [..._restoFalta].join(', ') : 'dados';
       const n = (_carga && _carga.linhas) ? ' · ' + _carga.linhas.toLocaleString('pt-BR') + ' linhas' : '';
       el.innerHTML = '<span class="spin" style="border-color:#fff;border-top-color:transparent;flex:0 0 auto"></span>'
-        + '<span>Carregando paradas e refugo' + n + '… <span style="font-weight:600;opacity:.9">esses números ainda estão zerados</span></span>';
+        + '<span>Carregando <b>' + escapeHtml(falta) + '</b>' + n + '… <span style="font-weight:600;opacity:.9">esses números ainda estão zerados</span></span>';
     };
     pinta();
     _tarjaT = setInterval(pinta, 600);
@@ -14247,81 +14263,147 @@ function _tarjaResto(ligar) {
   } catch (_) { }
 }
 
+/* ============ FASE 2, AGORA EM PISTAS SEPARADAS — 22/08/2026 ============
+   João: "por que não separa ele do refugo? deixa ele sozinho em segundo plano".
+   Está certo, e o defeito era meu.
+
+   As quatro buscas saíam juntas num Promise.all e o resultado só era usado
+   DEPOIS que a última chegasse. Como paradas é de longe a maior — 16.886 linhas
+   contra 4.671 do refugo — o refugo ficava pronto e esperava, parado, o irmão
+   grande terminar. Se paradas emperrasse, TUDO ficava zerado na tela junto.
+
+   Agora cada uma corre na sua pista e entra na tela assim que chega. O refugo
+   aparece sem depender de parada nenhuma. E a espera de OEE e Conferência, que
+   existe para não mostrarem 100% de disponibilidade com zero parada, passa a
+   ser só pela pista de PARADAS — não mais pelo pacote inteiro. */
+let _promParadas = null, _restoFalta = new Set();
+function _redesenhaResto() {
+  if (_redesenhaResto._t) clearTimeout(_redesenhaResto._t);
+  /* agrupa os redesenhos: quatro pistas chegando quase juntas redesenhariam a
+     tela quatro vezes seguidas, e é justamente aí que o dedo engasga. */
+  _redesenhaResto._t = setTimeout(() => {
+    try {
+      const _sy = window.scrollY || 0;
+      if (_abaAtual === 'painel') renderPainel(); else recarregarAbaAtual();
+      if (_sy > 0) requestAnimationFrame(() => { try { window.scrollTo(0, _sy); } catch (_) { } });
+    } catch (_) { }
+  }, 120);
+}
 async function _carregarResto(de, ate, ateX, imps, seq) {
-  _restoPend = true; _tarjaResto(true);
-  try {
-    let [paradas, consumo, perdas, prod622] = await Promise.all([
-      fetchCache('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX),
-      /* 21/08/2026: só BOBINA. Os OITO lugares que leem D.consumo filtram
-         /BOBINA/i antes de qualquer conta — as outras 6.547 linhas do mês
-         (81% do total) eram baixadas, guardadas e nunca lidas. */
-      fetchCache('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX, 'componente_desc.ilike.%BOBINA%'),
-      /* 04/08/2026: faltavam quantidade e unidade — sem elas o detalhe de perdas
-         mostrava a coluna de caixas toda com "—", mesmo com o dado no banco. */
-      fetchCache('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso,quantidade,unidade,op,item_cod,item_desc', de, ateX),
-      /* o 622 é o único com item_desc: sem ele não há como converter caixa em peça.
-         Só a métrica milheiro usa. Trocando para milheiro, mudarMetricaGlobal()
-         busca na hora — 13.209 linhas que o resto do tempo não são lidas. */
-      (($('fMetrica') && $('fMetrica').value) === 'milheiro'
-        ? fetchCache('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
-        : Promise.resolve([]))
-    ]);
-    let perdasCli = [];
-    try { perdasCli = await fetchCache('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate); } catch (_) { }
-    if (seq !== _restoSeq) return;   // o período mudou no meio do caminho: joga fora
-    // dia operacional 06:00→05:59 (mesma regra da fase 1)
+  _restoPend = true;
+  _restoFalta = new Set(['paradas', 'refugo', 'bobina', 'perda cliente']);
+  _tarjaResto(true);
+
+  const guarda = () => (seq === _restoSeq && !!dadosPainelFull);
+  const pista = async (nome, fn) => {
+    try { await fn(); }
+    catch (e) {
+      try { console.error('fase2/' + nome, e); } catch (_) { }
+      if (seq === _restoSeq) { try { toast('⚠️ Falha ao carregar ' + nome + ' — puxe o 🔄'); } catch (_) { } }
+    } finally {
+      if (seq === _restoSeq) { _restoFalta.delete(nome); _tarjaFalta(); }
+    }
+  };
+
+  _promParadas = pista('paradas', async () => {
+    let paradas = await fetchCache('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX);
+    if (!guarda()) return;
     aplicarDiaOperacional(paradas, 'inicio');
-    aplicarDiaOperacional(consumo, 'hora');
-    aplicarDiaOperacional(perdas, 'turno-perda');
-    aplicarDiaOperacional(prod622, 'turno');
     paradas = filtraPeriodoOperacional(paradas, de, ate);
-    consumo = filtraPeriodoOperacional(consumo, de, ate);
-    perdas = filtraPeriodoOperacional(perdas, de, ate);
-    prod622 = filtraPeriodoOperacional(prod622, de, ate);
-    try { classificarPerdas(perdas); _regrasAplicadas = true; } catch (_) { }
     try { aplicarPadraoParadas([...new Set(paradas.map(p => p.motivo_desc || '—'))]); } catch (_) { }
-    if (seq !== _restoSeq || !dadosPainelFull) return;
-    /* corte de confiabilidade: na fase 1 ele só conhecia a produção e por isso
-       ficava OTIMISTA. Agora que parada e perda chegaram, refaz — é a mesma
-       conta de antes, só que no lugar certo. */
-    try {
-      const _maxDia = arr => { let m = ''; (arr || []).forEach(r => { const d = String(r.dia || '').slice(0, 10); if (d && d > m) m = d; }); return m; };
-      const _mProd = _maxDia((dadosPainelFull.producao || []).filter(r => (r.peso || 0) > 0));
-      const _completo = [_mProd, _maxDia(paradas), _maxDia(perdas)].filter(Boolean).sort()[0] || null;
-      if (dadosPainelFull.info) { dadosPainelFull.info.corteCompleto = _completo; dadosPainelFull.info.corteProd = _mProd; }
-    } catch (_) { }
-    // nomes de máquina que só aparecem em parada/perda/consumo (máquina sem produção)
-    try {
-      const nm = dadosPainelFull.nomeMaq || (dadosPainelFull.nomeMaq = {});
-      [perdas, paradas, consumo].forEach(arr => (arr || []).forEach(r => {
-        const c = r.recurso_cod; if (c && r.recurso_nome && !nm[c]) nm[c] = r.recurso_nome;
-      }));
-    } catch (_) { }
+    if (!guarda()) return;
+    dadosPainelFull.paradas = paradas;
+    _nomeiaMaq(paradas); _refazCorte();
+    aplicarMaqGlobal(); _redesenhaResto();
+  });
+
+  const pRefugo = pista('refugo', async () => {
+    /* 04/08/2026: faltavam quantidade e unidade — sem elas o detalhe de perdas
+       mostrava a coluna de caixas toda com "—", mesmo com o dado no banco. */
+    let perdas = await fetchCache('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso,quantidade,unidade,op,item_cod,item_desc', de, ateX);
+    if (!guarda()) return;
+    aplicarDiaOperacional(perdas, 'turno-perda');
+    perdas = filtraPeriodoOperacional(perdas, de, ate);
+    try { classificarPerdas(perdas); _regrasAplicadas = true; } catch (_) { }
+    if (!guarda()) return;
+    dadosPainelFull.perdas = perdas;
+    _nomeiaMaq(perdas); _refazCorte();
+    aplicarMaqGlobal(); _redesenhaResto();
+  });
+
+  const pBobina = pista('bobina', async () => {
+    /* 21/08/2026: só BOBINA. Os OITO lugares que leem D.consumo filtram
+       /BOBINA/i antes de qualquer conta — as outras 6.547 linhas do mês
+       (81% do total) eram baixadas, guardadas e nunca lidas. */
+    let consumo = await fetchCache('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX, 'componente_desc.ilike.%BOBINA%');
+    if (!guarda()) return;
+    aplicarDiaOperacional(consumo, 'hora');
+    consumo = filtraPeriodoOperacional(consumo, de, ate);
+    if (!guarda()) return;
+    dadosPainelFull.consumo = consumo;
+    _nomeiaMaq(consumo);
     // "Outros" no seletor de setor: máquina não mapeada que só aparece no consumo
     try {
       const sel = $('fSetor');
       if (sel && consumo.some(c => setorDe(c.recurso_cod) === 'Outros') && ![...sel.options].some(o => o.value === 'Outros'))
         sel.insertAdjacentHTML('beforeend', '<option value="Outros">Outros</option>');
     } catch (_) { }
-    Object.assign(dadosPainelFull, { paradas, consumo, perdas, perdasCli, prod622, parcial: false });
-    aplicarMaqGlobal();   // dadosPainel é cópia quando há máquina filtrada: refaz o recorte
-  } catch (e) {
-    try { console.error('fase2', e); } catch (_) { }
-    if (seq === _restoSeq) { try { toast('⚠️ Falha ao carregar paradas/refugo — puxe o 🔄'); } catch (_) { } }
-    return;
+    aplicarMaqGlobal(); _redesenhaResto();
+  });
+
+  const pCliente = pista('perda cliente', async () => {
+    const perdasCli = await fetchCache('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate);
+    if (!guarda()) return;
+    dadosPainelFull.perdasCli = perdasCli;
+    aplicarMaqGlobal(); _redesenhaResto();
+  });
+
+  /* o 622 é o único com item_desc: sem ele não há como converter caixa em peça.
+     Só a métrica milheiro usa. Trocando para milheiro, mudarMetricaGlobal()
+     busca na hora — 13.209 linhas que o resto do tempo não são lidas. */
+  const pMil = (($('fMetrica') && $('fMetrica').value) === 'milheiro')
+    ? pista('itens', async () => {
+        let prod622 = await fetchCache('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX);
+        if (!guarda()) return;
+        aplicarDiaOperacional(prod622, 'turno');
+        prod622 = filtraPeriodoOperacional(prod622, de, ate);
+        if (!guarda()) return;
+        dadosPainelFull.prod622 = prod622;
+        aplicarMaqGlobal(); _redesenhaResto();
+      })
+    : Promise.resolve();
+
+  try {
+    await Promise.all([_promParadas, pRefugo, pBobina, pCliente, pMil]);
+    if (guarda()) dadosPainelFull.parcial = false;
   } finally {
     if (seq === _restoSeq) { _restoPend = false; _tarjaResto(false); }
   }
-  // desenha de novo a aba que estiver na frente, agora com os números completos.
-  // A posição de rolagem é preservada: sem isso, quem já estava lendo o meio do
-  // Painel era jogado para outro ponto no exato momento em que tocava a tela.
+}
+/* nomes de máquina que só aparecem em parada/perda/consumo (máquina sem produção) */
+function _nomeiaMaq(arr) {
   try {
-    const _sy = window.scrollY || 0;
-    if (_abaAtual === 'painel') renderPainel(); else recarregarAbaAtual();
-    if (_sy > 0) requestAnimationFrame(() => { try { window.scrollTo(0, _sy); } catch (_) { } });
+    if (!dadosPainelFull) return;
+    const nm = dadosPainelFull.nomeMaq || (dadosPainelFull.nomeMaq = {});
+    (arr || []).forEach(r => { const c = r.recurso_cod; if (c && r.recurso_nome && !nm[c]) nm[c] = r.recurso_nome; });
   } catch (_) { }
 }
-
+/* corte de confiabilidade: na fase 1 ele só conhecia a produção e por isso ficava
+   OTIMISTA. Refaz a cada pista que chega, com o que já existe — o corte é sempre
+   a MENOR das últimas datas, então ele só pode andar para trás conforme os dados
+   completam, nunca inventar dia que não tem. */
+function _refazCorte() {
+  try {
+    if (!dadosPainelFull || !dadosPainelFull.info) return;
+    const _maxDia = arr => { let m = ''; (arr || []).forEach(r => { const d = String(r.dia || '').slice(0, 10); if (d && d > m) m = d; }); return m; };
+    const _mProd = _maxDia((dadosPainelFull.producao || []).filter(r => (r.peso || 0) > 0));
+    const _par = (dadosPainelFull.paradas || []).length ? _maxDia(dadosPainelFull.paradas) : '';
+    const _per = (dadosPainelFull.perdas || []).length ? _maxDia(dadosPainelFull.perdas) : '';
+    const _completo = [_mProd, _par, _per].filter(Boolean).sort()[0] || null;
+    dadosPainelFull.info.corteCompleto = _completo;
+    dadosPainelFull.info.corteProd = _mProd;
+  } catch (_) { }
+}
 function recarregarPainel() { _regrasAplicadas = false; limparCachesDados(); carregarPainel(); }
 // ao trocar de setor, define a métrica padrão: Embaladeiras = Cxs; demais = Peso
 /* METRICA AMARRADA AO SETOR — 04/08/2026.
