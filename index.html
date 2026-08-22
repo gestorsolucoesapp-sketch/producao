@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.030.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.031.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.030.0';
+const APP_VER = '4.031.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25214,7 +25214,7 @@ function _depoEstado(itemCod) {
    achava tudo. Agora lista TODOS, do maior saldo para o menor, com o total
    quando há mais de um. O nome do reservado sai destacado: é o que já está
    separado com dono. */
-function _depoOndeLinha(itemCod, precisaKg) {
+function _depoOndeLinha(itemCod, precisaKg, pedNum) {
   const e = _depoEstado(itemCod); if (!e || !e.deps.length) return '';
   /* 21/08/2026: caixa junto do quilo. O depósito já guardava a quantidade em
      `cx` — só não estava sendo mostrada. Quem separa carga conta caixa e palete,
@@ -25230,9 +25230,18 @@ function _depoOndeLinha(itemCod, precisaKg) {
      cobre. O que sobra vira uma linha discreta, porque saber que existe mais em
      outro canto continua sendo útil; o que não podia era competir com o que
      importa. */
-  const _fila = e.deps.slice().sort((a, b) =>
-    (_DEP_RESERV.includes(String(b.cod)) ? 1 : 0) - (_DEP_RESERV.includes(String(a.cod)) ? 1 : 0)
-    || (+b.kg || 0) - (+a.kg || 0));
+  /* o reservado que ENTRA na conta é o que coube a este pedido, não o saldo do
+     depósito: sem isso, um item com 10 t no 6 aparecia como reservado em cinco
+     pedidos diferentes, e os cinco não podem levar a mesma tonelada. */
+  const _resDest = (typeof pedNum !== 'undefined' && pedNum != null && _resPorPed)
+    ? _resPorPed[String(pedNum) + '|' + String(itemCod)] : null;
+  const _fila = e.deps.map(d => (_DEP_RESERV.includes(String(d.cod)) && _resDest != null)
+      ? Object.assign({}, d, { kg: _resDest, cx: (+d.kg > 0 ? Math.round((+d.cx || 0) * (_resDest / +d.kg)) : 0) })
+      : d)
+    .filter(d => (+d.kg || 0) > 0)
+    .sort((a, b) =>
+      (_DEP_RESERV.includes(String(b.cod)) ? 1 : 0) - (_DEP_RESERV.includes(String(a.cod)) ? 1 : 0)
+      || (+b.kg || 0) - (+a.kg || 0));
   /* 22/08/2026, terceira passada — e a que faltava. O João: "esse pendente e a
      informação na caixa verde não têm nada a ver".
      Ele está certo e o problema era conceitual, não de excesso: a linha pedia
@@ -27231,7 +27240,7 @@ function detPedido(num, voltar) {
          como no palete: nao inventa caixa onde nao existe. */
       + (() => {
           const e = ok ? _depoEstado(l.item_cod) : null;
-          const onde = ok ? `<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:3px;line-height:1.35">${_depoOndeLinha(l.item_cod, need)}</div>` : '';
+          const onde = ok ? `<div style="font-size:9.5px;font-weight:600;opacity:.85;margin-top:3px;line-height:1.35">${_depoOndeLinha(l.item_cod, need, num)}</div>` : '';
           if (e && e.emQual) {
             return `<td><span class="cel ok">✓ material pronto`
               + `<div style="font-size:10px;font-weight:800;color:#7a4a00;margin-top:1px">⚠ em análise de qualidade</div>${onde}</span></td></tr>`;
@@ -27796,12 +27805,23 @@ function _cardDestravaBase(_semAlav) {
       String(a.ent || '9999-99-99').localeCompare(String(b.ent || '9999-99-99')) || (b.kg - a.kg));
     const ok = [], parcial = [];
     let faltaKg = 0;
+    /* 22/08/2026 (João: "por que esse que está a separar aparece como
+       reservado?"). Estava aparecendo porque a caixa do item lia o SALDO BRUTO
+       do depósito 6, sem saber da fila. Reservado não é etiquetado por pedido no
+       ERP: é um monte, e o app reparte por ordem de entrega. Então o mesmo item
+       pode ter saldo de sobra no 6 e mesmo assim não sobrar nada para ESTE
+       pedido, porque outro na frente já levou.
+       Este mapa guarda quanto do reservado coube a cada pedido+item. É ele que a
+       caixa passa a consultar — assim a linha do item conta a mesma história que
+       a classificação do pedido, em vez de duas versões do mesmo fato. */
+    _resPorPed = {};
     fila.forEach(p => {
       let falta = 0;
       (porPed[String(p.num)] || []).forEach(l => {
         const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
         saldo[l.item] = d - pega;
         falta += Math.max(0, l.kg - pega);
+        _resPorPed[String(p.num) + '|' + l.item] = pega;
       });
       if (falta > 0.001) { p._faltaRes = falta; parcial.push(p); faltaKg += falta; }
       else { p._faltaRes = 0; ok.push(p); }
@@ -30022,6 +30042,8 @@ let _sfdDados = null, _sfdAberto = null;
 /* montado dentro do card "O que destrava faturamento" (é lá que a alocação do
    reservado acontece) e transplantado para o topo da aba pelo _progReservaTopo. */
 let _progResHTML = '';
+/* quanto do reservado coube a cada pedido+item depois da fila por entrega */
+let _resPorPed = {};
 function cardSaiuFilaDia() {
   const h = '<div class="card" id="sfdCard"><h3 style="margin:0 0 4px">📤 O que saiu da fila por dia</h3>'
     + '<p class="desc" style="margin:0 0 8px">OP que estava na fila e não está mais · toque num dia para ver as OPs</p>'
