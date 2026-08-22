@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.004.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.005.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.004.0';
+const APP_VER = '4.005.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13193,6 +13193,48 @@ function blocoParadaTurno(inicio, dia) {
 // em cada turno. Uma parada de 15:02→15:19 (cruza o corte T3/T4 às 15:10) devolve
 // { Manhã: 8min, Tarde: 9min }. Varre minuto a minuto usando a régua vigente (blocoPorHora),
 // então respeita T3=Manhã e o sábado reduzido automaticamente.
+/* ============ ESTE ERA O GARGALO (22/08/2026) ============
+   O travômetro pegou em flagrante: 42,9 SEGUNDOS de tela congelada no Painel,
+   logo depois de tocar a máquina 710. Não era rede — rede não congela a tela.
+   Era esta função.
+
+   Ela repartia cada parada entre Manhã/Tarde/Noite ANDANDO DE MINUTO EM MINUTO.
+   Para cada minuto ela montava uma string "HH:MM" com dois padStart, chamava o
+   blocoPorHora, que fazia split, duas conversões e — quando o dia é reduzido —
+   construía um `new Date` só para descobrir se era domingo.
+   Agosto tem 13.524 horas de parada: 811 mil voltas, cada uma com montagem de
+   texto e criação de data. No iPhone isso é meio minuto de tela morta. E ela é
+   chamada em 24 lugares do app.
+
+   A régua de turno só depende de DUAS coisas: o minuto do dia (0–1439) e o tipo
+   do dia (útil, sábado ou domingo) — ou seja, existem só TRÊS réguas possíveis.
+   Agora cada uma é montada UMA VEZ por sessão como soma acumulada, e repartir
+   uma parada vira três subtrações. O laço de 811 mil voltas virou aritmética.
+
+   O resultado é o MESMO, minuto a minuto: as réguas saem do próprio
+   blocoPorHora, que continua sendo a única fonte da regra. A única diferença é
+   que a soma agora é de inteiros divididos no fim, em vez de somar 1/60
+   oitocentas mil vezes — o que, se muda alguma coisa, é para menos erro. */
+const _pfTurno = new Map();
+function _prefixoTurno(dia) {
+  let red = false, dom = false;
+  try { red = _diaReduzido(dia); } catch (_) { }
+  if (red) { try { dom = new Date(String(dia).slice(0, 10) + 'T12:00:00').getDay() === 0; } catch (_) { } }
+  const k = red ? (dom ? 'dom' : 'sab') : 'util';
+  let p = _pfTurno.get(k);
+  if (p) return p;
+  const M = new Int32Array(1441), T = new Int32Array(1441), N = new Int32Array(1441);
+  for (let m = 0; m < 1440; m++) {
+    const hh = String(Math.floor(m / 60)).padStart(2, '0'), mm = String(m % 60).padStart(2, '0');
+    const b = blocoPorHora(hh + ':' + mm, dia) || 'Noite';
+    M[m + 1] = M[m] + (b === 'Manhã' ? 1 : 0);
+    T[m + 1] = T[m] + (b === 'Tarde' ? 1 : 0);
+    N[m + 1] = N[m] + (b === 'Noite' ? 1 : 0);
+  }
+  p = { 'Manhã': M, 'Tarde': T, 'Noite': N };
+  _pfTurno.set(k, p);
+  return p;
+}
 function tempoParadaPorTurno(inicio, horas, dia) {
   const out = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
   const hhmm = horaHHMMParada(inicio);
@@ -13204,12 +13246,17 @@ function tempoParadaPorTurno(inicio, horas, dia) {
   const [h0, m0] = hhmm.split(':').map(Number);
   const iniMin = h0 * 60 + m0;
   const totMin = Math.round(horas * 60);
-  for (let i = 0; i < totMin; i++) {
-    const abs = iniMin + i;                 // minuto absoluto desde 00:00
-    const hh = Math.floor((abs % 1440) / 60), mm = abs % 60;
-    const b = blocoPorHora(String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0'), d) || 'Noite';
-    out[b] += 1 / 60;                       // 1 minuto em horas
-  }
+  const pf = _prefixoTurno(d);
+  // parada que passa de 24 h dá voltas inteiras no relógio: cada volta é um dia cheio
+  const voltas = Math.floor(totMin / 1440), resto = totMin % 1440;
+  const fim = iniMin + resto;
+  ['Manhã', 'Tarde', 'Noite'].forEach(b => {
+    const A = pf[b];
+    let n = voltas * A[1440];
+    if (fim <= 1440) n += A[fim] - A[iniMin];
+    else n += (A[1440] - A[iniMin]) + A[fim - 1440];   // atravessou a meia-noite
+    out[b] = n / 60;
+  });
   return out;
 }
 function blocoPorHora(h, dia) {
