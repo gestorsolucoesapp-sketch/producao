@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.038.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.040.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.038.0';
+const APP_VER = '4.040.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6669,7 +6669,14 @@ async function _mtCarregarMes() {
   _mtMesCarregado = ym;
   try {
     const de = ym + '-01';
-    const { data } = await sb.from('producao_resumo').select('dia,turno,recurso_cod,peso').gte('dia', de).lte('dia', hoje);
+    /* 22/08/2026 (João: "o sparkline não está indo") — ERA CORTE DE PÁGINA.
+       Este select vinha cru, sem paginar, e o servidor devolve no máximo 1.000
+       linhas por pedido. Agosto tem 3.532 linhas de produção: dois terços nunca
+       chegavam, e a máquina que caísse fora dessas 1.000 primeiras ficava sem
+       série nenhuma — o sparkline simplesmente não aparecia, sem erro na tela.
+       Pior: aparecia para umas e não para outras, o que faz parecer regra e não
+       falha. O fetchTudo pagina até o fim, que é o mesmo caminho do resto do app. */
+    const data = await fetchTudo('producao_resumo', 'dia,turno,recurso_cod,peso', de, hoje);
     const porDia = {}, porBloco = {};
     (data || []).forEach(r => {
       const c = String(r.recurso_cod || ''), d = String(r.dia || '').slice(0, 10);
@@ -9967,7 +9974,12 @@ async function getMaqsAtivas() {
     const ref = (ult.data && ult.data[0] && ult.data[0].dia) || null;
     if (ref) {
       const de = addDiasISO(ref, -30);
-      const { data } = await sb.from('producao_resumo').select('recurso_cod').gt('peso', 0).gte('dia', de);
+      /* 22/08: mesma armadilha do sparkline. Sem paginar, 30 dias de produção
+         passam de 1.000 linhas e a lista de máquinas ativas saía incompleta —
+         máquina que rodou o mês inteiro podia não constar. */
+      /* traz o peso junto para manter o critério original (só máquina que de
+         fato produziu) — sem ele eu estaria alargando a regra sem querer. */
+      const data = await fetchTudo('producao_resumo', 'recurso_cod,peso', de, ref, 'peso.gt.0');
       (data || []).forEach(r => MAQS_ATIVAS.add(String(r.recurso_cod)));
     }
   } catch (_) {}
@@ -19042,9 +19054,12 @@ async function ppCarregar(setor, de, ate, alvo) {
        Agora o QUILO sai do 621, a mesma fonte de todo o resto do app. Do 622
        vem só o que ele tem de próprio: a contagem de peças, que depende do
        item_desc e não existe no 621. */
-    let q2 = sb.from('producao_resumo').select('dia,recurso_cod,peso').gte('dia', de).lte('dia', ate);
-    if (maqs.length) q2 = q2.in('recurso_cod', maqs);
-    const [{ data, error }, { data: dRes }] = await Promise.all([q, q2]);
+    /* paginado: um mês de produção passa de 1.000 linhas e o corte silencioso
+       faria o quilo oficial sair por baixo — justamente o número que este card
+       passou a usar hoje para bater com o gráfico de cima. */
+    const [{ data, error }, dRes] = await Promise.all([q,
+      fetchTudo('producao_resumo', 'dia,recurso_cod,peso', de, ate,
+        maqs.length ? 'recurso_cod.in.(' + maqs.join(',') + ')' : null)]);
     if (error) throw error;
     const kgOficial = {};
     (dRes || []).forEach(r => { const d = String(r.dia).slice(0, 10); kgOficial[d] = (kgOficial[d] || 0) + (+r.peso || 0); });
