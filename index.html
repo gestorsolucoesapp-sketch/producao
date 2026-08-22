@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.002.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.003.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.002.0';
+const APP_VER = '4.003.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13674,10 +13674,18 @@ async function _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra) {
         _conta((r.data || []).length);
         return r.data || [];
       } catch (e) {
-        // uma página que falha não derruba a carga inteira: tenta em duas metades
+        /* 22/08 — ESTE catch era MUDO, e foi ele que criou o mistério do "2.290
+           linhas" que aparecia igualzinho em todo print, noite e manhã: quando
+           uma página caía aqui, as linhas voltavam mas NÃO eram contadas. O
+           número na tela ficava 1.000 abaixo do real e parecia travado num
+           ponto fixo — quando na verdade a carga seguia. */
+        _carga.falhas = (_carga.falhas || 0) + 1;
+        _carga.ultErro = String((e && e.message) || e).slice(0, 80);
         const meio = Math.floor((a + b) / 2);
         const r1 = await montaSeguro(a, meio), r2 = await montaSeguro(meio + 1, b);
-        return (r1.data || []).concat(r2.data || []);
+        const d1 = r1.data || [], d2 = r2.data || [];
+        _conta(d1.length + d2.length);
+        return d1.concat(d2);
       }
     }));
     res.forEach((d, k) => { partes[g + k] = d; });
@@ -13800,16 +13808,33 @@ async function carregarPainel() {
        pessoa desiste aos 6 s achando que travou — foi exatamente o que o vídeo
        do João mostrou. Agora aparece a tabela e o número de linhas subindo, e
        depois de 12 s ele avisa que é volume, não travamento. */
-    _carga = { tabela: '', linhas: 0, req: 0, ativo: true };
+    _carga = { tabela: '', linhas: 0, req: 0, ativo: true, falhas: 0, ultErro: '' };
     const _t0carga = Date.now();
     const _tick = setInterval(() => {
       const el = $('pnCarga'); if (!el || !_carga.ativo) return;
       const seg = Math.round((Date.now() - _t0carga) / 1000);
       el.innerHTML = 'Carregando ' + (_carga.tabela ? '<b>' + escapeHtml(_carga.tabela) + '</b>' : 'dados')
         + (_carga.linhas ? ' · ' + _carga.linhas.toLocaleString('pt-BR') + ' linhas' : '')
-        + (seg >= 12 ? '<div style="font-size:11px;margin-top:5px;color:var(--fraco)">Ainda buscando a produção do período. Não travou.</div>' : '');
+        + (_carga.falhas ? '<div style="font-size:11px;margin-top:4px;color:#B26B00">' + _carga.falhas + ' pedido(s) sem resposta — refazendo</div>' : '')
+        + (seg >= 12 ? '<div style="font-size:11px;margin-top:5px;color:var(--fraco)">' + seg + ' s · ' + _carga.req + ' pedidos ao banco. Não travou.</div>' : '');
     }, 400);
-    const _fimCarga = () => { _carga.ativo = false; clearInterval(_tick); };
+    /* CÃO DE GUARDA (22/08). Mesmo com prazo em toda consulta, sobra a chance de
+       a carga morrer num ponto que ninguém previu — e o sintoma é sempre o pior
+       possível: a tela fica "Carregando" para sempre, sem dizer nada. Depois de
+       40 s isto assume e mostra o estado real, com botão de refazer. Sair da
+       tela parada é obrigação; adivinhar o motivo, não. */
+    const _cao = setTimeout(() => {
+      if (!_carga.ativo) return;
+      const el = $('painelConteudo'); if (!el) return;
+      _carga.ativo = false; clearInterval(_tick);
+      el.innerHTML = '<div class="card"><p class="vazio-painel">⏳ A carga não terminou em 40 s.</p>'
+        + '<p class="desc" style="text-align:center;font-size:12px">último: <b>' + escapeHtml(_carga.tabela || '—') + '</b> · '
+        + (_carga.linhas || 0).toLocaleString('pt-BR') + ' linhas · ' + (_carga.req || 0) + ' pedidos'
+        + (_carga.falhas ? ' · ' + _carga.falhas + ' sem resposta' : '')
+        + (_carga.ultErro ? '<br>' + escapeHtml(_carga.ultErro) : '') + '</p>'
+        + '<button class="btn btn-verde" style="margin-top:8px" onclick="recarregarPainel()">🔄 Tentar de novo</button></div>';
+    }, 40000);
+    const _fimCarga = () => { _carga.ativo = false; clearInterval(_tick); clearTimeout(_cao); };
     try {
       const imps = await carregarInfoImports();
       infoImports = imps;
