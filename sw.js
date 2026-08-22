@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v3.992.0';
+const CACHE = 'producao-rioplastic-v3.993.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -28,7 +28,10 @@ const CACHE = 'producao-rioplastic-v3.992.0';
    v3.207.0 e a tela de abertura é HTML puro desde então. O arquivo continuava
    sendo pré-baixado em toda instalação, sem nada para reproduzir. */
 const CACHE_ASSET = 'producao-rioplastic-assets-v1';
-const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest'];
+/* 22/08/2026: o supabase.js entra no pré-carregamento. Ele saiu do CDN e virou
+   arquivo nosso — se ficar de fora daqui, a primeira abertura depois de cada
+   deploy busca 212 KB pela rede antes do app existir, que era o problema. */
+const APP_SHELL = ['./logo_rioplastic.png', './logo_splash.png', './icon-180.png', './icon-192.png', './ia-logo.png', './manifest.webmanifest', './supabase.js?v=2.112.3'];
 
 /* 21/08/2026 (João: "está travando muito") — A CAUSA PRINCIPAL ESTAVA AQUI.
    Até a 3.952 a navegação era NETWORK-FIRST com `cache:'no-store'` e
@@ -174,7 +177,10 @@ self.addEventListener('fetch', e => {
   e.respondWith((async () => {
     /* imagem/ícone/manifest vai para o cache que sobrevive ao deploy; o resto
        (app.js) para o cache da versão. */
-    const ehAsset = /\.(png|jpg|jpeg|svg|webp|ico|mp4|webmanifest)$/i.test(url.pathname);
+    /* supabase.js entra como ASSET de propósito: é biblioteca de terceiro, não
+       muda quando o código do app muda. No cache da versão ele seria apagado a
+       cada publicação e rebaixado 212 KB na abertura seguinte. */
+    const ehAsset = /\.(png|jpg|jpeg|svg|webp|ico|mp4|webmanifest)$/i.test(url.pathname) || /supabase\.js$/.test(url.pathname);
     const cache = await caches.open(ehAsset ? CACHE_ASSET : CACHE);
     const cacheado = await cache.match(e.request);
     const rede = fetch(e.request).then(r => {
