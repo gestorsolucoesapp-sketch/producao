@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.006.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.007.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.006.0';
+const APP_VER = '4.007.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31175,7 +31175,9 @@ function csRender(R, box) {
     const totTurnos = S.reduce((s, x) => s + (+x.turnos || 0), 0);
     const totMeta = S.reduce((s, x) => s + (+x.meta || 0), 0);
     const temMeta = !!M.tem_meta && totMeta > 0;
+    const totDiasCheios = S.reduce((s, x) => s + (+x.dias_cheios || 0), 0);
     const tot = { kg: totKg, cx: S.reduce((s, x) => s + (+x.cx || 0), 0), dias: totDias,
+                  diasCheios: totDiasCheios,
                   turnos: totTurnos, meta: totMeta,
                   mil: totMil, g_pc: gMes, h_parada: totPar, kg_perda: totPer };
     /* 21/08/2026 (João: "milheiro, caixas e kg devem ficar juntos"). A tabela
@@ -31187,7 +31189,17 @@ function csRender(R, box) {
     const grupo = titulo => `<tr><td colspan="${sem.length + 2}" style="padding:7px 0 2px;font-size:10px;font-weight:800;color:#8A97A6;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--linha,#eef2f7)">${titulo}</td></tr>`;
 
     const tabela = `<div class="tab-rolagem"><table class="tab" style="min-width:${180 + sem.length * 78}px">
-      <thead><tr><th style="text-align:left">semana</th>${rot.map(r => `<th style="text-align:right;font-size:11px">${r}</th>`).join('')}<th style="text-align:right;font-size:11px;background:var(--leve-2,#F4F7FA)">mês</th></tr></thead>
+      <thead><tr><th style="text-align:left">semana</th>${sem.map((s, i) => {
+          /* 22/08/2026 (João: "sinalize semana incompleta, nela dá dois dias").
+             A semana é sempre segunda→domingo, mas a primeira e a última do mês
+             são recortadas pelo calendário. Mostrar "01/08–02/08" do mesmo
+             tamanho de uma semana cheia fazia parecer despencada de produção
+             onde só faltava dia. Agora a coluna diz quantos dias ela tem. */
+          const inc = s.completa === false;
+          return `<th style="text-align:right;font-size:11px${inc ? ';color:#8A5A00' : ''}">${rot[i]}`
+            + (inc ? `<div style="font-size:9.5px;font-weight:700;color:#8A5A00">⚠️ ${s.dias_cal} dia${s.dias_cal > 1 ? 's' : ''}</div>` : '')
+            + '</th>';
+        }).join('')}<th style="text-align:right;font-size:11px;background:var(--leve-2,#F4F7FA)">mês</th></tr></thead>
       <tbody>
         ${grupo('volume produzido')}
         ${linhaSem('kg', (x, t) => t ? tot.kg : x.kg, kg, true)}
@@ -31196,8 +31208,19 @@ function csRender(R, box) {
         ${linhaSem('peso unitário', (x, t) => t ? tot.g_pc : x.g_pc, v => (+v || 0) > 0 ? (+v).toFixed(2) + ' g' : '—', true)}
         ${grupo('ritmo e meta')}
         ${linhaSem('dias com apontamento', (x, t) => t ? tot.dias : x.dias, n0, false)}
+        ${linhaSem('dias cheios (seg–sex)', (x, t) => t ? tot.diasCheios : x.dias_cheios, n0, false)}
         ${linhaSem('turnos', (x, t) => t ? tot.turnos : x.turnos, n0, false)}
-        ${linhaSem('média por dia', (x, t) => t ? (tot.dias ? tot.kg / tot.dias : 0) : ((+x.dias || 0) ? x.kg / x.dias : 0), kg, true)}
+        ${/* 22/08/2026 (João: "a média divide por dias cheios"). Sábado e domingo
+             não são dia de produção normal — contá-los como dia inteiro puxava a
+             média para baixo e escondia o ritmo real da máquina na semana.
+             Semana que só teve fim de semana (a de 01–02/08, por exemplo) não tem
+             dia cheio nenhum; nesse caso divide pelos dias apontados mesmo, senão
+             a conta seria por zero e a célula ficaria vazia sem explicação. */''}
+        ${linhaSem('média por dia cheio', (x, t) => {
+            if (t) return tot.diasCheios ? tot.kg / tot.diasCheios : (tot.dias ? tot.kg / tot.dias : 0);
+            const dc = +x.dias_cheios || 0, dd = +x.dias || 0;
+            return dc ? x.kg / dc : (dd ? x.kg / dd : 0);
+          }, kg, true)}
         ${linhaSem('média por turno', (x, t) => t ? (tot.turnos ? tot.kg / tot.turnos : 0) : ((+x.turnos || 0) ? x.kg / x.turnos : 0), kg, true)}
         ${temMeta ? `${linhaSem('meta dos turnos', (x, t) => t ? tot.meta : x.meta, kg, false)}
         ${(() => {
