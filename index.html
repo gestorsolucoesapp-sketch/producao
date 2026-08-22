@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.040.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.042.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.040.0';
+const APP_VER = '4.042.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -33391,6 +33391,31 @@ function faixaVersaoNova(v) {
 /* ===== Análise+ → imagem por máquina para WhatsApp (sem nome de auxiliar) ===== */
 let _mtSnap = null;
 
+/* ===== TENDÊNCIA MENSAL NA IMAGEM — 22/08/2026 =====
+   João: "o sparkline está certo, o outro sem nada está errado". A tela mostra a
+   tendência do mês na máquina e em cada turno; a imagem que vai para o WhatsApp
+   ia sem. Quem recebe vê menos do que quem abriu o app — o mesmo buraco de
+   ontem, porque tela e imagem são desenhadas por códigos diferentes.
+   Usa a MESMA série (_mtSerieMes / _mtSerieMesBloco) da tela: se uma mudar, a
+   outra muda junto, em vez de duas verdades sobre o mesmo mês. */
+function _mtSparkCanvas(x, serie, px, py, pw, ph) {
+  const v = (serie || []).map(Number).filter(n => isFinite(n));
+  if (v.length < 2) return false;
+  const mx = Math.max(...v), mn = Math.min(...v);
+  const cor = (v[v.length - 1] >= v[0]) ? '#3CA96E' : '#D64545';
+  const dx = pw / (v.length - 1);
+  const yv = n => mx === mn ? py + ph / 2 : (py + ph) - ((n - mn) / (mx - mn)) * ph;
+  x.save();
+  x.strokeStyle = cor; x.lineWidth = 3; x.lineJoin = 'round'; x.lineCap = 'round';
+  x.beginPath();
+  v.forEach((n, i) => { const a2 = px + i * dx, b2 = yv(n); i ? x.lineTo(a2, b2) : x.moveTo(a2, b2); });
+  x.stroke();
+  x.fillStyle = cor;
+  x.beginPath(); x.arc(px + (v.length - 1) * dx, yv(v[v.length - 1]), 4.5, 0, 6.3); x.fill();
+  x.restore();
+  return true;
+}
+
 function _mtImgMaquina(cod, blocos, turnoLbl, ctx) {
   if (!CanvasRenderingContext2D.prototype.roundRect) {
     CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
@@ -33420,6 +33445,15 @@ function _mtImgMaquina(cod, blocos, turnoLbl, ctx) {
   }
   x.fillStyle = '#C9D9E8'; x.font = F(26, 500);
   x.fillText(S.rotulo + ' · até ' + fmtData(S.ate), PAD, 128);
+  try {
+    const sm = _mtSerieMes && _mtSerieMes[String(cod)];
+    if (sm && sm.length >= 2) {
+      const bx = PAD + x.measureText(S.rotulo + ' · até ' + fmtData(S.ate)).width + 34;
+      x.fillStyle = '#7E97AE'; x.font = F(19, 800);
+      x.fillText('tendência mensal', bx, 122);
+      _mtSparkCanvas(x, sm, bx + x.measureText('tendência mensal').width + 14, 104, 130, 26);
+    }
+  } catch (_) { }
   /* 20/08/2026 (João): o export saía mais pobre que a tela. Estes números
      existiam no card do app e sumiam na imagem compartilhada — quem recebia no
      WhatsApp via menos do que quem abriu o app. */
@@ -33459,6 +33493,18 @@ function _mtImgMaquina(cod, blocos, turnoLbl, ctx) {
     const eq = _mtEquipe && _mtEquipe[(b.cod || cod) + '|' + b.bl];
     const op = eq ? (eq.operador ? _mtCurto(eq.operador) : 'sem operador') : '';
     if (op) { x.fillStyle = '#41505E'; x.font = F(26, 600); x.fillText(op, PAD + 26 + x.measureText(rot).width + 24, y + 46); }
+    try {
+      const sb2 = _mtSerieMesBloco && _mtSerieMesBloco[String(b.cod || cod) + '|' + b.bl];
+      if (sb2 && sb2.length >= 3) {
+        /* fica à direita do bloco, longe do nome e do operador: no card da tela
+           ele espremia o selo PARADA da Noite, e na imagem há espaço de sobra. */
+        const bx = W - PAD - 26 - 150;
+        x.fillStyle = '#7E97AE'; x.font = F(18, 800); x.textAlign = 'right';
+        x.fillText('tendência mensal', bx - 12, y + 44);
+        x.textAlign = 'left';
+        _mtSparkCanvas(x, sb2, bx, y + 26, 140, 26);
+      }
+    } catch (_) { }
 
     /* 19/08/2026: a imagem compartilhada passou a usar os MESMOS mostradores da
        tela. Antes ia com barras e ficava diferente do que o gestor tinha acabado
@@ -33699,6 +33745,12 @@ async function mtWhatsGerar(turno) {
 
   const files = [], urls = [];
   toast('Gerando imagens…');
+  /* 22/08/2026 — a linha de tendência vem de _mtSerieMes, que é carregada em
+     segundo plano quando a Análise+ abre. Quem exportava antes de ela chegar
+     recebia a imagem SEM a linha, sem nada avisando — e o mesmo botão às vezes
+     dava um resultado, às vezes outro. Aqui a espera é explícita: garante a
+     série antes de desenhar. Se falhar, segue sem a linha em vez de travar. */
+  try { if (typeof _mtCarregarMes === 'function') await _mtCarregarMes(); } catch (_) { }
   await new Promise(r => setTimeout(r, 30));
 
   for (const cod of cods) {
