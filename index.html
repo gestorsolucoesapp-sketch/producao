@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.026.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.027.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1985,6 +1985,30 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     if (linhas.some(l => /^Proposta\s+Pedido\s+Emiss/.test(l.texto))) return 'PROP';
     // 624 filtrado não tem cabeçalho: identifica pelo header de colunas
     if (linhas.some(l => /^Data Ordem Item\/Vers/.test(l.texto))) return '624';
+    /* 22/08/2026 (João tirou o cabeçalho e o logo para o PDF encolher).
+       Sem a linha "ROTINA: RPCPxxx" o app não reconhecia mais o arquivo — e a
+       decisão dele faz sentido: o 643 do mês tem 732 páginas, e cabeçalho e logo
+       repetidos em cada uma pesam.
+       Então a rotina passa a ser reconhecida também pelo DESENHO do relatório,
+       que é o que ele tem de próprio. Cada regra abaixo exige DUAS marcas, não
+       uma: um cabeçalho de grupo mais o cabeçalho de colunas correspondente.
+       Com uma marca só, um relatório poderia ser confundido com outro — e ler o
+       643 como se fosse 624 gravaria parada na tabela de refugo. */
+    const tem = rx => linhas.some(l => rx.test(l.texto));
+    // 643 — paradas: motivo como grupo, e as colunas com Início/Fim/Tempo
+    if (tem(/^Motivo Parada:\s*\d+/) && tem(/^Data\s+Ordem\s+Recurso\s+In[ií]cio\s+Fim\s+Tempo/)) return '643';
+    // 622 — itens: Item e Turno como grupo, e as colunas de produção
+    if (tem(/^Item:\s*\d+\s*-\s*/) && tem(/^In[ií]cio\s+Fim\s+OP\s+Ident/)) return '622';
+    // 621 — resumo por turno e recurso
+    if (tem(/^Turno:\s*\d$/) && tem(/^Recurso\s+Quantidade\s+UN\s+Peso/)) return '621';
+    /* último recurso: o nome do arquivo. O ERP grava rpcp643_2208...pdf, então
+       quando nem a estrutura foi reconhecida ainda dá para acertar. Fica por
+       último de propósito — nome de arquivo se renomeia, conteúdo não. */
+    try {
+      const n = String((window && window._nomeArqAtual) || '').toLowerCase();
+      const mn = /(?:rpcp|rger|rest)[_\s-]?(\d{3})/.exec(n);
+      if (mn && NOMES[mn[1]]) return mn[1];
+    } catch (_) { }
     return null;
   }
 
@@ -3105,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.026.0';
+const APP_VER = '4.027.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24610,6 +24634,7 @@ async function processarArquivos(arquivos) {
       const hash = await sha256Hex(buf);
       await garantirPdfJs();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      try { window._nomeArqAtual = arq.name; } catch (_) { }
       const resultado = await RioParsers.parseDocumento(pdf);
       // já importado?
       const { data: dup } = await sb.from('importacoes').select('id, criado_em').eq('hash', hash).maybeSingle();
