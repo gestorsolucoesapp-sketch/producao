@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.022.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.023.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3105,7 +3105,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.022.0';
+const APP_VER = '4.023.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25128,7 +25128,29 @@ function _depoOndeLinha(itemCod, precisaKg) {
   /* 21/08/2026: caixa junto do quilo. O depósito já guardava a quantidade em
      `cx` — só não estava sendo mostrada. Quem separa carga conta caixa e palete,
      não quilo, e era isso que faltava para a linha ser útil no chão. */
-  const linhas = e.deps.map(x => {
+  /* 22/08/2026 (João: "no pedido reservado não pode ter esse monte de informação
+     de depósito, ele está só no 6").
+     Estava certo. No pedido 224482 a linha pede 74 kg e o reservado tem 1 t —
+     mas a caixa listava também PRODUTOS RÍGIDO e ESTOQUE INDUSTRIAL, e fechava
+     com "em 3 depósitos". Quem bate o olho lê material espalhado, quando na
+     verdade o depósito 6 resolve sozinho e ninguém vai aos outros dois.
+     Agora só aparecem os depósitos que a carga PRECISA abrir para fechar o
+     pendente — reservado primeiro, os outros por maior saldo, parando assim que
+     cobre. O que sobra vira uma linha discreta, porque saber que existe mais em
+     outro canto continua sendo útil; o que não podia era competir com o que
+     importa. */
+  const _fila = e.deps.slice().sort((a, b) =>
+    (_DEP_RESERV.includes(String(b.cod)) ? 1 : 0) - (_DEP_RESERV.includes(String(a.cod)) ? 1 : 0)
+    || (+b.kg || 0) - (+a.kg || 0));
+  const _need = +precisaKg || 0;
+  const _usados = [];
+  if (_need > 0) {
+    let resta = _need;
+    for (const d of _fila) { if (resta <= 0.001) break; _usados.push(d); resta -= (+d.kg || 0); }
+  }
+  const _mostra = _usados.length ? _usados : _fila;   // sem pendente conhecido: mostra tudo
+  const _sobra = _fila.filter(d => !_mostra.includes(d));
+  const linhas = _mostra.map(x => {
     const res = _DEP_RESERV.includes(String(x.cod));
     const nome = escapeHtml(String(x.nome || x.cod).slice(0, 26));
     const cx = +x.cx || 0;
@@ -25140,8 +25162,11 @@ function _depoOndeLinha(itemCod, precisaKg) {
   /* palete somado POR DEPÓSITO e não no geral: caixa que está em lugares
      diferentes não empilha no mesmo palete. */
   const totPal = e.deps.reduce((s, x) => s + ((+x.cx || 0) > 0 ? _paletes(x.cx) : 0), 0);
-  const varios = e.deps.length > 1
-    ? `<div style="margin-top:2px;opacity:.75">em <b>${e.deps.length} depósitos</b> · ${fmtKg(tot)}${totCx > 0 ? ' · ' + fmtNum(totCx) + ' cx · ' + fmtNum(totPal) + ' pal' : ''} no total do item</div>` : '';
+  const _kgSobra = _sobra.reduce((s, x) => s + (+x.kg || 0), 0);
+  const varios = _sobra.length
+    ? `<div style="margin-top:2px;opacity:.6;font-size:10.5px">+ ${fmtKg(_kgSobra)} deste item em outro(s) ${_sobra.length} depósito(s), não necessário(s) para esta carga</div>`
+    : (_mostra.length > 1
+        ? `<div style="margin-top:2px;opacity:.75">a carga sai de <b>${_mostra.length} depósitos</b> · ${fmtKg(tot)}${totCx > 0 ? ' · ' + fmtNum(totCx) + ' cx · ' + fmtNum(totPal) + ' pal' : ''}</div>` : '');
   /* 21/08/2026 (pedido do João, a partir do pedido 224462). O modal dizia
      "✓ material pronto" com 464 kg pendentes e mostrava 348 kg no depósito ao
      lado: números que não fecham, sem nada explicando.
