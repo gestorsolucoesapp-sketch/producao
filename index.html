@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.031.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.032.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.031.0';
+const APP_VER = '4.032.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27623,6 +27623,38 @@ function _seloDesvio(entrega, pronto) {
 /* 21/08/2026 (pedido do João): lista dos pedidos prontos separada por reserva.
    Reaproveita a MESMA alocação do card — não recalcula por outro caminho, senão
    a lista diverge do número que foi tocado, que já aconteceu antes neste app. */
+/* ===== LISTA DOS "A SEPARAR" — 22/08/2026 =====
+   Só os pedidos que ainda dependem de alguém mover material no depósito, do
+   setor tocado. Cada linha diz QUANTO falta separar, que é a tarefa. Vem
+   ordenada pelo menor volume primeiro: separar 30 kg destrava um pedido inteiro
+   com o mesmo esforço de separar 3 t, e é assim que se tira mais carga do pátio
+   no mesmo turno. */
+function detSeparar(filtro) {
+  const A = _alocarEstoque();
+  if (!A) { toast('Importe o REST196 primeiro'); return; }
+  if (!_resDiv || !_resDiv.temDep) { toast('Importe o REST241 (depósito) para ver a reserva'); return; }
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  let L = _resDiv.parcial.slice();
+  /* mesmo critério de setor da linha clicada: usa a função do card, não uma
+     regra paralela — duas implementações do mesmo filtro divergem na primeira
+     mudança, e foi assim que a lista já deixou de bater com o número antes. */
+  let _rot = '';
+  if (filtro && filtro !== 'null') {
+    L = L.filter(p => { const c = _comboSetorPed(p, false); if (c.k === filtro) { _rot = c.rot; return true; } return false; });
+  }
+  if (!L.length) { toast('Nenhum pedido a separar aqui'); return; }
+  L.sort((a, b) => (+a._faltaRes || 0) - (+b._faltaRes || 0));
+  const totF = L.reduce((s, p) => s + (+p._faltaRes || 0), 0);
+  abreDet('⚠️ A separar' + (_rot ? ' · ' + escapeHtml(_rot) : ''),
+    `<p class="desc" style="margin:0 0 10px"><b>${L.length} pedido(s)</b> · falta separar <b>${kg(totF)}</b>.<br>
+      O material existe, mas está fora do depósito de reservados — alguém precisa movê-lo no ERP antes de a carga ser chamada.
+      Os menores primeiro: destravam um pedido inteiro com pouco esforço.</p>`
+    + tabSimples(['Pedido', 'Falta separar'], L.map(p => `<tr onclick="detPedido('${escapeHtml(p.num)}')" style="cursor:pointer">
+        <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} ›
+          <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s) · ${kg(p.kg)} no pedido · entrega ${escapeHtml(fmtDataSem(p.ent))}</div></td>
+        <td style="text-align:right"><b style="color:#8A5A00">${kg(+p._faltaRes || 0)}</b></td></tr>`).join('')));
+}
+
 function destravaReserva(qual) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
@@ -27982,7 +28014,12 @@ function _cardDestravaBase(_semAlav) {
       const sub = (gid2 === 0 && _resDiv.temDep)
         ? `<div class="dfx-sub">`
           + (nOk ? `<span style="color:var(--ok-4,#1E6B3A)">✅ <b>${nOk}</b> separado(s)</span>` : '')
-          + (pa.length ? `${nOk ? ' · ' : ''}<span style="color:#8A5A00">⚠️ <b>${pa.length}</b> a separar · ${kg(pa.reduce((s, p) => s + (+p._faltaRes || 0), 0))}</span>` : '')
+          /* 22/08/2026 (João: "não tá mostrando nos a separar"). O texto contava
+             quantos faltavam separar, mas o clique era o mesmo da linha inteira:
+             abria os 75 pedidos do setor, com os 12 parciais perdidos no meio de
+             63 que já estão prontos. Quem quer separar material precisa da lista
+             DOS 12. Agora o pedaço "a separar" é um botão próprio. */
+          + (pa.length ? `${nOk ? ' · ' : ''}<span onclick="event.stopPropagation();detSeparar('${filtro}')" style="color:#8A5A00;cursor:pointer;text-decoration:underline">⚠️ <b>${pa.length}</b> a separar · ${kg(pa.reduce((s, p) => s + (+p._faltaRes || 0), 0))} ›</span>` : '')
           + `</div>`
         : '';
       return `<div class="dfx-linha" onclick="detGrupoTravado(${gid2},'${filtro}')">`
