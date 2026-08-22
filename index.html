@@ -16,6 +16,10 @@
      sendo descoberto só quando o navegador chegava na tag <img> lá no body.
      Com preload ele começa a baixar junto com o HTML. -->
 <link rel="preload" as="image" href="logo_splash.png">
+  <!-- 22/08/2026: a primeira consulta ao banco pagava DNS + TLS sozinha (perfil
+       levou 581 ms no cronômetro). O preconnect faz esse aperto de mão começar
+       agora, em paralelo com a splash, para a consulta já achar o caminho aberto. -->
+  <link rel="preconnect" href="https://bweblwmgwutzdvqtpbww.supabase.co" crossorigin>
 <!-- 22/08/2026 — A TELA PRETA ANTES DE ENTRAR ERA ESTA LINHA.
      O supabase-js vinha do cdn.jsdelivr.net numa tag de script SEM defer, no byte 938
      do arquivo: antes do CSS, antes do <body>, antes de tudo. Script externo
@@ -1000,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.997.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.998.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3030,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.997.0';
+const APP_VER = '3.998.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3437,9 +3441,10 @@ let _letVelFator = (() => { try { const v = parseFloat(localStorage.getItem('rp_
 async function _salvarLetreiroCfg() {
   try { if (typeof souAdmin === 'undefined' || !souAdmin) return; await salvarCfg('letreiro_cfg', { vel: _letVelFator, setores: (typeof _letSetores !== 'undefined' ? _letSetores : true) }); } catch (_) {}
 }
-async function carregarLetreiroCfg() {
+async function carregarLetreiroCfg(pronto) {
   try {
-    const { data } = await sb.from('app_config').select('valor').eq('chave', 'letreiro_cfg').maybeSingle();
+    const data = (pronto !== undefined) ? pronto
+      : (await sb.from('app_config').select('valor').eq('chave', 'letreiro_cfg').maybeSingle()).data;
     if (!data || data.valor == null) return;
     const c = JSON.parse(data.valor);
     if (c && typeof c.vel === 'number' && c.vel > 0 && c.vel <= 6) { _letVelFator = c.vel; try { localStorage.setItem('rp_let_vel', String(c.vel)); } catch (_) {} }
@@ -3903,6 +3908,19 @@ async function posLogin(userPronto) {
   if (!user) { try { const { data } = await sb.auth.getUser(); user = data && data.user; } catch (_) { } }
   if (!user) return;
   // busca o perfil (pode não existir ainda se o SQL 04 não foi rodado)
+  /* 22/08/2026 — as três chaves de configuração eram TRÊS consultas à mesma
+     tabela app_config, uma para cada chave, e só começavam depois do perfil
+     chegar. Agora são UMA consulta (`in`) disparada JUNTO com a do perfil: o
+     custo vira o da mais lenta das duas, não a soma de quatro. */
+  const _pCfg = (async () => {
+    try {
+      const { data } = await sb.from('app_config').select('chave,valor')
+        .in('chave', ['timeout_min', 'presenca_online', 'letreiro_cfg']);
+      const m = {};
+      (data || []).forEach(r => { m[r.chave] = { valor: r.valor }; });
+      return m;
+    } catch (_) { return {}; }
+  })();
   let p = null;
   for (let i = 0; i < 3 && !p; i++) {
     try { const { data } = await sb.from('perfis').select('*').eq('id', user.id).maybeSingle(); p = data; } catch (_) {}
@@ -3937,11 +3955,12 @@ async function posLogin(userPronto) {
   /* eram QUATRO idas ao banco em fila, uma esperando a outra terminar, e
      nenhuma depende do resultado da anterior. Em paralelo o custo passa a ser
      o da mais lenta, não a soma das quatro. */
+  const _cfg = await _pCfg;   // já estava voando desde antes do perfil
   await Promise.all([
-    (async () => { try { await registrarAcesso(); } catch (_) { } })(),
-    (async () => { try { await carregarTimeout(); } catch (_) { } })(),
-    (async () => { try { await getPresencaCfg(); } catch (_) { } })(),
-    (async () => { try { await carregarLetreiroCfg(); } catch (_) { } })()
+    (async () => { try { await registrarAcesso(user); } catch (_) { } })(),
+    (async () => { try { await carregarTimeout(_cfg.timeout_min || null); } catch (_) { } })(),
+    (async () => { try { await getPresencaCfg(_cfg.presenca_online || null); } catch (_) { } })(),
+    (async () => { try { await carregarLetreiroCfg(_cfg.letreiro_cfg || null); } catch (_) { } })()
   ]);
   window._B && window._B.m('cfg');
   iniciarPresenca(user);
@@ -3998,9 +4017,10 @@ async function ouvirAcessos(user) {
   } catch (_) {}
 }
 let presAtiva = true;   // config global: mostrar ou não a presença
-async function getPresencaCfg() {
+async function getPresencaCfg(pronto) {
   try {
-    const { data } = await sb.from('app_config').select('valor').eq('chave', 'presenca_online').maybeSingle();
+    const data = (pronto !== undefined) ? pronto
+      : (await sb.from('app_config').select('valor').eq('chave', 'presenca_online').maybeSingle()).data;
     presAtiva = (data && data.valor != null) ? (JSON.parse(data.valor) !== false) : true;   // padrão: ligada
   } catch (_) { presAtiva = true; }
   return presAtiva;
@@ -4202,9 +4222,12 @@ async function mostrarOnline() {
   $('itemDetOverlay').classList.remove('oculto');
 }
 
-async function registrarAcesso() {
+async function registrarAcesso(userPronto) {
   try {
-    const { data: { user } } = await sb.auth.getUser();
+    /* 22/08/2026: aqui havia MAIS um getUser() — outra ida ao servidor só para
+       descobrir um id que quem chama já tinha. Agora ele é recebido. */
+    let user = userPronto || null;
+    if (!user && !(perfil && perfil.id)) { try { const { data } = await sb.auth.getUser(); user = data && data.user; } catch (_) { } }
     const uid = (perfil && perfil.id) || (user && user.id);
     if (!uid) { acessoId = null; return; }
     const { data } = await sb.from('acessos')
@@ -4218,9 +4241,10 @@ async function fecharAcesso() {
   try { await sb.from('acessos').update({ saiu_em: new Date().toISOString() }).eq('id', acessoId); } catch (_) {}
 }
 
-async function carregarTimeout() {
+async function carregarTimeout(pronto) {
   try {
-    const { data } = await sb.from('app_config').select('valor').eq('chave', 'timeout_min').maybeSingle();
+    const data = (pronto !== undefined) ? pronto
+      : (await sb.from('app_config').select('valor').eq('chave', 'timeout_min').maybeSingle()).data;
     timeoutMin = data ? parseInt(data.valor, 10) || 0 : 0;
   } catch (_) { timeoutMin = 0; }
   armarIdle();
@@ -4709,7 +4733,7 @@ function revelarPosSplash() {
           if (data && data.session) { $('telaLogin').classList.add('oculto'); await posLogin(); }
         } catch (_) {}
       }
-    }, 260);   // 22/08: era 520 ms só de transição de saída
+    }, 170);   // 22/08: era 520 ms, depois 260 — só transição de saída
   };
   /* 22/08/2026: a splash cobrava 1.400 ms de relógio + 520 ms de saída = 1,92 s
      de espera combinada, herança da época em que ela segurava a vinheta em
@@ -4720,7 +4744,7 @@ function revelarPosSplash() {
   const _t0sp = Date.now();
   function _sessaoChegou() {
     if (_vinhetaSaiu) return;
-    const falta = Math.max(0, 350 - (Date.now() - _t0sp));
+    const falta = Math.max(0, 150 - (Date.now() - _t0sp));   // 22/08: era 350 ms
     if (_vinhetaTimer) clearTimeout(_vinhetaTimer);
     _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, falta);
   }
