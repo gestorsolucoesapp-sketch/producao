@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.020.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.021.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3105,7 +3105,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.020.0';
+const APP_VER = '4.021.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25141,7 +25141,7 @@ function _depoOndeLinha(itemCod, precisaKg) {
      diferentes não empilha no mesmo palete. */
   const totPal = e.deps.reduce((s, x) => s + ((+x.cx || 0) > 0 ? _paletes(x.cx) : 0), 0);
   const varios = e.deps.length > 1
-    ? `<div style="margin-top:2px;opacity:.75">⚠️ em <b>${e.deps.length} depósitos</b> · ${fmtKg(tot)}${totCx > 0 ? ' · ' + fmtNum(totCx) + ' cx · ' + fmtNum(totPal) + ' pal' : ''} no total — a retirada é em mais de um lugar</div>` : '';
+    ? `<div style="margin-top:2px;opacity:.75">em <b>${e.deps.length} depósitos</b> · ${fmtKg(tot)}${totCx > 0 ? ' · ' + fmtNum(totCx) + ' cx · ' + fmtNum(totPal) + ' pal' : ''} no total do item</div>` : '';
   /* 21/08/2026 (pedido do João, a partir do pedido 224462). O modal dizia
      "✓ material pronto" com 464 kg pendentes e mostrava 348 kg no depósito ao
      lado: números que não fecham, sem nada explicando.
@@ -27101,18 +27101,36 @@ function detPedido(num, voltar) {
      batendo com a carteira não ganha caixa nenhuma. */
   const _avisoDep = (() => {
     if (!_depoItem) return '';
+    /* 22/08/2026 (João: "está dizendo que está em mais depósitos").
+       O aviso contava TODO depósito onde o item tem qualquer saldo — inclusive
+       4 kg parados no CQ que ninguém vai buscar. No pedido 225942 ele mandava
+       procurar material em SETE lugares, sendo que o depósito 6 sozinho cobria
+       tudo: o item precisava de 22 kg e tinha 10,7 t reservadas.
+       Agora conta só os depósitos que a expedição REALMENTE precisa abrir para
+       cobrir o pendente, na ordem em que ela trabalha: reservado (6) primeiro,
+       e só desce para os outros se faltar. Sobrou saldo em depósito que não foi
+       preciso tocar, ele não entra na conta nem no aviso. */
     let espalhados = 0, faltando = 0, kgFalta = 0, nDeps = new Set();
     L.forEach(l => {
       const e = _depoEstado(l.item_cod); if (!e || !e.deps.length) return;
       const need = +l.peso_pendente || 0;
       const tot = e.deps.reduce((s, x) => s + (+x.kg || 0), 0);
-      if (e.deps.length > 1) espalhados++;
-      e.deps.forEach(x => nDeps.add(String(x.cod)));
+      // reservado primeiro; o resto na ordem do maior saldo, que é como se separa
+      const fila = e.deps.slice().sort((a, b) =>
+        (_DEP_RESERV.includes(String(b.cod)) ? 1 : 0) - (_DEP_RESERV.includes(String(a.cod)) ? 1 : 0)
+        || (+b.kg || 0) - (+a.kg || 0));
+      let resta = need, usados = 0;
+      for (const d of fila) {
+        if (resta <= 0.001) break;
+        const pega = Math.min(+d.kg || 0, resta);
+        if (pega > 0) { resta -= pega; usados++; nDeps.add(String(d.cod)); }
+      }
+      if (usados > 1) espalhados++;
       if (need > 0 && tot < need * 0.99) { faltando++; kgFalta += (need - tot); }
     });
     if (!espalhados && !faltando) return '';
     const partes = [];
-    if (espalhados) partes.push(`<b>${espalhados} item(ns)</b> em mais de um depósito — a retirada é em ${nDeps.size} lugares`);
+    if (espalhados) partes.push(`<b>${espalhados} item(ns)</b> precisam de mais de um depósito para fechar a quantidade — a retirada é em ${nDeps.size} lugar${nDeps.size > 1 ? 'es' : ''}`);
     if (faltando) partes.push(`<b>${faltando} item(ns)</b> com <b>${kg(kgFalta)} a menos</b> no depósito do que a carteira aponta`);
     return `<div style="background:#FDF0D5;border-left:4px solid #C99A2E;border-radius:7px;padding:8px 10px;margin:0 0 8px;font-size:12px;line-height:1.45;color:#5A3D06">
       📦 <b>Antes de programar a carga:</b><br>${partes.join('<br>')}
