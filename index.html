@@ -965,7 +965,7 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.991.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.992.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2991,7 +2991,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.991.0';
+const APP_VER = '3.992.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4801,6 +4801,10 @@ async function carregarSaudeImport(manual) {
 /* zera TODOS os caches de dados. O Análise+ e a Conferência mantêm cache próprio:
    sem limpar aqui, uma reimportação corrigida não aparecia nessas abas. */
 function limparCachesDados() {
+  /* 21/08/2026: derruba TAMBÉM a cópia local do mês. Importar um PDF pelo app
+     grava linhas novas sem bater o dados_carimbo — sem esta linha, importar não
+     mudaria nada na tela, que é o pior desfecho possível. */
+  try { _cacheLimpar(); _pularCache = true; setTimeout(() => { _pularCache = false; }, 15000); } catch (_) { }
   dadosPainel = dadosPainelFull = null; dadosAnalise = null;
   try { _kgcxCache = null; } catch (_) {}
   try { _amCacheMes = null; _amCacheAno = null; _amCacheChave = null; } catch (_) {}
@@ -13156,6 +13160,116 @@ function _reusarTexto(arr) {
   return arr;
 }
 
+/* ============ CÓPIA LOCAL DO MÊS (IndexedDB) — 21/08/2026 ============
+   João: "guardar o mês no app, só o mês atual". O ganho é a SEGUNDA abertura:
+   os números aparecem na hora, sem esperar a rede.
+
+   Por que IndexedDB e não localStorage: agosto inteiro dá 5,7 MB de JSON
+   (paradas sozinha são 3,9 MB). O localStorage tem teto de 5 MB e é SÍNCRONO —
+   gravar isso congelaria o app no meio da carga. Funciona igual no PC e no
+   iPhone; é a mesma API do navegador.
+
+   O que garante que o dado não fica velho, em três camadas:
+   1. CARIMBO. `app_config.dados_carimbo` é batido pelo cron das 07:05. A cópia
+      local só vale se o carimbo dela for igual ao do banco — uma consulta de
+      200 bytes decide isso antes de qualquer coisa.
+   2. IMPORTAR PELO APP NÃO BATE O CARIMBO. Quem importa um PDF grava linhas
+      novas sem mexer no app_config. Por isso limparCachesDados() — que já roda
+      em toda importação, no 🔄 e ao apagar importação — agora APAGA a cópia
+      local também. Sem isso, importar não mudaria a tela.
+   3. SÓ MÊS FECHADO NO SELETOR. Período "dia", "ano", "tudo" e personalizado
+      não usam cópia local: são recortes que mudam de significado conforme o dia.
+
+   ARMADILHA QUE ISTO EVITA (a razão do put() ser imediato, sem adiar):
+   aplicarDiaOperacional() e classificarPerdas() MEXEM nas linhas depois que o
+   fetch volta — trocam o campo `dia` e acrescentam campos. Se a gravação fosse
+   adiada, ela salvaria a linha JÁ deslocada, e na abertura seguinte o
+   deslocamento aconteceria DE NOVO em cima do dado deslocado. Um dia de
+   diferença, sem erro nenhum na tela. Gravar antes de devolver o array é o que
+   impede isso — o navegador copia o valor na hora da chamada. */
+const _CDB = 'rp_cache', _CST = 'dados';
+let _idbP = null, _cacheLimpo = false, _pularCache = false;
+function _idb() {
+  if (_idbP) return _idbP;
+  _idbP = new Promise((ok2, nao) => {
+    try {
+      if (!window.indexedDB) return ok2(null);
+      const r = window.indexedDB.open(_CDB, 1);
+      r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains(_CST)) d.createObjectStore(_CST, { keyPath: 'k' }); };
+      r.onsuccess = () => ok2(r.result);
+      r.onerror = () => nao(r.error);
+      r.onblocked = () => ok2(null);
+    } catch (e) { nao(e); }
+  }).catch(() => null);
+  return _idbP;
+}
+function _idbOp(modo, fn) {
+  return _idb().then(db => {
+    if (!db) return null;
+    return new Promise((ok2) => {
+      try {
+        const tx = db.transaction(_CST, modo), st = tx.objectStore(_CST);
+        const req = fn(st);
+        tx.onabort = tx.onerror = () => ok2(null);
+        if (req) { req.onsuccess = () => ok2(req.result); req.onerror = () => ok2(null); }
+        else tx.oncomplete = () => ok2(true);
+      } catch (_) { ok2(null); }
+    });
+  }).catch(() => null);
+}
+const _cacheGet = k => _idbOp('readonly', st => st.get(k));
+const _cachePut = rec => _idbOp('readwrite', st => st.put(rec));   // clona AGORA, antes de qualquer mutação
+function _cacheLimpar() { _idbOp('readwrite', st => st.clear()); }
+// mês diferente do que está na tela vira lixo: ninguém reabre agosto em outubro
+function _cacheSoEsteMes(ym) {
+  if (_cacheLimpo) return; _cacheLimpo = true;
+  _idbOp('readwrite', st => {
+    try {
+      const c = st.openCursor();
+      c.onsuccess = e => { const cur = e.target.result; if (!cur) return; if (cur.value && cur.value.ym !== ym) cur.delete(); cur.continue(); };
+    } catch (_) { }
+    return null;
+  });
+}
+function _hashTxt(s) { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); }
+async function carimboAtual() {
+  if (_carimboDados !== null) return _carimboDados;
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'dados_carimbo').maybeSingle();
+    _carimboDados = data ? String(data.valor || '') : '';
+  } catch (_) { _carimboDados = ''; }
+  return _carimboDados;
+}
+/* Mesma assinatura do fetchTudo, de propósito: onde o cache não se aplica ela
+   simplesmente encaminha, e o resto do app não sabe que isto existe. */
+let _veioDoCache = 0;
+async function fetchCache(tabela, colunas, de, ate, filtroExtra) {
+  let k = null, carimbo = '';
+  const podeCache = !_pularCache && !!(periodoSel && periodoSel.tipo === 'mes' && periodoSel.ym && de && ate);
+  if (podeCache) {
+    try {
+      carimbo = await carimboAtual();
+      if (carimbo) {
+        _cacheSoEsteMes(periodoSel.ym);
+        k = 'm|' + periodoSel.ym + '|' + tabela + '|' + _hashTxt(String(colunas) + '~' + (filtroExtra || '') + '~' + de + '~' + ate);
+        const rec = await _cacheGet(k);
+        if (rec && rec.carimbo === carimbo && Array.isArray(rec.v)) { _veioDoCache++; return rec.v; }
+      }
+    } catch (_) { k = null; }
+  }
+  const arr = await fetchTudo(tabela, colunas, de, ate, filtroExtra);
+  /* CÓPIA AGORA, NA MÃO. Eu tinha escrito `v: arr` confiando que o navegador
+     clonaria na hora da chamada — não clona: o _idbOp abre o banco primeiro, e
+     essa abertura é assíncrona. Quando a transação enfim roda, o
+     aplicarDiaOperacional já mexeu no campo `dia` das mesmas linhas, e o que
+     iria para o disco seria o dado JÁ deslocado — que na abertura seguinte
+     seria deslocado outra vez. Um dia de diferença, sem erro na tela.
+     A linha abaixo tira um retrato do array antes de devolvê-lo. */
+  if (k && carimbo) {
+    try { _cachePut({ k, carimbo, ym: periodoSel.ym, v: arr.map(r => Object.assign({}, r)), em: Date.now() }); } catch (_) { }
+  }
+  return arr;
+}
 async function fetchTudo(tabela, colunas, de, ate, filtroExtra) {
   const arr = await _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra);
   const out = (typeof colunas === 'string' && colunas.indexOf('recurso_nome') >= 0) ? _fixNomeMaq(arr) : arr;
@@ -13416,14 +13530,15 @@ async function carregarPainel() {
          boca) e paradas, refugo e consumo entram ATRÁS, em segundo plano.
          Enquanto não chegam, uma tarja fixa avisa que parada e perda estão
          incompletas — número errado na tela é pior que tela lenta. */
+      _veioDoCache = 0;
       let [producao, boca] = await Promise.all([
-        fetchTudo('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
+        fetchCache('producao_resumo', 'dia,turno,recurso_cod,recurso_nome,quantidade,unidade,peso', de, ateX),
         // boca (cavidades) por maquina e dia — usada para mostrar a boca predominante
         /* 20/08/2026 (Joao: "Carregando dados... e nao passa") - ESTE ERA O TRAVAMENTO.
            fetchTudo pagina; a view calculada refazia 8 expressoes regulares sobre as
            110 mil linhas de producao A CADA PAGINA (861 ms de media, 3,8 s de pico).
            A materializada devolve a mesma coisa em 2 ms, com indice por dia. */
-        fetchTudo('mv_boca_maquina_dia', 'dia,recurso_cod,boca,peso,quantidade', de, ateX)
+        fetchCache('mv_boca_maquina_dia', 'dia,recurso_cod,boca,peso,quantidade', de, ateX)
       ]);
       let paradas = [], consumo = [], perdas = [], perdasCli = [], prod622 = [];
       // a lista de dias isolados precisa estar lida ANTES: quem filtra é o próprio
@@ -13480,6 +13595,10 @@ async function carregarPainel() {
         lista.map(s => `<option value="${s}">${s}</option>`).join('');
       if (prevSetor && [...sel.options].some(o => o.value === prevSetor)) sel.value = prevSetor;
       setTimeout(sincSetorGlobal, 0);
+      /* sinal na tela de que a cópia local foi usada. Serve para conferir que
+         está funcionando — e para ninguém achar que o app ficou rápido por
+         mágica quando na verdade está lendo do aparelho. */
+      if (_veioDoCache) { try { toast('⚡ Mês carregado do aparelho'); } catch (_) { } }
       /* FASE 2 dispara aqui, sem await: o render logo abaixo não espera por ela. */
       _cargaResto = _carregarResto(de, ate, ateX, imps, ++_restoSeq);
     } catch (e) {
@@ -13545,23 +13664,23 @@ async function _carregarResto(de, ate, ateX, imps, seq) {
   _restoPend = true; _tarjaResto(true);
   try {
     let [paradas, consumo, perdas, prod622] = await Promise.all([
-      fetchTudo('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX),
+      fetchCache('paradas', 'dia,recurso_cod,recurso_nome,motivo_desc,tempo_horas,inicio,fim,op,item_cod,item_desc', de, ateX),
       /* 21/08/2026: só BOBINA. Os OITO lugares que leem D.consumo filtram
          /BOBINA/i antes de qualquer conta — as outras 6.547 linhas do mês
          (81% do total) eram baixadas, guardadas e nunca lidas. */
-      fetchTudo('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX, 'componente_desc.ilike.%BOBINA%'),
+      fetchCache('consumo', 'dia,recurso_cod,recurso_nome,componente_desc,hora,peso,unidade', de, ateX, 'componente_desc.ilike.%BOBINA%'),
       /* 04/08/2026: faltavam quantidade e unidade — sem elas o detalhe de perdas
          mostrava a coluna de caixas toda com "—", mesmo com o dado no banco. */
-      fetchTudo('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso,quantidade,unidade,op,item_cod,item_desc', de, ateX),
+      fetchCache('perdas', 'dia,turno,recurso_cod,recurso_nome,tipo_perda_desc,peso,quantidade,unidade,op,item_cod,item_desc', de, ateX),
       /* o 622 é o único com item_desc: sem ele não há como converter caixa em peça.
          Só a métrica milheiro usa. Trocando para milheiro, mudarMetricaGlobal()
          busca na hora — 13.209 linhas que o resto do tempo não são lidas. */
       (($('fMetrica') && $('fMetrica').value) === 'milheiro'
-        ? fetchTudo('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
+        ? fetchCache('producao', 'dia,turno,recurso_cod,item_cod,item_desc,quantidade,unidade,peso', de, ateX)
         : Promise.resolve([]))
     ]);
     let perdasCli = [];
-    try { perdasCli = await fetchTudo('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate); } catch (_) { }
+    try { perdasCli = await fetchCache('perdas_cliente', 'dia,etapa,tipo_perda_desc,cliente,peso,quantidade,item_desc', de, ate); } catch (_) { }
     if (seq !== _restoSeq) return;   // o período mudou no meio do caminho: joga fora
     // dia operacional 06:00→05:59 (mesma regra da fase 1)
     aplicarDiaOperacional(paradas, 'inicio');
