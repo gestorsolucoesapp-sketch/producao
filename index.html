@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.999.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.000.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,7 +3034,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.999.0';
+const APP_VER = '4.000.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13509,10 +13509,39 @@ async function _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra) {
     // sem varrer a tabela toda — evita o statement timeout.
     return q.order('dia', { ascending: true }).order('id', { ascending: true }).range(desde, ateAqui);
   };
+  /* 22/08/2026 (João: "antes travava nas 46.000 linhas, agora trava nas 2.900").
+     ESTE ERA O TRAVAMENTO DE VERDADE, e não o tamanho do arquivo.
+     Cada página é um fetch SEM PRAZO. Quando uma delas não responde — 4G que
+     oscila, conexão que morre em segundo plano no iOS — a promessa nunca
+     resolve, o Promise.all nunca termina, e o "Carregando… X linhas" fica ali
+     para sempre num número quebrado. Foi exatamente o que o print mostrou: 2.290
+     de 3.290 linhas, parado.
+     Agora cada página tem 12 s de prazo. Estourou, aborta e refaz — até três
+     vezes. Se as três falharem, o erro sobe e a tela DIZ que falhou, em vez de
+     fingir que ainda está carregando. */
+  const montaSeguro = async (desde, ateAqui) => {
+    let ultimo = null;
+    for (let tent = 1; tent <= 3; tent++) {
+      let tmr = null;
+      try {
+        const ctrl = new AbortController();
+        tmr = setTimeout(() => { try { ctrl.abort(); } catch (_) { } }, 12000);
+        const r = await monta(desde, ateAqui).abortSignal(ctrl.signal);
+        clearTimeout(tmr);
+        if (r.error) throw r.error;
+        return r;
+      } catch (e) {
+        if (tmr) clearTimeout(tmr);
+        ultimo = e;
+        if (tent < 3) await new Promise(r => setTimeout(r, 400 * tent));
+      }
+    }
+    throw ultimo || new Error('sem resposta do banco');
+  };
 
   // 1ª página serve de amostra: se couber tudo nela, acabou em uma ida só.
   let r0;
-  try { r0 = await monta(0, PEDIDO - 1); } catch (e) { r0 = { error: e }; }
+  try { r0 = await montaSeguro(0, PEDIDO - 1); } catch (e) { r0 = { error: e }; }
   if (r0.error) throw r0.error;
   const p0 = r0.data || [];
   _conta(p0.length);
@@ -13542,7 +13571,7 @@ async function _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra) {
     // sem count: cai no modo seguro, sequencial
     let tudo = p0.slice(), ini = passo;
     while (ini < TETO) {
-      const r = await monta(ini, ini + passo - 1);
+      const r = await montaSeguro(ini, ini + passo - 1);
       if (r.error) throw r.error;
       const d = r.data || [];
       _conta(d.length);
@@ -13561,14 +13590,13 @@ async function _fetchTudoRaw(tabela, colunas, de, ate, filtroExtra) {
     const lote = faixas.slice(g, g + CONC);
     const res = await Promise.all(lote.map(async ([a, b], k) => {
       try {
-        const r = await monta(a, b);
-        if (r.error) throw r.error;
+        const r = await montaSeguro(a, b);
         _conta((r.data || []).length);
         return r.data || [];
       } catch (e) {
-        // uma página que falha não derruba a carga inteira: tenta menor
+        // uma página que falha não derruba a carga inteira: tenta em duas metades
         const meio = Math.floor((a + b) / 2);
-        const r1 = await monta(a, meio), r2 = await monta(meio + 1, b);
+        const r1 = await montaSeguro(a, meio), r2 = await montaSeguro(meio + 1, b);
         return (r1.data || []).concat(r2.data || []);
       }
     }));
