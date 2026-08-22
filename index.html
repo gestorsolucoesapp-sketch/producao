@@ -1004,7 +1004,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.001.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.002.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3034,11 +3034,36 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.001.0';
+const APP_VER = '4.002.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
-const sb = supabase.createClient(SB_URL, SB_KEY);
+/* 22/08/2026, 06h — o print da manhã: toast "mês carregado do aparelho" na
+   tela e o Painel parado em "Carregando dados…". Ou seja: a carga principal
+   veio, e uma consulta AVULSA de depois (meta de atenção, config) ficou
+   pendurada sem prazo. O fetchTudo já tinha ganhado prazo na 4.000.0; as
+   dezenas de consultas de um tiro só, não.
+   Em vez de caçar uma por uma: o PRÓPRIO CLIENTE do Supabase passa a usar um
+   fetch com prazo de 25 s. Vale para toda consulta, login incluído. Estourou,
+   o erro SOBE e a tela mostra "tentar de novo" — pendurado para sempre, nunca
+   mais.
+   Fora do prazo, de propósito: /storage/v1/ (foto de OS na 4G da fábrica pode
+   demorar mais que isso legitimamente) e as Edge Functions (ai-chat, os-ocr),
+   que nem passam por aqui — usam fetch direto. */
+const _fetchComPrazo = (url, opts) => {
+  opts = opts || {};
+  try {
+    if (String(url).indexOf('/storage/v1/') >= 0) return fetch(url, opts);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => { try { ctrl.abort(new DOMException('sem resposta do banco em 25 s', 'TimeoutError')); } catch (_) { try { ctrl.abort(); } catch (__) { } } }, 25000);
+    if (opts.signal) {
+      if (opts.signal.aborted) ctrl.abort();
+      else opts.signal.addEventListener('abort', () => { try { ctrl.abort(opts.signal.reason); } catch (_) { try { ctrl.abort(); } catch (__) { } } }, { once: true });
+    }
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() => clearTimeout(t));
+  } catch (_) { return fetch(url, opts); }
+};
+const sb = supabase.createClient(SB_URL, SB_KEY, { global: { fetch: _fetchComPrazo } });
 // captura logo no início se o link é de recuperação de senha
 const HASH_INICIAL = location.hash || '';
 let emRecovery = /type=recovery/.test(HASH_INICIAL);
