@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.044.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.045.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.044.0';
+const APP_VER = '4.045.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -7312,11 +7312,36 @@ document.addEventListener('touchstart', e => {
    todas as chamadas feitas depois — nenhuma linha delas precisou ser tocada.
    Quando um desenho passa de 1 s, as três mais caras entram no registro do 🧊,
    com nome e número de chamadas. Aí o conserto é mirado. */
+/* 22/08, 15h30 — A REDE ESTAVA CURTA. O registro do João marcou 4,4 s de tela
+   travada e as funções medidas somaram 354 ms: 8% do tempo. Os outros 92%
+   estavam em código que eu não tinha embrulhado. Sem medir tudo, o cronômetro
+   aponta o inocente que por acaso estava sendo observado.
+   Entram agora as telas de configuração (onde ele estava quando travou), o
+   desenho das outras abas e as funções de agregação pesada. */
 const _PROF_ALVOS = ['renderPainel', 'cardAbaixoMeta', 'kgPerdidoParadas', 'computeOEE',
   'analiseTurnoCompleta', 'cardSetupsMaquina', 'aplicarMaqGlobal', 'classificarPerdas',
-  'aplicarDiaOperacional', 'filtraPeriodoOperacional'];
+  'aplicarDiaOperacional', 'filtraPeriodoOperacional',
+  'renderParadasChave', 'renderLimpaRotina', 'renderDiagPausa', 'carregarUsuarios',
+  'renderAnaliseMais', 'renderOEE', 'carregarPainel', 'recarregarAbaAtual',
+  'cardParadasTotais', 'cardPerdaMeta', 'cardMilSemRegra', 'gMaqPeso',
+  'paretoSVG', 'paretoHorizontal', 'renderProgramacao', 'cardDestrava',
+  '_alocarEstoque', 'aplicarPadraoParadas', 'medirTopoApp', 'trocarAba'];
 let _prof = {};
 function _profZera() { _prof = {}; }
+/* O innerHTML volta rápido e o navegador só DEPOIS monta e posiciona tudo —
+   esse custo não cai em cronômetro de função nenhuma, e é o principal suspeito
+   dos 92% que faltavam. Isto mede o intervalo entre o fim do desenho e o quadro
+   seguinte da tela, que é exatamente o tempo de montagem e posicionamento. */
+let _profPintura = 0;
+function _medePintura(marca) {
+  try {
+    const t0 = performance.now();
+    requestAnimationFrame(() => {
+      const d = performance.now() - t0;
+      if (d > 80) { _profPintura = Math.max(_profPintura, d); _prof['🎨 pintar a tela' + (marca ? ' (' + marca + ')' : '')] = { ms: d, n: 1 }; }
+    });
+  } catch (_) { }
+}
 function _profTop(n) {
   return Object.entries(_prof).sort((a, b) => b[1].ms - a[1].ms).slice(0, n || 3)
     .map(([k, v]) => k + ' ' + Math.round(v.ms) + 'ms×' + v.n);
@@ -9642,7 +9667,12 @@ function p643Todos(liga) {
   _p643 = new Set(liga ? Object.keys(P643) : []);
   try { localStorage.setItem(P643_CH, JSON.stringify([..._p643])); } catch (_) { }
   try { renderParadasChave(); } catch (_) { }
-  try { recarregarPainel(); } catch (_) { }
+  /* 22/08, 15h30 — o registro do João mostrou renderPainel rodando CINCO vezes
+     enquanto ele estava na aba Acesso, mexendo nas chaves. Desenhar o Painel
+     estando em outra aba é trabalho jogado fora: ninguém está vendo. Aqui só
+     invalida o cache; o desenho acontece quando ele voltar para o Painel. */
+  try { limparCachesDados(); } catch (_) { }
+  try { if (_abaAtual === 'painel') carregarPainel(); } catch (_) { }
 }
 const PARADAS_CH = 'rp_paradas_on';
 let _paradasLigado = (() => { try { return localStorage.getItem(PARADAS_CH) === '1'; } catch (_) { return false; } })();
@@ -14368,6 +14398,7 @@ async function carregarPainel() {
   }
   _pnEtapa = 'pronto';
   _pnCaoLimpa();
+  try { _medePintura('painel'); } catch (_) { }
 }
 /* ==================== FASE 2 — O RESTO, EM SEGUNDO PLANO ====================
    21/08/2026. Paradas (15.808 linhas no mês), refugo (4.218), consumo de bobina
