@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.049.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.050.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1995,6 +1995,9 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        Com uma marca só, um relatório poderia ser confundido com outro — e ler o
        643 como se fosse 624 gravaria parada na tabela de refugo. */
     const tem = rx => linhas.some(l => rx.test(l.texto));
+    /* RVEN002 — duas marcas, como as outras: o cabeçalho de Região e a linha de
+       Pedido com Vendedor. Sozinha, "Região:" apareceria em outros relatórios. */
+    if (tem(/^Regi[ãa]o:\s*\d/) && tem(/^Pedido:\s*\d+.*Vendedor:/)) return 'RVEN002';
     // 643 — paradas: motivo como grupo, e as colunas com Início/Fim/Tempo
     if (tem(/^Motivo Parada:\s*\d+/) && tem(/^Data\s+Ordem\s+Recurso\s+In[ií]cio\s+Fim\s+Tempo/)) return '643';
     // 622 — itens: Item e Turno como grupo, e as colunas de produção
@@ -2287,6 +2290,64 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   }
 
   // ---------- RPCP643: paradas Motivo x OP x Dia x Item ----------
+  /* ===== RVEN002 — Documentos por Região × Sub-Região (22/08/2026) =====
+     Serve de TRADUTOR: pedido → UF, região, sub-região e representante. Essa
+     informação não existe em nenhum outro relatório do app, e é o que falta para
+     desenhar o mapa. Peso, cliente e situação de reserva já vêm do REST196 e do
+     REST241 — aqui não se lê nada disso.
+
+     Por isso ele lê SÓ OS CABEÇALHOS e ignora as linhas de item. O arquivo do
+     João tem 1.771 páginas; ler item a item seria baixar um caminhão para
+     carregar um envelope. Uma linha por pedido, e pronto. */
+  function parseRVEN002(linhas, periodo) {
+    const out = [];
+    let regiao = null, sub = null;
+    const vis = new Set();
+    linhas.forEach(l => {
+      const t = (l.texto || '').trim();
+      let m;
+      if ((m = /^Região:\s*(.+?)\s*$/.exec(t)) && !/Sub-Regi/.test(t)) { regiao = m[1].trim(); return; }
+      if ((m = /^Sub-Região:\s*(.+?)\s*$/.exec(t))) { sub = m[1].trim(); return; }
+      /* o cabeçalho do pedido vem tudo numa linha só, com rótulos fixos. Pego
+         cada campo pelo rótulo em vez de contar posição: o ERP muda largura de
+         coluna sem avisar, e já quebrou três leitores hoje por isso. */
+      if (/^Pedido:/.test(t)) {
+        const ped = (/Pedido:\s*([\d]+)/.exec(t) || [])[1];
+        if (!ped || vis.has(ped)) return;
+        const emi = (/Emiss[ãa]o:\s*(\d{2}\/\d{2}\/\d{4})/.exec(t) || [])[1];
+        const cid = (/Cidade\s*\/\s*UF:\s*(.+?)\s{2,}|Cidade\s*\/\s*UF:\s*(.+?)\s+Fluxo/.exec(t) || [])[1];
+        const cid2 = cid || (/Cidade\s*\/\s*UF:\s*(.+)$/.exec(t) || [])[1] || '';
+        const flx = (/Fluxo\/Situa[çc][ãa]o:\s*(.+?)\s{2,}|Fluxo\/Situa[çc][ãa]o:\s*(.+?)\s+Vendedor/.exec(t) || []).slice(1).find(Boolean) || '';
+        const ven = (/Vendedor:\s*(.+?)\s*$/.exec(t) || [])[1] || '';
+        const mv = /^(\d+)\s*-\s*(.+)$/.exec(ven.trim());
+        // "GOIANIA - GO" → cidade e UF; a UF é o que o mapa usa
+        /* "VARGEM GRANDE DO SUL - " aparece sem a UF em alguns pedidos. Sem UF o
+           ponto não tem onde ser pintado no mapa; limpo o traço solto para o
+           nome da cidade não ficar sujo e deixo a UF nula — quem não tem estado
+           vai para um contador de "sem UF" em vez de sumir calado. */
+        const cidLimpa = String(cid2).trim().replace(/\s*-\s*$/, '');
+        const mc = /^(.*?)\s*-\s*([A-Z]{2})\s*$/.exec(cidLimpa);
+        vis.add(ped);
+        out.push({
+          pedido: ped, emissao: dataBR(emi) || null,
+          cidade: mc ? mc[1].trim() : (cidLimpa || null),
+          uf: mc ? mc[2] : null,
+          regiao, sub_regiao: sub,
+          vendedor_cod: mv ? mv[1] : null, vendedor_nome: mv ? mv[2].trim() : (ven.trim() || null),
+          situacao: flx.trim() || null,
+          cliente_cod: null, cliente_nome: null, _i: out.length
+        });
+        return;
+      }
+      // o cliente vem na linha seguinte e completa o último pedido lido
+      if ((m = /^Cliente:\s*(\d+)\s*-\s*(.+?)\s*$/.exec(t)) && out.length) {
+        const u = out[out.length - 1];
+        if (!u.cliente_cod) { u.cliente_cod = m[1]; u.cliente_nome = m[2].trim(); }
+      }
+    });
+    return out.map(o => { delete o._i; return o; });
+  }
+
   function parse643(linhas, periodo) {
     const out = [];
     let motivo = null, op = null, diaRef = null, item = null;
@@ -2446,7 +2507,8 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     '339': 'Fila de produção por Data/Pedido (todas as máquinas num arquivo)',
     '241': 'Saldos de Estoque por Depósito',
     '196': 'Saldos de Estoque × Pedidos (carteira em aberto)',
-    'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)'
+    'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)',
+    'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)'
   };
 
 
@@ -3072,6 +3134,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       case '241': registros = parse241(linhas, periodo); break;
       case '196': registros = parse196(linhas, periodo); break;
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
+      case 'RVEN002': registros = parseRVEN002(linhas, periodo); break;
     }
     /* PDF DE UM DIA SO, SEM CABECALHO. O RPCP624 gerado dia a dia sai sem o bloco
        "Período:" — entao acharPeriodo devolve vazio e nao da para saber o dia pelo
@@ -3129,7 +3192,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.049.0';
+const APP_VER = '4.050.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9807,7 +9870,7 @@ const ROT_NOME = {
   '621': 'Produção (resumo)', '622': 'Produção detalhada / itens', '624': 'Refugo',
   '054': 'Perda por cliente', '643': 'Paradas', '646': 'Consumo de componentes',
   '196': 'REST196 · carteira', '241': 'REST241 · estoque', '264': 'Fila por recurso',
-  '339': 'Fila por data/pedido'
+  '339': 'Fila por data/pedido', 'RVEN002': 'RVEN002 · região e representante'
 };
 async function renderLimpaRotina() {
   const box = $('cardLimpaRot'); if (!box) return;
@@ -24480,6 +24543,11 @@ async function comecarDoZero() {
 /* ================= IMPORTAÇÃO ================= */
 // mapeia registro do parser -> linha da tabela
 const MAPA = {
+  'RVEN002': { tabela: 'pedidos_regiao', linha: r => ({
+      pedido: r.pedido, emissao: r.emissao, cidade: r.cidade, uf: r.uf,
+      regiao: r.regiao, sub_regiao: r.sub_regiao,
+      vendedor_cod: r.vendedor_cod, vendedor_nome: r.vendedor_nome,
+      cliente_cod: r.cliente_cod, cliente_nome: r.cliente_nome, situacao: r.situacao }) },
   '621': { tabela: 'producao_resumo', linha: r => ({ dia: r.dia, turno: r.turno, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '622': { tabela: 'producao', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, ident: r.ident, data_inicio: r.data_inicio, data_fim: r.data_fim, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '624': { tabela: 'perdas', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, data: r.data, ordem: r.ordem, acessorio: r.acessorio, tipo_perda_cod: r.tipo_perda_cod, tipo_perda_desc: r.tipo_perda_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
