@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.029.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.030.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3129,7 +3129,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.029.0';
+const APP_VER = '4.030.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19028,8 +19028,26 @@ async function ppCarregar(setor, de, ate, alvo) {
     const maqs = (SETOR_MAQ[setor] || []).map(String);
     let q = sb.from('v_peso_peca_dia').select('*').gte('dia', de).lte('dia', ate);
     if (maqs.length) q = q.in('recurso_cod', maqs);
-    const { data, error } = await q;
+    /* 22/08/2026 (João: "dia 17/08 não foi 8,7, foi 10,2").
+       O card mostrava 8,4 t e o gráfico de cima, no mesmo dia e no mesmo setor,
+       10,7 t. Os dois estavam certos — vinham de relatórios diferentes:
+
+       o gráfico usa o 621, que agrupa por dia de apontamento;
+       este card usava o 622, que data a linha pelo INÍCIO da OP.
+
+       OP que começa 16/08 e fecha no 17 conta no dia 16 pelo 622 e no 17 pelo
+       621. No mês fecha igual (2.263 t contra 2.264 t), mas no DIA divergem — e
+       dois números diferentes para "quanto a Impressão produziu no dia 17" é
+       exatamente o tipo de coisa que faz perder a confiança na tela inteira.
+       Agora o QUILO sai do 621, a mesma fonte de todo o resto do app. Do 622
+       vem só o que ele tem de próprio: a contagem de peças, que depende do
+       item_desc e não existe no 621. */
+    let q2 = sb.from('producao_resumo').select('dia,recurso_cod,peso').gte('dia', de).lte('dia', ate);
+    if (maqs.length) q2 = q2.in('recurso_cod', maqs);
+    const [{ data, error }, { data: dRes }] = await Promise.all([q, q2]);
     if (error) throw error;
+    const kgOficial = {};
+    (dRes || []).forEach(r => { const d = String(r.dia).slice(0, 10); kgOficial[d] = (kgOficial[d] || 0) + (+r.peso || 0); });
     // agrega o setor por dia: g/peça do dia é kg total ÷ peças totais, não média de médias
     /* cobertura: quanto do peso do dia tem a conversão caixa→peça na descrição.
        Abaixo de 100% o g/peça é estimado sobre parte do dia, e a tela avisa —
@@ -19040,11 +19058,17 @@ async function ppCarregar(setor, de, ate, alvo) {
       porDia[d].kg += +r.kg || 0; porDia[d].mi += +r.milheiros || 0;
       porDia[d].kgOk += (+r.kg || 0) * ((+r.cobertura_pct || 0) / 100);
     });
+    // dia que só existe no 621 (nenhuma linha de item) também entra, com barra vazia
+    Object.keys(kgOficial).forEach(d => { if (!porDia[d]) porDia[d] = { dia: d, kg: 0, mi: 0, kgOk: 0 }; });
     _ppCache[chave] = Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1)
       .map(x => Object.assign(x, {
-        // g/peça usa só o peso coberto, igual à view — dividir o peso todo inflava o número
+        /* g/peça continua saindo do 622: é kg e peças da MESMA linha, então a
+           divisão é coerente mesmo que o dia dele seja o do início da OP. */
         g: x.mi > 0 ? (x.kgOk / x.mi) : null,
-        cob: x.kg > 0 ? Math.round(x.kgOk / x.kg * 100) : 100
+        cob: x.kg > 0 ? Math.round(x.kgOk / x.kg * 100) : 100,
+        // o quilo exibido é o oficial do 621; o do 622 fica guardado para a conta acima
+        kg622: x.kg,
+        kg: kgOficial[x.dia] != null ? kgOficial[x.dia] : x.kg
       }));
     ppRender(alvo, _ppCache[chave]);
   } catch (e) {
