@@ -1019,7 +1019,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.010.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.011.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2116,20 +2116,29 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   // ---------- RPCP624: perdas Turno x OP x Item ----------
   function parse624(linhas, periodo) {
     // contexto Turno/OP/Item corre em paralelo às colunas
-    const contexto = []; // [{idx, turno, op, item}]
-    let turno = null, op = null, item = null;
+    /* 22/08/2026 — LAYOUT NOVO DO 624 (Recurso Causa × Tipo Perda × Turno).
+       O relatório passou a trazer a MÁQUINA como cabeçalho de grupo
+       ("Recurso Causa: 501 - EXTRUSORA RULLI 01") e o TURNO como coluna. Antes
+       era o contrário. Resultado da primeira importação de hoje: 4.671 linhas
+       entraram com máquina, turno e OP TODOS nulos — refugo sem dono, que é
+       pior que refugo faltando, porque o total fecha e ninguém desconfia.
+       Agora o leitor entende os dois desenhos. */
+    const contexto = []; // [{idx, turno, op, item, rec}]
+    let turno = null, op = null, item = null, rec = null;
     linhas.forEach((l, i) => {
       let m;
       if ((m = /^Turno: (\d)$/.exec(l.texto))) turno = +m[1];
       else if ((m = /^OP: (\d+)$/.exec(l.texto))) op = m[1];
       else if ((m = /^Item: (\d+) - (.+)$/.exec(l.texto))) item = { cod: m[1], desc: m[2].trim() };
-      contexto[i] = { turno, op, item };
+      else if ((m = /^Recurso(?: Causa)?: *(\d+) - (.+)$/.exec(l.texto))) rec = { cod: m[1], nome: m[2].trim() };
+      contexto[i] = { turno, op, item, rec };
     });
 
     const cols = [
       { nome: 'Data', chave: 'data' }, { nome: 'Ordem', chave: 'ordem' },
       { nome: 'Item/Versão', chave: 'item' }, { nome: 'Acessório', chave: 'acessorio' },
-      { nome: 'Tipo Perda', chave: 'tipo_perda' }, { nome: 'Recurso', chave: 'recurso' },
+      { nome: 'Tipo Perda', chave: 'tipo_perda' }, { nome: 'Turno', chave: 'turno_col' },
+      { nome: 'Recurso', chave: 'recurso' },
       { nome: 'Quantidade', chave: 'quantidade' }, { nome: 'UN', chave: 'un' },
       { nome: 'Peso', chave: 'peso' }
     ];
@@ -2145,8 +2154,11 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       if (t.startsWith('Data Ordem') && t.includes('Tipo Perda')) {
         colX = cols.map(c => {
           const it = linha.itens.find(x => x.s === c.nome || x.s.startsWith(c.nome));
-          return { chave: c.chave, x: it ? it.x : 0 };
-        }).sort((a, b) => a.x - b.x);
+          return { chave: c.chave, x: it ? it.x : -1 };
+        /* coluna que NÃO existe neste layout ficava com x=0 e ia parar na frente
+           de todas as outras — engolindo o valor da primeira coluna real. Sai
+           do mapa: o que não está no cabeçalho não tem lugar na linha. */
+        }).filter(c => c.x >= 0).sort((a, b) => a.x - b.x);
         fecha(); return;
       }
       if (!colX) return;
@@ -2175,16 +2187,20 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       return {
         // a data da PRÓPRIA linha manda; periodo.de é só reserva pra linha sem
         // data. Invertido, todo o mês colapsava no primeiro dia do relatório.
-        dia: _diaUnico(periodo) || dataBR(v.data) || periodo.de, turno: c.turno,
-        op: c.op, item_cod: c.item ? c.item.cod : (mi ? mi[1] : null),
+        dia: _diaUnico(periodo) || dataBR(v.data) || periodo.de,
+        // turno e OP: cabeçalho de grupo no layout antigo, coluna da linha no novo
+        turno: (c.turno != null ? c.turno : (/^\d$/.test(String(v.turno_col || '').trim()) ? +String(v.turno_col).trim() : null)),
+        op: c.op || v.ordem || null,
+        item_cod: c.item ? c.item.cod : (mi ? mi[1] : null),
         item_desc: c.item ? c.item.desc : (mi ? mi[3] : null),
         item_versao: mi ? mi[2] : null,
         data: dataBR(v.data), ordem: v.ordem || null,
         acessorio: v.acessorio || null,
         tipo_perda_cod: tp ? tp[1] : null,
         tipo_perda_desc: tp ? tp[2].trim() : (v.tipo_perda || null),
-        recurso_cod: rc ? rc[1] : null,
-        recurso_nome: rc ? rc[2].trim() : (v.recurso || null),
+        // máquina: coluna Recurso no layout antigo, cabeçalho "Recurso Causa" no novo
+        recurso_cod: rc ? rc[1] : (c.rec ? c.rec.cod : null),
+        recurso_nome: rc ? rc[2].trim() : (v.recurso || (c.rec ? c.rec.nome : null)),
         quantidade: numBR(v.quantidade), unidade: v.un || null, peso: numBR(v.peso)
       };
     }).filter(r => r.data && r.quantidade != null);
@@ -3057,7 +3073,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.010.0';
+const APP_VER = '4.011.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
