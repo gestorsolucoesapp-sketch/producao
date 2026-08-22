@@ -1000,7 +1000,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.996.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v3.997.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3030,7 +3030,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '3.996.0';
+const APP_VER = '3.997.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3889,8 +3889,18 @@ function telaEspera(titulo, msg, icone) {
 }
 
 // depois de autenticar: carrega perfil, decide acesso
-async function posLogin() {
-  const { data: { user } } = await sb.auth.getUser();
+async function posLogin(userPronto) {
+  window._B && window._B.m('login0');
+  /* 22/08/2026 — MEDIDO, NÃO SUPOSTO. O cronômetro deu 5.008 ms até o app na
+     tela, com a primeira pintura em 66 ms e a compilação do script em 2 ms.
+     Ou seja: o tempo NUNCA esteve no tamanho do arquivo. Estava aqui, em
+     round-trips enfileirados.
+     getSession() lê a sessão guardada no aparelho; getUser() vai ao servidor
+     validar o token. Como quem chama já tem a sessão na mão, usar o usuário
+     dela economiza uma ida inteira à rede. O getUser() fica de reserva. */
+  let user = userPronto || null;
+  if (!user) { try { const { data } = await sb.auth.getSession(); user = data && data.session && data.session.user; } catch (_) { } }
+  if (!user) { try { const { data } = await sb.auth.getUser(); user = data && data.user; } catch (_) { } }
   if (!user) return;
   // busca o perfil (pode não existir ainda se o SQL 04 não foi rodado)
   let p = null;
@@ -3923,10 +3933,17 @@ async function posLogin() {
       'Seu cadastro foi criado e está esperando um gestor liberar o acesso. Assim que liberarem, é só abrir o app de novo.', '⏳');
     return;
   }
-  await registrarAcesso();
-  await carregarTimeout();
-  await getPresencaCfg();
-  try { await carregarLetreiroCfg(); } catch (_) {}
+  window._B && window._B.m('perfil');
+  /* eram QUATRO idas ao banco em fila, uma esperando a outra terminar, e
+     nenhuma depende do resultado da anterior. Em paralelo o custo passa a ser
+     o da mais lenta, não a soma das quatro. */
+  await Promise.all([
+    (async () => { try { await registrarAcesso(); } catch (_) { } })(),
+    (async () => { try { await carregarTimeout(); } catch (_) { } })(),
+    (async () => { try { await getPresencaCfg(); } catch (_) { } })(),
+    (async () => { try { await carregarLetreiroCfg(); } catch (_) { } })()
+  ]);
+  window._B && window._B.m('cfg');
   iniciarPresenca(user);
   mostrarApp();
 }
@@ -4681,7 +4698,7 @@ function revelarPosSplash() {
     sp && sp.classList.add('ir');
     setTimeout(async () => {
       fim();
-      if (_temSessao && _sessao) { try { await posLogin(); } catch (_) {} }
+      if (_temSessao && _sessao) { try { await posLogin(_sessao.user); } catch (_) {} }
       else if (_temSessao) $('telaLogin').classList.remove('oculto');
       else {
         /* a sessão ainda não voltou: mostra o login e corrige quando chegar,
@@ -4692,11 +4709,24 @@ function revelarPosSplash() {
           if (data && data.session) { $('telaLogin').classList.add('oculto'); await posLogin(); }
         } catch (_) {}
       }
-    }, 520);
+    }, 260);   // 22/08: era 520 ms só de transição de saída
   };
+  /* 22/08/2026: a splash cobrava 1.400 ms de relógio + 520 ms de saída = 1,92 s
+     de espera combinada, herança da época em que ela segurava a vinheta em
+     vídeo. O vídeo saiu na v3.207 e o tempo fixo ficou.
+     Agora ela espera A SESSÃO, não o relógio: assim que o Supabase responde,
+     sai. Os 1.400 ms viram só o teto para quando a rede não responde, e o piso
+     de 350 ms existe para o logo não dar um flash e sumir. */
+  const _t0sp = Date.now();
+  function _sessaoChegou() {
+    if (_vinhetaSaiu) return;
+    const falta = Math.max(0, 350 - (Date.now() - _t0sp));
+    if (_vinhetaTimer) clearTimeout(_vinhetaTimer);
+    _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, falta);
+  }
   _vinhetaTimer = setTimeout(() => { _vinhetaSaiu = true; _vinhetaSegue(); }, SPLASH_MS);
-  sb.auth.getSession().then(({ data }) => { _sessao = data && data.session; _temSessao = true; })
-    .catch(() => { _temSessao = true; });
+  sb.auth.getSession().then(({ data }) => { _sessao = data && data.session; _temSessao = true; _sessaoChegou(); })
+    .catch(() => { _temSessao = true; _sessaoChegou(); });
 }
 /* encurta a splash quando o vídeo não vai rolar */
 function _semVideo() {
@@ -7091,6 +7121,9 @@ function verTempos() {
       + linha('supabase.js', sb2 ? (ms(sb2.duration) + ' · ' + kb(sb2.transferSize)) : '—')
       + linha('início do script grande', ms(t.js0))
       + linha('COMPILAR O SCRIPT (2,2 MB)', ms((t.js1 || 0) - (t.js0 || 0)), true)
+      + linha('splash saiu / login começou', ms(t.login0))
+      + linha('perfil lido', ms(t.perfil))
+      + linha('configurações lidas', ms(t.cfg))
       + linha('app na tela', ms(t.app), true);
     d.onclick = () => d.remove();
     document.body.appendChild(d);
