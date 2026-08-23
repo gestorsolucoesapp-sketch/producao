@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.052.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.053.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.052.0';
+const APP_VER = '4.053.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31443,7 +31443,11 @@ function _mapaCor(v, max) {
 function cardMapaBrasil() {
   const D = _mapaDados();
   if (!D) return '<div class="card"><div class="titulo-sec">🗺️ Mapa da carteira</div>'
-    + '<p class="desc">Importe o <b>REST196</b> (carteira) e o <b>RVEN002</b> (região e representante) para o mapa aparecer.</p></div>';
+    + '<p class="desc">' + (!_cart196 ? 'Importe o <b>REST196</b> (carteira) para o mapa aparecer.'
+      : 'Importe o <b>RVEN002</b> na aba Importar — é ele que diz o estado e o representante de cada pedido.') + '</p></div>';
+  /* nunca sumir calado: se a geografia veio vazia, diga isso na cara. */
+  if (!Object.keys(D.st).length && !D.semUF) return '<div class="card"><div class="titulo-sec">🗺️ Mapa da carteira</div>'
+    + '<p class="desc">Nenhum pedido da carteira cruzou com o RVEN002. Reimporte o <b>RVEN002</b> cobrindo o período dos pedidos em aberto.</p></div>';
   const st = D.st;
   const max = Math.max(1, ...Object.values(st).map(s => s.kg));
   const totKg = Object.values(st).reduce((a, s) => a + s.kg, 0);
@@ -31507,12 +31511,23 @@ function cmPintaMapa() { const b = $('cmMapa'); if (b) b.innerHTML = cardMapaBra
 let _pedReg = null;
 async function carregarPedidosRegiao(forcar) {
   if (_pedReg && !forcar) return _pedReg;
+  /* 22/08, 23h30 (João: "onde está o mapa?") — ele não aparecia porque esta
+     busca não trazia nada. Eu usei o fetchTudo, que ordena por `dia` e filtra por
+     `dia` — e `pedidos_regiao` NÃO TEM essa coluna. O erro caía no catch, o mapa
+     ficava sem geografia e sumia sem dizer nada.
+     Aqui a paginação é própria, ordenando por `id`, que é o que a tabela tem. */
   try {
-    const d = await fetchTudo('pedidos_regiao', 'pedido,cidade,uf,regiao,sub_regiao,vendedor_cod,vendedor_nome,cliente_nome', null, null);
     const m = {};
-    (d || []).forEach(r => { m[String(r.pedido)] = r; });
+    const COLS = 'pedido,cidade,uf,regiao,sub_regiao,vendedor_cod,vendedor_nome,cliente_nome';
+    for (let ini = 0; ini < 40000; ini += 1000) {
+      const { data, error } = await sb.from('pedidos_regiao').select(COLS)
+        .order('id', { ascending: true }).range(ini, ini + 999);
+      if (error) throw error;
+      (data || []).forEach(r => { m[String(r.pedido)] = r; });
+      if (!data || data.length < 1000) break;
+    }
     _pedReg = m;
-  } catch (_) { _pedReg = _pedReg || {}; }
+  } catch (e) { try { console.error('pedidos_regiao', e); } catch (_) { } _pedReg = _pedReg || {}; }
   return _pedReg;
 }
 
