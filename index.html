@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.057.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.059.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.057.0';
+const APP_VER = '4.059.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27587,6 +27587,21 @@ function _selo196(k) {
        ninguém programou. */
     const pend = ((_cart196 && _cart196.pend) || []).filter(p => String(p.item_cod) === cod);
     const faltaTot = pend.reduce((a, p) => a + (+p._falta || 0), 0);
+    /* 23/08 (João: "se tiver reservado para esse pedido o total, não precisa
+       informar isso"). A tarja diz que o item não tem ordem na fila — verdade,
+       mas irrelevante quando o material JÁ ESTÁ SEPARADO no depósito. No 227073
+       ela aparecia vermelha ao lado de uma caixa verde escrita "material pronto",
+       no mesmo modal. Aviso que contradiz o que está do lado perde a autoridade
+       de todos os outros avisos da tela.
+       Se o reservado cobre o pendente do item, a tarja não sai. */
+    let resCobre = false;
+    try {
+      const e = _depoEstado && _depoEstado(cod);
+      const res = e && (e.deps || []).reduce((s, d) => s + (_DEP_RESERV.includes(String(d.cod)) ? (+d.kg || 0) : 0), 0);
+      const precisa = pend.reduce((a, p) => a + (+p.peso_pendente || 0), 0);
+      resCobre = precisa > 0 && res >= precisa * 0.999;
+    } catch (_) { }
+    if (resCobre) return '';
     const coberto = pend.length > 0 && faltaTot <= 0.001;
     if (coberto) {
       return `<span onclick="event.stopPropagation();detItemMaquinas('${escapeHtml(cod)}')" title="${tip} — pendente coberto pelo estoque, não precisa produzir" `
@@ -31437,8 +31452,9 @@ function _mapaDados() {
   LIN.forEach(l => {
     const p = String(l.pedido || '').split('/')[0];
     if (!p) return;
-    (porPed[p] = porPed[p] || { kg: 0, linhas: 0, cli: l.cliente, ent: l.entrega })
-      .kg += (+l.peso_pendente || 0);
+    const _pp = (porPed[p] = porPed[p] || { kg: 0, linhas: 0, cli: l.cliente, ent: l.entrega, item: l.item_cod });
+    _pp.kg += (+l.peso_pendente || 0);
+    if (!_pp.item) _pp.item = l.item_cod;
     porPed[p].linhas++;
     if (l.entrega && (!porPed[p].ent || l.entrega < porPed[p].ent)) porPed[p].ent = l.entrega;
   });
@@ -31461,7 +31477,7 @@ function _mapaDados() {
     s.kg += v.kg; s.ped++;
     if (res === 'ok') s.ok++; else if (res === 'parcial') s.parcial++;
     s.lista.push({ ped, kg: v.kg, cli: g.cliente_nome || v.cli, ent: v.ent,
-      rep: g.vendedor_nome, cid: g.cidade, res });
+      rep: g.vendedor_nome, cid: g.cidade, res, item: v.item });
   });
   return { st, reps, semUF, semUFkg };
 }
@@ -31607,14 +31623,88 @@ function cargaCidade(cidade, uf) {
       <td style="text-align:right"><b>${kg(p.kg)}</b></td></tr>`).join('')));
 }
 
+/* ===== REPRESENTANTE × BOCA — 23/08/2026 (pedido do João) =====
+   Boca é da MÁQUINA, não do pedido. O caminho é: pedido → item → máquina que
+   roda aquele item na fila → boca predominante dela. Por ser indireto, a barra
+   só conta o que tem os três elos; o resto vai para "sem boca conhecida" em vez
+   de ser diluído no meio e fingir precisão que não existe.
+   Serve para uma pergunta que ninguém conseguia responder: cada representante
+   vende o quê, em termos de ferramenta? Quem concentra numa boca só é risco se
+   aquela máquina parar; quem espalha ocupa a fábrica inteira. */
+const BOCA_COR = { '75': '#2E6FB7', '101': '#2E9E5B', '120': '#C58A1E', '150': '#8C4FB7', '93': '#C7522B' };
+let _bocaTop = 10;
+function cardRepBoca() {
+  const D = _mapaDados();
+  if (!D || !_itemBoca) return '';
+  const rep = {};
+  let semBoca = 0;
+  Object.values(D.st).forEach(s => (s.lista || []).forEach(p => {
+    const g = _pedReg[p.ped]; if (!g) return;
+    const nome = String(g.vendedor_nome || '(sem representante)').replace(/^V[RD]\s*-\s*/, '');
+    const r = (rep[nome] = rep[nome] || { nome, kg: 0, bocas: {}, peds: 0 });
+    r.peds++;
+    const b = _itemBoca[String(p.item || '')] || null;
+    r.kg += p.kg;
+    const k = b || '?';
+    r.bocas[k] = (r.bocas[k] || 0) + p.kg;
+    if (!b) semBoca += p.kg;
+  }));
+  const L = Object.values(rep).sort((a, b) => b.kg - a.kg).slice(0, _bocaTop);
+  if (!L.length) return '';
+  const max = Math.max(...L.map(r => r.kg)) || 1;
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const usadas = [...new Set(L.flatMap(r => Object.keys(r.bocas)))].filter(b => b !== '?').sort((a, b) => +a - +b);
+  const legenda = usadas.map(b => `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin-right:9px">
+      <i style="width:11px;height:11px;border-radius:3px;background:${BOCA_COR[b] || '#7E97AE'};display:inline-block"></i>boca ${b}</span>`).join('')
+    + '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><i style="width:11px;height:11px;border-radius:3px;background:#D6DEE7;display:inline-block"></i>sem boca conhecida</span>';
+  const linhas = L.map(r => {
+    const larg = Math.max(6, Math.round(r.kg / max * 100));
+    const partes = Object.entries(r.bocas).sort((a, b) => b[1] - a[1]).map(([b, v]) =>
+      `<i title="boca ${b} · ${kg(v)}" style="display:block;height:100%;width:${(v / r.kg * 100).toFixed(1)}%;background:${b === '?' ? '#D6DEE7' : (BOCA_COR[b] || '#7E97AE')}"></i>`).join('');
+    const dom = Object.entries(r.bocas).filter(([b]) => b !== '?').sort((a, b) => b[1] - a[1])[0];
+    const pctDom = dom ? Math.round(dom[1] / r.kg * 100) : 0;
+    return `<div style="margin-bottom:9px">
+      <div style="display:flex;gap:8px;align-items:baseline;font-size:12.5px">
+        <b style="flex:1;color:var(--tinta-s)">${escapeHtml(r.nome.slice(0, 26))}</b>
+        <span style="font-weight:800">${kg(r.kg)}</span>
+        <span style="font-size:11px;color:var(--fraco-2)">${r.peds} ped</span></div>
+      <div style="display:flex;height:16px;border-radius:5px;overflow:hidden;width:${larg}%;min-width:60px;margin-top:3px">${partes}</div>
+      ${dom ? `<div style="font-size:10.5px;color:var(--fraco-2);margin-top:2px">boca <b>${dom[0]}</b> em ${pctDom}% do peso${pctDom >= 80 ? ' · <b style="color:#8A5A00">concentrado numa ferramenta só</b>' : ''}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="card">
+    <div class="titulo-sec">🎯 Representantes × boca</div>
+    <p class="desc" style="margin-bottom:9px">O que cada representante vende, em <b>ferramenta de produção</b>. A barra inteira é o peso dele na carteira; as fatias são as bocas. Quem está quase todo numa boca só depende daquela máquina.</p>
+    <div style="margin-bottom:9px">${legenda}</div>
+    ${linhas}
+    ${semBoca > 0 ? `<p class="desc" style="font-size:11px;margin:6px 0 0">${kg(semBoca)} sem boca conhecida — item que ainda não passou pela fila, então não dá para saber a ferramenta.</p>` : ''}
+  </div>`;
+}
+
 function mapaSel(uf) { _mapaSel = (_mapaSel === uf ? '' : uf); cmPintaMapa(); }
 function mapaRep(v) { _mapaFiltroRep = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaSit(v) { _mapaFiltroSit = v || 'todos'; _mapaSel = ''; cmPintaMapa(); }
-function cmPintaMapa() { const b = $('cmMapa'); if (b) b.innerHTML = cardMapaBrasil() + (typeof cardCargaCidade === 'function' ? cardCargaCidade() : ''); }
+function cmPintaMapa() { const b = $('cmMapa'); if (b) b.innerHTML = cardMapaBrasil() + (typeof cardCargaCidade === 'function' ? cardCargaCidade() : '') + (typeof cardRepBoca === 'function' ? cardRepBoca() : ''); }
 
 /* geografia por pedido, buscada uma vez e guardada em memória: são ~4 mil linhas
    pequenas e o mapa consulta a cada filtro. */
 let _pedReg = null;
+/* item → boca predominante. Sai do cruzamento fila × mv_boca, feito no servidor
+   com uma consulta só: são milhares de combinações e trazer linha a linha para
+   somar no navegador seria repetir o erro do 643. */
+let _itemBoca = null;
+async function carregarItemBoca(forcar) {
+  if (_itemBoca && !forcar) return _itemBoca;
+  try {
+    const { data, error } = await sb.rpc('item_boca_predominante');
+    if (error) throw error;
+    const m = {};
+    (data || []).forEach(r => { m[String(r.item_cod)] = String(r.boca); });
+    _itemBoca = m;
+  } catch (e) { try { console.error('item_boca', e); } catch (_) { } _itemBoca = _itemBoca || {}; }
+  return _itemBoca;
+}
+
 async function carregarPedidosRegiao(forcar) {
   if (_pedReg && !forcar) return _pedReg;
   /* 22/08, 23h30 (João: "onde está o mapa?") — ele não aparecia porque esta
@@ -31655,6 +31745,7 @@ async function cmAbrir(forcar) {
     if (st) st.innerHTML = 'Dados atualizados em <b>' + escapeHtml(cmDataHoraAgora()) + '</b>'
       + (_foto196Txt() ? ' · <span style="color:var(--fraco-2)">' + escapeHtml(_foto196Txt()) + '</span>' : '');
     try { await carregarPedidosRegiao(forcar); } catch (_) { }
+    try { await carregarItemBoca(forcar); } catch (_) { }
     if (box) box.innerHTML = '<div id="cmMapa"></div>' + cardDestravaSemAlavanca() + _faixaFoto196();
     try { cmPintaMapa(); } catch (_) { }
   } catch (e) {
