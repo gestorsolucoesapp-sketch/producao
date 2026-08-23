@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.070.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.071.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.070.0';
+const APP_VER = '4.071.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31909,6 +31909,26 @@ function detCarteiraBoca(mes, boca) {
     const i = (IT[k] = IT[k] || { cod: k, desc: l.item_desc, kg: 0, cx: 0, mil: 0, peds: new Set() });
     i.kg += p; if (ehCx) i.cx += q; i.mil += mil; i.peds.add(String(l.pedido || '').split('/')[0]);
   });
+  /* 23/08 (João: "mostra número de pedido, representante, região, cidade e data
+     de entrega"). A lista era por ITEM, e item não se carrega — carrega-se
+     pedido. Sem o número, quem olha não consegue agir: não dá para procurar no
+     ERP, não dá para ligar para o cliente, não dá para juntar com outro pedido
+     do mesmo destino. Agora a lista é de PEDIDOS, e cada linha traz o que decide
+     uma carga: quem vendeu, para onde vai e quando vence. */
+  const PED = {};
+  L.forEach(l => {
+    const n = String(l.pedido || '').split('/')[0];
+    const g = (_pedReg && _pedReg[n]) || null;
+    const p = (PED[n] = PED[n] || { num: n, cli: l.cliente, kg: 0, cx: 0, mil: 0, itens: new Set(),
+      ent: l.entrega, rep: g && g.vendedor_nome, cid: g && g.cidade, uf: g && g.uf, reg: g && g.regiao });
+    const pp = +l.peso_pendente || 0, q = +l.qtd_pendente || 0;
+    const ehCx = /^CX/i.test(String(l.un || l.unidade || 'CX'));
+    const u = undPorCaixa(l.item_desc);
+    p.kg += pp; if (ehCx) p.cx += q; if (ehCx && u) p.mil += q * u / 1000;
+    if (l.item_cod) p.itens.add(String(l.item_cod));
+    if (l.entrega && (!p.ent || l.entrega < p.ent)) p.ent = l.entrega;
+  });
+  const peds = Object.values(PED).sort((a, b) => b.kg - a.kg).slice(0, 30);
   const itens = Object.values(IT).sort((a, b) => b.kg - a.kg).slice(0, 30);
   const titMes = (mes ? ' · ' + mes.split('-').reverse().join('/') : ' · todo o período') + _cartRecorte();
   abreDet('🎯 Boca ' + boca + titMes,
@@ -31920,11 +31940,16 @@ function detCarteiraBoca(mes, boca) {
     </div>
     <p class="desc" style="margin:0 0 9px">${L.length} linha(s) · ${Object.values(IT).length} item(ns) · ${new Set(L.map(l => String(l.pedido || '').split('/')[0])).size} pedido(s)</p>`
     + (semUnid ? `<p class="desc" style="font-size:11px;color:#8A5A00;margin:0 0 8px">⚠️ ${n0(semUnid)} cx sem unidade na descrição — ficaram fora da conta de milheiro.</p>` : '')
-    + tabSimples(['Item', 'kg · cx · mi'], itens.map(i => `<tr onclick="detItemCarteira('${escapeHtml(i.cod)}')" style="cursor:pointer">
-        <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(i.cod)}</span> ${escapeHtml(String(i.desc || '').slice(0, 28))} ›
-          <div style="font-size:10.5px;color:var(--fraco-2)">${i.peds.size} pedido(s)</div></td>
-        <td style="text-align:right"><b>${kg(i.kg)}</b>
-          <div style="font-size:10.5px;color:var(--fraco-2)">${n0(i.cx)} cx · ${fmtMil(i.mil)} mi</div></td></tr>`).join('')));
+    + tabSimples(['Pedido · cliente', 'kg · cx · mi'], peds.map(p => `<tr onclick="detPedido('${escapeHtml(p.num)}')" style="cursor:pointer">
+        <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 22))} ›
+          <div style="font-size:10.5px;color:var(--fraco-2)">
+            ${p.ent ? '📅 ' + escapeHtml(fmtDataSem(p.ent)) : ''}${p.itens.size > 1 ? ' · ' + p.itens.size + ' itens' : ''}</div>
+          <div style="font-size:10.5px;color:var(--fraco-2)">
+            ${p.rep ? '🧭 ' + escapeHtml(String(p.rep).replace(/^V[RD]\s*-\s*/, '').slice(0, 20)) : ''}${p.cid ? ' · ' + escapeHtml(p.cid) + (p.uf ? '/' + escapeHtml(p.uf) : '') : ''}${p.reg ? ' · ' + escapeHtml(String(p.reg).replace(/^\d+\s*-\s*/, '')) : ''}</div></td>
+        <td style="text-align:right"><b>${kg(p.kg)}</b>
+          <div style="font-size:10.5px;color:var(--fraco-2)">${n0(p.cx)} cx · ${fmtMil(p.mil)} mi</div></td></tr>`).join('')
+      + (itens.length > 1 ? '' : ''))
+    + `<p class="desc" style="font-size:11px;margin:8px 0 0">${itens.length} item(ns) nesta boca · toque no pedido para ver as linhas e onde está o material.</p>`);
 }
 
 function detCarteiraMes(mes) {
