@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.067.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.068.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.067.0';
+const APP_VER = '4.068.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31479,6 +31479,37 @@ const BR_REG = { N:['RR','AP','AM','PA','AC','RO','TO'], NE:['MA','CE','RN','PI'
    RESERVADO + A SEPARAR: pedido sem nada separado ainda depende da fábrica, não
    da expedição, e não é carga que se monta hoje. Ele continua alcançável pelo
    filtro, mas não é mais o que a tela mostra sozinha. */
+/* ===== FONTE ÚNICA DA RESERVA — 23/08/2026 (pedido do João) =====
+   "não pode haver discrepância entre Programação e Comercial."
+
+   Ele está certo, e o risco era real: o Comercial estava lendo _resDivG com um
+   `some()` em cada card. Três leituras da mesma coisa é como elas começam a
+   divergir — basta uma delas mudar de critério. Agora existe UMA função, e ela
+   devolve exatamente o que a Programação classificou, sem recalcular nada.
+
+   Recalcular seria o erro clássico: a alocação depende da ORDEM de entrega e do
+   saldo que sobrou dos pedidos anteriores. Refazer a conta por outro caminho,
+   mesmo com a mesma regra, daria outro resultado na primeira diferença de
+   ordenação. A conta é feita uma vez, na Programação, e o Comercial consulta. */
+let _resIdx = null, _resIdxSeq = null;
+function _resSituacao(num) {
+  if (!_resDivG || !_resDivG.temDep) return null;      // sem 241 não há veredito
+  if (_resIdx === null || _resIdxSeq !== _resDivG) {
+    _resIdx = {};
+    (_resDivG.ok || []).forEach(p => { _resIdx[String(p.num)] = 'ok'; });
+    (_resDivG.parcial || []).forEach(p => { _resIdx[String(p.num)] = 'parcial'; });
+    _resIdxSeq = _resDivG;
+  }
+  return _resIdx[String(num)] || 'sem';
+}
+/* o mesmo número que a Programação mostra nos dois cartões, para conferir a olho */
+function _resResumoProg() {
+  if (!_resDivG || !_resDivG.temDep) return null;
+  const S = L => (L || []).reduce((a, p) => a + (+p.kg || 0), 0);
+  return { nOk: (_resDivG.ok || []).length, kgOk: S(_resDivG.ok),
+           nPa: (_resDivG.parcial || []).length, kgPa: S(_resDivG.parcial) };
+}
+
 let _mapaFiltroRep = '', _mapaFiltroSit = 'reservados', _mapaSel = '';
 
 /* junta as três pontas: geografia vem do RVEN002, o que falta entregar vem do
@@ -31509,10 +31540,7 @@ function _mapaDados() {
   Object.entries(porPed).forEach(([ped, v]) => {
     const g = _pedReg[ped];
     if (!g) return;
-    const res = (_resDivG && _resDivG.temDep)
-      ? (_resDivG.ok.some(x => String(x.num) === ped) ? 'ok'
-        : _resDivG.parcial.some(x => String(x.num) === ped) ? 'parcial' : 'sem')
-      : 'sem';
+    const res = _resSituacao(ped) || 'sem';
     if (_mapaFiltroRep && String(g.vendedor_cod) !== _mapaFiltroRep) return;
     if (_mapaFiltroSit === 'reservados' && res === 'sem') return;
     if (_mapaFiltroSit === 'completa' && res !== 'ok') return;
@@ -31747,13 +31775,11 @@ function cardCarteiraMes() {
      repetido num card só. Filtro que vale para três dos quatro quadros é filtro
      que engana. */
   if (_mapaFiltroSit && _mapaFiltroSit !== 'todos' && _resDivG && _resDivG.temDep) {
-    const ok = new Set((_resDivG.ok || []).map(x => String(x.num)));
-    const pa = new Set((_resDivG.parcial || []).map(x => String(x.num)));
     LIN = LIN.filter(l => {
-      const n = String(l.pedido || '').split('/')[0];
-      if (_mapaFiltroSit === 'completa') return ok.has(n);
-      if (_mapaFiltroSit === 'parcial') return pa.has(n);
-      return ok.has(n) || pa.has(n);            // reservado + a separar
+      const s = _resSituacao(String(l.pedido || '').split('/')[0]);
+      if (_mapaFiltroSit === 'completa') return s === 'ok';
+      if (_mapaFiltroSit === 'parcial') return s === 'parcial';
+      return s === 'ok' || s === 'parcial';     // reservado + a separar
     });
   }
   if (!LIN.length) return '<div class="card"><div class="titulo-sec">📈 Carteira por mês de entrega</div>'
@@ -31939,6 +31965,15 @@ function cmBarraFiltro() {
       ${ativo ? '<button class="btn btn-borda" style="width:auto;padding:6px 12px;font-size:12px" onclick="mapaLimpaFiltro()">limpar</button>' : ''}
     </div>
     ${_mapaFiltroRep ? `<p class="desc" style="margin:7px 0 0;font-size:11.5px;color:var(--azul-marca,#2E6FB7)"><b>Todos os quadros abaixo</b> estão mostrando só ${escapeHtml(String((D && D.reps[_mapaFiltroRep]) || _mapaFiltroRep).replace(/^V[RD]\s*-\s*/, ''))}.</p>` : ''}
+    ${(() => {
+      /* o mesmo par de números que a Programação estampa, repetido aqui de
+         propósito: se um dia as duas telas divergirem, a diferença aparece
+         lado a lado em vez de passar despercebida por semanas. */
+      const R = _resResumoProg();
+      if (!R) return `<p class="desc" style="margin:7px 0 0;font-size:11.5px;color:#8A5A00">⚠️ Sem o <b>REST241</b> importado não há reserva calculada — os filtros de reserva ficam sem efeito e tudo aparece como "sem reserva".</p>`;
+      const kg2 = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+      return `<p class="desc" style="margin:7px 0 0;font-size:11.5px">Mesma conta da <b>Programação</b>: ✅ ${R.nOk} com reserva completa (${kg2(R.kgOk)}) · ⚠️ ${R.nPa} a separar (${kg2(R.kgPa)}).</p>`;
+    })()}
   </div>`;
 }
 function mapaLimpaFiltro() { _mapaFiltroRep = ''; _mapaFiltroSit = 'reservados'; _mapaSel = ''; cmPintaMapa(); }
