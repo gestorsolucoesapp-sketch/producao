@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.062.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.063.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.062.0';
+const APP_VER = '4.063.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31743,11 +31743,20 @@ function cardCarteiraMes() {
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
   const hoje = hojeISO(), mesAtual = hoje.slice(0, 7);
   const M = {}, IT = {};
+  /* 23/08 — a barra do mês passa a ser FATIADA POR BOCA. Sozinho, "setembro tem
+     1.059 t" não diz o que fazer: a fábrica não produz tonelada, produz numa
+     ferramenta. Fatiado, a mesma barra responde qual molde vai apertar e quando.
+     Nos dados de hoje isso muda a conversa: agosto é liderado pela boca 150, mas
+     setembro vira de cabeça para baixo e a 75 dispara para 413 t. */
+  const B = {};
   LIN.forEach(l => {
     const e = l.entrega ? String(l.entrega).slice(0, 7) : null;
     const p = +l.peso_pendente || 0;
-    if (e) { const m = (M[e] = M[e] || { mes: e, kg: 0, peds: new Set(), itens: new Set() });
-      m.kg += p; m.peds.add(String(l.pedido || '').split('/')[0]); if (l.item_cod) m.itens.add(String(l.item_cod)); }
+    const bk = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || '?';
+    if (e) { const m = (M[e] = M[e] || { mes: e, kg: 0, peds: new Set(), itens: new Set(), bocas: {} });
+      m.kg += p; m.peds.add(String(l.pedido || '').split('/')[0]); if (l.item_cod) m.itens.add(String(l.item_cod));
+      m.bocas[bk] = (m.bocas[bk] || 0) + p; }
+    B[bk] = (B[bk] || 0) + p;
     if (l.item_cod) { const i = (IT[l.item_cod] = IT[l.item_cod] || { cod: l.item_cod, desc: l.item_desc, kg: 0, peds: new Set() });
       i.kg += p; i.peds.add(String(l.pedido || '').split('/')[0]); }
   });
@@ -31758,16 +31767,23 @@ function cardCarteiraMes() {
   const venc = meses.filter(m => m.mes < mesAtual);
   const vencKg = venc.reduce((s, m) => s + m.kg, 0);
   const nomeMes = ym => { const [a, m] = ym.split('-'); return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m - 1] + '/' + a.slice(2); };
+  const corBoca = b => b === '?' ? '#C9D4DE' : (BOCA_COR[b] || ['#2E6FB7','#2E9E5B','#C58A1E','#8C4FB7','#C7522B','#0E7C86','#B0578D'][(parseInt(b, 10) || 0) % 7]);
   const barras = meses.map(m => {
     const atrasado = m.mes < mesAtual, agora = m.mes === mesAtual;
-    const h = Math.max(3, Math.round(m.kg / max * 108));
-    const cor = atrasado ? 'var(--critico)' : agora ? 'var(--azul-marca,#2E6FB7)' : '#8FB4D8';
-    return `<div onclick="detCarteiraMes('${m.mes}')" style="flex:1;min-width:38px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer">
-      <span style="font-size:10.5px;font-weight:800;color:${cor}">${kg(m.kg)}</span>
-      <div style="width:100%;max-width:46px;height:${h}px;background:${cor};border-radius:5px 5px 0 0"></div>
+    const h = Math.max(4, Math.round(m.kg / max * 118));
+    const fatias = Object.entries(m.bocas).sort((a, b) => b[1] - a[1]).map(([b, v]) =>
+      `<i title="boca ${b} · ${kg(v)}" style="display:block;width:100%;height:${(v / m.kg * 100).toFixed(1)}%;background:${atrasado ? 'var(--critico)' : corBoca(b)};opacity:${atrasado ? .85 : 1}"></i>`).join('');
+    return `<div onclick="detCarteiraMes('${m.mes}')" style="flex:1;min-width:40px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer">
+      <span style="font-size:10.5px;font-weight:800;color:${atrasado ? 'var(--critico)' : 'var(--tinta-s)'}">${kg(m.kg)}</span>
+      <div style="width:100%;max-width:48px;height:${h}px;border-radius:5px 5px 0 0;overflow:hidden;display:flex;flex-direction:column;${agora ? 'outline:2px solid var(--azul-marca,#2E6FB7);outline-offset:1px' : ''}">${fatias}</div>
       <span style="font-size:10.5px;font-weight:${agora ? '800' : '600'};color:${atrasado ? 'var(--critico)' : 'var(--fraco)'}">${nomeMes(m.mes)}</span>
       <span style="font-size:9.5px;color:var(--fraco-2)">${m.peds.size} ped</span></div>`;
   }).join('');
+  const bocasOrd = Object.entries(B).filter(([b]) => b !== '?').sort((a, b) => b[1] - a[1]);
+  const legBoca = bocasOrd.slice(0, 8).map(([b, v]) =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin:0 9px 3px 0">
+      <i style="width:11px;height:11px;border-radius:3px;background:${corBoca(b)};display:inline-block"></i>boca <b>${b}</b> · ${kg(v)}</span>`).join('')
+    + (B['?'] ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px"><i style="width:11px;height:11px;border-radius:3px;background:#C9D4DE;display:inline-block"></i>sem boca · ${kg(B['?'])}</span>` : '');
   const topIt = Object.values(IT).sort((a, b) => b.kg - a.kg).slice(0, 10);
   const maxIt = topIt.length ? topIt[0].kg : 1;
   const itensHtml = topIt.map(i => `<tr onclick="detItemCarteira('${escapeHtml(String(i.cod))}')" style="cursor:pointer">
@@ -31780,8 +31796,9 @@ function cardCarteiraMes() {
     <p class="desc" style="margin-bottom:9px"><b>${kg(totKg)}</b> prometidos e ainda não entregues. A Análise de Tendência olha o que a fábrica <b>produziu</b>; esta olha o que ela <b>deve entregar</b>.</p>
     ${vencKg > 0 ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:9px;padding:8px 10px;margin-bottom:9px;font-size:12.5px;color:#8C2F2F">
       <b>⚠️ ${kg(vencKg)} com entrega vencida</b> em ${venc.reduce((s, m) => s + m.peds.size, 0)} pedido(s). Isso não é carteira do mês — é atraso, e por isso aparece em vermelho.</div>` : ''}
-    <div style="display:flex;gap:5px;align-items:flex-end;margin-bottom:6px;overflow-x:auto;padding-bottom:2px">${barras}</div>
-    <p class="desc" style="font-size:11px;margin:0 0 12px">Toque num mês para ver os pedidos daquele vencimento.</p>
+    <div style="display:flex;gap:5px;align-items:flex-end;margin-bottom:7px;overflow-x:auto;padding-bottom:2px">${barras}</div>
+    <div style="margin-bottom:6px">${legBoca}</div>
+    <p class="desc" style="font-size:11px;margin:0 0 12px">Cada barra é fatiada pela <b>boca</b> que produz o item — a fábrica não faz tonelada, faz ferramenta. Toque num mês para ver os pedidos.</p>
     <div class="titulo-sec" style="font-size:13px">Os 10 itens que mais pesam na carteira</div>
     ${tabSimples(['Item', 'a entregar'], itensHtml)}
   </div>`;
