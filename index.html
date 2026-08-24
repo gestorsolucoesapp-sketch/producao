@@ -942,6 +942,12 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
    layout é o tipo de coisa que se ajusta cinco vezes até ficar bom, e ajuste de
    layout não pode ter chance de mexer no que a fábrica lê. */
 
+/* mapa: o grupo inteiro desliza/aproxima quando um estado é escolhido */
+#mapaZoom{transition:transform .5s cubic-bezier(.4,0,.2,1)}
+.mapa-uf{transition:opacity .35s ease}
+.mapa-cidades{animation:mapaSobe .38s cubic-bezier(.2,.8,.2,1)}
+@keyframes mapaSobe{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
 /* ===== SEPARAÇÃO ENTRE CARDS — 24/08/2026 (João: "não está claro onde começa
    e termina os cards, falta uma cor mais escura de fundo") =====
    O fundo era #F2F5F8 e o card #FFFFFF: 3% de diferença de luminosidade. Num
@@ -1107,7 +1113,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.154.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.155.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3312,7 +3318,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.154.0';
+const APP_VER = '4.155.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -32612,42 +32618,90 @@ function cardMapaBrasil() {
   const totPed = Object.values(st).reduce((a, s) => a + s.ped, 0);
   const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
   const W = 7, H = 8, L = 44, G = 4, PAD = 6;
+  /* ===== 24/08/2026 (João: "deixe essa informação de lado para aumentar o mapa,
+     deixe ele interativo — ao clicar faz um movimento e mostra todas as cidades") =====
+     Três mudanças aqui:
+     · O mapa cresceu (420 → 560 px) porque as duas linhas de aviso embaixo dele
+       roubavam altura sem serem lidas. O "sem UF" virou uma nota curta na
+       própria linha de resumo, e o "toque num estado" saiu: a instrução ficou
+       redundante quando o mapa passou a reagir ao toque de forma óbvia.
+     · Ao escolher um estado, o grupo inteiro APROXIMA nele — é transform CSS com
+       transição no <g>, não redesenho. Os outros estados apagam para 25%, então
+       o olho vai junto com o movimento em vez de procurar o que mudou.
+     · E abre a faixa de CIDADES daquele estado, ordenada por peso. Cidade é a
+       unidade que interessa para montar carga; estado sozinho não carrega
+       caminhão. */
   const blocos = Object.entries(BR_GRID).map(([uf, [c, r]]) => {
     const s = st[uf], v = s ? s.kg : 0, cor = _mapaCor(v, max);
     const x = PAD + (c - 1) * (L + G), y = PAD + (r - 1) * (L + G);
     const sel = _mapaSel === uf;
-    return `<g style="cursor:pointer" onclick="mapaSel('${uf}')">
+    const apaga = _mapaSel && !sel;
+    return `<g class="mapa-uf" style="cursor:pointer;opacity:${apaga ? .25 : 1}" onclick="mapaSel('${uf}')">
       <rect x="${x}" y="${y}" width="${L}" height="${L}" rx="7" fill="${cor.f}"
         stroke="${sel ? '#F2A33C' : 'rgba(11,42,74,.14)'}" stroke-width="${sel ? 3 : 1}"/>
       <text x="${x + L / 2}" y="${y + 19}" text-anchor="middle" font-size="13" font-weight="800" fill="${cor.t}">${uf}</text>
       <text x="${x + L / 2}" y="${y + 34}" text-anchor="middle" font-size="10" font-weight="700" fill="${cor.t}" opacity=".92">${v > 0 ? kg(v) : '—'}</text>
     </g>`;
   }).join('');
-  const svg = `<svg viewBox="0 0 ${PAD * 2 + W * (L + G)} ${PAD * 2 + H * (L + G)}" style="width:100%;max-width:420px;display:block;margin:0 auto">${blocos}</svg>`;
+  const VW = PAD * 2 + W * (L + G), VH = PAD * 2 + H * (L + G);
+  const zoom = (() => {
+    const g = _mapaSel && BR_GRID[_mapaSel];
+    if (!g) return 'translate(0,0) scale(1)';
+    const k = 1.85;
+    const cx = PAD + (g[0] - 1) * (L + G) + L / 2, cy = PAD + (g[1] - 1) * (L + G) + L / 2;
+    return `translate(${(VW / 2 - k * cx).toFixed(1)},${(VH / 2 - k * cy).toFixed(1)}) scale(${k})`;
+  })();
+  const svg = `<svg viewBox="0 0 ${VW} ${VH}" style="width:100%;max-width:560px;display:block;margin:0 auto">
+    <g id="mapaZoom" transform="${zoom}">${blocos}</g></svg>`;
+  /* cidades do estado escolhido — o que de fato monta carga */
+  const faixaCidades = (() => {
+    if (!_mapaSel || !st[_mapaSel]) return '';
+    const c = {};
+    (st[_mapaSel].lista || []).forEach(p => {
+      const k = p.cid || '(sem cidade)';
+      const o = (c[k] = c[k] || { cid: k, kg: 0, ped: 0 });
+      o.kg += p.kg; o.ped++;
+    });
+    const L2 = Object.values(c).sort((a, b) => b.kg - a.kg);
+    if (!L2.length) return '';
+    const mx = L2[0].kg || 1;
+    return `<div class="mapa-cidades" style="margin-top:9px">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">
+        ${L2.length} cidade(s) em ${_mapaSel} · toque para ver os pedidos</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px">${L2.map(x => {
+        const pc = Math.round(x.kg / mx * 100);
+        return `<span onclick="mapaCidade('${escapeHtml(String(x.cid)).replace(/'/g, "&#39;")}')" style="cursor:pointer;position:relative;overflow:hidden;
+          border:1px solid var(--linha-2s);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:700;background:var(--card)">
+          <span style="position:absolute;inset:0;width:${pc}%;background:rgba(40,52,142,.10)"></span>
+          <span style="position:relative">${escapeHtml(String(x.cid))} <b style="color:var(--azul-marca)">${kg(x.kg)}</b>
+          <span style="color:var(--fraco);font-weight:600">· ${x.ped}</span></span></span>`;
+      }).join('')}</div></div>`;
+  })();
   const detalhe = _mapaSel && st[_mapaSel] ? (() => {
     const s = st[_mapaSel];
-    const l = s.lista.slice().sort((a, b) => b.kg - a.kg).slice(0, 25);
+    const base = _mapaCid ? s.lista.filter(p => String(p.cid || '(sem cidade)') === _mapaCid) : s.lista;
+    const l = base.slice().sort((a, b) => b.kg - a.kg).slice(0, 25);
     const tag = r => r === 'ok' ? '<span style="color:var(--ok-4,#1E6B3A);font-weight:800">✅ reservado</span>'
       : r === 'parcial' ? '<span style="color:#8A5A00;font-weight:800">⚠️ a separar</span>'
       : '<span style="color:var(--fraco-2)">sem reserva</span>';
     return `<div class="card" style="margin-top:10px;border-left:3px solid var(--navy)">
-      <div class="titulo-sec">${_mapaSel} · ${s.ped} pedido(s) · ${kg(s.kg)}</div>
+      <div class="titulo-sec">${_mapaSel}${_mapaCid ? ' · ' + escapeHtml(_mapaCid) : ''} · ${_mapaCid ? base.length : s.ped} pedido(s) · ${kg(_mapaCid ? base.reduce((a2, p) => a2 + p.kg, 0) : s.kg)}${_mapaCid ? ' <span style="font-size:11px;font-weight:600;color:var(--azul-marca);cursor:pointer" onclick="mapaCidade(\'' + escapeHtml(_mapaCid).replace(/'/g, '&#39;') + '\')">· ver o estado todo</span>' : ''}</div>
       <p class="desc" style="margin-bottom:8px">✅ ${s.ok} com reserva completa · ⚠️ ${s.parcial} a separar</p>
       ${tabSimples(['Pedido · cliente', 'kg'], l.map(p => `<tr onclick="detPedido('${escapeHtml(p.ped)}')" style="cursor:pointer">
         <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.ped)}</span> ${escapeHtml(String(p.cli || '').slice(0, 24))} ›
           <div style="font-size:10.5px;color:var(--fraco-2)">${escapeHtml(p.cid || '')} · ${escapeHtml(String(p.rep || '').slice(0, 22))} · ${tag(p.res)}</div></td>
         <td style="text-align:right"><b>${kg(p.kg)}</b></td></tr>`).join(''))}
-      ${s.lista.length > l.length ? `<p class="desc" style="font-size:11px;margin:6px 0 0">+ ${s.lista.length - l.length} pedido(s)</p>` : ''}
+      ${base.length > l.length ? `<p class="desc" style="font-size:11px;margin:6px 0 0">+ ${base.length - l.length} pedido(s)</p>` : ''}
     </div>`;
-  })() : '<p class="desc" style="text-align:center;margin-top:8px">Toque num estado para ver os pedidos.</p>';
+  })() : '';
   return `<div class="card">
     <div class="titulo-sec">🗺️ Mapa da carteira por estado</div>
-    <p class="desc" style="margin-bottom:8px"><b>${totPed}</b> pedido(s) · <b>${kg(totKg)}</b> a entregar em <b>${Object.keys(st).length}</b> estados. Quanto mais escuro, mais peso parado ali.</p>
+    <p class="desc" style="margin-bottom:8px"><b>${totPed}</b> pedido(s) · <b>${kg(totKg)}</b> a entregar em <b>${Object.keys(st).length}</b> estados. Quanto mais escuro, mais peso parado ali.${D.semUF ? ` <span style="color:#8A5A00">· ${D.semUF} ped · ${kg(D.semUFkg)} sem UF no relatório, fora do mapa</span>` : ''}</p>
     <!-- 23/08: os filtros saíram daqui e viraram uma barra única no topo da
          aba, valendo para os quatro cards. Deixar dois lugares para a mesma
          escolha é como as telas passam a discordar. -->
     ${svg}
-    ${D.semUF ? `<p class="desc" style="text-align:center;font-size:11.5px;color:#8A5A00;margin-top:6px">⚠️ ${D.semUF} pedido(s) · ${kg(D.semUFkg)} sem UF no relatório — não entram no mapa</p>` : ''}
+    ${faixaCidades}
     ${detalhe}
   </div>`;
 }
@@ -33143,7 +33197,10 @@ function detItemCarteira(cod) {
         `<tr><td class="nome" style="font-size:12px">${escapeHtml(m)}</td><td style="text-align:right"><b>${kg(v)}</b></td></tr>`).join('')));
 }
 
-function mapaSel(uf) { _mapaSel = (_mapaSel === uf ? '' : uf); cmPintaMapa(); }
+function mapaSel(uf) { _mapaSel = (_mapaSel === uf ? '' : uf); _mapaCid = ''; cmPintaMapa(); }
+/* cidade escolhida dentro do estado: recorta só a lista de pedidos abaixo */
+let _mapaCid = '';
+function mapaCidade(c) { _mapaCid = (_mapaCid === c ? '' : c); cmPintaMapa(); }
 function mapaRep(v) { _mapaFiltroRep = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaSit(v) { _mapaFiltroSit = v || 'todos'; _mapaSel = ''; cmPintaMapa(); }
 /* ===== UM FILTRO PARA A ABA INTEIRA — 23/08/2026 (pedido do João) =====
