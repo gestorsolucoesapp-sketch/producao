@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.119.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.120.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3237,7 +3237,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.119.0';
+const APP_VER = '4.120.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -30946,7 +30946,8 @@ async function detItem(item) {
      que está certo gasta a confiança do alarme que dispara no que está errado.
      Regra: só avisa quando a entrega MAIS PRÓXIMA está a 5 dias ou menos, ou já
      venceu. E sem dramatização: "sem programação" diz o que é. */
-  if (!kgFila && kgPend > 0) {
+  /* o estoque entra na conta: item coberto não precisa de OP nenhuma. */
+  if (!kgFila && kgPend > 0 && est < kgPend) {
     const prox = ped.filter(r => r.entrega).map(r => String(r.entrega).slice(0, 10)).sort()[0] || null;
     const dias = prox ? Math.round((new Date(prox + 'T12:00:00') - new Date(hoje + 'T12:00:00')) / 86400000) : null;
     if (dias != null && dias <= 5) {
@@ -30955,7 +30956,8 @@ async function detItem(item) {
         + ';color:' + (atrasado ? '#8A2B2B' : '#8A5A12') + ';border-radius:10px;padding:8px 10px;font-size:11.5px;line-height:1.5;margin-bottom:10px">'
         + '<b>Sem programação.</b> Entrega ' + (atrasado ? 'vencida em ' : 'em ') + escapeHtml(fmtData(prox))
         + (atrasado ? ' (' + Math.abs(dias) + ' dia(s))' : dias === 0 ? ' (hoje)' : ' (' + dias + ' dia(s))')
-        + (est > 0 ? ' · há ' + fmtKg(est) + ' em estoque.' : ' · sem estoque.')
+        + ' · falta produzir <b>' + fmtKg(kgPend - est) + '</b>'
+        + (est > 0 ? ' (há ' + fmtKg(est) + ' em estoque).' : ' (sem estoque).')
         + '</div>';
     }
   }
@@ -32066,6 +32068,28 @@ function _itemDias(cod) {
   return Math.round((new Date(p + 'T12:00:00') - new Date(hojeISO() + 'T12:00:00')) / 86400000);
 }
 const _PM_JANELA = 5;   // dias: dentro disso, não estar na fila é problema
+/* PENDENTE TOTAL DO ITEM, para saber se o estoque cobre. Comparar o total do
+   item com o estoque do item dá o mesmo veredito da alocação linha a linha:
+   se o saldo cobre a soma, cobre cada linha; se não cobre, alguma fica de fora.
+   O que a alocação decide é QUAL pedido fica sem — e isso não muda a resposta
+   de "este item precisa ser produzido?". */
+let _pendIdx = null, _pendSeq = null;
+function _itemPend(cod) {
+  if (!_cart196) return 0;
+  if (_pendIdx === null || _pendSeq !== _cart196) {
+    _pendIdx = {}; _pendSeq = _cart196;
+    (_cart196.pend || []).forEach(l => {
+      const k = String(l.item_cod);
+      _pendIdx[k] = (_pendIdx[k] || 0) + (+l.peso_pendente || 0);
+    });
+  }
+  return _pendIdx[String(cod)] || 0;
+}
+/* falta produzir = o que a carteira pede menos o que já está pronto */
+function _itemFalta(cod) {
+  const e = _estItem(cod);
+  return _itemPend(cod) - ((e && e.kg) || 0);
+}
 let _estItemIdx = null, _estItemSeq = null;
 function _estItem(cod) {
   if (!_cart196) return null;
@@ -32118,12 +32142,22 @@ function _seloFila(cod) {
   /* 24/08/2026 (João): item com entrega daqui a um mês e sem OP é NORMAL — a
      fila do ERP cobre poucos dias à frente. Só vira aviso dentro da janela de
      5 dias ou quando já venceu. Fora dela, informa em cinza, sem alarme. */
+  /* 24/08/2026 (João: "se tem em estoque por que está dando sem programação?").
+     Certíssimo: item cujo estoque cobre a carteira NÃO precisa de OP — o
+     material já existe, é só faturar. Programar seria produzir para a
+     prateleira. Só falta programação o que a carteira pede ALÉM do estoque. */
+  const falta = _itemFalta(k);
+  if (falta <= 0.001) {
+    return bolha('#E8F3E8', '#2C6B2F', '✔ coberto pelo estoque',
+      'o estoque cobre toda a carteira deste item — não precisa de OP') + selEst;
+  }
   const dias = _itemDias(k);
   if (dias != null && dias <= _PM_JANELA) {
     const venc = dias < 0;
     return bolha(venc ? '#FDECEC' : '#FDF3E7', venc ? '#8A2B2B' : '#8A5A12',
-      '⚠ sem programação · entrega ' + escapeHtml(fmtData(_itemPrazo(k))),
-      venc ? 'entrega vencida e sem OP na fila' : 'entrega em ' + dias + ' dia(s) e sem OP na fila') + selEst;
+      '⚠ sem programação · falta ' + escapeHtml(kgv(falta)) + ' · entrega ' + escapeHtml(fmtData(_itemPrazo(k))),
+      venc ? 'entrega vencida, estoque não cobre e sem OP na fila'
+           : 'entrega em ' + dias + ' dia(s), estoque não cobre e sem OP na fila') + selEst;
   }
   return bolha('#EEF2F7', '#5A6B7C', 'sem OP na fila',
     dias != null ? ('entrega mais próxima em ' + fmtData(_itemPrazo(k)) + ' — ainda há prazo')
@@ -32576,6 +32610,7 @@ function cardCarteiraMes() {
       const d = Math.round((new Date(hojeISO() + 'T12:00:00') - new Date(u + 'T12:00:00')) / 86400000);
       if (d >= 0 && d <= 10) return false;
     }
+    if (_itemFalta(i.cod) <= 0.001) return false;   // estoque cobre: não precisa de OP
     const dd = _itemDias(i.cod);
     return dd != null && dd <= _PM_JANELA;
   });
