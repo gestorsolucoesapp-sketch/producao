@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.131.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.132.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.131.0';
+const APP_VER = '4.132.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35773,6 +35773,7 @@ const _pmNum = s => {
 async function promoCarregar(forcar) {
   if (_promoRegs && !forcar) return;
   await carregarCargoMapa(!!forcar);
+  await carregarUltPromo(!!forcar);
   /* 24/08/2026 (João: "esse valor e cargo tem que pegar no relatório que acabei
      de importar — você já tinha essa informação").
      Tinha mesmo: rh_remuneracao guarda cargo E salário por matrícula, vindo do
@@ -36132,6 +36133,139 @@ async function renderOrgPromo() {
 }
 function promoAba(k) { _promoAba = k; renderOrgPromo(); }
 
+/* ===== DATA DA ÚLTIMA PROMOÇÃO (24/08/2026, pedido do João) =====
+   "Há quanto tempo essa pessoa não é promovida" é o argumento mais forte de uma
+   proposta, e o app só sabia responder para quem já tinha sido promovido AQUI.
+   Como o app é de agosto, isso é quase ninguém.
+   Regra: o histórico manda quando existe; quando não existe, o João informa uma
+   vez e fica gravado no cadastro da pessoa. A tela sempre diz de onde veio o
+   número, porque "3 anos sem promoção" tirado do lugar errado é o tipo de frase
+   que se repete numa reunião de Diretoria. */
+let _ultPromo = null;
+async function carregarUltPromo(forcar) {
+  if (_ultPromo && !forcar) return _ultPromo;
+  const m = {};
+  try {
+    const { data } = await sb.from('colaborador_ultima_promo').select('*');
+    (data || []).forEach(r => { m[String(r.matricula)] = r; });
+  } catch (_) { }
+  _ultPromo = m; return m;
+}
+/* devolve { data, fonte } — histórico do app primeiro, cadastro manual depois */
+function ultimaPromocao(mat) {
+  const ap = (_promoRegs || [])
+    .filter(p => String(p.matricula) === String(mat) && p.status === 'aplicada' && p.data_efeito)
+    .sort((a, b) => String(b.data_efeito).localeCompare(String(a.data_efeito)))[0];
+  if (ap) return { data: String(ap.data_efeito).slice(0, 10), fonte: 'histórico do app' };
+  const m = (_ultPromo || {})[String(mat)];
+  if (m && m.data) return { data: String(m.data).slice(0, 10), fonte: 'informado por você' };
+  return { data: null, fonte: null };
+}
+async function promoSetUltima(mat, v) {
+  if (!v) {
+    await sb.from('colaborador_ultima_promo').delete().eq('matricula', String(mat));
+    delete (_ultPromo || {})[String(mat)];
+  } else {
+    const linha = { matricula: String(mat), data: v };
+    const { error } = await sb.from('colaborador_ultima_promo').upsert(linha, { onConflict: 'matricula' });
+    if (error) { toast('❌ ' + error.message); return; }
+    (_ultPromo || {})[String(mat)] = linha;
+  }
+  renderOrgPromo();
+}
+function _promoCampoUltima(mat) {
+  const u = ultimaPromocao(mat);
+  const meses = u.data ? (() => {
+    const a = new Date(u.data + 'T12:00:00'), b = new Date(hojeISO() + 'T12:00:00');
+    let mm = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+    if (b.getDate() < a.getDate()) mm--;
+    return mm < 0 ? null : mm;
+  })() : null;
+  const auto = u.fonte === 'histórico do app';
+  let h = '<div class="campo" style="margin-top:8px"><label>Última promoção</label>';
+  if (auto) {
+    h += '<div style="padding:9px 11px;background:#E8F3E8;border-radius:10px;font-size:13px;color:#2C6B2F">'
+      + '<b>' + escapeHtml(fmtData(u.data)) + '</b>'
+      + (meses != null ? ' · ' + (meses >= 12 ? Math.floor(meses / 12) + ' ano(s) e ' + (meses % 12) + ' mês(es)' : meses + ' mês(es)') + ' atrás' : '')
+      + '<div class="desc" style="font-size:11px;color:#2C6B2F">puxado do histórico deste app — não precisa preencher</div></div>';
+  } else {
+    h += '<input type="date" value="' + escapeHtml(u.data || '') + '" onchange="promoSetUltima(\'' + escapeHtml(mat) + '\',this.value)" '
+      + 'style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px">'
+      + '<div class="desc" style="font-size:11px;margin-top:3px">'
+      + (u.data ? 'informado por você' + (meses != null ? ' · ' + (meses >= 12 ? Math.floor(meses / 12) + ' ano(s) e ' + (meses % 12) + ' mês(es)' : meses + ' mês(es)') + ' atrás' : '')
+                : 'Não há promoção desta pessoa no histórico do app. Se ela já foi promovida antes, informe a data — fica gravada e não precisa repetir.')
+      + '</div>';
+  }
+  return h + '</div>';
+}
+
+/* ===== EDITAR UM REGISTRO DO HISTÓRICO =====
+   Rascunho errado hoje só dava para excluir e refazer, o que joga fora o motivo
+   já escrito. Aqui dá para corrigir destino, data e motivo. O salário de destino
+   é RECALCULADO pela tabela ao trocar cargo/nível — digitar salário à mão criaria
+   registro que não bate com faixa nenhuma. */
+let _promoEd = null;
+function promoEditar(id) {
+  _promoEd = (_promoRegs || []).find(p => p.id === id) || null;
+  if (!_promoEd) return;
+  window._edCargo = _promoEd.cargo_para || '';
+  window._edNivel = _promoEd.nivel_para || '';
+  window._edData = _promoEd.data_efeito ? String(_promoEd.data_efeito).slice(0, 10) : hojeISO();
+  window._edMotivo = _promoEd.motivo || '';
+  _promoEdModal();
+}
+function promoEdSet(k, v) {
+  if (k === 'cargo') { window._edCargo = v; window._edNivel = ''; }
+  else if (k === 'nivel') window._edNivel = v;
+  else if (k === 'data') window._edData = v;
+  _promoEdModal();
+}
+function _promoEdModal() {
+  const p = _promoEd; if (!p) return;
+  const salPara = _promoSal(window._edCargo, window._edNivel);
+  const salDe = +p.salario_de || 0;
+  const d = (salPara != null) ? (salPara - salDe) : null;
+  let h = '<div class="desc" style="margin:0 0 8px">' + escapeHtml(p.nome || p.matricula) + ' · sai de <b>'
+    + escapeHtml((p.cargo_de || '—') + (p.nivel_de ? ' ' + p.nivel_de : '')) + '</b> · ' + _pmMoeda(salDe) + '</div>'
+    + '<div class="campo"><label>Cargo de destino</label><select onchange="promoEdSet(\'cargo\',this.value)" class="sel-pad" style="width:100%">'
+    + '<option value="">— escolher —</option>'
+    + _promoCargos().map(x => '<option' + (x === window._edCargo ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('')
+    + '</select></div>'
+    + '<div class="campo"><label>Nível de destino</label><select onchange="promoEdSet(\'nivel\',this.value)" class="sel-pad" style="width:100%">'
+    + '<option value="">— escolher —</option>'
+    + _promoNiveis(window._edCargo).map(n => '<option value="' + escapeHtml(n.nivel) + '"' + (n.nivel === window._edNivel ? ' selected' : '') + '>'
+        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
+    + '</select></div>'
+    + '<div class="campo"><label>Vale a partir de</label><input type="date" value="' + escapeHtml(window._edData) + '" '
+    + 'onchange="promoEdSet(\'data\',this.value)" style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px"></div>'
+    + '<div class="campo"><label>Motivo</label><textarea id="edMotivo" rows="3" style="width:100%;font-size:15px;padding:8px;border:1px solid var(--linha);border-radius:10px">'
+    + escapeHtml(window._edMotivo || '') + '</textarea></div>';
+  if (d != null) {
+    h += '<div style="padding:9px 11px;border-radius:10px;background:var(--leve);margin-bottom:8px;font-size:13px">'
+      + 'vai para <b>' + _pmMoeda(salPara) + '</b> · <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">'
+      + (d >= 0 ? '+' : '') + _pmMoeda(d) + '</b></div>';
+  }
+  h += '<button class="btn btn-verde" style="width:100%" onclick="promoEdSalvar()">Salvar alterações</button>';
+  abreDet('✏️ Editar promoção', h);
+}
+async function promoEdSalvar() {
+  const p = _promoEd; if (!p) return;
+  try { window._edMotivo = ($('edMotivo') || {}).value || ''; } catch (_) { }
+  const salPara = _promoSal(window._edCargo, window._edNivel);
+  if (salPara == null) { toast('Escolha cargo e nível de destino.'); return; }
+  const upd = {
+    cargo_para: window._edCargo, nivel_para: window._edNivel, salario_para: salPara,
+    data_efeito: window._edData || hojeISO(), motivo: (window._edMotivo || '').trim() || null,
+    atualizado_em: new Date().toISOString()
+  };
+  const { error } = await sb.from('promocoes').update(upd).eq('id', p.id);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('✅ Promoção atualizada.');
+  try { fecharTudoDet(); } catch (_) { }
+  _promoEd = null;
+  await promoCarregar(true); renderOrgPromo();
+}
+
 /* ---------- NOVA ---------- */
 function _promoNova() {
   const busca = _promoFiltro.toLowerCase();
@@ -36189,6 +36323,7 @@ function _promoNova() {
         + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
       + '</select></div>';
   }
+  h += _promoCampoUltima(_promoSel);
   h += '<div class="campo"><label>Vale a partir de</label>'
     + '<input type="date" id="promoData" value="' + escapeHtml(window._pmData || hojeISO()) + '" '
     + 'onchange="window._pmData=this.value" style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px"></div>'
@@ -36264,7 +36399,8 @@ async function promoSalvar() {
     cargo_de: at.cargo, nivel_de: at.nivel || null, salario_de: salDe,
     cargo_para: window._pmCargoPara, nivel_para: window._pmNivelPara, salario_para: salPara,
     data_efeito: window._pmData || hojeISO(), status: 'rascunho',
-    motivo: (window._pmMotivo || '').trim() || null
+    motivo: (window._pmMotivo || '').trim() || null,
+    promo_anterior: (ultimaPromocao(_promoSel) || {}).data || null
   };
   const { error } = await sb.from('promocoes').insert(linha);
   if (error) { toast('❌ ' + error.message); return; }
@@ -36421,8 +36557,11 @@ function _promoHist() {
       + '<div style="font-size:12.5px;margin-top:2px">' + _pmMoeda(p.salario_de) + ' → ' + _pmMoeda(p.salario_para)
       + ' <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">(' + (d >= 0 ? '+' : '') + _pmMoeda(d) + ')</b></div>'
       + (p.motivo ? '<div class="desc" style="font-size:11.5px;margin-top:2px">' + escapeHtml(p.motivo) + '</div>' : '')
+      + (p.promo_anterior ? '<div class="desc" style="font-size:11px;margin-top:2px">última promoção antes desta: <b>'
+          + escapeHtml(fmtData(String(p.promo_anterior).slice(0, 10))) + '</b></div>' : '')
       + _promoPerfHTML(p.matricula)
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
+      + (p.status !== 'aplicada' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoEditar(' + p.id + ')">✏️ Editar</button>' : '')
       + (p.status === 'rascunho' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aprovada\')">Aprovar</button>' : '')
       + (p.status === 'aprovada' ? '<button class="btn btn-verde" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aplicada\')">Marcar aplicada</button>' : '')
       + (p.status !== 'cancelada' && p.status !== 'aplicada' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'cancelada\')">Cancelar</button>' : '')
