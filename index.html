@@ -1107,7 +1107,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.151.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.152.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3307,7 +3307,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.151.0';
+const APP_VER = '4.152.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41940,16 +41940,43 @@ function ferChecaConflito() {
   av.innerHTML = h;
 }
 
+/* ===== 24/08/2026 (João: "no organograma não está salvando a programação de
+   férias") — E NÃO ESTAVA MESMO =====
+   Com o filtro em "Todos", ferSalvar batia em orgExigeSetor() e voltava na
+   primeira linha. O botão abria o formulário, os avisos de conflito calculavam,
+   o "Volta em 03/04/2027" aparecia — tudo funcionando — e no Salvar saía só um
+   toast que some em três segundos, com o modal ainda aberto. Quem está olhando
+   o formulário não olha o rodapé da tela: parece que salvou.
+
+   A trava existia por um motivo razoável (em "Todos" a tela é de leitura, para
+   ninguém editar sem saber de qual setor), mas aqui ela era desnecessária: o
+   setor certo do registro não é o do FILTRO, é o da PESSOA. Puxo do cadastro
+   dela, que inclusive é mais confiável — gravar o setor da tela deixaria férias
+   de gente da Impressão marcada como Termoformagem só porque o filtro estava
+   nesse setor na hora.
+
+   Se nem pelo cadastro der para saber, aí sim bloqueia — mas dizendo isso
+   DENTRO do modal, em vermelho, onde a pessoa está olhando. */
 async function ferSalvar(id) {
-  if (!orgExigeSetor()) return;
-  const mat = $('ferMat').value, ini = $('ferIni').value || null, dias = parseInt($('ferDias').value, 10) || null;
+  const av = $('ferAviso');
+  const trava = txt => {
+    if (av) av.innerHTML = '<div style="margin-top:8px;padding:9px 11px;background:var(--crit-bg);border:1px solid var(--crit-br);'
+      + 'border-radius:10px;font-size:12.5px;color:var(--critico-2s);font-weight:700">⚠️ ' + txt + '</div>';
+    try { toast(txt); } catch (_) { }
+  };
+  const mat = $('ferMat').value;
+  if (!mat) { trava('Escolha o colaborador.'); return; }
+  const ini = $('ferIni').value || null, dias = parseInt($('ferDias').value, 10) || null;
+  const cad = (orgDados.colab || []).find(c => String(c.matricula) === String(mat));
+  const setor = (cad && cad.setor) || (orgTodosSetores() ? null : orgSetorSel);
+  if (!setor) { trava('Este colaborador está sem setor no cadastro — escolha um setor específico no topo para gravar.'); return; }
   let fim = null;
   if (ini && dias) { const d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + dias - 1); fim = d.toISOString().slice(0, 10); }
-  const reg = { matricula: mat, setor: orgSetorSel, inicio: ini, dias: dias, fim: fim,
+  const reg = { matricula: mat, setor: setor, inicio: ini, dias: dias, fim: fim,
                 nivel: $('ferNivel').value || null, status: ini ? 'ok' : 'pendente', atualizado_em: new Date().toISOString() };
   const r = id ? await sb.from('org_ferias').update(reg).eq('id', id) : await sb.from('org_ferias').insert(reg);
-  if (r.error) { toast('Erro: ' + r.error.message); return; }
-  toast('Salvo ✔');
+  if (r.error) { trava('Não gravou: ' + r.error.message); return; }
+  toast('Férias salvas ✔ · ' + setor);
   orgFechaModal();
   await carregarFerias();
   renderOrgFerias();
