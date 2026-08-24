@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.126.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.127.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.126.0';
+const APP_VER = '4.127.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35917,7 +35917,7 @@ async function promoDesempenho(mat) {
                 fb: [], fbPos: 0, fbDes: 0, instrutorDe: [] };
   try {
     const { data: al } = await sb.from('org_alocacoes')
-      .select('setor,turno,maquina_codigo,funcao').eq('matricula', String(mat))
+      .select('setor,turno,maquina_codigo,funcao,vigencia_inicio').eq('matricula', String(mat))
       .is('vigencia_fim', null).limit(1);
     out.aloc = (al || [])[0] || null;
     const hoje = hojeISO();
@@ -35947,10 +35947,15 @@ async function promoDesempenho(mat) {
     // só os turnos do BLOCO da pessoa: Manhã=T1+T3, Tarde=T2+T4, Noite=T5
     const BL = { 'Manhã': ['1', '3'], 'Tarde': ['2', '4'], 'Noite': ['5'] };
     const meus = BL[(out.aloc || {}).turno] || [];
+    /* a janela começa na VIGÊNCIA da alocação, nunca antes: o organograma só
+       existe desde 23/07/2026 e antes disso não se sabe quem estava na máquina. */
+    const vig = (out.aloc && out.aloc.vigencia_inicio) ? String(out.aloc.vigencia_inicio).slice(0, 10) : null;
+    out.desde = vig && vig > desde ? vig : desde;
     const porDia = {};
     (pr.data || []).forEach(r => {
       if (!meus.includes(String(r.turno))) return;
       const d = String(r.dia).slice(0, 10);
+      if (out.desde && d < out.desde) return;
       /* PESO, e não quantidade. A mesma máquina aponta ora em CX, ora em MIL —
          a 706 tem 49 CX e 30,72 MIL no mesmo dia. Somar os dois é somar caixa
          com milheiro. Converter MIL→caixa exige a descrição do item, que o
@@ -35970,7 +35975,7 @@ async function promoDesempenho(mat) {
   return out;
 }
 function _promoDesHTML(mat) {
-  const d = _promoDesCache[mat];
+  const d = _promoDesCache[mat], out0 = d || {};
   if (!d) return '<div id="promoDes" class="desc" style="margin-top:10px">carregando desempenho…</div>';
   if (d.erro) return '<div id="promoDes" class="desc" style="margin-top:10px;color:var(--critico-s)">Não consegui ler o desempenho: ' + escapeHtml(d.erro) + '</div>';
   const cx = v => Math.round(v).toLocaleString('pt-BR') + ' cx';
@@ -36025,7 +36030,7 @@ function _promoDesHTML(mat) {
     const kgf = v => Math.round(v).toLocaleString('pt-BR') + ' kg';
     h += '<div class="desc" style="font-size:11.5px;margin-bottom:6px">máquina <b>' + escapeHtml(d.aloc.maquina_codigo)
       + '</b> · turno <b>' + escapeHtml(d.aloc.turno) + '</b> · ' + escapeHtml(d.aloc.funcao || '')
-      + ' · ' + comProd.length + ' dia(s) com produção nos últimos 45</div>'
+      + ' · ' + comProd.length + ' dia(s) com produção desde ' + escapeHtml(fmtData(out0.desde || '')) + '</div>'
       + '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
       + '<div><div class="desc" style="font-size:10.5px">média por turno</div>'
       + '<div style="font-size:18px;font-weight:800">' + kgf(media) + '</div></div>'
@@ -36039,6 +36044,7 @@ function _promoDesHTML(mat) {
     if (!comProd.length) h += '<div class="desc" style="font-size:11.5px;color:#8A5A12;margin-top:5px">Nenhuma produção apontada nesse turno nos últimos 45 dias.</div>';
     h += '<div class="desc" style="font-size:10.5px;margin-top:6px;line-height:1.45">'
       + 'O apontamento é por máquina e turno, não por pessoa — este é o resultado do <b>posto</b>. Auxiliar da mesma máquina aparece com o mesmo número.<br>'
+      + 'A contagem começa na data em que a alocação passou a valer — o organograma é uma foto recente e não guarda quem estava na máquina antes disso.<br>'
       + 'Em <b>kg</b> de propósito: a mesma máquina aponta ora em caixa, ora em milheiro, e somar os dois daria número errado. '
       + 'O <b>produção × meta</b> fica na <b>Análise+</b>, que tem a regra de unidade por item — filtre a máquina '
       + escapeHtml(d.aloc.maquina_codigo) + ' lá para ver contra a meta.</div>';
@@ -36274,12 +36280,13 @@ async function promoPerfAno() {
   if (_promoPerfAno && _promoPerfSeq === chave) return _promoPerfAno;
   const mats = [...new Set((_promoRegs || []).map(p => String(p.matricula)).filter(Boolean))];
   const out = {};
-  mats.forEach(m => { out[m] = { aloc: null, meses: {}, kg: 0, turnos: 0, faltas: 0, atestados: 0, fbPos: 0, fbDes: 0 }; });
+  mats.forEach(m => { out[m] = { aloc: null, meses: {}, kg: 0, turnos: 0, postoKg: 0, postoTurnos: 0, desde: null,
+                                 faltas: 0, atestados: 0, fbPos: 0, fbDes: 0 }; });
   if (!mats.length) { _promoPerfAno = out; _promoPerfSeq = chave; return out; }
   const ano = hojeISO().slice(0, 4), de = ano + '-01-01';
   try {
     const [al, af, fb] = await Promise.all([
-      sb.from('org_alocacoes').select('matricula,setor,turno,maquina_codigo,funcao').in('matricula', mats).is('vigencia_fim', null),
+      sb.from('org_alocacoes').select('matricula,setor,turno,maquina_codigo,funcao,vigencia_inicio').in('matricula', mats).is('vigencia_fim', null),
       sb.from('org_afastamentos').select('matricula,tipo,dias,data').in('matricula', mats).gte('data', de),
       sb.from('feedbacks').select('matricula,tipo').in('matricula', mats)
     ]);
@@ -36311,15 +36318,29 @@ async function promoPerfAno() {
         const k = r.recurso_cod + '|' + bl + '|' + String(r.dia).slice(0, 10);
         porDia[k] = (porDia[k] || 0) + (+r.peso || 0);
       });
+      /* ===== 24/08/2026 — O ORGANOGRAMA NÃO TEM HISTÓRICO (achado do João) =====
+         org_alocacoes começa em 23/07/2026: 338 linhas, 337 vigentes e UMA
+         encerrada. Ou seja, é uma FOTO de hoje, não um histórico de quem estava
+         em cada máquina ao longo do ano.
+         Eu estava creditando janeiro a julho à pessoa pelo lugar onde ela senta
+         AGORA. Se alguém trocou de máquina em março, o número era de outro.
+         Agora são dois números com nomes diferentes:
+           · DELA  — só a partir da vigência da alocação. É o que dá para
+                     atribuir a uma pessoa sem inventar.
+           · POSTO — o ano inteiro da máquina/turno, como contexto da posição.
+         Quando o organograma acumular histórico de verdade, o primeiro número
+         cresce sozinho e nada aqui precisa mudar. */
       Object.keys(out).forEach(m => {
         const o = out[m]; if (!o.aloc) return;
         const pre = o.aloc.maquina_codigo + '|' + o.aloc.turno + '|';
+        o.desde = o.aloc.vigencia_inicio ? String(o.aloc.vigencia_inicio).slice(0, 10) : null;
         Object.keys(porDia).forEach(k => {
           if (k.indexOf(pre) !== 0) return;
           const v = porDia[k]; if (!(v > 0)) return;
-          o.kg += v; o.turnos++;
-          const mes = k.slice(pre.length, pre.length + 7);
-          o.meses[mes] = (o.meses[mes] || 0) + v;
+          const dia = k.slice(pre.length);
+          o.postoKg += v; o.postoTurnos++;
+          o.meses[dia.slice(0, 7)] = (o.meses[dia.slice(0, 7)] || 0) + v;
+          if (!o.desde || dia >= o.desde) { o.kg += v; o.turnos++; }
         });
       });
     }
@@ -36336,8 +36357,9 @@ function _promoPerfHTML(mat) {
   if (o.aloc) {
     const media = o.turnos ? o.kg / o.turnos : 0;
     p.push('<b>' + escapeHtml(o.aloc.maquina_codigo) + '</b> · ' + escapeHtml(o.aloc.turno));
-    p.push('<b>' + t(o.kg) + '</b> em ' + ano);
+    p.push('dele: <b>' + t(o.kg) + '</b>' + (o.desde ? ' desde ' + fmtData(o.desde) : ''));
     if (o.turnos) p.push(Math.round(media).toLocaleString('pt-BR') + ' kg/turno · ' + o.turnos + ' turnos');
+    p.push('<span style="opacity:.8">posto em ' + ano + ': ' + t(o.postoKg) + '</span>');
   } else {
     p.push('<span style="color:#8A5A12">sem alocação no organograma</span>');
   }
