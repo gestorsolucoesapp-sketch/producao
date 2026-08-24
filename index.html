@@ -1107,7 +1107,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.153.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.154.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3312,7 +3312,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.153.0';
+const APP_VER = '4.154.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -30811,10 +30811,22 @@ function fsRender() {
   const R = _fsRows || [];
   if (!R.length) return '<p class="vazio-painel">Fila vazia.</p>';
   const hoje = hojeISO();
+  /* ===== 24/08/2026 (João: "sinalizar para o mês de agosto quantas ordens tem
+     para entrega e até qual data vai a fila") =====
+     Duas perguntas diferentes e que não se respondem sozinhas:
+       · ENTREGA NO MÊS é compromisso com o cliente — o que precisa sair até dia 31.
+       · ATÉ QUANDO VAI A FILA é a capacidade — a data do último término previsto.
+     Juntas elas dizem se o mês fecha: se a fila termina depois do fim do mês,
+     parte do que foi prometido para agosto já nasceu para setembro. O card passa
+     a mostrar isso em vermelho quando acontece, no total e por setor. */
+  const _fsMesIni = hoje.slice(0, 7) + '-01';
+  const _fsMesFim = (() => { const d = new Date(+hoje.slice(0, 4), +hoje.slice(5, 7), 0); return hoje.slice(0, 7) + '-' + String(d.getDate()).padStart(2, '0'); })();
+  const _fsMesRot = (() => { const M = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']; return M[+hoje.slice(5, 7) - 1] + '/' + hoje.slice(2, 4); })();
+  const _dm = d => d ? (d.slice(8, 10) + '/' + d.slice(5, 7)) : '—';
   const porSetor = {};
   R.forEach(r => {
     const st = setorDe(r.recurso_cod) || '—';
-    if (!porSetor[st]) porSetor[st] = { st, ops: 0, kg: 0, cx: 0, atras: 0, maqs: {} };
+    if (!porSetor[st]) porSetor[st] = { st, ops: 0, kg: 0, cx: 0, atras: 0, mesOps: 0, mesKg: 0, ate: null, maqs: {} };
     const g = porSetor[st];
     /* 24/08/2026 (João: "o peso está 0 kg na fila") — este card somava r.peso,
        campo que NÃO EXISTE em v_fila_op: lá o peso se chama kg_programado. Some
@@ -30822,6 +30834,11 @@ function fsRender() {
        todo setor. Zero não pareceu erro porque tinha cara de número. */
     g.ops++; g.kg += _fsKg(r); g.cx += (+r.quantidade || 0);
     if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.atras++;
+    /* entrega dentro do mês corrente e até onde a fila alcança */
+    const _e = r.entrega ? String(r.entrega).slice(0, 10) : null;
+    if (_e && _e >= _fsMesIni && _e <= _fsMesFim) { g.mesOps++; g.mesKg += _fsKg(r); }
+    const _t = r.termino ? String(r.termino).slice(0, 10) : null;
+    if (_t && (!g.ate || _t > g.ate)) g.ate = _t;
     const m = String(r.recurso_cod);
     if (!g.maqs[m]) g.maqs[m] = { cod: m, nome: r.recurso_nome || m, ops: 0, kg: 0, atras: 0, fila: [] };
     g.maqs[m].ops++; g.maqs[m].kg += _fsKg(r);
@@ -30841,6 +30858,20 @@ function fsRender() {
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Entrega vencida</div>'
     + '<b style="font-size:17px;color:' + (totAtr ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + totAtr + '</b></div>'
     + (() => {
+        const mOps = L.reduce((n, x) => n + x.mesOps, 0), mKg = L.reduce((n, x) => n + x.mesKg, 0);
+        if (!mOps) return '';
+        return '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Entrega em ' + _fsMesRot + '</div>'
+          + '<b style="font-size:17px">' + fmtNum(mOps) + '</b> <span style="font-size:11px;color:var(--fraco)">OPs · ' + fmtKg(mKg) + '</span></div>';
+      })()
+    + (() => {
+        const ate = L.reduce((d, x) => (x.ate && (!d || x.ate > d)) ? x.ate : d, null);
+        if (!ate) return '';
+        const estoura = ate > _fsMesFim;
+        return '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Fila vai até</div>'
+          + '<b style="font-size:17px;color:' + (estoura ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + fmtDataSem(ate).slice(0, 10) + '</b>'
+          + '<span style="font-size:11px;color:var(--fraco)"> · ' + (estoura ? 'passa de ' + _fsMesRot : 'dentro de ' + _fsMesRot) + '</span></div>';
+      })()
+    + (() => {
         if (!_fsReprog) { setTimeout(async () => { await carregarReprog(); const c = document.getElementById('fsCorpo'); if (c) c.innerHTML = fsRender(); }, 0); return ''; }
         let n = 0, mx = 0;
         R.forEach(r => { const x = _fsReprog[String(r.op)]; if (x && +x.reprog > 0) { n++; if (+x.reprog > mx) mx = +x.reprog; } });
@@ -30856,6 +30887,8 @@ function fsRender() {
       + '<div style="display:flex;gap:8px;align-items:baseline;font-size:13px">'
       + '<b style="flex:1;min-width:0">' + escapeHtml(g.st) + '</b>'
       + (g.atras ? '<span style="background:#FDE8E8;color:#B3261E;border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:800">' + g.atras + ' vencida(s)</span>' : '')
+      + (g.mesOps ? '<span style="background:var(--leve);color:var(--txt-2s);border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:700" title="OPs com entrega dentro de ' + _fsMesRot + '">' + g.mesOps + ' p/ ' + _fsMesRot + '</span>' : '')
+      + (g.ate ? '<span style="font-size:10.5px;font-weight:700;color:' + (g.ate > _fsMesFim ? 'var(--critico-s)' : 'var(--fraco)') + '" title="último término previsto da fila deste setor">até ' + _dm(g.ate) + '</span>' : '')
       + '<b>' + g.ops + '</b><span style="font-size:11px;color:var(--fraco)">OPs</span>'
       + '<b style="color:var(--azul-marca)">' + fmtKg(g.kg) + '</b>'
       + '<span style="color:var(--fraco);font-size:12px">' + (ab ? '▾' : '›') + '</span></div>'
