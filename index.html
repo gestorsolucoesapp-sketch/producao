@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.140.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.141.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.140.0';
+const APP_VER = '4.141.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37610,7 +37610,9 @@ const _fchTexto = txt => `<div style="font-size:13px;line-height:1.5;color:var(-
 
 function orgCardFicha() {
   const lista = (orgDados.colab || []).slice().sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-  const opts = lista.map(c => `<option value="${escapeHtml((c.nome || '') + ' · ' + c.matricula)}"></option>`).join('');
+  const pend = pendentesSemMat();
+  const opts = lista.map(c => `<option value="${escapeHtml((c.nome || '') + ' · ' + c.matricula)}"></option>`).join('')
+    + pend.map(p => `<option value="${escapeHtml(p.nome + ' · sem matrícula')}"></option>`).join('');
   return `<div class="card" style="margin-bottom:10px;border-left:5px solid var(--azul-marca)">
     <b>🗂️ Ficha do colaborador</b>
     <div class="desc" style="margin:2px 0 8px">Busque por nome ou matrícula: alocação, presença, férias, banco de horas, observações e diagnóstico numa tela só.</div>
@@ -37620,7 +37622,7 @@ function orgCardFicha() {
       <datalist id="orgFichaLista">${opts}</datalist>
       <button class="btn" style="width:auto;padding:9px 18px" onclick="orgAbrirFicha()">Abrir</button>
     </div>
-    <div class="desc" style="margin-top:6px">${lista.length} colaborador(es) na base</div>
+    <div class="desc" style="margin-top:6px">${lista.length} colaborador(es) na base${pend.length ? ` · <b style="color:#8A5A12">${pend.length} sem matrícula</b> (aparecem na busca só pelo nome)` : ''}</div>
   </div>`;
 }
 
@@ -37654,6 +37656,13 @@ function buscaPessoa(txt, base) {
   const partes = bruto.split(/\s*[·—–\-|\/]\s*/).map(p => p.trim()).filter(Boolean);
   const nums = partes.filter(p => /^\d+$/.test(p));
   for (const n of nums) { const c1 = porMat(n); if (c1) return { c: c1, cands: [c1] }; }
+  /* cada pedaço isolado também vale como nome inteiro: assim "Leonardo · sem
+     matrícula" e "Thiago da Silva Elias · 602" caem na pessoa certa */
+  for (const p of partes) {
+    if (/^\d+$/.test(p)) continue;
+    const cp = lista.find(x => _pesNorm(x.nome) === _pesNorm(p));
+    if (cp) return { c: cp, cands: [cp] };
+  }
   const alvo = _pesNorm(partes.filter(p => !/^\d+$/.test(p)).join(' ') || bruto);
   if (!alvo) return { cands: [], nums };
   const c2 = lista.find(x => _pesNorm(x.nome) === alvo);
@@ -37664,11 +37673,73 @@ function buscaPessoa(txt, base) {
   if (cands.length === 1) return { c: cands[0], cands };
   return { cands, nums };
 }
+/* ===== QUEM AINDA NÃO TEM MATRÍCULA — 24/08/2026 (pedido do João) =====
+   No organograma existe posto ocupado por gente que o RH ainda não casou com uma
+   matrícula: são as alocações com matricula NULL e um apelido ("Leonardo",
+   "Roberto", "novo", "a identificar"). Para a busca da ficha essas pessoas
+   simplesmente não existiam, então não dava nem para chegar nelas e identificar.
+
+   Agora aparecem na consulta só com o nome, marcadas como SEM MATRÍCULA, e a
+   ficha provisória leva direto ao "Identificar pessoa" de cada posto.
+
+   Cuidado que vale a pena registrar: alocação com matricula NULL e SEM apelido é
+   outra coisa — é posto marcado "sem auxiliar", vaga proposital, não gente. Essas
+   continuam de fora, senão a busca encheria de fantasma. */
+function pendentesSemMat() {
+  const out = {};
+  (orgDados.aloc || []).forEach(a => {
+    if (a.matricula) return;
+    const ape = String(a.apelido_origem || '').trim();
+    if (!ape) return;
+    const k = _pesNorm(ape) + '|' + _pesNorm(a.setor || '');
+    if (!out[k]) out[k] = { chave: k, nome: ape, setor: a.setor || '—', postos: [] };
+    out[k].postos.push(a);
+  });
+  return Object.values(out).sort((x, y) => x.nome.localeCompare(y.nome, 'pt-BR'));
+}
+function buscaPendente(txt) {
+  const lista = pendentesSemMat();
+  const bruto = String(txt || '').trim();
+  if (!bruto) return [];
+  const partes = bruto.split(/\s*[·—–\-|\/]\s*/).map(p => p.trim()).filter(Boolean);
+  for (const p of partes) {
+    const ex = lista.filter(x => _pesNorm(x.nome) === _pesNorm(p));
+    if (ex.length) return ex;
+  }
+  const alvo = _pesNorm(partes.filter(p => !/^\d+$/.test(p)).join(' ') || bruto);
+  if (!alvo) return [];
+  const toks = alvo.split(' ').filter(t => t.length > 1);
+  return lista.filter(x => { const n = _pesNorm(x.nome); return toks.length ? toks.every(t => n.includes(t)) : n.includes(alvo); });
+}
+function fichaPendente(chave) {
+  const p = pendentesSemMat().find(x => x.chave === chave);
+  if (!p) { toast('Não achei esse posto.'); return; }
+  let h = '<p class="idet-desc"><b style="font-size:15px;color:var(--texto)">' + escapeHtml(p.nome) + '</b><br>'
+    + '<span style="display:inline-block;margin-top:4px;font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;background:#FFF4E0;color:#8A5A12">SEM MATRÍCULA</span></p>'
+    + '<p class="idet-desc">Esta pessoa está no organograma de <b>' + escapeHtml(p.setor) + '</b> mas ainda não foi casada com uma matrícula. '
+    + 'Enquanto isso ela não tem ficha: sem faltas, sem férias, sem banco de horas, sem salário. Identifique abaixo e o histórico passa a existir.</p>';
+  h += p.postos.map(a => '<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--linha)">'
+    + '<span style="flex:1;font-size:13px">' + escapeHtml(a.maquina_codigo || 'sem máquina') + ' · ' + escapeHtml(a.turno || '—')
+    + ' · <span class="desc" style="font-size:11.5px">' + escapeHtml(a.funcao || '') + '</span></span>'
+    + '<button class="btn" style="width:auto;padding:6px 13px;font-size:12.5px" onclick="orgEscolhePessoa(' + a.id + ')">👤 Identificar</button></div>').join('');
+  abreDet('🗂️ Ficha · sem matrícula', h);
+}
 function orgAbrirFicha() {
   const el = $('orgFichaBusca'); const v = String((el && el.value) || '').trim();
   if (!v) return;
   const r = buscaPessoa(v, orgDados.colab || []);
   if (r.c) { fichaColaborador(r.c.matricula); return; }
+  const pend = buscaPendente(v);
+  if (!r.cands.length && pend.length === 1) { fichaPendente(pend[0].chave); return; }
+  if (r.cands.length + pend.length > 1) {
+    abreDet('🗂️ Ficha', `<p class="idet-desc">${r.cands.length + pend.length} pessoas batem com “${escapeHtml(v)}”. Escolha uma:</p>` +
+      tabSimples(['Nome', 'Matrícula'],
+        r.cands.slice(0, 60).map(x =>
+          `<tr><td class="nome" style="cursor:pointer;color:var(--azul-marca)" onclick="fichaColaborador('${escapeHtml(x.matricula)}')">${escapeHtml(x.nome || '—')}</td><td><span class="cel neutra">${escapeHtml(x.matricula)}</span></td></tr>`).join('') +
+        pend.slice(0, 60).map(x =>
+          `<tr><td class="nome" style="cursor:pointer;color:var(--laranja-2)" onclick="fichaPendente('${escapeHtml(x.chave)}')">${escapeHtml(x.nome)}</td><td><span class="cel neutra" style="color:#8A5A12">sem matrícula</span></td></tr>`).join('')));
+    return;
+  }
   if (r.cands.length > 1) {
     abreDet('🗂️ Ficha', `<p class="idet-desc">${r.cands.length} pessoas batem com “${escapeHtml(v)}”. Escolha uma:</p>` +
       tabSimples(['Nome', 'Matrícula'], r.cands.slice(0, 60).map(x =>
