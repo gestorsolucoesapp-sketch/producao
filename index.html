@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.107.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.108.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3220,7 +3220,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.107.0';
+const APP_VER = '4.108.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31838,6 +31838,7 @@ function _produtoDe(g) {
 }
 let _mapaFiltroRep = '', _mapaFiltroSit = 'todos', _mapaSel = '';
 let _fCanal = '', _fBoca = '', _fProd = '', _fMisto = '', _fSetor = '', _fItem = '', _fPer = '';
+let _fDe = '', _fAte = '';
 /* PERÍODO = DATA DE ENTREGA PROMETIDA, não data de emissão do pedido.
    Numa carteira em aberto a pergunta é sempre "o que tenho de entregar até
    quando" — emissão é história, entrega é compromisso. É a mesma data que
@@ -31855,6 +31856,15 @@ function _passaPeriodo(l) {
   if (_fPer === 'mes') return e.slice(0, 7) === hoje.slice(0, 7);
   if (_fPer === 'd30') { const d = new Date(hoje + 'T12:00:00'); d.setDate(d.getDate() + 30);
     return e >= hoje && e <= d.toISOString().slice(0, 10); }
+  /* faixa livre: as duas pontas são INCLUSIVAS e cada uma é opcional — só "de"
+     é tudo dali para a frente, só "até" é tudo até ali. Comparação de string
+     ISO, sem construir Date: '2026-09-03' >= '2026-09-01' já é verdadeiro e não
+     passa por fuso nenhum, que foi de onde vieram os bugs de data deste app. */
+  if (_fPer === 'faixa') {
+    if (_fDe && e < _fDe) return false;
+    if (_fAte && e > _fAte) return false;
+    return true;
+  }
   if (/^\d{4}-\d{2}$/.test(_fPer)) return e.slice(0, 7) === _fPer;
   return true;
 }
@@ -32254,7 +32264,11 @@ function _cartRecorte() {
     const g = Object.values(_pedReg).find(x => String(x.vendedor_cod) === String(_mapaFiltroRep));
     p.push(String((g && g.vendedor_nome) || _mapaFiltroRep).replace(/^V[RD]\s*-\s*/, ''));
   }
-  if (_fPer) p.push(_PER_ROT[_fPer] || ('entrega em ' + _fPer));
+  if (_fPer === 'faixa') {
+    if (_fDe && _fAte) p.push('entrega de ' + fmtData(_fDe) + ' a ' + fmtData(_fAte));
+    else if (_fDe) p.push('entrega a partir de ' + fmtData(_fDe));
+    else if (_fAte) p.push('entrega até ' + fmtData(_fAte));
+  } else if (_fPer) p.push(_PER_ROT[_fPer] || ('entrega em ' + _fPer));
   if (_fSetor) p.push(_fSetor);
   if (_fItem) p.push('item "' + _fItem + '"');
   if (_fCanal) p.push(CANAL_NOME[_fCanal] || _fCanal);
@@ -32486,7 +32500,7 @@ function cmBarraFiltro() {
     const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || null;
     if (b) bocas[b] = 1;
   });
-  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca || _fMisto || _fSetor || _fItem || _fPer;
+  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca || _fMisto || _fSetor || _fItem || _fPer || _fDe || _fAte;
   return `<div class="card" style="padding:11px 13px">
     <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;font-weight:800;color:var(--fraco-2);letter-spacing:.5px">FILTRAR TUDO</span>
@@ -32494,12 +32508,19 @@ function cmBarraFiltro() {
       ${sel('cmSit', _mapaFiltroSit, [['todos', 'toda a carteira'], ['reservados', 'reservado + a separar'], ['completa', 'só reserva completa'], ['parcial', 'só a separar']], 'mapaSit')}
       ${sel('cmPer', _fPer, [['', 'todo o período']]
         .concat(nVenc ? [['venc', '⚠️ entrega vencida (' + nVenc + ')']] : [])
-        .concat([['mes', 'entrega neste mês'], ['d30', 'entrega nos próximos 30 dias']])
+        .concat([['mes', 'entrega neste mês'], ['d30', 'entrega nos próximos 30 dias'], ['faixa', '📅 de uma data a outra…']])
         .concat(Object.keys(meses).sort().map(m => {
           const [a, mm] = m.split('-');
           return [m, ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+mm - 1] + '/' + a.slice(2)];
         }))
         .concat(nSem ? [['semdata', 'sem data de entrega (' + nSem + ')']] : []), 'mapaPer')}
+      ${_fPer === 'faixa' ? `<span style="display:flex;gap:6px;align-items:center;flex:1;min-width:230px">
+        <input type="date" value="${escapeHtml(_fDe)}" onchange="mapaData('de',this.value)" aria-label="entrega de"
+          style="flex:1;min-width:0;font-size:13px;padding:7px 8px;border:1px solid var(--borda);border-radius:9px;background:#fff">
+        <span style="font-size:12px;color:var(--fraco-2);font-weight:700">até</span>
+        <input type="date" value="${escapeHtml(_fAte)}" onchange="mapaData('ate',this.value)" aria-label="entrega até"
+          style="flex:1;min-width:0;font-size:13px;padding:7px 8px;border:1px solid var(--borda);border-radius:9px;background:#fff">
+      </span>` : ''}
       ${sel('cmSetor', _fSetor, [['', 'todos os setores']].concat(Object.keys(setores)
         .sort((a, b) => setores[b] - setores[a])
         .map(s => [s, s + ' · ' + (setores[s] >= 1000 ? (setores[s] / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(setores[s]) + ' kg')])), 'mapaSetor')}
@@ -32528,7 +32549,15 @@ function mapaProd(v) { _fProd = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaBoca(v) { _fBoca = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaMisto(v) { _fMisto = v || ''; _mapaSel = ''; cmPintaMapa(); }
 const _PER_ROT = { venc: 'entrega vencida', mes: 'entrega neste mês', d30: 'entrega nos próximos 30 dias', semdata: 'sem data de entrega' };
-function mapaPer(v) { _fPer = v || ''; _mapaSel = ''; cmPintaMapa(); }
+function mapaPer(v) {
+  _fPer = v || ''; _mapaSel = '';
+  if (_fPer !== 'faixa') { _fDe = ''; _fAte = ''; }
+  cmPintaMapa();
+}
+function mapaData(qual, v) {
+  if (qual === 'de') _fDe = v || ''; else _fAte = v || '';
+  _mapaSel = ''; cmPintaMapa();
+}
 function mapaSetor(v) { _fSetor = v || ''; _mapaSel = ''; cmPintaMapa(); }
 /* o campo do item é de digitação: cmPintaMapa refaz o innerHTML e levaria o
    <input> junto. Como esse repinte é SÍNCRONO, devolver o foco na linha
@@ -32541,7 +32570,7 @@ function mapaItem(v) {
 }
 function mapaLimpaFiltro() {
   _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = ''; _fProd = ''; _fBoca = ''; _fMisto = '';
-  _fSetor = ''; _fItem = ''; _fPer = ''; _mapaSel = '';
+  _fSetor = ''; _fItem = ''; _fPer = ''; _fDe = ''; _fAte = ''; _mapaSel = '';
   cmPintaMapa();
 }
 function cmPintaMapa() {
