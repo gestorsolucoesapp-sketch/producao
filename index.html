@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.128.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.129.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.128.0';
+const APP_VER = '4.129.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37105,6 +37105,10 @@ function orgMatsSetor() {
 function orgColabSetor() {
   return orgDados.colab.filter(c => orgEhSetor(c.setor));
 }
+/* a busca de setor precisa ver TODO MUNDO, inclusive quem está no setor errado
+   — se ela respeitasse o filtro de setor, a pessoa mal classificada nunca
+   apareceria para ser corrigida. */
+function orgColabTodos() { return orgDados.colab || []; }
 function orgNome(mat) { const c = orgDados.colab.find(x => x.matricula === mat); return c ? c.nome : null; }
 function orgPrimeiro(n) { return (n || '').split(' ').slice(0, 2).join(' '); }
 function orgAfastadoHoje(mat) {
@@ -37347,6 +37351,15 @@ async function carregarOrganograma() {
       sb.rpc('org_kpis_mes', { p_ini: orgJanela.ini, p_fim: orgJanela.fim })
     ]);
     orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [], kpis: kp.data || [] };
+    /* a correção manual entra ANTES de qualquer filtro por setor: guardo o valor
+       original em setor_erp para poder mostrar os dois lado a lado. */
+    try {
+      await carregarSetorManual(true);
+      orgDados.colab.forEach(c2 => {
+        const m = (_setorManual || {})[String(c2.matricula)];
+        if (m && m.setor) { c2.setor_erp = c2.setor; c2.setor = m.setor; }
+      });
+    } catch (_) { }
     await orgCarregaMaqOcultas();
     orgMontaSetores();
     renderOrgVista();
@@ -38748,7 +38761,10 @@ async function orgImpGravar(tipo) {
   orgImpBuf = { tipo: null, linhas: [] };
   const t = $('impTxt_' + tipo); if (t) t.value = '';
   await carregarOrganograma();
-  if (tipo === 'colab') orgAvisaForaDoRH(setoresImp, linhas.map(x => x.matricula));
+  if (tipo === 'colab') {
+    orgAvisaForaDoRH(setoresImp, linhas.map(x => x.matricula));
+    try { await carregarSetorManual(true); orgAvisaSetorDivergente(linhas); } catch (_) { }
+  }
 }
 
 /* ---------- headcount por turno ---------- */
@@ -42156,6 +42172,121 @@ async function orgDelFalta(id) { await sb.from('org_afastamentos').delete().eq('
 
 /* ---------- banco de horas ---------- */
 const ORG_MOTIVOS = ['hora_extra', 'compensacao', 'atraso', 'saida_antecipada', 'ajuste'];
+/* ===== SETOR CORRIGIDO NA MÃO (24/08/2026, pedido do João) =====
+   O relatório de colaboradores do ERP vem com o setor errado para parte do
+   pessoal — e é reimportado com upsert em colaboradores.matricula. Corrigir na
+   própria linha seria perder a correção na importação seguinte, sem aviso.
+   Por isso a correção mora em colaborador_setor e VENCE o valor do ERP. Depois
+   de cada importação o app compara os dois e pergunta: manter a correção ou
+   aceitar o que o ERP passou a dizer. */
+let _setorManual = null;
+async function carregarSetorManual(forcar) {
+  if (_setorManual && !forcar) return _setorManual;
+  const m = {};
+  try {
+    const { data } = await sb.from('colaborador_setor').select('*');
+    (data || []).forEach(r => { m[String(r.matricula)] = r; });
+  } catch (_) { }
+  _setorManual = m; return m;
+}
+function setorDoColab(c) {
+  if (!c) return null;
+  const m = (_setorManual || {})[String(c.matricula)];
+  return (m && m.setor) || c.setor || null;
+}
+function setorCorrigido(mat) { return !!(_setorManual || {})[String(mat)]; }
+
+async function bhSalvaSetor(mat, novo, setorErp) {
+  novo = String(novo || '').trim();
+  if (!novo) {
+    await sb.from('colaborador_setor').delete().eq('matricula', String(mat));
+    delete (_setorManual || {})[String(mat)];
+    toast('Correção removida — volta a valer o setor do ERP.');
+  } else {
+    const linha = { matricula: String(mat), setor: novo, setor_erp: setorErp || null, atualizado_em: new Date().toISOString() };
+    const { error } = await sb.from('colaborador_setor').upsert(linha, { onConflict: 'matricula' });
+    if (error) { toast('❌ ' + error.message); return; }
+    (_setorManual || {})[String(mat)] = linha;
+    toast('Setor corrigido para ' + novo + '.');
+  }
+  try { await carregarOrganograma(); } catch (_) { }
+  renderOrgHoras();
+}
+
+/* ---- busca + edição de setor dentro do Banco de Horas ---- */
+let _bhFiltro = '';
+function bhFiltra(v) {
+  _bhFiltro = String(v || '').trim();
+  const box = document.getElementById('bhPessoas');
+  if (box) box.innerHTML = _bhPessoasHTML(); else renderOrgHoras();
+}
+function _bhSetoresConhecidos() {
+  const s = new Set();
+  (orgColabSetor() || []).forEach(c => { if (c.setor) s.add(c.setor); });
+  Object.values(_setorManual || {}).forEach(r => { if (r.setor) s.add(r.setor); });
+  ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embalagem', 'Injeção', 'Compressão', 'Manutenção', 'Qualidade', 'PCP', 'Expedição'].forEach(x => s.add(x));
+  return [...s].sort();
+}
+function _bhPessoasHTML() {
+  const q = _bhFiltro.toLowerCase();
+  const todos = (orgColabTodos ? orgColabTodos() : orgColabSetor()) || [];
+  const lista = todos.filter(c => !q
+    || String(c.nome || '').toLowerCase().includes(q)
+    || String(c.matricula || '').includes(q)
+    || String(setorDoColab(c) || '').toLowerCase().includes(q));
+  if (!q) return '<div class="desc" style="font-size:12px">Digite um nome, matrícula ou setor para achar a pessoa. '
+    + todos.length + ' colaborador(es) ativos.</div>';
+  if (!lista.length) return '<div class="desc" style="font-size:12px">Ninguém com esse texto.</div>';
+  const ops = _bhSetoresConhecidos();
+  return lista.slice(0, 25).map(c => {
+    const atual = setorDoColab(c), corr = setorCorrigido(c.matricula);
+    return '<div style="padding:8px 0;border-bottom:1px solid var(--linha)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+      + '<b style="font-size:13px">' + escapeHtml(c.nome || '') + '</b>'
+      + '<span class="desc" style="font-size:11.5px">' + escapeHtml(c.matricula) + '</span>'
+      + (corr ? '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;background:#FFF4D6;color:#8A5A12">✎ corrigido</span>' : '')
+      + '</div>'
+      + '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:5px">'
+      + '<select onchange="bhSalvaSetor(\'' + escapeHtml(c.matricula) + '\',this.value,\'' + escapeHtml(c.setor || '') + '\')" class="sel-pad" style="min-width:180px">'
+      + '<option value="">— usar o do ERP' + (c.setor ? ' (' + escapeHtml(c.setor) + ')' : ' (em branco)') + ' —</option>'
+      + ops.map(s => '<option' + (s === atual && corr ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('')
+      + '</select>'
+      + (corr ? '<span class="desc" style="font-size:11px">ERP diz <b>' + escapeHtml(c.setor || 'em branco') + '</b></span>' : '')
+      + '</div></div>';
+  }).join('') + (lista.length > 25 ? '<div class="desc" style="font-size:11px;margin-top:6px">… e mais ' + (lista.length - 25) + '. Refine a busca.</div>' : '');
+}
+function _bhCardSetor() {
+  const n = Object.keys(_setorManual || {}).length;
+  return '<div class="card"><div class="titulo-sec">Procurar colaborador · corrigir setor'
+    + (n ? ' <span style="font-size:11px;font-weight:800;color:#8A5A12">· ' + n + ' corrigido(s)</span>' : '') + '</div>'
+    + '<input id="bhProc" value="' + escapeHtml(_bhFiltro) + '" oninput="bhFiltra(this.value)" '
+    + 'placeholder="nome, matrícula ou setor" style="width:100%;font-size:16px;padding:9px 11px;border:1px solid var(--linha);border-radius:10px">'
+    + '<div id="bhPessoas" style="margin-top:8px;max-height:420px;overflow:auto">' + _bhPessoasHTML() + '</div>'
+    + '<div class="desc" style="font-size:11px;margin-top:7px;line-height:1.5">A correção fica <b>fora</b> da tabela do ERP e vence o valor dele — '
+    + 'reimportar o relatório de colaboradores não apaga o que você ajustou aqui. Quando o ERP passar a concordar, o app avisa.</div></div>';
+}
+/* ---- aviso depois de importar o relatório de colaboradores ---- */
+function orgAvisaSetorDivergente(linhas) {
+  const m = _setorManual || {};
+  const conf = (linhas || []).filter(x => m[String(x.matricula)] && String(x.setor || '') !== String(m[String(x.matricula)].setor || ''));
+  if (!conf.length) return;
+  const iguais = (linhas || []).filter(x => m[String(x.matricula)] && String(x.setor || '') === String(m[String(x.matricula)].setor || ''));
+  let h = '<p class="desc" style="margin:0 0 8px">O relatório trouxe outro setor para '
+    + conf.length + ' pessoa(s) que você já tinha corrigido na mão. <b>A sua correção continua valendo</b> — '
+    + 'solte só as que o ERP acertou.</p>'
+    + conf.map(x => {
+      const c = m[String(x.matricula)];
+      return '<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--linha)">'
+        + '<span style="font-size:12.5px"><b>' + escapeHtml(orgNome(x.matricula) || x.matricula) + '</b>'
+        + '<div class="desc" style="font-size:11px">sua correção: <b>' + escapeHtml(c.setor) + '</b> · ERP agora: <b>' + escapeHtml(x.setor || 'em branco') + '</b></div></span>'
+        + '<button class="btn btn-borda" style="width:auto;padding:5px 11px;font-size:12px" '
+        + 'onclick="bhSalvaSetor(\'' + escapeHtml(x.matricula) + '\',\'\',\'' + escapeHtml(x.setor || '') + '\');this.closest(\'div\').style.opacity=.4">aceitar o do ERP</button></div>';
+    }).join('')
+    + (iguais.length ? '<p class="desc" style="font-size:11.5px;margin-top:8px">' + iguais.length
+        + ' correção(ões) agora batem com o ERP e podem ser soltas na aba Banco de Horas.</p>' : '');
+  try { abreDet('⚠️ Setor corrigido x setor do ERP', h); } catch (_) { }
+}
+
 async function renderOrgHoras() {
   const wrap = $('orgWrap');
   wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
@@ -42164,7 +42295,9 @@ async function renderOrgHoras() {
   const regs = (data || []).filter(r => matsH.has(r.matricula));
   const saldo = {};
   regs.forEach(r => { saldo[r.matricula] = (saldo[r.matricula] || 0) + Number(r.horas); });
+  await carregarSetorManual();
   let h = '<div id="bhResumoBox"></div>';
+  h += _bhCardSetor();
   h += '<div class="card"><div class="titulo-sec">Lançar horas na mão</div><div style="display:flex;flex-direction:column;gap:8px">';
   h += '<input id="bhBusca" list="faLista2" placeholder="colaborador (nome ou matrícula)" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">';
   h += '<datalist id="faLista2">' + orgColabSetor().map(c => '<option value="' + escapeHtml(c.nome) + ' — ' + c.matricula + '">').join('') + '</datalist>';
