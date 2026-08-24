@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.111.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.112.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3220,7 +3220,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.111.0';
+const APP_VER = '4.112.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31947,9 +31947,17 @@ let _itemSetorCache = null, _itemSetorFila = null;
    (1201–1208, 632 itens na foto de ontem). Então a fila entra como fonte
    secundária: o histórico manda quando existe, porque é peso real de um ano; a
    fila cobre quem nunca apontou produção. */
+/* ITEM PROGRAMADO OU NÃO — 24/08/2026 (pedido do João: "informe se está na fila
+   de produção ou não está programado", como na aba Programação).
+   É a pergunta que fecha o ciclo desta tela: a carteira diz o que foi prometido,
+   a fila diz o que a fábrica combinou de fazer. Item com pedido em aberto e sem
+   nenhuma OP na fila é promessa que ninguém encostou ainda.
+   Lê a foto MAIS RECENTE da fila. Fila é retrato do dia: somar dias diferentes
+   diria "programado" para OP que já saiu. */
+let _itemFila = {};
 async function carregarItemSetorFila(forcar) {
   if (_itemSetorFila && !forcar) return _itemSetorFila;
-  const m = {};
+  const m = {}; _itemFila = {};
   try {
     const { data: fot } = await sb.from('fila_producao').select('dia_foto')
       .order('dia_foto', { ascending: false }).limit(1);
@@ -31961,6 +31969,13 @@ async function carregarItemSetorFila(forcar) {
         if (error) throw error;
         (data || []).forEach(r => {
           const k = String(r.item_cod || ''); if (!k) return;
+          /* a MESMA varredura já diz se o item está programado — buscar isso
+             depois seria uma segunda ida ao banco para responder o que este
+             laço já tem na mão. */
+          const fi = (_itemFila[k] = _itemFila[k] || { kg: 0, maqs: [] });
+          fi.kg += (+r.peso || 0);
+          const mc = String(r.recurso_cod || '');
+          if (mc && !fi.maqs.includes(mc)) fi.maqs.push(mc);
           const st = (typeof setorDe === 'function') ? setorDe(r.recurso_cod) : null;
           if (!st) return;
           (m[k] = m[k] || {})[st] = (m[k][st] || 0) + (+r.peso || 1);
@@ -31975,6 +31990,20 @@ async function carregarItemSetorFila(forcar) {
   });
   _itemSetorFila = out; _itemSetorCache = null;
   return out;
+}
+function _seloFila(cod) {
+  const k = String(cod || '');
+  const f = _itemFila[k];
+  const clique = 'event.stopPropagation();detItem(\'' + k.replace(/'/g, '') + '\')';
+  if (f && f.maqs.length) {
+    const maq = f.maqs.slice(0, 3).join(', ') + (f.maqs.length > 3 ? '…' : '');
+    return '<span onclick="' + clique + '" title="ver a ficha do item"'
+      + ' style="display:inline-block;cursor:pointer;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
+      + 'background:#E8F3E8;color:#2C6B2F;white-space:nowrap">▶ na fila · ' + escapeHtml(maq) + '</span>';
+  }
+  return '<span onclick="' + clique + '" title="ver a ficha do item"'
+    + ' style="display:inline-block;cursor:pointer;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
+    + 'background:#FDF3E7;color:#8A5A12;white-space:nowrap">⚠ não programado</span>';
 }
 function _itemSetor(cod) {
   const k = String(cod || ''); if (!k) return null;
@@ -32407,6 +32436,7 @@ function cardCarteiraMes() {
   const maxIt = topIt.length ? topIt[0].kg : 1;
   const itensHtml = topIt.map(i => `<tr onclick="detItemCarteira('${escapeHtml(String(i.cod))}')" style="cursor:pointer">
       <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(i.cod))}</span> ${escapeHtml(String(i.desc || '').slice(0, 30))} ›
+        <div style="margin-top:3px">${_seloFila(i.cod)}</div>
         <div style="height:5px;border-radius:3px;background:var(--leve-3,#e6ecf3);margin-top:4px;overflow:hidden">
           <i style="display:block;height:100%;width:${Math.round(i.kg / maxIt * 100)}%;background:var(--azul-marca,#2E6FB7)"></i></div></td>
       <td style="text-align:right"><b>${kg(i.kg)}</b><div style="font-size:10.5px;color:var(--fraco-2)">${i.peds.size} ped</div></td></tr>`).join('');
@@ -32524,9 +32554,15 @@ function detItemCarteira(cod) {
   const tot = L.reduce((s, l) => s + (+l.peso_pendente || 0), 0);
   const porMes = {};
   L.forEach(l => { const m = l.entrega ? String(l.entrega).slice(0, 7) : '—'; porMes[m] = (porMes[m] || 0) + (+l.peso_pendente || 0); });
+  const _f = _itemFila[String(cod)];
   abreDet('📦 ' + cod,
     `<p class="idet-desc">${escapeHtml(String(L[0].item_desc || ''))}</p>`
-    + `<p class="desc" style="margin:6px 0 9px"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b> a entregar</p>`
+    + `<div style="margin:6px 0 4px">${_seloFila(cod)}</div>`
+    + `<p class="desc" style="margin:0 0 9px"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b> a entregar`
+    + (_f && _f.maqs.length
+        ? ` · na fila há <b>${kg(_f.kg)}</b> em ${_f.maqs.length} máquina(s)`
+        : ` · <b style="color:#8A5A12">nenhuma OP na fila</b> — a carteira pede e ninguém programou`)
+    + `</p>`
     + tabSimples(['Mês de entrega', 'kg'], Object.entries(porMes).sort().map(([m, v]) =>
         `<tr><td class="nome" style="font-size:12px">${escapeHtml(m)}</td><td style="text-align:right"><b>${kg(v)}</b></td></tr>`).join('')));
 }
