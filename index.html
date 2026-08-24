@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.139.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.140.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.139.0';
+const APP_VER = '4.140.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37624,25 +37624,60 @@ function orgCardFicha() {
   </div>`;
 }
 
+/* ===== BUSCA DE PESSOA TOLERANTE — 24/08/2026 =====
+   O João digitou "Thiago da Silva Elias · 602" e o app disse que não achou
+   ninguém. Achava mesmo: 602 é o código da MÁQUINA dele (é assim que o
+   organograma escreve o nome ao lado do posto), enquanto a matrícula é 40927.
+   A busca só sabia comparar "nome · matrícula", então qualquer sufixo diferente
+   derrubava tudo — inclusive o fallback por pedaço de nome, porque "· 602"
+   também entrava na comparação.
+
+   Pior que isso: orgMatDoCampo() pegava QUALQUER número de 3 a 6 dígitos no fim
+   do campo e devolvia como matrícula, sem conferir se ela existe. Uma falta
+   lançada com o campo nesse estado iria para a matrícula "602", que não é
+   ninguém — registro órfão, invisível na ficha de quem faltou de verdade.
+   (Auditei: ainda não aconteceu — 0 órfãos em faltas e banco de horas.)
+
+   Agora a busca ignora acento, caixa e pontuação, separa o que veio depois de
+   ·, —, - ou /, e aceita pedaços soltos do nome ("thiago elias" acha
+   "Thiago da Silva Elias"). E número só vira matrícula se existir de verdade. */
+function _pesNorm(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function buscaPessoa(txt, base) {
+  const lista = base || orgDados.colab || [];
+  const bruto = String(txt || '').trim();
+  if (!bruto) return { cands: [] };
+  const porMat = m => lista.find(x => String(x.matricula) === String(m));
+  if (/^\d+$/.test(bruto)) { const c0 = porMat(bruto); if (c0) return { c: c0, cands: [c0] }; }
+  const partes = bruto.split(/\s*[·—–\-|\/]\s*/).map(p => p.trim()).filter(Boolean);
+  const nums = partes.filter(p => /^\d+$/.test(p));
+  for (const n of nums) { const c1 = porMat(n); if (c1) return { c: c1, cands: [c1] }; }
+  const alvo = _pesNorm(partes.filter(p => !/^\d+$/.test(p)).join(' ') || bruto);
+  if (!alvo) return { cands: [], nums };
+  const c2 = lista.find(x => _pesNorm(x.nome) === alvo);
+  if (c2) return { c: c2, cands: [c2] };
+  const toks = alvo.split(' ').filter(t => t.length > 1);
+  let cands = toks.length ? lista.filter(x => { const n = _pesNorm(x.nome); return toks.every(t => n.includes(t)); }) : [];
+  if (!cands.length) cands = lista.filter(x => _pesNorm(x.nome).includes(alvo) || String(x.matricula).includes(alvo));
+  if (cands.length === 1) return { c: cands[0], cands };
+  return { cands, nums };
+}
 function orgAbrirFicha() {
   const el = $('orgFichaBusca'); const v = String((el && el.value) || '').trim();
   if (!v) return;
-  const lista = orgDados.colab || [], alvo = v.toLowerCase();
-  let c = lista.find(x => ((x.nome || '') + ' · ' + x.matricula) === v)
-    || lista.find(x => String(x.matricula) === v)
-    || lista.find(x => String(x.nome || '').toLowerCase() === alvo);
-  if (!c) {
-    const cands = lista.filter(x => String(x.nome || '').toLowerCase().includes(alvo) || String(x.matricula).includes(alvo));
-    if (cands.length === 1) c = cands[0];
-    else if (cands.length > 1) {
-      abreDet('🗂️ Ficha', `<p class="idet-desc">${cands.length} pessoas batem com “${escapeHtml(v)}”. Escolha uma:</p>` +
-        tabSimples(['Nome', 'Matrícula'], cands.slice(0, 60).map(x =>
-          `<tr><td class="nome" style="cursor:pointer;color:var(--azul-marca)" onclick="fichaColaborador('${escapeHtml(x.matricula)}')">${escapeHtml(x.nome || '—')}</td><td><span class="cel neutra">${escapeHtml(x.matricula)}</span></td></tr>`).join('')));
-      return;
-    }
+  const r = buscaPessoa(v, orgDados.colab || []);
+  if (r.c) { fichaColaborador(r.c.matricula); return; }
+  if (r.cands.length > 1) {
+    abreDet('🗂️ Ficha', `<p class="idet-desc">${r.cands.length} pessoas batem com “${escapeHtml(v)}”. Escolha uma:</p>` +
+      tabSimples(['Nome', 'Matrícula'], r.cands.slice(0, 60).map(x =>
+        `<tr><td class="nome" style="cursor:pointer;color:var(--azul-marca)" onclick="fichaColaborador('${escapeHtml(x.matricula)}')">${escapeHtml(x.nome || '—')}</td><td><span class="cel neutra">${escapeHtml(x.matricula)}</span></td></tr>`).join('')));
+    return;
   }
-  if (!c) { abreDet('🗂️ Ficha', `<p class="idet-desc">Não achei ninguém com “${escapeHtml(v)}”.</p>`); return; }
-  fichaColaborador(c.matricula);
+  abreDet('🗂️ Ficha', `<p class="idet-desc">Não achei ninguém com “${escapeHtml(v)}”.</p>`
+    + ((r.nums || []).length ? `<p class="idet-desc">Aviso: <b>${escapeHtml(r.nums.join(', '))}</b> não é matrícula de ninguém. No organograma o número ao lado do nome é o da <b>máquina</b>, não a matrícula.</p>` : '')
+    + `<p class="idet-desc">Tente só o primeiro nome, ou a matrícula sozinha.</p>`);
 }
 
 async function fichaColaborador(mat) {
@@ -42694,11 +42729,11 @@ function faAtualizaFim() {
 }
 
 function orgMatDoCampo(idCampo) {
-  const v = ($(idCampo).value || '').trim();
-  const m = v.match(/(\d{3,6})\s*$/);
-  if (m) return m[1];
-  const c = orgDados.colab.find(x => (x.nome || '').toLowerCase() === v.toLowerCase());
-  return c ? c.matricula : null;
+  /* antes: devolvia qualquer número de 3-6 dígitos do fim do campo COMO SE fosse
+     matrícula, sem conferir. Um "· 602" colado do organograma viraria lançamento
+     para uma matrícula que não existe. Agora só devolve quem está no cadastro. */
+  const r = buscaPessoa((($(idCampo) || {}).value || ''), orgDados.colab || []);
+  return r.c ? r.c.matricula : null;
 }
 async function orgSalvaFalta() {
   const mat = orgMatDoCampo('faBusca');
