@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.135.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.136.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.135.0';
+const APP_VER = '4.136.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28437,6 +28437,13 @@ function detGrupoTravado(gid, filtro) {
    tem material. Ranqueia os itens faltantes pelo que cada um libera sozinho —
    pedidos em que ele e o UNICO bloqueio. Item que divide o bloqueio com outro
    aparece com alavanca zero e a nota explicando que precisam sair juntos. */
+/* recorte rápido do card de faturamento: '', 'pronto' ou 'falta' */
+let _dfxSo = '';
+function dfxSo(k) {
+  _dfxSo = (_dfxSo === k) ? '' : k;
+  try { if (typeof renderProgramacao === 'function') return renderProgramacao(); } catch (_) { }
+  try { if (typeof cmPintaMapa === 'function') return cmPintaMapa(); } catch (_) { }
+}
 function _cardDestravaBase(_semAlav) {
   const A = _alocarEstoque();
   if (!A || !A.peds.length) return '';
@@ -28645,18 +28652,36 @@ function _cardDestravaBase(_semAlav) {
      faixa — o número da faixa continuava somando tudo. Agora cada faixa mostra
      as duas partes SEPARADAS, cada uma com o seu total, e cada uma abre a sua
      própria lista. O total da faixa fica só como referência, em cinza. */
+  /* ===== AS FAIXAS PASSAM A RESPEITAR O SETOR (24/08/2026, pedido do João) =====
+     Antes as barras vinham da fábrica inteira de propósito: um pedido cruza
+     setores, e chamar de "completo" um pedido em que só a Impressão terminou
+     faria o card dizer que o caminhão sai quando ele não sai.
+     Continua verdade — mas quem abre a Programação com o setor de Injeção
+     escolhido quer ver a Injeção, e ficava lendo Termoformagem e Impressão.
+     Agora: com um setor escolhido, ficam só os grupos que TÊM aquele setor —
+     o puro dele e os MISTOS. E o misto vem RISCADO, porque nele o setor
+     escolhido não decide sozinho: mesmo terminando a parte dele, o pedido
+     continua preso no outro. O risco na barra é o aviso de que ali há trabalho
+     de terceiro no meio. */
   const barra = (rot, L, cor, gid) => {
     const grupos = new Map();
     L.forEach(p => {
       const c = _comboSetor(p, gid > 0);
+      if (_st) {
+        // 'k' do grupo é o apelido do setor, ou "a+b" quando misto
+        const partes = String(c.k).split('+');
+        const alvo = (() => { try { return _apelidoSetorG(_st); } catch (_) { return _st; } })();
+        if (!partes.includes(alvo)) return;      // grupo sem o setor escolhido: fora
+      }
       let g = grupos.get(c.k);
       if (!g) { g = { rot: c.rot, cor: c.cor, n: c.n, arr: [] }; grupos.set(c.k, g); }
       g.arr.push(p);
     });
+    if (_st && !grupos.size) return '';          // nada deste setor nesta faixa
     /* setor puro primeiro, misto depois, e dentro de cada bloco o maior em cima */
     const ordem = [...grupos.entries()].sort((a, b) => (a[1].n - b[1].n) || (b[1].arr.length - a[1].arr.length));
     const mx = A.peds.length || 1;
-    const linha = (rotulo, arr, c, gid2, filtro) => {
+    const linha = (rotulo, arr, c, gid2, filtro, misto) => {
       if (!arr.length) return '';
       /* 21/08/2026 (João: "faça essa análise aqui"): na faixa de material pronto,
          cada SETOR passa a dizer quanto dele já está separado e quanto ainda
@@ -28681,7 +28706,9 @@ function _cardDestravaBase(_semAlav) {
         : '';
       return `<div class="dfx-linha" onclick="detGrupoTravado(${gid2},'${filtro}')">`
         + `<span class="dfx-rot"><span class="dfx-nome">${rotulo} ›</span>${sub}</span>`
-        + `<span class="dfx-bar"><i style="width:${Math.max(1.5, arr.length / mx * 100).toFixed(1)}%;background:${c}"></i></span>`
+        + `<span class="dfx-bar"><i style="width:${Math.max(1.5, arr.length / mx * 100).toFixed(1)}%;background:${c}`
+        + (misto ? `;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.55) 0 4px,transparent 4px 8px)` : '')
+        + `"></i></span>`
         + `<b class="dfx-num" style="color:${c}">${arr.length} ped · ${kg(S(arr))} · ${plt(pal(arr))}</b></div>`;
     };
     return `<div class="dfx-bloco" style="border-left:3px solid ${cor}">`
@@ -28691,7 +28718,9 @@ function _cardDestravaBase(_semAlav) {
          é teto por item, e somar os arredondamentos de cada linha daria um total
          maior que o real. É a mesma razão do aviso "faixas somam +N pal". */
       + `<span>total ${L.length} ped · ${kg(S(L))} · ${plt(pal(L))}</span></div>`
-      + ordem.map(([k, g]) => linha(g.rot, g.arr, g.cor, gid, k)).join('')
+      + ordem.map(([k, g]) => linha(g.rot, g.arr, g.cor, gid, k, g.n > 1)).join('')
+      + (_st && [...grupos.values()].some(g => g.n > 1)
+          ? `<div class="desc" style="font-size:10.5px;padding:2px 0 0">barra riscada = pedido misto: tem item de outro setor junto e não destrava só com a ${escapeHtml(_st)}</div>` : '')
       + `</div>`;
   };
 
@@ -28753,11 +28782,21 @@ function _cardDestravaBase(_semAlav) {
         return '';   // o bloco foi para o topo da aba, não sai mais aqui dentro
       })() : '')
     + '<div class="dfx-grade">'
-    + barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0)
-    + barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4)
-    + barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1)
-    + barra('Travados por 2 itens', t2, '#c96a1f', 2)
-    + barra('Travados por 3 ou mais', t3, 'var(--critico)', 3)
+    /* 24/08/2026 (João): dois recortes rápidos. PRONTO é só a faixa verde — o
+       que dá para faturar hoje. FALTA PRODUZIR junta "no prazo" com as três de
+       travado, porque em todas elas o que impede o faturamento é máquina, não
+       depósito. Sem escolha, mostra tudo como antes. */
+    + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 9px">`
+    + [['', 'tudo'], ['pronto', '✅ só o que está pronto'], ['falta', '🏭 só o que falta produzir']]
+        .map(([k, r]) => `<button onclick="dfxSo('${k}')" style="cursor:pointer;font-size:12px;font-weight:800;padding:6px 12px;border-radius:9px;`
+          + `border:1.5px solid ${_dfxSo === k ? 'var(--navy)' : 'var(--borda)'};background:${_dfxSo === k ? 'var(--navy)' : '#fff'};`
+          + `color:${_dfxSo === k ? '#fff' : 'var(--navy)'}">${r}</button>`).join('')
+    + `</div>`
+    + (_dfxSo === 'falta' ? '' : barra('✅ Material pronto — dá para faturar hoje', comp, 'var(--verde)', 0))
+    + (_dfxSo === 'pronto' ? '' : barra('🕓 No prazo — falta produzir', prazo, 'var(--azul-marca)', 4))
+    + (_dfxSo === 'pronto' ? '' : barra('🎯 Travados por 1 item só', t1, 'var(--laranja)', 1))
+    + (_dfxSo === 'pronto' ? '' : barra('Travados por 2 itens', t2, '#c96a1f', 2))
+    + (_dfxSo === 'pronto' ? '' : barra('Travados por 3 ou mais', t3, 'var(--critico)', 3))
     + '</div>'
     /* preenchido depois: o card e montado como string e so existe no DOM
        depois que o painel inteiro e injetado. */
