@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.073.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.074.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.073.0';
+const APP_VER = '4.074.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31546,12 +31546,33 @@ function _canalDe(g) {
   return m ? m[1] : '';
 }
 function _produtoDe(g) {
+  /* 23/08, correção: eu estava apagando o "RIGIDO" e jogando 432 pedidos de
+     RIGIDO LISO dentro de LISO. São fluxos diferentes no ERP (o *RIGIDO tem
+     asterisco e caminho próprio), e fundir os dois escondia um grupo inteiro
+     dentro de outro. Agora o nome sai como o ERP escreveu. O prefixo WEB e o
+     asterisco continuam fora: eles marcam a origem do pedido, não o produto. */
   const s = String((g && g.situacao) || '');
   const m = /^(?:\*|WEB\s*-\s*)?([^\/]+)/.exec(s);
-  return m ? m[1].trim().replace(/^RIGIDO\s+/, '') : '';
+  return m ? m[1].trim() : '';
 }
 let _mapaFiltroRep = '', _mapaFiltroSit = 'todos', _mapaSel = '';
-let _fCanal = '', _fBoca = '', _fProd = '';
+let _fCanal = '', _fBoca = '', _fProd = '', _fMisto = '';
+/* ===== PEDIDO MISTO — 23/08/2026 (pergunta do João) =====
+   "Misto" na Programação quer dizer pedido que passa por mais de um SETOR. Aqui
+   o equivalente útil é outro: pedido que precisa de mais de uma BOCA, ou seja,
+   de mais de uma ferramenta para ficar pronto.
+   A diferença importa na hora de programar: um pedido de boca única entra e sai
+   de uma máquina; um pedido de três bocas só fecha quando as três rodarem, e
+   basta uma atrasar para o caminhão não sair. */
+function _bocasDoPedido(num) {
+  const s = new Set();
+  ((_cart196 && _cart196.pend) || []).forEach(l => {
+    if (String(l.pedido || '').split('/')[0] !== String(num)) return;
+    const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || null;
+    if (b) s.add(String(b));
+  });
+  return s;
+}
 
 /* junta as três pontas: geografia vem do RVEN002, o que falta entregar vem do
    REST196, e a situação de reserva vem da mesma alocação que a Programação usa —
@@ -31835,6 +31856,14 @@ function _cartFiltrada() {
     const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || '?';
     return String(b) === String(_fBoca);
   });
+  if (_fMisto) {
+    const cache = {};
+    LIN = LIN.filter(l => {
+      const n = String(l.pedido || '').split('/')[0];
+      if (cache[n] === undefined) cache[n] = _bocasDoPedido(n).size;
+      return _fMisto === 'misto' ? cache[n] > 1 : cache[n] === 1;
+    });
+  }
   return LIN;
 }
 /* frase curta do recorte, para todo título de detalhe dizer o que está mostrando */
@@ -31847,6 +31876,8 @@ function _cartRecorte() {
   if (_fCanal) p.push(CANAL_NOME[_fCanal] || _fCanal);
   if (_fProd) p.push(String(_fProd).toLowerCase());
   if (_fBoca) p.push('boca ' + _fBoca);
+  if (_fMisto === 'misto') p.push('pedido de mais de uma boca');
+  else if (_fMisto === 'unica') p.push('pedido de boca única');
   if (_mapaFiltroSit === 'completa') p.push('reserva completa');
   else if (_mapaFiltroSit === 'parcial') p.push('a separar');
   else if (_mapaFiltroSit === 'reservados') p.push('reservado ou a separar');
@@ -32065,7 +32096,7 @@ function cmBarraFiltro() {
     const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || null;
     if (b) bocas[b] = 1;
   });
-  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca;
+  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca || _fMisto;
   return `<div class="card" style="padding:11px 13px">
     <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;font-weight:800;color:var(--fraco-2);letter-spacing:.5px">FILTRAR TUDO</span>
@@ -32074,6 +32105,7 @@ function cmBarraFiltro() {
       ${sel('cmCanal', _fCanal, [['', 'todos os canais']].concat(Object.keys(canais).sort().map(c => [c, (CANAL_NOME[c] || c) + ' (' + c + ')'])), 'mapaCanal')}
       ${sel('cmProd', _fProd, [['', 'todos os produtos']].concat(Object.keys(prods).sort().map(x => [x, x.toLowerCase()])), 'mapaProd')}
       ${sel('cmBoca', _fBoca, [['', 'todas as bocas']].concat(Object.keys(bocas).sort((a, b) => +a - +b).map(b => [b, 'boca ' + b])), 'mapaBoca')}
+      ${sel('cmMisto', _fMisto, [['', 'boca única e mista'], ['misto', 'só pedido de mais de uma boca'], ['unica', 'só pedido de boca única']], 'mapaMisto')}
       ${ativo ? '<button class="btn btn-borda" style="width:auto;padding:6px 12px;font-size:12px" onclick="mapaLimpaFiltro()">limpar</button>' : ''}
     </div>
     ${_mapaFiltroRep ? `<p class="desc" style="margin:7px 0 0;font-size:11.5px;color:var(--azul-marca,#2E6FB7)"><b>Todos os quadros abaixo</b> estão mostrando só ${escapeHtml(String((D && D.reps[_mapaFiltroRep]) || _mapaFiltroRep).replace(/^V[RD]\s*-\s*/, ''))}.</p>` : ''}
@@ -32091,8 +32123,9 @@ function cmBarraFiltro() {
 function mapaCanal(v) { _fCanal = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaProd(v) { _fProd = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaBoca(v) { _fBoca = v || ''; _mapaSel = ''; cmPintaMapa(); }
+function mapaMisto(v) { _fMisto = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaLimpaFiltro() {
-  _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = ''; _fProd = ''; _fBoca = ''; _mapaSel = '';
+  _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = ''; _fProd = ''; _fBoca = ''; _fMisto = ''; _mapaSel = '';
   cmPintaMapa();
 }
 function cmPintaMapa() {
