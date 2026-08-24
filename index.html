@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.105.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.106.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3220,7 +3220,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.105.0';
+const APP_VER = '4.106.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31837,7 +31837,74 @@ function _produtoDe(g) {
   return m ? m[1].trim() : '';
 }
 let _mapaFiltroRep = '', _mapaFiltroSit = 'todos', _mapaSel = '';
-let _fCanal = '', _fBoca = '', _fProd = '', _fMisto = '';
+let _fCanal = '', _fBoca = '', _fProd = '', _fMisto = '', _fSetor = '', _fItem = '';
+/* ITEM → SETOR (24/08/2026, pedido do João: "ver carteira de Injeção,
+   Compressão, impressos…").
+   A carteira do REST196 é comercial: traz item, cliente e prazo, e NÃO traz
+   máquina nem setor. O único lugar que liga item a recurso é o RPCP622, já
+   agregado na v_item_maquina — a mesma fonte da coluna "Roda em".
+   O setor do item é o da máquina que MAIS produziu ele em kg, não a primeira da
+   lista: item que rodou uma vez numa máquina emprestada e mil vezes na de casa
+   pertence à de casa. Item sem histórico fica em "(sem histórico)" e aparece
+   como opção de filtro — quero que ele seja VISÍVEL, e não silenciosamente
+   jogado num setor qualquer. */
+let _itemSetorCache = null, _itemSetorFila = null;
+/* SEGUNDA FONTE: A FILA. A v_item_maquina nasce do RPCP622, e a Injeção e a
+   Compressão NÃO APONTAM no 622 — elas só aparecem no relatório de paradas.
+   Resultado: pelo histórico, os dois setores que o João pediu para ver seriam
+   exatamente os dois que ficariam vazios, e as 199 t deles cairiam caladas em
+   "(sem histórico)".
+   O RPCP264/RGER339 traz item e recurso na mesma linha e ENXERGA a Injeção
+   (1201–1208, 632 itens na foto de ontem). Então a fila entra como fonte
+   secundária: o histórico manda quando existe, porque é peso real de um ano; a
+   fila cobre quem nunca apontou produção. */
+async function carregarItemSetorFila(forcar) {
+  if (_itemSetorFila && !forcar) return _itemSetorFila;
+  const m = {};
+  try {
+    const { data: fot } = await sb.from('fila_producao').select('dia_foto')
+      .order('dia_foto', { ascending: false }).limit(1);
+    const dia = fot && fot[0] && fot[0].dia_foto;
+    if (dia) {
+      for (let ini = 0; ini < 20000; ini += 1000) {
+        const { data, error } = await sb.from('fila_producao').select('item_cod,recurso_cod,peso')
+          .eq('dia_foto', dia).order('id', { ascending: true }).range(ini, ini + 999);
+        if (error) throw error;
+        (data || []).forEach(r => {
+          const k = String(r.item_cod || ''); if (!k) return;
+          const st = (typeof setorDe === 'function') ? setorDe(r.recurso_cod) : null;
+          if (!st) return;
+          (m[k] = m[k] || {})[st] = (m[k][st] || 0) + (+r.peso || 1);
+        });
+        if (!data || data.length < 1000) break;
+      }
+    }
+  } catch (e) { try { console.warn('item_setor_fila:', e && e.message); } catch (_) { } }
+  const out = {};
+  Object.keys(m).forEach(k => {
+    out[k] = Object.entries(m[k]).sort((a, b) => b[1] - a[1])[0][0];
+  });
+  _itemSetorFila = out; _itemSetorCache = null;
+  return out;
+}
+function _itemSetor(cod) {
+  const k = String(cod || ''); if (!k) return null;
+  if (!_itemSetorCache) {
+    _itemSetorCache = {};
+    const hist = _itemMaqCache || {};
+    Object.keys(hist).forEach(it => {
+      const m = (hist[it] || [])[0];          // já vem ordenado por kg desc
+      if (!m) return;
+      const st = (typeof setorDe === 'function') ? setorDe(m.cod) : null;
+      if (st) _itemSetorCache[it] = st;
+    });
+    // a fila só preenche o que o histórico não conhece — nunca sobrescreve
+    Object.keys(_itemSetorFila || {}).forEach(it => {
+      if (!_itemSetorCache[it]) _itemSetorCache[it] = _itemSetorFila[it];
+    });
+  }
+  return _itemSetorCache[k] || null;
+}
 /* ===== PEDIDO MISTO — 23/08/2026 (pergunta do João) =====
    "Misto" na Programação quer dizer pedido que passa por mais de um SETOR. Aqui
    o equivalente útil é outro: pedido que precisa de mais de uma BOCA, ou seja,
@@ -32139,6 +32206,12 @@ function _cartFiltrada() {
       return true;
     });
   }
+  if (_fSetor) LIN = LIN.filter(l => (_itemSetor(l.item_cod) || '(sem histórico)') === _fSetor);
+  if (_fItem) {
+    const q = _fItem.toLowerCase();
+    LIN = LIN.filter(l => String(l.item_cod || '').toLowerCase().includes(q)
+      || String(l.item_desc || '').toLowerCase().includes(q));
+  }
   if (_fBoca) LIN = LIN.filter(l => {
     const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || '?';
     return String(b) === String(_fBoca);
@@ -32160,6 +32233,8 @@ function _cartRecorte() {
     const g = Object.values(_pedReg).find(x => String(x.vendedor_cod) === String(_mapaFiltroRep));
     p.push(String((g && g.vendedor_nome) || _mapaFiltroRep).replace(/^V[RD]\s*-\s*/, ''));
   }
+  if (_fSetor) p.push(_fSetor);
+  if (_fItem) p.push('item "' + _fItem + '"');
   if (_fCanal) p.push(CANAL_NOME[_fCanal] || _fCanal);
   if (_fProd) p.push(String(_fProd).toLowerCase());
   if (_fBoca) p.push('boca ' + _fBoca);
@@ -32376,19 +32451,26 @@ function cmBarraFiltro() {
      canal ou produto que sumir do ERP some do filtro sozinho, e um novo aparece
      sem eu precisar publicar nada. */
   const LINt = (_cart196 && _cart196.pend) || [];
-  const canais = {}, prods = {}, bocas = {};
+  const canais = {}, prods = {}, bocas = {}, setores = {};
   LINt.forEach(l => {
+    const st = _itemSetor(l.item_cod) || '(sem histórico)';
+    setores[st] = (setores[st] || 0) + (+l.peso_pendente || 0);
     const g = _pedReg && _pedReg[String(l.pedido || '').split('/')[0]];
     if (g) { const c = _canalDe(g); if (c) canais[c] = 1; const pr = _produtoDe(g); if (pr) prods[pr] = 1; }
     const b = (_itemBoca && l.item_cod && _itemBoca[String(l.item_cod)]) || null;
     if (b) bocas[b] = 1;
   });
-  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca || _fMisto;
+  const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal || _fProd || _fBoca || _fMisto || _fSetor || _fItem;
   return `<div class="card" style="padding:11px 13px">
     <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;font-weight:800;color:var(--fraco-2);letter-spacing:.5px">FILTRAR TUDO</span>
       ${sel('cmRep', _mapaFiltroRep, [['', 'todos os representantes' + (reps.length ? ' (' + reps.length + ')' : '')]].concat(reps.map(([c, n]) => [c, String(n).replace(/^V[RD]\s*-\s*/, '')])), 'mapaRep')}
       ${sel('cmSit', _mapaFiltroSit, [['todos', 'toda a carteira'], ['reservados', 'reservado + a separar'], ['completa', 'só reserva completa'], ['parcial', 'só a separar']], 'mapaSit')}
+      ${sel('cmSetor', _fSetor, [['', 'todos os setores']].concat(Object.keys(setores)
+        .sort((a, b) => setores[b] - setores[a])
+        .map(s => [s, s + ' · ' + (setores[s] >= 1000 ? (setores[s] / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(setores[s]) + ' kg')])), 'mapaSetor')}
+      <input id="cmItem" value="${escapeHtml(_fItem)}" oninput="mapaItem(this.value)" placeholder="item: código ou descrição"
+        style="flex:1;min-width:170px;font-size:13px;padding:8px 10px;border:1px solid var(--borda);border-radius:9px">
       ${sel('cmCanal', _fCanal, [['', 'todos os canais']].concat(Object.keys(canais).sort().map(c => [c, (CANAL_NOME[c] || c) + ' (' + c + ')'])), 'mapaCanal')}
       ${sel('cmProd', _fProd, [['', 'todos os produtos']].concat(Object.keys(prods).sort().map(x => [x, x.toLowerCase()])), 'mapaProd')}
       ${sel('cmBoca', _fBoca, [['', 'todas as bocas']].concat(Object.keys(bocas).sort((a, b) => +a - +b).map(b => [b, 'boca ' + b])), 'mapaBoca')}
@@ -32411,8 +32493,19 @@ function mapaCanal(v) { _fCanal = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaProd(v) { _fProd = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaBoca(v) { _fBoca = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaMisto(v) { _fMisto = v || ''; _mapaSel = ''; cmPintaMapa(); }
+function mapaSetor(v) { _fSetor = v || ''; _mapaSel = ''; cmPintaMapa(); }
+/* o campo do item é de digitação: cmPintaMapa refaz o innerHTML e levaria o
+   <input> junto. Como esse repinte é SÍNCRONO, devolver o foco na linha
+   seguinte funciona — ao contrário do que acontecia na busca de Promoções, onde
+   o render era async e o foco voltava para um elemento já condenado. */
+function mapaItem(v) {
+  _fItem = String(v || '').trim(); _mapaSel = '';
+  cmPintaMapa();
+  try { const el = document.getElementById('cmItem'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } } catch (_) { }
+}
 function mapaLimpaFiltro() {
-  _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = ''; _fProd = ''; _fBoca = ''; _fMisto = ''; _mapaSel = '';
+  _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = ''; _fProd = ''; _fBoca = ''; _fMisto = '';
+  _fSetor = ''; _fItem = ''; _mapaSel = '';
   cmPintaMapa();
 }
 function cmPintaMapa() {
@@ -32500,6 +32593,10 @@ async function cmAbrir(forcar) {
     try { await carregarPedidosRegiao(forcar); } catch (_) { }
     // depende da carteira já carregada: a boca sai da descrição do item dela
     try { await carregarItemBoca(true); } catch (_) { }
+    // v_item_maquina: é ela que dá o SETOR de cada item (a carteira não tem máquina)
+    try { await carregarItemMaquina(); } catch (_) { }
+    try { await carregarItemSetorFila(forcar); } catch (_) { }
+    _itemSetorCache = null;
     if (box) box.innerHTML = '<div id="cmMapa"></div>' + cardDestravaSemAlavanca() + _faixaFoto196();
     try { cmPintaMapa(); } catch (_) { }
   } catch (e) {
