@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.103.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.104.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1584,6 +1584,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="importar" onclick="orgVer('importar')">📦 Importar</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="inspecao" onclick="orgVer('inspecao')">🦺 Inspe&ccedil;&otilde;es</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="feedback" onclick="orgVer('feedback')">💬 Feedback</button>
+          <button class="btn org-vbtn so-dono" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="promo" onclick="orgVer('promo')">💼 Promo&ccedil;&otilde;es</button>
           <button class="btn" id="orgLayBtn" onclick="orgTrocaLayout()" title="Alternar layout" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px;margin-left:auto">📱 Coluna</button>
           <button class="btn" id="orgApresBtn" onclick="orgApresentar()" title="Modo apresentação" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⛶ Apresentar</button>
         </div>
@@ -3219,7 +3220,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.103.0';
+const APP_VER = '4.104.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35244,6 +35245,375 @@ function _mtAbrirGaleria(urls, turno) {
   toast(urls.length + ' imagem(ns) · a primeira já vai copiada');
 }
 
+
+/* ================= PROMOÇÕES (Gestão de Pessoas) =================
+   24/08/2026 — pedido do João. A tela existe para responder três coisas:
+   quem vai subir, para qual cargo/nível, e quanto isso custa por mês.
+
+   ONDE MORA O DINHEIRO. A tabela `colaboradores` NÃO tem salário e não vai ter:
+   o valor vem da TABELA SALARIAL por cargo × nível, importada aqui. Ou seja, o
+   salário de uma pessoa é uma CONSULTA (cargo + nível), não um campo dela. Isso
+   evita ter 244 salários soltos para manter e faz o reajuste da tabela valer
+   para todo mundo de uma vez.
+
+   QUAL É O NÍVEL ATUAL DA PESSOA. O ERP não manda nível. Então a regra é:
+   a última promoção APLICADA manda; se não houver nenhuma, o nível é escolhido
+   na mão e fica gravado na própria promoção. Não invento nível por padrão —
+   chutar o piso do cargo daria um impacto inflado e crível, que é o pior tipo
+   de número errado.
+
+   ACESSO. Só quem tem a flag 'desenvolvedor' no perfil (hoje só o João), no app
+   e no banco (RLS com sou_dono()). Salário não é dado de chão de fábrica. */
+let _promoRegs = null, _promoTab = null, _promoColabs = null;
+let _promoAba = 'nova', _promoSel = null, _promoEnc = null;
+let _promoFiltro = '';
+
+function _promoSouDono() { try { return !!souDevReal; } catch (_) { return false; } }
+const _pmMoeda = v => (v == null || isNaN(v)) ? '—'
+  : (+v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const _pmNum = s => {
+  if (s == null) return null;
+  const t = String(s).replace(/[^\d,.-]/g, '').trim();
+  if (!t) return null;
+  // 1.234,56 (BR) x 1234.56 — a vírgula manda quando existe
+  const n = t.includes(',') ? parseFloat(t.replace(/\./g, '').replace(',', '.')) : parseFloat(t);
+  return isNaN(n) ? null : n;
+};
+
+async function promoCarregar(forcar) {
+  if (_promoRegs && !forcar) return;
+  const [pr, ts, co, cfg] = await Promise.all([
+    sb.from('promocoes').select('*').order('criado_em', { ascending: false }).limit(1000),
+    sb.from('tabela_salarial').select('*').eq('ativo', true).order('cargo').order('nivel'),
+    sb.from('colaboradores').select('matricula,nome,cargo,setor,admissao,ativo').eq('ativo', true).order('nome'),
+    sb.from('app_config').select('valor').eq('chave', 'promo_encargos').maybeSingle()
+  ]);
+  if (pr.error) throw pr.error;
+  _promoRegs = pr.data || [];
+  _promoTab = ts.data || [];
+  _promoColabs = co.data || [];
+  let e = null;
+  try { e = cfg.data ? parseFloat(String(cfg.data.valor).replace(',', '.')) : null; } catch (_) { }
+  _promoEnc = (e && e > 0) ? e : null;      // null = ainda não definido, e a tela avisa
+}
+
+/* posição ATUAL: última promoção aplicada vence o cadastro do ERP */
+function _promoAtual(mat) {
+  const c = (_promoColabs || []).find(x => x.matricula === mat) || {};
+  const ap = (_promoRegs || [])
+    .filter(p => p.matricula === mat && p.status === 'aplicada')
+    .sort((a, b) => String(b.data_efeito || b.criado_em).localeCompare(String(a.data_efeito || a.criado_em)))[0];
+  if (ap) return { cargo: ap.cargo_para, nivel: ap.nivel_para, salario: +ap.salario_para || null, origem: 'promoção aplicada' };
+  return { cargo: c.cargo || null, nivel: null, salario: null, origem: 'cadastro do ERP' };
+}
+const _promoCargos = () => [...new Set((_promoTab || []).map(t => t.cargo))].sort();
+const _promoNiveis = cargo => (_promoTab || []).filter(t => t.cargo === cargo)
+  .sort((a, b) => (+a.salario) - (+b.salario));
+function _promoSal(cargo, nivel) {
+  const r = (_promoTab || []).find(t => t.cargo === cargo && t.nivel === nivel);
+  return r ? +r.salario : null;
+}
+
+async function renderOrgPromo() {
+  const wrap = $('orgWrap');
+  if (!_promoSouDono()) { wrap.innerHTML = '<div class="card"><p class="desc" style="margin:0">Esta tela é restrita.</p></div>'; return; }
+  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
+  try { await promoCarregar(); }
+  catch (e) {
+    wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui ler as promoções: '
+      + escapeHtml(String(e.message || e)) + '</p></div>';
+    return;
+  }
+  const abas = [['nova', '➕ Nova'], ['hist', '📜 Histórico'], ['impacto', '💰 Impacto'], ['tabela', '📋 Tabela salarial']];
+  let h = '<div class="orgv2"><div class="card">'
+    + '<div class="titulo-sec">💼 Promoções <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🔒 só você</span></div>'
+    + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
+    + abas.map(([k, r]) => '<button onclick="promoAba(\'' + k + '\')" style="cursor:pointer;font-size:13px;font-weight:800;padding:8px 14px;border-radius:999px;'
+      + 'border:1.5px solid ' + (k === _promoAba ? 'var(--navy)' : '#C3CEDA') + ';'
+      + 'background:' + (k === _promoAba ? 'var(--navy)' : '#fff') + ';color:' + (k === _promoAba ? '#fff' : 'var(--navy)') + '">'
+      + r + '</button>').join('')
+    + '</div></div>';
+  if (!(_promoTab || []).length) {
+    h += '<div class="card" style="border-left:4px solid var(--laranja)"><b>A tabela salarial ainda está vazia.</b>'
+      + '<p class="desc" style="margin:6px 0 0">Sem ela não há salário para consultar, então a promoção não tem de onde tirar o valor. '
+      + 'Vá em <b>📋 Tabela salarial</b> e cole os dados — cargo, nível e salário.</p></div>';
+  }
+  if (_promoAba === 'nova') h += _promoNova();
+  else if (_promoAba === 'hist') h += _promoHist();
+  else if (_promoAba === 'impacto') h += _promoImpacto();
+  else h += _promoTabela();
+  wrap.innerHTML = h + '</div>';
+}
+function promoAba(k) { _promoAba = k; renderOrgPromo(); }
+
+/* ---------- NOVA ---------- */
+function _promoNova() {
+  const busca = _promoFiltro.toLowerCase();
+  const lista = (_promoColabs || []).filter(c => !busca
+    || String(c.nome || '').toLowerCase().includes(busca)
+    || String(c.matricula || '').includes(busca)
+    || String(c.cargo || '').toLowerCase().includes(busca)).slice(0, 40);
+  let h = '<div class="card"><div class="titulo-sec">Escolha o colaborador</div>'
+    + '<input id="promoBusca" value="' + escapeHtml(_promoFiltro) + '" oninput="promoBuscar(this.value)" '
+    + 'placeholder="nome, matrícula ou cargo" style="width:100%;font-size:16px;padding:9px 11px;border:1px solid var(--linha);border-radius:10px">'
+    + '<div class="desc" style="margin-top:5px">' + (_promoColabs || []).length + ' ativos'
+    + (lista.length === 40 ? ' · mostrando os 40 primeiros' : '') + '</div>';
+  if (!_promoSel) {
+    h += '<div style="max-height:330px;overflow:auto;margin-top:8px">'
+      + lista.map(c => '<div onclick="promoEscolher(\'' + escapeHtml(c.matricula) + '\')" '
+        + 'style="cursor:pointer;padding:9px 10px;border-bottom:1px solid var(--linha)">'
+        + '<b>' + escapeHtml(c.nome || '') + '</b>'
+        + '<div class="desc" style="font-size:11.5px">' + escapeHtml(c.matricula) + ' · '
+        + escapeHtml(c.cargo || 'sem cargo') + ' · ' + escapeHtml(c.setor || '—') + '</div></div>').join('')
+      + (lista.length ? '' : '<p class="desc">Ninguém com esse texto.</p>') + '</div>';
+    return h + '</div>';
+  }
+  const c = (_promoColabs || []).find(x => x.matricula === _promoSel) || {};
+  const at = _promoAtual(_promoSel);
+  const salDe = at.salario != null ? at.salario : _promoSal(at.cargo, window._pmNivelDe || '');
+  const cargoPara = window._pmCargoPara || '';
+  const nivelPara = window._pmNivelPara || '';
+  const salPara = _promoSal(cargoPara, nivelPara);
+  const delta = (salDe != null && salPara != null) ? (salPara - salDe) : null;
+  h += '<div style="margin-top:10px;padding:10px 12px;background:var(--leve-2);border-radius:12px">'
+    + '<b style="font-size:15px">' + escapeHtml(c.nome || '') + '</b> '
+    + '<button onclick="promoEscolher(null)" style="float:right;border:none;background:transparent;color:var(--fraco);font-weight:800;cursor:pointer">trocar</button>'
+    + '<div class="desc" style="font-size:12px">' + escapeHtml(c.matricula) + ' · ' + escapeHtml(c.setor || '—')
+    + (c.admissao ? ' · admitido em ' + fmtData(c.admissao) : '') + '</div>'
+    + '<div class="desc" style="font-size:11.5px;margin-top:3px">cargo atual: <b>' + escapeHtml(at.cargo || 'não cadastrado')
+    + '</b> · fonte: ' + escapeHtml(at.origem) + '</div></div>';
+
+  // nível ATUAL — só aparece quando a última posição não veio de promoção aplicada
+  if (at.salario == null) {
+    const niv = _promoNiveis(at.cargo);
+    h += '<div class="campo" style="margin-top:10px"><label>Nível ATUAL (para saber de quanto ele sai)</label>'
+      + '<select onchange="promoSetNivelDe(this.value)" class="sel-pad" style="width:100%">'
+      + '<option value="">— escolher —</option>'
+      + niv.map(n => '<option value="' + escapeHtml(n.nivel) + '"' + ((window._pmNivelDe === n.nivel) ? ' selected' : '') + '>'
+        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
+      + '</select>'
+      + (niv.length ? '' : '<div class="desc" style="color:var(--laranja);margin-top:4px">O cargo <b>'
+        + escapeHtml(at.cargo || '—') + '</b> não existe na tabela salarial.</div>') + '</div>';
+  }
+  const cargos = _promoCargos();
+  h += '<div class="campo" style="margin-top:8px"><label>Cargo de destino</label>'
+    + '<select onchange="promoSetCargoPara(this.value)" class="sel-pad" style="width:100%"><option value="">— escolher —</option>'
+    + cargos.map(x => '<option' + (x === cargoPara ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('')
+    + '</select></div>';
+  if (cargoPara) {
+    h += '<div class="campo"><label>Nível de destino</label>'
+      + '<select onchange="promoSetNivelPara(this.value)" class="sel-pad" style="width:100%"><option value="">— escolher —</option>'
+      + _promoNiveis(cargoPara).map(n => '<option value="' + escapeHtml(n.nivel) + '"' + (n.nivel === nivelPara ? ' selected' : '') + '>'
+        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
+      + '</select></div>';
+  }
+  h += '<div class="campo"><label>Vale a partir de</label>'
+    + '<input type="date" id="promoData" value="' + escapeHtml(window._pmData || hojeISO()) + '" '
+    + 'onchange="window._pmData=this.value" style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px"></div>'
+    + '<div class="campo"><label>Motivo</label><textarea id="promoMotivo" rows="2" '
+    + 'placeholder="por que essa pessoa" style="width:100%;font-size:15px;padding:8px;border:1px solid var(--linha);border-radius:10px">'
+    + escapeHtml(window._pmMotivo || '') + '</textarea></div>';
+
+  if (salDe != null && salPara != null) {
+    const pct = salDe > 0 ? (delta / salDe * 100) : 0;
+    const cor = delta >= 0 ? 'var(--ok-2)' : 'var(--critico-s)';
+    h += '<div style="margin-top:6px;padding:11px 13px;border-radius:12px;background:var(--leve);border-left:4px solid ' + cor + '">'
+      + '<div style="font-size:13px">de <b>' + _pmMoeda(salDe) + '</b> para <b>' + _pmMoeda(salPara) + '</b></div>'
+      + '<div style="font-size:18px;font-weight:800;color:' + cor + ';margin-top:2px">'
+      + (delta >= 0 ? '+' : '') + _pmMoeda(delta) + ' <span style="font-size:13px">(' + (delta >= 0 ? '+' : '') + pct.toFixed(1).replace('.', ',') + '%)</span></div>'
+      + '<div class="desc" style="font-size:11.5px;margin-top:3px">custo mensal com encargos: <b>'
+      + (_promoEnc ? _pmMoeda(delta * _promoEnc) : 'defina o multiplicador na aba Impacto') + '</b></div></div>';
+  }
+  h += '<button class="btn btn-verde" style="width:100%;margin-top:10px" onclick="promoSalvar()"'
+    + ((salDe != null && salPara != null) ? '' : ' disabled style="width:100%;margin-top:10px;opacity:.5"')
+    + '>Gravar como rascunho</button>';
+  return h + '</div>';
+}
+function promoBuscar(v) {
+  _promoFiltro = v || '';
+  renderOrgPromo();
+  try { const el = $('promoBusca'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } } catch (_) { }
+}
+function promoEscolher(m) {
+  _promoSel = m;
+  window._pmCargoPara = ''; window._pmNivelPara = ''; window._pmNivelDe = '';
+  window._pmMotivo = ''; window._pmData = hojeISO();
+  renderOrgPromo();
+}
+function promoSetNivelDe(v) { window._pmNivelDe = v; renderOrgPromo(); }
+function promoSetCargoPara(v) { window._pmCargoPara = v; window._pmNivelPara = ''; renderOrgPromo(); }
+function promoSetNivelPara(v) { window._pmNivelPara = v; renderOrgPromo(); }
+
+async function promoSalvar() {
+  try { window._pmMotivo = ($('promoMotivo') || {}).value || ''; } catch (_) { }
+  const c = (_promoColabs || []).find(x => x.matricula === _promoSel);
+  if (!c) { toast('Escolha o colaborador.'); return; }
+  const at = _promoAtual(_promoSel);
+  const salDe = at.salario != null ? at.salario : _promoSal(at.cargo, window._pmNivelDe || '');
+  const salPara = _promoSal(window._pmCargoPara, window._pmNivelPara);
+  if (salDe == null || salPara == null) { toast('Faltou o nível de origem ou de destino.'); return; }
+  const linha = {
+    matricula: c.matricula, nome: c.nome, setor: c.setor,
+    cargo_de: at.cargo, nivel_de: at.nivel || window._pmNivelDe || null, salario_de: salDe,
+    cargo_para: window._pmCargoPara, nivel_para: window._pmNivelPara, salario_para: salPara,
+    data_efeito: window._pmData || hojeISO(), status: 'rascunho',
+    motivo: (window._pmMotivo || '').trim() || null
+  };
+  const { error } = await sb.from('promocoes').insert(linha);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('✅ Rascunho gravado para ' + (c.nome || ''));
+  _promoSel = null; _promoAba = 'hist';
+  await promoCarregar(true); renderOrgPromo();
+}
+
+/* ---------- HISTÓRICO ---------- */
+const _PM_ST = {
+  rascunho: ['Rascunho', '#8A6D3B', '#FDF3E7'],
+  aprovada: ['Aprovada', '#1D5C8A', '#E7F0F8'],
+  aplicada: ['Aplicada', '#2C6B2F', '#E8F3E8'],
+  cancelada: ['Cancelada', '#8A2A2A', '#FDECEC']
+};
+function _promoHist() {
+  const regs = _promoRegs || [];
+  if (!regs.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
+  let h = '<div class="card"><div class="titulo-sec">📜 Histórico · ' + regs.length + '</div>';
+  h += regs.map(p => {
+    const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    return '<div style="padding:10px 0;border-bottom:1px solid var(--linha)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+      + '<b>' + escapeHtml(p.nome || p.matricula) + '</b>'
+      + '<span style="font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;background:' + st[2] + ';color:' + st[1] + '">' + st[0] + '</span>'
+      + '<span class="desc" style="font-size:11.5px;margin-left:auto">' + (p.data_efeito ? fmtData(p.data_efeito) : '') + '</span></div>'
+      + '<div class="desc" style="font-size:12px;margin-top:2px">'
+      + escapeHtml((p.cargo_de || '—') + (p.nivel_de ? ' ' + p.nivel_de : '')) + ' → <b>'
+      + escapeHtml((p.cargo_para || '—') + (p.nivel_para ? ' ' + p.nivel_para : '')) + '</b></div>'
+      + '<div style="font-size:12.5px;margin-top:2px">' + _pmMoeda(p.salario_de) + ' → ' + _pmMoeda(p.salario_para)
+      + ' <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">(' + (d >= 0 ? '+' : '') + _pmMoeda(d) + ')</b></div>'
+      + (p.motivo ? '<div class="desc" style="font-size:11.5px;margin-top:2px">' + escapeHtml(p.motivo) + '</div>' : '')
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
+      + (p.status === 'rascunho' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aprovada\')">Aprovar</button>' : '')
+      + (p.status === 'aprovada' ? '<button class="btn btn-verde" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aplicada\')">Marcar aplicada</button>' : '')
+      + (p.status !== 'cancelada' && p.status !== 'aplicada' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'cancelada\')">Cancelar</button>' : '')
+      + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px;color:var(--critico-s)" onclick="promoExcluir(' + p.id + ')">Excluir</button>'
+      + '</div></div>';
+  }).join('');
+  return h + '</div>';
+}
+async function promoStatus(id, st) {
+  const { error } = await sb.from('promocoes').update({ status: st, atualizado_em: new Date().toISOString() }).eq('id', id);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('Status: ' + st);
+  await promoCarregar(true); renderOrgPromo();
+}
+async function promoExcluir(id) {
+  if (!confirm('Excluir este registro de vez?')) return;
+  const { error } = await sb.from('promocoes').delete().eq('id', id);
+  if (error) { toast('❌ ' + error.message); return; }
+  await promoCarregar(true); renderOrgPromo();
+}
+
+/* ---------- IMPACTO ----------
+   Conta só o que NÃO foi cancelado, e separa por status: rascunho é cenário,
+   aplicada já está na folha. Somar tudo num número só esconde essa diferença,
+   que é justamente a pergunta de quem aprova. */
+function _promoImpacto() {
+  const enc = _promoEnc;
+  let h = '<div class="card"><div class="titulo-sec">💰 Impacto na folha</div>'
+    + '<div class="campo" style="margin:0 0 10px"><label>Multiplicador de encargos</label>'
+    + '<input id="promoEnc" type="text" inputmode="decimal" value="' + (enc != null ? String(enc).replace('.', ',') : '') + '" '
+    + 'placeholder="ex.: 1,68" style="width:130px;font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px">'
+    + '<button class="btn btn-borda" style="width:auto;padding:6px 14px;font-size:13px;margin-left:8px" onclick="promoSalvarEnc()">Salvar</button>'
+    + '<div class="desc" style="font-size:11.5px;margin-top:4px">'
+    + (enc == null
+      ? '<b style="color:var(--laranja)">Ainda não definido.</b> Sem ele eu mostro só o salário bruto — não invento o número dos encargos da Rioplastic. Pegue o valor com o RH ou a contabilidade.'
+      : 'Todo valor "com encargos" abaixo é o delta do salário × ' + String(enc).replace('.', ',') + '.')
+    + '</div></div>';
+  const regs = (_promoRegs || []).filter(p => p.status !== 'cancelada');
+  if (!regs.length) return h + '<p class="desc" style="margin:0">Nada para somar ainda.</p></div>';
+  const porStatus = {};
+  const porSetor = {};
+  regs.forEach(p => {
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    porStatus[p.status] = (porStatus[p.status] || 0) + d;
+    const s = p.setor || '—';
+    if (!porSetor[s]) porSetor[s] = { d: 0, n: 0 };
+    porSetor[s].d += d; porSetor[s].n++;
+  });
+  const total = regs.reduce((a, p) => a + ((+p.salario_para || 0) - (+p.salario_de || 0)), 0);
+  const linha = (rot, v, n) => '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--linha)">'
+    + '<span>' + escapeHtml(rot) + (n != null ? ' <span class="desc">· ' + n + '</span>' : '') + '</span>'
+    + '<b>' + _pmMoeda(v) + (enc != null ? ' <span class="desc" style="font-weight:600">· ' + _pmMoeda(v * enc) + ' c/ enc.</span>' : '') + '</b></div>';
+  h += '<div style="padding:11px 13px;background:var(--leve);border-radius:12px;margin-bottom:10px">'
+    + '<div class="desc" style="font-size:11.5px">acréscimo MENSAL na folha (tudo que não foi cancelado)</div>'
+    + '<div style="font-size:23px;font-weight:800;color:var(--navy)">' + _pmMoeda(enc != null ? total * enc : total) + '</div>'
+    + '<div class="desc" style="font-size:11.5px">' + _pmMoeda(total) + ' de salário'
+    + (enc != null ? ' × ' + String(enc).replace('.', ',') : ' · sem encargos') + ' · '
+    + _pmMoeda((enc != null ? total * enc : total) * 12) + ' em 12 meses</div>'
+    + '<div class="desc" style="font-size:11px;margin-top:3px">13º e férias não estão nesta conta.</div></div>';
+  h += '<div style="font-weight:800;font-size:13px;color:var(--navy);margin:4px 0 2px">Por situação</div>';
+  ['rascunho', 'aprovada', 'aplicada'].forEach(s => { if (porStatus[s]) h += linha((_PM_ST[s] || [s])[0], porStatus[s]); });
+  h += '<div style="font-weight:800;font-size:13px;color:var(--navy);margin:12px 0 2px">Por setor</div>';
+  Object.keys(porSetor).sort((a, b) => porSetor[b].d - porSetor[a].d).forEach(s => h += linha(s, porSetor[s].d, porSetor[s].n));
+  return h + '</div>';
+}
+async function promoSalvarEnc() {
+  const v = _pmNum(($('promoEnc') || {}).value);
+  if (!(v > 0)) { toast('Valor inválido.'); return; }
+  const { error } = await sb.from('app_config').upsert({ chave: 'promo_encargos', valor: String(v) }, { onConflict: 'chave' });
+  if (error) { toast('❌ ' + error.message); return; }
+  _promoEnc = v; toast('✅ Multiplicador salvo.'); renderOrgPromo();
+}
+
+/* ---------- TABELA SALARIAL ---------- */
+function _promoTabela() {
+  const t = _promoTab || [];
+  let h = '<div class="card"><div class="titulo-sec">📋 Tabela salarial · ' + t.length + ' faixas</div>'
+    + '<p class="desc" style="margin:0 0 8px">Cole uma linha por faixa: <b>cargo ; nível ; salário</b>. '
+    + 'Serve vírgula, ponto-e-vírgula ou tabulação (colar direto do Excel funciona). '
+    + 'Cargo e nível que já existirem são atualizados, não duplicados.</p>'
+    + '<textarea id="promoCola" rows="6" placeholder="OPERADOR I; A; 2.150,00&#10;OPERADOR I; B; 2.380,00" '
+    + 'style="width:100%;font:13px/1.5 ui-monospace,Menlo,monospace;padding:9px;border:1px solid var(--linha);border-radius:10px"></textarea>'
+    + '<button class="btn btn-navy" style="width:100%;margin-top:8px" onclick="promoImportar()">Importar</button>';
+  if (t.length) {
+    const porCargo = {};
+    t.forEach(x => { (porCargo[x.cargo] = porCargo[x.cargo] || []).push(x); });
+    h += '<div style="margin-top:12px">' + Object.keys(porCargo).sort().map(c =>
+      '<details style="border-bottom:1px solid var(--linha)"><summary style="cursor:pointer;padding:8px 0;font-weight:800;font-size:13.5px">'
+      + escapeHtml(c) + ' <span class="desc" style="font-weight:600">· ' + porCargo[c].length + ' níveis</span></summary>'
+      + porCargo[c].sort((a, b) => (+a.salario) - (+b.salario)).map(x =>
+        '<div style="display:flex;justify-content:space-between;padding:5px 0 5px 12px;font-size:13px">'
+        + '<span>' + escapeHtml(x.nivel) + '</span><b>' + _pmMoeda(x.salario) + '</b></div>').join('')
+      + '</details>').join('') + '</div>'
+      + '<button class="btn btn-borda" style="width:100%;margin-top:10px;color:var(--critico-s)" onclick="promoLimparTabela()">Apagar a tabela inteira</button>';
+  }
+  return h + '</div>';
+}
+async function promoImportar() {
+  const txt = (($('promoCola') || {}).value || '').trim();
+  if (!txt) { toast('Cole os dados primeiro.'); return; }
+  const linhas = [], erros = [];
+  txt.split(/\r?\n/).forEach((l, i) => {
+    const s = l.trim(); if (!s) return;
+    const p = s.split(/\t|;|,(?=\s*[^\d])/).map(x => x.trim()).filter(x => x !== '');
+    if (p.length < 3) { erros.push((i + 1) + ': ' + s.slice(0, 40)); return; }
+    const sal = _pmNum(p[p.length - 1]);
+    if (sal == null || sal <= 0) { erros.push((i + 1) + ': sem salário'); return; }
+    linhas.push({ cargo: p[0].toUpperCase(), nivel: p[1] || '-', salario: sal, vigencia: hojeISO(), ativo: true });
+  });
+  if (!linhas.length) { toast('Não reconheci nenhuma linha.'); return; }
+  const { error } = await sb.from('tabela_salarial').upsert(linhas, { onConflict: 'cargo,nivel,vigencia' });
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('✅ ' + linhas.length + ' faixas' + (erros.length ? ' · ' + erros.length + ' linha(s) ignorada(s)' : ''));
+  await promoCarregar(true); renderOrgPromo();
+}
+async function promoLimparTabela() {
+  if (!confirm('Apagar TODA a tabela salarial? As promoções já gravadas guardam o valor delas e não mudam.')) return;
+  const { error } = await sb.from('tabela_salarial').delete().neq('id', -1);
+  if (error) { toast('❌ ' + error.message); return; }
+  await promoCarregar(true); renderOrgPromo();
+}
+
 /* ================= SERVICE WORKER ================= */
 /* ===== Service Worker com AUTO-UPDATE (nunca precisa reinstalar) ===== */
 if ('serviceWorker' in navigator) {
@@ -35622,6 +35992,11 @@ function orgTrocaSetor() {
 function orgTrocaTurno() { orgTurnoSel = $('orgTurno').value; renderOrgVista(); window.scrollTo(0, 0); }
 const ORG_VISTAS_RH = ['faltas', 'semaforo'];
 function orgVer(v) {
+  /* Promoções carrega salário — é a vista mais restrita do app. Só a flag
+     'desenvolvedor' do perfil abre, e o banco repete a trava no RLS com
+     sou_dono(). Não uso sou_dev() aqui: ela também libera quem tem a tela
+     Organograma, que hoje é meio mundo. */
+  if (v === 'promo' && !souDevReal) { toast('Promoções: tela restrita.'); return; }
   // o líder abre o Semáforo (versão sem nomes); a vista Faltas segue só p/ gestor e RH
   if (v === 'semaforo' && !vePessoal && !ehLider) { toast('Faltas e atestados: só gestor, RH e líderes.'); return; }
   if (v !== 'semaforo' && ORG_VISTAS_RH.includes(v) && !vePessoal) { toast('Faltas e atestados: só gestor e RH.'); return; }
@@ -35648,6 +36023,8 @@ function renderOrgVista() {
     const soSemaforo = b.getAttribute('data-v') === 'semaforo';
     b.classList.toggle('oculto', soSemaforo ? !(vePessoal || ehLider) : !vePessoal);
   });
+  document.querySelectorAll('.so-dono').forEach(b => b.classList.toggle('oculto', !souDevReal));
+  if (orgVista === 'promo' && !souDevReal) orgVista = 'org';
   if (orgVista === 'semaforo' && !vePessoal && !ehLider) orgVista = 'organograma';
   if (orgVista !== 'semaforo' && ORG_VISTAS_RH.includes(orgVista) && !vePessoal) orgVista = 'organograma';
   orgGuardaScroll();
@@ -35665,6 +36042,7 @@ function renderOrgVista() {
   if (orgVista === 'semaforo') return renderOrgSemaforo();
   if (orgVista === 'importar') return renderOrgImportar();
   if (orgVista === 'inspecao') return renderOrgInspecoes();
+  if (orgVista === 'promo') return renderOrgPromo();
   if (orgVista === 'feedback') return fbCarregar();
 }
 
