@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.125.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.126.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.125.0';
+const APP_VER = '4.126.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -36259,6 +36259,110 @@ async function promoSalvar() {
   await promoCarregar(true); renderOrgPromo();
 }
 
+/* ===== DESEMPENHO DO ANO NA LISTA DO HISTÓRICO (24/08/2026, pedido do João) =====
+   Quem lê a lista para aprovar precisa ver o argumento junto do nome, sem abrir
+   pessoa por pessoa. Aqui vai o ano fechado do POSTO de cada um: produção
+   acumulada, média por turno, curva mês a mês e as ocorrências.
+
+   UMA consulta para a lista inteira, não uma por pessoa. As alocações saem de
+   um .in() só; a produção sai de um .in() nas máquinas envolvidas e é repartida
+   por bloco na memória. Com 4 promoções isso seria irrelevante, mas a lista vai
+   crescer e o padrão de uma consulta por linha é o que trava tela. */
+let _promoPerfAno = null, _promoPerfSeq = null;
+async function promoPerfAno() {
+  const chave = (_promoRegs || []).map(p => p.matricula).join(',');
+  if (_promoPerfAno && _promoPerfSeq === chave) return _promoPerfAno;
+  const mats = [...new Set((_promoRegs || []).map(p => String(p.matricula)).filter(Boolean))];
+  const out = {};
+  mats.forEach(m => { out[m] = { aloc: null, meses: {}, kg: 0, turnos: 0, faltas: 0, atestados: 0, fbPos: 0, fbDes: 0 }; });
+  if (!mats.length) { _promoPerfAno = out; _promoPerfSeq = chave; return out; }
+  const ano = hojeISO().slice(0, 4), de = ano + '-01-01';
+  try {
+    const [al, af, fb] = await Promise.all([
+      sb.from('org_alocacoes').select('matricula,setor,turno,maquina_codigo,funcao').in('matricula', mats).is('vigencia_fim', null),
+      sb.from('org_afastamentos').select('matricula,tipo,dias,data').in('matricula', mats).gte('data', de),
+      sb.from('feedbacks').select('matricula,tipo').in('matricula', mats)
+    ]);
+    (al.data || []).forEach(a => { if (out[String(a.matricula)]) out[String(a.matricula)].aloc = a; });
+    (af.data || []).forEach(a => {
+      const o = out[String(a.matricula)]; if (!o) return;
+      const t = String(a.tipo || '').toLowerCase();
+      if (t === 'falta') o.faltas += (+a.dias || 1); else if (t === 'atestado') o.atestados += (+a.dias || 1);
+    });
+    (fb.data || []).forEach(f => {
+      const o = out[String(f.matricula)]; if (!o) return;
+      if (String(f.tipo) === 'reconhecimento') o.fbPos++; else o.fbDes++;
+    });
+    const maqs = [...new Set(Object.values(out).map(o => o.aloc && String(o.aloc.maquina_codigo)).filter(Boolean))];
+    if (maqs.length) {
+      let linhas = [];
+      for (let ini = 0; ini < 60000; ini += 1000) {
+        const { data, error } = await sb.from('producao_resumo').select('dia,turno,recurso_cod,peso')
+          .in('recurso_cod', maqs).gte('dia', de).order('dia').range(ini, ini + 999);
+        if (error) throw error;
+        linhas = linhas.concat(data || []);
+        if (!data || data.length < 1000) break;
+      }
+      const BL = { 'Manhã': ['1', '3'], 'Tarde': ['2', '4'], 'Noite': ['5'] };
+      const porDia = {};   // maquina|bloco|dia -> kg
+      linhas.forEach(r => {
+        const t = String(r.turno);
+        const bl = t === '1' || t === '3' ? 'Manhã' : t === '2' || t === '4' ? 'Tarde' : 'Noite';
+        const k = r.recurso_cod + '|' + bl + '|' + String(r.dia).slice(0, 10);
+        porDia[k] = (porDia[k] || 0) + (+r.peso || 0);
+      });
+      Object.keys(out).forEach(m => {
+        const o = out[m]; if (!o.aloc) return;
+        const pre = o.aloc.maquina_codigo + '|' + o.aloc.turno + '|';
+        Object.keys(porDia).forEach(k => {
+          if (k.indexOf(pre) !== 0) return;
+          const v = porDia[k]; if (!(v > 0)) return;
+          o.kg += v; o.turnos++;
+          const mes = k.slice(pre.length, pre.length + 7);
+          o.meses[mes] = (o.meses[mes] || 0) + v;
+        });
+      });
+    }
+  } catch (e) { try { console.warn('perf ano:', e && e.message); } catch (_) { } }
+  _promoPerfAno = out; _promoPerfSeq = chave;
+  return out;
+}
+function _promoPerfHTML(mat) {
+  const o = (_promoPerfAno || {})[String(mat)];
+  if (!o) return '<div class="pperf desc" style="font-size:11px;margin-top:3px">carregando desempenho do ano…</div>';
+  const ano = hojeISO().slice(0, 4);
+  const t = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const p = [];
+  if (o.aloc) {
+    const media = o.turnos ? o.kg / o.turnos : 0;
+    p.push('<b>' + escapeHtml(o.aloc.maquina_codigo) + '</b> · ' + escapeHtml(o.aloc.turno));
+    p.push('<b>' + t(o.kg) + '</b> em ' + ano);
+    if (o.turnos) p.push(Math.round(media).toLocaleString('pt-BR') + ' kg/turno · ' + o.turnos + ' turnos');
+  } else {
+    p.push('<span style="color:#8A5A12">sem alocação no organograma</span>');
+  }
+  p.push(o.faltas ? '<b style="color:' + (o.faltas >= 3 ? 'var(--critico-s)' : '#8A5A12') + '">' + o.faltas + ' falta(s)</b>' : '0 faltas');
+  if (o.atestados) p.push(o.atestados + ' atestado(s)');
+  if (o.fbPos) p.push('<b style="color:var(--ok-2)">👏 ' + o.fbPos + '</b>');
+  if (o.fbDes) p.push('🎯 ' + o.fbDes);
+  const ms = Object.keys(o.meses).sort();
+  const vals = ms.map(k => o.meses[k]);
+  let spark = '';
+  if (vals.length > 1) {
+    const meio = Math.floor(vals.length / 2);
+    const md = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const sobe = md(vals.slice(meio)) >= md(vals.slice(0, meio));
+    spark = '<span style="margin-left:auto">' + sparkSVG(vals, sobe ? '#3CA96E' : '#D64545', 96, 26) + '</span>';
+  }
+  return '<div class="pperf" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--fraco);'
+    + 'margin-top:5px;padding:5px 8px;background:var(--leve);border-radius:8px">'
+    + p.join(' <span style="opacity:.45">·</span> ') + spark + '</div>';
+}
+async function _promoPerfCarrega() {
+  await promoPerfAno();
+  if (_promoAba === 'hist') renderOrgPromo();
+}
+
 /* ---------- HISTÓRICO ---------- */
 const _PM_ST = {
   rascunho: ['Rascunho', '#8A6D3B', '#FDF3E7'],
@@ -36269,7 +36373,10 @@ const _PM_ST = {
 function _promoHist() {
   const regs = _promoRegs || [];
   if (!regs.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
-  let h = '<div class="card"><div class="titulo-sec">📜 Histórico · ' + regs.length + '</div>';
+  // uma consulta para a lista toda; a tela abre na hora e as linhas se completam
+  if (!_promoPerfAno || _promoPerfSeq !== regs.map(x => x.matricula).join(',')) setTimeout(_promoPerfCarrega, 0);
+  let h = '<div class="card"><div class="titulo-sec">📜 Histórico · ' + regs.length
+    + ' <span class="desc" style="font-size:11px;font-weight:600">· desempenho de ' + hojeISO().slice(0, 4) + '</span></div>';
   h += regs.map(p => {
     const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
     const d = (+p.salario_para || 0) - (+p.salario_de || 0);
@@ -36284,6 +36391,7 @@ function _promoHist() {
       + '<div style="font-size:12.5px;margin-top:2px">' + _pmMoeda(p.salario_de) + ' → ' + _pmMoeda(p.salario_para)
       + ' <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">(' + (d >= 0 ? '+' : '') + _pmMoeda(d) + ')</b></div>'
       + (p.motivo ? '<div class="desc" style="font-size:11.5px;margin-top:2px">' + escapeHtml(p.motivo) + '</div>' : '')
+      + _promoPerfHTML(p.matricula)
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
       + (p.status === 'rascunho' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aprovada\')">Aprovar</button>' : '')
       + (p.status === 'aprovada' ? '<button class="btn btn-verde" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aplicada\')">Marcar aplicada</button>' : '')
