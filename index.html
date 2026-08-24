@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.100.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.101.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3215,7 +3215,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.100.0';
+const APP_VER = '4.101.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4080,6 +4080,9 @@ const ABAS = [
   { id: 'manut', nome: 'Manutenção / Engenharia' }, { id: 'oee', nome: 'OEE' }, { id: 'metas', nome: 'Metas' },
   { id: 'importar', nome: 'Importar' }, { id: 'historico', nome: 'Histórico' },
   { id: 'estoque', nome: 'Estoque' },
+  /* 24/08/2026 — a Comercial/Logística nunca esteve nesta lista, então não havia
+     checkbox nenhum para ela: liberar alguém só dava na unha, por SQL. */
+  { id: 'comercial', nome: 'Comercial / Logística' },
   { id: 'conf', nome: 'Conferência' },
   { id: 'organograma', nome: 'Gestão de Pessoas' }
 ];
@@ -4557,7 +4560,11 @@ async function aplicarPermissoes() {
        aceita quem tem 'programacao', que é todo mundo). Agora a exceção
        individual do perfil fura a obra — e só ela: categoria de setor não fura,
        senão um setor inteiro entraria de uma vez. */
-    const _nominal = !!(perfil && perfil.abas_excecao && Array.isArray(perfil.abas) && perfil.abas.includes(id));
+    /* o passe de obra é a PRESENÇA do id em perfil.abas, e não a flag
+       abas_excecao. Admin tem as telas pelo papel e não pela lista — exigir a
+       flag obrigaria a ligar 'telas próprias' num admin só para mostrar uma aba
+       em obra, e isso derrubaria o Organograma dele (que lê a mesma flag). */
+    const _nominal = !!(perfil && Array.isArray(perfil.abas) && perfil.abas.includes(id));
     const emObra = Array.isArray(_abasOcultas) && _abasOcultas.includes(id) && !souDevReal && !_nominal;
     a.classList.toggle('oculto', !ok || emObra);
   });
@@ -24398,13 +24405,24 @@ async function carregarUsuarios() {
     const abasU = Array.isArray(u.abas) && u.abas.length ? u.abas : ['painel'];
     const herdadas = (u.setor && Array.isArray(telasSetor[u.setor])) ? telasSetor[u.setor] : [];
     const exc = !!u.abas_excecao;
-    const telas = admin
-      ? '<div class="usr-telas desc">Admin vê todas as telas</div>'
+    /* TELAS EM OBRA — liberação nominal, pessoa por pessoa.
+       Aba em construção some para todos menos para o dono, e nem admin escapa.
+       Esta linha aparece para TODO MUNDO, inclusive admin, porque é o único
+       caminho de mostrar a aba a alguém sem tirá-la da obra e abrir para os 43. */
+    const emObraIds = (Array.isArray(_abasOcultas) ? _abasOcultas : []).filter(x => ABAS.some(a => a.id === x));
+    const linhaObra = emObraIds.length
+      ? `<div class="usr-telas"><span class="tl-tit">🚧 Em obra:</span>${emObraIds.map(x => {
+          const nm = (ABAS.find(a => a.id === x) || {}).nome || x;
+          return `<label><input type="checkbox" ${abasU.includes(x) ? 'checked' : ''} onchange="usrAbaObra('${u.id}','${x}',this.checked)"> ${escapeHtml(nm)}</label>`;
+        }).join('')}</div>`
+      : '';
+    const telas = linhaObra + (admin
+      ? '<div class="usr-telas desc">Admin vê todas as telas prontas</div>'
       : `<div class="usr-telas"><span class="tl-tit">Exceção:</span><label><input type="checkbox" ${exc ? 'checked' : ''} onchange="usrExcecao('${u.id}',this.checked)"> Telas próprias (ignora o padrão do setor)</label></div>` +
         (exc
           ? `<div class="usr-telas"><span class="tl-tit">Telas liberadas:</span>${ABAS.map(a =>
               `<label><input type="checkbox" ${abasU.includes(a.id) ? 'checked' : ''} onchange="usrAbas('${u.id}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>`
-          : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`);
+          : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`));
     const setorSel = `<div class="usr-telas"><span class="tl-tit">Setor:</span><select onchange="usrSetor('${u.id}', this.value)" style="padding:4px 8px;border:1px solid var(--borda);border-radius:10px;font-size:13px"><option value="">— definir —</option>${(setoresLista || []).map(s => `<option ${s === u.setor ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select></div>`;
     const metasTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Metas:</span><label><input type="checkbox" ${u.metas_edit ? 'checked' : ''} onchange="usrMetasEdit('${u.id}',this.checked)"> Pode editar metas</label></div>`;
     acoes.push(`<button onclick="verHistCiencia('${u.id}','${escapeHtml(u.nome || '').replace(/'/g, "&#39;")}')">📌 Histórico de tarefas fixas</button>`);
@@ -24621,6 +24639,34 @@ async function usrAbas(id, abaId, on) {
   }
   if (u) u.abas = arr;
   toast('Acesso às telas atualizado.');
+}
+/* Liberar uma aba EM OBRA para uma pessoa.
+   Para o admin basta pôr o id em 'abas': o papel já abre o portão, o que faltava
+   era o passe da obra.
+   Para quem não é admin o portão também precisa abrir, e ele lê abasPermitidas.
+   Então, se a pessoa ainda herda do setor, a exceção é ligada JUNTO e a lista
+   nasce com tudo o que o setor já dava — senão ligar a exceção tiraria dela as
+   telas que tinha, que foi o jeito de errar mais óbvio aqui. */
+async function usrAbaObra(id, abaId, on) {
+  const u = usuariosCarregados.find(x => x.id === id);
+  if (!u) return;
+  const ehAdmin = (u.papel || '') === 'admin';
+  const base = new Set(Array.isArray(u.abas) && u.abas.length ? u.abas : []);
+  const patch = {};
+  if (on && !ehAdmin && !u.abas_excecao) {
+    const herda = (u.setor && Array.isArray(telasSetor && telasSetor[u.setor])) ? telasSetor[u.setor] : ['painel'];
+    herda.forEach(x => base.add(x));
+    patch.abas_excecao = true;
+  }
+  if (on) base.add(abaId); else base.delete(abaId);
+  if (!base.size) base.add('painel');
+  patch.abas = [...base];
+  const { error } = await sb.from('perfis').update(patch).eq('id', id);
+  if (error) { toast('❌ ' + error.message); _usrMarcarAncora(id); carregarUsuarios(); return; }
+  const nm = (ABAS.find(a => a.id === abaId) || {}).nome || abaId;
+  toast(on ? '🚧 ' + nm + ' liberada para ' + (u.nome || 'esta pessoa') + ' — ela precisa reabrir o app'
+           : '🔒 ' + nm + ' fechada para ' + (u.nome || 'esta pessoa'));
+  _usrMarcarAncora(id); carregarUsuarios();
 }
 async function salvarTimeout() {
   const v = Math.max(0, parseInt($('inTimeout').value, 10) || 0);
