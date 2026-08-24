@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.132.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.133.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.132.0';
+const APP_VER = '4.133.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37140,6 +37140,82 @@ async function promoGravarPrev() {
   _promoPrev = null;
   await promoCarregar(true); renderOrgPromo();
 }
+
+/* ===== O CAMPO NÃO PERDE MAIS O FOCO NEM O LUGAR DA TELA =====
+   24/08/2026 — João: "a gente digita, rola a tela e sai do lugar".
+
+   A CAUSA, que é a mesma em vários lugares: um campo de busca com
+   oninput chama a função que redesenha o BLOCO ONDE ELE MORA. O innerHTML
+   destrói o <input> em que o dedo está e cria outro igual — o teclado fecha, o
+   cursor some e o navegador joga a rolagem para o topo. Achei isso na busca de
+   Feedback, na de Estoque, na de Usuários, nas regras de perda e em outras.
+
+   POR QUE NÃO CONSERTEI UM POR UM: são doze telas com o mesmo defeito, e cada
+   conserto pontual é uma chance de esquecer a próxima que alguém escrever. Isto
+   aqui é uma rede embaixo de todas.
+
+   POR QUE NÃO PESA: o observador só liga ENQUANTO alguém está com um campo em
+   foco, e desliga assim que sai. Fora isso o custo é zero — nada roda enquanto
+   você só navega. E o trabalho de cada verificação é um getElementById.
+
+   O que ele devolve: o foco, a posição do cursor e a rolagem da página, tudo
+   como estava um instante antes de a tela ser refeita. */
+let _fgAlvo = null, _fgObs = null, _fgScroll = 0, _fgPend = false;
+function _fgPos(el) {
+  try { return el.selectionStart; } catch (_) { return null; }
+}
+function _fgMarca(el) {
+  if (!el || !el.id) { _fgAlvo = null; return; }
+  if (!/^(INPUT|TEXTAREA)$/.test(el.tagName)) { _fgAlvo = null; return; }
+  const t = String(el.type || 'text').toLowerCase();
+  if (t === 'checkbox' || t === 'radio' || t === 'file' || t === 'range') { _fgAlvo = null; return; }
+  _fgAlvo = { id: el.id, val: el.value, pos: _fgPos(el) };
+  _fgScroll = window.scrollY || window.pageYOffset || 0;
+}
+function _fgRestaura() {
+  _fgPend = false;
+  const a = _fgAlvo; if (!a) return;
+  const ae = document.activeElement;
+  if (ae && ae.id === a.id) return;                 // ainda está lá: nada a fazer
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;  // o foco foi para outro campo de propósito
+  const el = document.getElementById(a.id);
+  if (!el || !/^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+  try {
+    /* o elemento é novo e nasceu com o valor antigo do render: devolve o que a
+       pessoa já tinha digitado, senão a última letra some */
+    if (el.value !== a.val) el.value = a.val;
+    el.focus({ preventScroll: true });              // preventScroll: focar não pode puxar a tela
+    const p = (a.pos == null ? el.value.length : a.pos);
+    try { el.setSelectionRange(p, p); } catch (_) { }
+    const y = window.scrollY || window.pageYOffset || 0;
+    if (Math.abs(y - _fgScroll) > 4) window.scrollTo(0, _fgScroll);
+  } catch (_) { }
+}
+function _fgAgenda() {
+  if (_fgPend || !_fgAlvo) return;
+  _fgPend = true;
+  requestAnimationFrame(_fgRestaura);               // uma vez por quadro, não por mutação
+}
+document.addEventListener('focusin', ev => {
+  _fgMarca(ev.target);
+  if (!_fgAlvo) return;
+  if (!_fgObs) _fgObs = new MutationObserver(_fgAgenda);
+  try { _fgObs.observe(document.body, { childList: true, subtree: true }); } catch (_) { }
+}, true);
+document.addEventListener('input', ev => { if (_fgAlvo && ev.target && ev.target.id === _fgAlvo.id) _fgMarca(ev.target); }, true);
+document.addEventListener('keyup', ev => { if (_fgAlvo && ev.target && ev.target.id === _fgAlvo.id) _fgAlvo.pos = _fgPos(ev.target); }, true);
+document.addEventListener('focusout', () => {
+  /* espera um instante: se o campo sumiu por causa de um render, o foco volta
+     sozinho e não é para desligar nada. Só desliga se ninguém assumiu. */
+  setTimeout(() => {
+    const ae = document.activeElement;
+    if (ae && _fgAlvo && ae.id === _fgAlvo.id) return;
+    if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+    if (_fgObs) { try { _fgObs.disconnect(); } catch (_) { } }
+    _fgAlvo = null;
+  }, 400);
+}, true);
+window.addEventListener('scroll', () => { if (_fgAlvo) _fgScroll = window.scrollY || window.pageYOffset || 0; }, { passive: true });
 
 /* ================= SERVICE WORKER ================= */
 /* ===== Service Worker com AUTO-UPDATE (nunca precisa reinstalar) ===== */
