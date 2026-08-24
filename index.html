@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.114.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.115.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3228,7 +3228,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.114.0';
+const APP_VER = '4.115.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31999,19 +31999,60 @@ async function carregarItemSetorFila(forcar) {
   _itemSetorFila = out; _itemSetorCache = null;
   return out;
 }
+/* ESTOQUE POR ITEM — o que já está pronto na prateleira. Vem da lista
+   deduplicada do próprio REST196 (no PDF o estoque se repete a cada cliente que
+   pede o mesmo item; somar as linhas contaria o mesmo material várias vezes). */
+let _estItemIdx = null, _estItemSeq = null;
+function _estItem(cod) {
+  if (!_cart196) return null;
+  if (_estItemIdx === null || _estItemSeq !== _cart196) {
+    _estItemIdx = {}; _estItemSeq = _cart196;
+    (_cart196.est || []).forEach(e => { _estItemIdx[String(e.item_cod)] = { kg: +e.peso || 0, qtd: +e.qtd || 0 }; });
+  }
+  return _estItemIdx[String(cod)] || null;
+}
+/* ÚLTIMO DIA EM QUE O ITEM PRODUZIU — v_item_maquina traz ultimo_dia por
+   máquina; o do item é o MAIOR deles, não o da máquina que mais produziu. */
+function _itemUltProd(cod) {
+  const hs = (_itemMaqCache || {})[String(cod || '')] || [];
+  let u = null;
+  hs.forEach(x => { const d = x.ult ? String(x.ult).slice(0, 10) : null; if (d && (!u || d > u)) u = d; });
+  return u;
+}
+/* 24/08/2026 (João: "essa OP está dizendo que não tem em fila e acabou de
+   terminar"). E o app estava certo sobre a FILA e errado sobre o RECADO: a OP
+   262221 rodou 21 e 22/08 na 1903 e saiu da foto de 23/08 porque ACABOU. Dizer
+   "não programado" para item que acabou de sair da máquina soa a esquecimento,
+   quando é o contrário.
+   Três estados agora: na fila · saiu da fila há pouco (produziu nos últimos 10
+   dias) · nunca encostou. O do meio é o que muda a ação: não é programar do
+   zero, é ver se o que sobrou da carteira precisa de OP nova. */
 function _seloFila(cod) {
   const k = String(cod || '');
   const f = _itemFila[k];
   const clique = 'event.stopPropagation();detItem(\'' + k.replace(/'/g, '') + '\')';
+  const bolha = (bg, cor, txt, tit) => '<span onclick="' + clique + '" title="' + escapeHtml(tit || 'ver a ficha do item') + '"'
+    + ' style="display:inline-block;cursor:pointer;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
+    + 'background:' + bg + ';color:' + cor + ';white-space:nowrap">' + txt + '</span>';
+  const est = _estItem(k);
+  const kgv = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const selEst = (est && est.kg > 0)
+    ? ' <span style="display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
+      + 'background:#EAF1F8;color:#1D5C8A;white-space:nowrap">📦 ' + kgv(est.kg) + ' em estoque</span>' : '';
   if (f && f.maqs.length) {
     const maq = f.maqs.slice(0, 3).join(', ') + (f.maqs.length > 3 ? '…' : '');
-    return '<span onclick="' + clique + '" title="ver a ficha do item"'
-      + ' style="display:inline-block;cursor:pointer;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
-      + 'background:#E8F3E8;color:#2C6B2F;white-space:nowrap">▶ na fila · ' + escapeHtml(maq) + '</span>';
+    return bolha('#E8F3E8', '#2C6B2F', '▶ na fila · ' + escapeHtml(maq)) + selEst;
   }
-  return '<span onclick="' + clique + '" title="ver a ficha do item"'
-    + ' style="display:inline-block;cursor:pointer;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;'
-    + 'background:#FDF3E7;color:#8A5A12;white-space:nowrap">⚠ não programado</span>';
+  const ult = _itemUltProd(k);
+  if (ult) {
+    const d = Math.round((new Date(hojeISO() + 'T12:00:00') - new Date(ult + 'T12:00:00')) / 86400000);
+    if (d >= 0 && d <= 10) {
+      return bolha('#EAF1F8', '#1D5C8A', '✔ saiu da fila · produziu ' + escapeHtml(fmtData(ult)),
+        'a OP terminou e saiu da fila — não é esquecimento') + selEst;
+    }
+  }
+  return bolha('#FDF3E7', '#8A5A12', '⚠ não programado',
+    ult ? ('última produção em ' + fmtData(ult)) : 'nunca produzido no período importado') + selEst;
 }
 function _itemSetor(cod) {
   const k = String(cod || ''); if (!k) return null;
@@ -32447,7 +32488,16 @@ function cardCarteiraMes() {
      rola quando passa de 40 linhas, para a página não virar um quilômetro. */
   const topIt = Object.values(IT).sort((a, b) => b.kg - a.kg);
   const maxIt = topIt.length ? topIt[0].kg : 1;
-  const _semProg = topIt.filter(i => !(_itemFila[String(i.cod)] || {}).maqs || !_itemFila[String(i.cod)].maqs.length);
+  /* só conta como não programado quem NÃO está na fila E não produziu nos
+     últimos 10 dias — item que acabou de sair da máquina não é esquecimento. */
+  const _semProg = topIt.filter(i => {
+    const f = _itemFila[String(i.cod)];
+    if (f && f.maqs.length) return false;
+    const u = _itemUltProd(i.cod);
+    if (!u) return true;
+    const d = Math.round((new Date(hojeISO() + 'T12:00:00') - new Date(u + 'T12:00:00')) / 86400000);
+    return !(d >= 0 && d <= 10);
+  });
   const itensHtml = topIt.map(i => `<tr onclick="detItemCarteira('${escapeHtml(String(i.cod))}')" style="cursor:pointer">
       <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(String(i.cod))}</span> ${escapeHtml(String(i.desc || ''))} ›
         <div style="margin-top:3px">${_seloFila(i.cod)}</div>
@@ -32578,7 +32628,13 @@ function detItemCarteira(cod) {
     + `<p class="desc" style="margin:0 0 9px"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b> a entregar`
     + (_f && _f.maqs.length
         ? ` · na fila há <b>${kg(_f.kg)}</b> em ${_f.maqs.length} máquina(s)`
-        : ` · <b style="color:#8A5A12">nenhuma OP na fila</b> — a carteira pede e ninguém programou`)
+        : ``)
+    + (() => {
+        const e = _estItem(cod);
+        if (!e || !(e.kg > 0)) return ' · <b>sem estoque</b>';
+        return ` · <b style="color:#1D5C8A">${kg(e.kg)} em estoque</b>`
+          + (e.kg >= tot ? ' — cobre a carteira' : ` — falta ${kg(tot - e.kg)}`);
+      })()
     + `</p>`
     /* 24/08/2026 (João: "tem que aparecer o número do pedido"). O mês de entrega
        responde QUANDO, mas quem lê esta tela precisa ligar para o cliente ou
