@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.123.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.124.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.123.0';
+const APP_VER = '4.124.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35896,6 +35896,129 @@ function _promoSal(cargo, nivel) {
   return r ? +r.salario : null;
 }
 
+/* ===== DESEMPENHO DE QUEM VAI SER PROMOVIDO (24/08/2026, pedido do João) =====
+   Promoção sem número vira conversa de simpatia. Esta caixa põe, ao lado do
+   salário, o que a pessoa entrega: produção do turno dela contra a meta da
+   máquina, a curva dos últimos dias, e faltas e atestados.
+
+   COMO SE LIGA A PESSOA À PRODUÇÃO. Não existe apontamento por matrícula — o
+   ERP aponta por MÁQUINA e TURNO. A ponte é o organograma (org_alocacoes):
+   matrícula → setor, máquina e bloco. Então o que aparece aqui é a produção da
+   MÁQUINA DELE NO TURNO DELE, e o texto diz isso com todas as letras: é o
+   resultado do posto, não a digital da pessoa. Auxiliar dividindo a mesma
+   máquina aparece com o mesmo número, e quem lê precisa saber disso.
+
+   Quem não está alocado no organograma não tem como ser medido por aqui, e a
+   caixa diz isso em vez de mostrar zero — zero parece desempenho ruim. */
+let _promoDesCache = {};
+async function promoDesempenho(mat) {
+  if (_promoDesCache[mat]) return _promoDesCache[mat];
+  const out = { erro: null, aloc: null, dias: [], meta: null, faltas: 0, atestados: 0, outros: 0, ultOco: null };
+  try {
+    const { data: al } = await sb.from('org_alocacoes')
+      .select('setor,turno,maquina_codigo,funcao').eq('matricula', String(mat))
+      .is('vigencia_fim', null).limit(1);
+    out.aloc = (al || [])[0] || null;
+    const hoje = hojeISO();
+    const d0 = new Date(hoje + 'T12:00:00'); d0.setDate(d0.getDate() - 45);
+    const desde = d0.toISOString().slice(0, 10);
+    const d1 = new Date(hoje + 'T12:00:00'); d1.setFullYear(d1.getFullYear() - 1);
+    const desdeAno = d1.toISOString().slice(0, 10);
+    const [pr, mt, af] = await Promise.all([
+      out.aloc ? sb.from('producao_resumo').select('dia,turno,peso,caixas')
+        .eq('recurso_cod', String(out.aloc.maquina_codigo)).gte('dia', desde).order('dia') : { data: [] },
+      out.aloc ? sb.from('metas').select('meta').eq('recurso_cod', String(out.aloc.maquina_codigo))
+        .eq('bloco', out.aloc.turno).maybeSingle() : { data: null },
+      sb.from('org_afastamentos').select('data,tipo,dias').eq('matricula', String(mat)).gte('data', desdeAno).order('data', { ascending: false })
+    ]);
+    out.meta = mt && mt.data ? +mt.data.meta : null;
+    // só os turnos do BLOCO da pessoa: Manhã=T1+T3, Tarde=T2+T4, Noite=T5
+    const BL = { 'Manhã': ['1', '3'], 'Tarde': ['2', '4'], 'Noite': ['5'] };
+    const meus = BL[(out.aloc || {}).turno] || [];
+    const porDia = {};
+    (pr.data || []).forEach(r => {
+      if (!meus.includes(String(r.turno))) return;
+      const d = String(r.dia).slice(0, 10);
+      /* PESO, e não quantidade. A mesma máquina aponta ora em CX, ora em MIL —
+         a 706 tem 49 CX e 30,72 MIL no mesmo dia. Somar os dois é somar caixa
+         com milheiro. Converter MIL→caixa exige a descrição do item, que o
+         producao_resumo não tem. O kg é a única medida comparável aqui. */
+      porDia[d] = (porDia[d] || 0) + (+r.peso || 0);
+    });
+    out.dias = Object.keys(porDia).sort().map(d => ({ dia: d, kg: porDia[d] }));
+    (af.data || []).forEach(a => {
+      const t = String(a.tipo || '').toLowerCase();
+      if (t === 'falta') out.faltas += (+a.dias || 1);
+      else if (t === 'atestado') out.atestados += (+a.dias || 1);
+      else out.outros += (+a.dias || 1);
+      if (!out.ultOco) out.ultOco = { data: a.data, tipo: a.tipo };
+    });
+  } catch (e) { out.erro = e && e.message; }
+  _promoDesCache[mat] = out;
+  return out;
+}
+function _promoDesHTML(mat) {
+  const d = _promoDesCache[mat];
+  if (!d) return '<div id="promoDes" class="desc" style="margin-top:10px">carregando desempenho…</div>';
+  if (d.erro) return '<div id="promoDes" class="desc" style="margin-top:10px;color:var(--critico-s)">Não consegui ler o desempenho: ' + escapeHtml(d.erro) + '</div>';
+  const cx = v => Math.round(v).toLocaleString('pt-BR') + ' cx';
+  let h = '<div id="promoDes" style="margin-top:10px;border:1px solid var(--linha);border-radius:12px;padding:10px 12px">'
+    + '<div style="font-weight:800;font-size:12.5px;color:var(--navy);margin-bottom:6px">Desempenho</div>';
+  if (!d.aloc) {
+    h += '<div class="desc" style="font-size:12px;color:#8A5A12">Esta pessoa não está alocada no organograma, '
+      + 'então não há máquina nem turno para medir a produção. Faltas e atestados abaixo continuam valendo.</div>';
+  } else {
+    const vals = d.dias.map(x => x.kg);
+    const comProd = vals.filter(v => v > 0);
+    const media = comProd.length ? comProd.reduce((a, b) => a + b, 0) / comProd.length : 0;
+    // tendência: metade recente contra metade antiga, só para dar cor à curva
+    const meio = Math.floor(comProd.length / 2);
+    const v1 = comProd.slice(0, meio), v2 = comProd.slice(meio);
+    const md = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const sobe = md(v2) >= md(v1);
+    const kgf = v => Math.round(v).toLocaleString('pt-BR') + ' kg';
+    h += '<div class="desc" style="font-size:11.5px;margin-bottom:6px">máquina <b>' + escapeHtml(d.aloc.maquina_codigo)
+      + '</b> · turno <b>' + escapeHtml(d.aloc.turno) + '</b> · ' + escapeHtml(d.aloc.funcao || '')
+      + ' · ' + comProd.length + ' dia(s) com produção nos últimos 45</div>'
+      + '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
+      + '<div><div class="desc" style="font-size:10.5px">média por turno</div>'
+      + '<div style="font-size:18px;font-weight:800">' + kgf(media) + '</div></div>'
+      + '<div><div class="desc" style="font-size:10.5px">melhor turno</div>'
+      + '<div style="font-size:15px;font-weight:700;color:var(--ok-2)">' + kgf(Math.max(0, ...comProd)) + '</div></div>'
+      + '<div><div class="desc" style="font-size:10.5px">tendência</div>'
+      + '<div style="font-size:15px;font-weight:800;color:' + (sobe ? 'var(--ok-2)' : 'var(--critico-s)') + '">'
+      + (sobe ? '▲ subindo' : '▼ caindo') + '</div></div>'
+      + (vals.length > 1 ? '<div style="margin-left:auto">' + sparkSVG(vals, sobe ? '#3CA96E' : '#D64545', 130, 36) + '</div>' : '')
+      + '</div>';
+    if (!comProd.length) h += '<div class="desc" style="font-size:11.5px;color:#8A5A12;margin-top:5px">Nenhuma produção apontada nesse turno nos últimos 45 dias.</div>';
+    h += '<div class="desc" style="font-size:10.5px;margin-top:6px;line-height:1.45">'
+      + 'O apontamento é por máquina e turno, não por pessoa — este é o resultado do <b>posto</b>. Auxiliar da mesma máquina aparece com o mesmo número.<br>'
+      + 'Em <b>kg</b> de propósito: a mesma máquina aponta ora em caixa, ora em milheiro, e somar os dois daria número errado. '
+      + 'O <b>produção × meta</b> fica na <b>Análise+</b>, que tem a regra de unidade por item — filtre a máquina '
+      + escapeHtml(d.aloc.maquina_codigo) + ' lá para ver contra a meta.</div>';
+  }
+  const tot = d.faltas + d.atestados;
+  const corF = d.faltas >= 3 ? 'var(--critico-s)' : d.faltas > 0 ? '#8A5A12' : 'var(--ok-2)';
+  h += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;padding-top:8px;border-top:1px solid var(--linha)">'
+    + '<div><div class="desc" style="font-size:10.5px">faltas · 12 meses</div>'
+    + '<div style="font-size:17px;font-weight:800;color:' + corF + '">' + d.faltas + '</div></div>'
+    + '<div><div class="desc" style="font-size:10.5px">atestados · 12 meses</div>'
+    + '<div style="font-size:17px;font-weight:800;color:var(--navy)">' + d.atestados + '</div></div>'
+    + (d.outros ? '<div><div class="desc" style="font-size:10.5px">férias/folga/afast.</div>'
+      + '<div style="font-size:17px;font-weight:800;color:var(--fraco)">' + d.outros + '</div></div>' : '')
+    + (d.ultOco ? '<div><div class="desc" style="font-size:10.5px">última ocorrência</div>'
+      + '<div style="font-size:12.5px;font-weight:700">' + escapeHtml(fmtData(String(d.ultOco.data).slice(0, 10)))
+      + ' <span class="desc" style="font-weight:600">' + escapeHtml(d.ultOco.tipo) + '</span></div></div>' : '')
+    + (!tot && !d.outros ? '<div class="desc" style="font-size:12px;color:var(--ok-2)">Nenhuma falta ou atestado em 12 meses.</div>' : '')
+    + '</div>';
+  return h + '</div>';
+}
+async function _promoDesCarrega(mat) {
+  await promoDesempenho(mat);
+  const el = document.getElementById('promoDes');
+  if (el && _promoSel === mat) el.outerHTML = _promoDesHTML(mat);
+}
+
 async function renderOrgPromo() {
   const wrap = $('orgWrap');
   if (!_promoSouDono()) { wrap.innerHTML = '<div class="card"><p class="desc" style="margin:0">Esta tela é restrita.</p></div>'; return; }
@@ -35961,7 +36084,10 @@ function _promoNova() {
     + (c.admissao ? ' · admitido em ' + fmtData(c.admissao) : '') + '</div>'
     + '<div class="desc" style="font-size:11.5px;margin-top:3px">cargo atual: <b>' + escapeHtml(at.cargo || 'não cadastrado')
     + '</b>' + (at.salario != null ? ' · ganha hoje <b style="color:var(--navy)">' + _pmMoeda(at.salario) + '</b>' : '')
-    + ' · fonte: ' + escapeHtml(at.origem) + '</div></div>';
+    + ' · fonte: ' + escapeHtml(at.origem) + '</div></div>'
+    + _promoDesHTML(_promoSel);
+  // busca em segundo plano: a tela abre na hora e o desempenho se encaixa quando chega
+  if (!_promoDesCache[_promoSel]) setTimeout(() => _promoDesCarrega(_promoSel), 0);
 
   /* nada de perguntar o nível: ele vem do cargo. Se não deu para casar com a
      tabela, o caminho é o de-para — uma vez por cargo, não por pessoa. */
@@ -36035,6 +36161,7 @@ function promoBuscar(v) {
 }
 function promoEscolher(m) {
   _promoSel = m;
+  if (m && _promoDesCache[m]) delete _promoDesCache[m];   // sempre o número do dia
   window._pmCargoPara = ''; window._pmNivelPara = ''; window._pmNivelDe = '';
   window._pmMotivo = ''; window._pmData = hojeISO();
   renderOrgPromo();
