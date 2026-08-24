@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.144.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.145.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.144.0';
+const APP_VER = '4.145.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -30828,22 +30828,71 @@ async function sfdCarregar() {
        (mv_fila_saidas_op / mv_pedido_saiu) — de estourar o tempo para ~7 ms.
        O refresh roda aqui, sem travar a tela: se falhar, mostra o que já existe. */
     sb.rpc('refresh_fila_saidas').then(() => {}, () => {});
-    const [{ data: dias, error: e1 }, { data: ops, error: e2 }] = await Promise.all([
-      sb.from('v_fila_saidas_dia').select('*'),
-      sb.from('v_fila_ate_faturar').select('*')
-    ]);
-    if (e1) throw e1; if (e2) throw e2;
-    _sfdDados = { dias: dias || [], ops: ops || [] };
+    /* ===== 24/08/2026 — O TOTAL ERA UM TETO, NÃO UMA CONTAGEM =====
+       Este select não paginava, e o PostgREST corta em 1.000 linhas. O card
+       dizia "SAÍRAM (TOTAL) 1.000 OPs" com cara de número redondo porque era
+       exatamente o teto: no banco são 1.332. Pior, "já faturadas" e "aguardando"
+       saíam do mesmo pedaço truncado — 8 e 308 na tela contra 10 e 386 reais.
+       Número que nasce de consulta cortada é o tipo de erro que ninguém
+       desconfia, porque a tela não avisa que faltou linha. */
+    const ops = [];
+    for (let ini = 0; ini < 40000; ini += 1000) {
+      const { data, error } = await sb.from('v_fila_ate_faturar').select('*')
+        .order('dia_saida', { ascending: false }).range(ini, ini + 999);
+      if (error) throw error;
+      (data || []).forEach(r => ops.push(r));
+      if (!data || data.length < 1000) break;
+    }
+    const { data: dias, error: e1 } = await sb.from('v_fila_saidas_dia').select('*');
+    if (e1) throw e1;
+    _sfdDados = { dias: dias || [], ops: ops };
     sfdRender();
   } catch (e) {
     box.innerHTML = '<p class="desc" style="color:var(--critico)">Não consegui ler as saídas: ' + escapeHtml(String(e.message || e)) + '</p>';
   }
 }
 
+/* ===== RECORTE POR SETOR — 24/08/2026 (pedido do João) =====
+   O card ignorava o seletor de setor da aba: a Programação inteira filtrava e só
+   este bloco seguia mostrando a fábrica toda.
+
+   A view v_fila_ate_faturar já traz `setor` por OP, então o filtro é direto. O
+   que NÃO dá para reaproveitar é v_fila_saidas_dia: ela vem somada no servidor,
+   sem setor, e não tem como recortar depois. Então, quando há filtro, as barras
+   por dia são RECONTADAS a partir das OPs. Sem filtro continuo usando a view —
+   ela é a fonte oficial e inclui OP que porventura não esteja na outra. */
+function _sfdFiltra(ops) {
+  const st = (typeof _progSetorSel !== 'undefined' && _progSetorSel) ? _progSetorSel : '';
+  const mq = (typeof _progMaqSel !== 'undefined' && _progMaqSel) ? _progMaqSel : '';
+  if (!st && !mq) return { ops, filtrado: false };
+  return {
+    ops: ops.filter(o => (!st || String(o.setor || 'Outros') === st)
+                      && (!mq || String(o.recurso_cod) === mq)),
+    filtrado: true
+  };
+}
+function _sfdDiasDe(ops, diasView) {
+  const ant = {};
+  (diasView || []).forEach(d => { ant[String(d.dia_saida)] = d.foto_ant; });
+  const m = {};
+  ops.forEach(o => {
+    const k = String(o.dia_saida);
+    if (!m[k]) m[k] = { dia_saida: k, foto_ant: ant[k] || k, ops: 0, kg: 0 };
+    m[k].ops++; m[k].kg += (+o.prog_kg || 0);
+  });
+  return Object.values(m).sort((a, b) => String(b.dia_saida).localeCompare(String(a.dia_saida)));
+}
 function sfdRender() {
   const box = document.getElementById('sfdCorpo'); if (!box || !_sfdDados) return;
-  const { dias, ops } = _sfdDados;
-  if (!dias.length) { box.innerHTML = '<p class="vazio-painel">Ainda não há duas fotos completas da fila para comparar.</p>'; return; }
+  const _f = _sfdFiltra(_sfdDados.ops || []);
+  const ops = _f.ops;
+  const dias = _f.filtrado ? _sfdDiasDe(ops, _sfdDados.dias) : (_sfdDados.dias || []);
+  if (!dias.length) {
+    box.innerHTML = _f.filtrado
+      ? '<p class="vazio-painel">Nenhuma OP saiu da fila neste recorte.</p>'
+      : '<p class="vazio-painel">Ainda não há duas fotos completas da fila para comparar.</p>';
+    return;
+  }
 
   const fat = ops.filter(o => o.situacao === 'faturado');
   const agu = ops.filter(o => o.situacao === 'aguardando');
@@ -30857,7 +30906,11 @@ function sfdRender() {
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Aguardando</div>'
     + '<b style="font-size:17px;color:var(--laranja-3)">' + agu.length + '</b></div>'
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Fila → faturado</div>'
-    + '<b style="font-size:17px">' + (medFat == null ? '—' : medFat.toFixed(1).replace('.', ',') + ' dias') + '</b></div></div>';
+    + '<b style="font-size:17px">' + (medFat == null ? '—' : medFat.toFixed(1).replace('.', ',') + ' dias') + '</b></div>'
+    + (_f.filtrado ? '<div style="align-self:center"><span style="font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px;background:var(--leve-2s,#E7EDF3);color:var(--navy)">'
+        + escapeHtml((typeof _progSetorSel !== 'undefined' && _progSetorSel) ? _progSetorSel : 'todos')
+        + ((typeof _progMaqSel !== 'undefined' && _progMaqSel) ? ' · ' + escapeHtml(_progMaqSel) : '') + '</span></div>' : '')
+    + '</div>';
 
   const maxKg = Math.max.apply(null, dias.map(d => Number(d.kg) || 0)) || 1;
   dias.forEach(d => {
@@ -30879,7 +30932,7 @@ function sfdRender() {
 function sfdToggle(dia) { _sfdAberto = (_sfdAberto === dia) ? null : dia; sfdRender(); }
 
 function sfdDetalhe(dia) {
-  const lista = (_sfdDados.ops || []).filter(o => String(o.dia_saida) === String(dia))
+  const lista = _sfdFiltra(_sfdDados.ops || []).ops.filter(o => String(o.dia_saida) === String(dia))
     .sort((a, b) => Number(b.prog_kg || 0) - Number(a.prog_kg || 0));
   if (!lista.length) return '<p class="desc" style="padding:8px 0">sem detalhe</p>';
   const selo = o => o.situacao === 'faturado'
