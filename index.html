@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.137.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.138.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.137.0';
+const APP_VER = '4.138.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35859,7 +35859,7 @@ async function promoCarregar(forcar) {
     sb.from('tabela_salarial').select('*').eq('ativo', true).order('cargo').order('nivel'),
     sb.from('colaboradores').select('matricula,nome,cargo,setor,admissao,ativo').eq('ativo', true).order('nome'),
     sb.from('app_config').select('valor').eq('chave', 'promo_encargos').maybeSingle(),
-    sb.from('rh_remuneracao').select('matricula,cargo,salario,referencia').order('referencia', { ascending: true })
+    sb.from('rh_remuneracao').select('matricula,cargo,salario,referencia,setor').order('referencia', { ascending: true })
   ]);
   if (pr.error) throw pr.error;
   _promoRegs = pr.data || [];
@@ -36882,16 +36882,54 @@ function relTica(id, on) { _relIni()[id] = !!on; renderOrgPromo(); }
 function relTodos(on) { _relIni(); (_promoRegs || []).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = !!on; }); renderOrgPromo(); }
 function relOpc(k, on) { if (k === 'faltas') _relFaltas = !!on; else _relDesemp = !!on; renderOrgPromo(); }
 function _relEscolhidas() { const s = _relIni(); return (_promoRegs || []).filter(p => s[p.id]); }
-/* folha mensal por setor: base de comparação do impacto */
-function _folhaSetor() {
+/* ===== FOLHA MENSAL POR SETOR — BASE DE COMPARAÇÃO DO IMPACTO =====
+   24/08/2026. O João viu Impressão como R$ 138.663,43 e disse que está errado.
+   Estava: a conta anterior varria o CADASTRO (colaboradores) e só somava quem
+   também tinha salário. Dois furos nisso, e os dois puxam o denominador para
+   baixo — ou seja, INFLAM o percentual que vai para a Diretoria:
+
+   · 22 pessoas que o arquivo do RH classifica como Impressão estão sem setor no
+     cadastro. Caíam num balde "—" que nunca aparece na tela: R$ 53.183,46 de
+     folha real evaporando do denominador de Impressão.
+   · Quem não tem linha no arquivo do RH sumia calado. Embalagem tem 28 ativos e
+     só 1 com salário no arquivo — a folha do setor saía como R$ 2.354,97, e
+     qualquer % contra isso é ficção.
+
+   Agora a varredura é pela FOLHA e o setor vem do próprio arquivo do RH (mesma
+   fonte do salário), com o cadastro só de reserva. E a tela passa a dizer quantas
+   pessoas entraram na conta e quantas ficaram de fora, porque denominador
+   incompleto sem aviso é pior que denominador nenhum. */
+function _folhaSetorInfo() {
   const f = {};
+  const põe = k => (f[k] = f[k] || { total: 0, n: 0, faltam: 0 });
+  Object.keys(_promoRemun || {}).forEach(mat => {
+    const r = _promoRemun[mat];
+    if (!r || !(+r.salario > 0)) return;
+    const c = (_promoColabs || []).find(x => String(x.matricula) === String(mat)) || {};
+    const k = r.setor || c.setor || '—';
+    const o = põe(k); o.total += (+r.salario); o.n++;
+  });
+  // ativos do cadastro sem linha no arquivo do RH: contam como buraco no setor
   (_promoColabs || []).forEach(c => {
     const r = _promoRemun[String(c.matricula)];
-    if (!r || !(+r.salario > 0)) return;
-    const s = c.setor || '—';
-    f[s] = (f[s] || 0) + (+r.salario);
+    if (r && +r.salario > 0) return;
+    põe(c.setor || '—').faltam++;
   });
   return f;
+}
+function _folhaSetor() {
+  const i = _folhaSetorInfo(), f = {};
+  Object.keys(i).forEach(k => { if (i[k].total > 0) f[k] = i[k].total; });
+  return f;
+}
+/* data do arquivo do RH que está sustentando esses números */
+function _folhaRef() {
+  let d = null;
+  Object.keys(_promoRemun || {}).forEach(m => {
+    const r = _promoRemun[m];
+    if (r && r.referencia && (!d || String(r.referencia) > d)) d = String(r.referencia).slice(0, 10);
+  });
+  return d;
 }
 function _promoRelatorio() {
   const L = _relEscolhidas();
@@ -36935,13 +36973,18 @@ function _promoRelatorio() {
     + '<div class="desc" style="font-size:11.5px">' + L.length + ' promoção(ões) no pacote · acréscimo mensal</div>'
     + '<div style="font-size:22px;font-weight:800;color:var(--navy)">' + _pmMoeda(enc ? tot * enc : tot) + '</div>'
     + '<div class="desc" style="font-size:11.5px">' + _pmMoeda(tot) + ' de salário' + (enc ? ' × ' + String(enc).replace('.', ',') : ' · sem encargos') + '</div>';
+  const info = _folhaSetorInfo(), refFolha = _folhaRef();
   Object.keys(porSetor).sort().forEach(k => {
-    const base = folha[k] || 0;
-    const pc = base > 0 ? (porSetor[k].d / base * 100) : null;
+    const inf = info[k] || { total: 0, n: 0, faltam: 0 };
+    const base = inf.total, pc = base > 0 ? (porSetor[k].d / base * 100) : null;
     h += '<div style="font-size:12px;margin-top:5px">' + escapeHtml(k) + ' · ' + porSetor[k].n + ': <b>' + _pmMoeda(porSetor[k].d) + '</b>'
-      + (pc != null ? ' — <b>' + pc.toFixed(2).replace('.', ',') + '%</b> da folha do setor (' + _pmMoeda(base) + ')'
-                    : ' <span style="color:#8A5A12">— folha do setor desconhecida</span>') + '</div>';
+      + (pc != null ? ' — <b>' + pc.toFixed(2).replace('.', ',') + '%</b> da folha do setor (' + _pmMoeda(base) + ' · ' + inf.n + ' pessoas)'
+                    : ' <span style="color:#8A5A12">— folha do setor desconhecida</span>')
+      + (inf.faltam ? '<div class="desc" style="font-size:11px;color:#8A5A12">⚠️ ' + inf.faltam
+          + ' pessoa(s) do setor sem salário no arquivo do RH — a folha está subestimada e o % acima sai alto.</div>' : '')
+      + '</div>';
   });
+  if (refFolha) h += '<div class="desc" style="font-size:11px;margin-top:7px">folha do RH de <b>' + fmtData(refFolha) + '</b></div>';
   h += '</div>'
     + '<button class="btn btn-navy" style="width:100%;margin-top:10px" onclick="relImprimir()">🖨️ Gerar relatório para imprimir</button>'
     + (enc ? '' : '<div class="desc" style="font-size:11.5px;color:#8A5A12;margin-top:6px">Sem o multiplicador de encargos o relatório sai só com salário bruto. Defina em <b>Impacto</b>.</div>');
@@ -36983,10 +37026,11 @@ function relImprimir() {
   }).join('');
   const setores = Object.keys(porSetor).sort().map(k => {
     const base = folha[k] || 0, pc = base > 0 ? (porSetor[k].d / base * 100) : null;
+    const _inf = (_folhaSetorInfo() || {})[k] || { n: 0, faltam: 0 };
     return '<tr><td>' + esc(k) + '</td><td class="r">' + porSetor[k].n + '</td>'
       + '<td class="r">' + _pmMoeda(porSetor[k].d) + '</td>'
       + '<td class="r">' + (enc ? _pmMoeda(porSetor[k].d * enc) : '—') + '</td>'
-      + '<td class="r">' + (base > 0 ? _pmMoeda(base) : '—') + '</td>'
+      + '<td class="r">' + (base > 0 ? _pmMoeda(base) : '—') + (_inf.faltam ? '<div class="ex">' + _inf.faltam + ' sem salario no arquivo</div>' : '') + '</td>'
       + '<td class="r"><b>' + (pc != null ? pc.toFixed(2).replace('.', ',') + '%' : '—') + '</b></td></tr>';
   }).join('');
   const win = window.open('', '_blank');
