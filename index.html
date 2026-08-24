@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.102.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.103.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1996,8 +1996,11 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        O PDF do Joao tem 139 paginas e a maioria esmagadora das linhas esta
        zerada — o parser descarta as linhas 100% zeradas e informa quantas. */
     if (/ROTINA:\s*REST241/.test(cab) || /Saldos de Estoque por Dep[oó]sito/i.test(cab)) return '241';
-    // Propostas x Pedidos: relatorio de VENDAS. O PDF que o comercial manda vem
-    // recortado, sem a linha ROTINA — identifica pelo cabecalho de colunas.
+    /* Propostas x Pedidos: e o RVEN002 emitido como LISTAGEM, sem o agrupamento
+       por Regiao/Sub-Regiao (confirmado pelo Joao em 24/08/2026). O PDF que o
+       comercial manda vem recortado, sem a linha ROTINA, entao os dois desenhos
+       do mesmo relatorio sao separados pelo que cada um tem de proprio: este
+       pelo cabecalho de colunas, o outro pelo par Regiao + Vendedor. */
     if (linhas.some(l => /^Proposta\s+Pedido\s+Emiss/.test(l.texto))) return 'PROP';
     // 624 filtrado não tem cabeçalho: identifica pelo header de colunas
     if (linhas.some(l => /^Data Ordem Item\/Vers/.test(l.texto))) return '624';
@@ -2530,6 +2533,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     '339': 'Fila de produção por Data/Pedido (todas as máquinas num arquivo)',
     '241': 'Saldos de Estoque por Depósito',
     '196': 'Saldos de Estoque × Pedidos (carteira em aberto)',
+    /* as duas saem do RVEN002; o que muda é o parâmetro de emissão */
     'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)',
     'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)'
   };
@@ -3142,7 +3146,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   async function parseDocumento(pdf) {
     const linhas = await extrairLinhas(pdf);
     const rotina = detectarRotina(linhas);
-    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264, RGER339, REST196 ou Propostas x Pedidos.');
+    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264, RGER339, REST196, REST241 ou RVEN002 (região ou propostas × pedidos).');
     const periodo = acharPeriodo(linhas);
     let registros;
     switch (rotina) {
@@ -3215,7 +3219,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.102.0';
+const APP_VER = '4.103.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10042,11 +10046,24 @@ function renderDiagPausa() {
    Aqui apaga um. Vai pelas IMPORTAÇÕES daquela rotina e pelas linhas que vieram
    delas, então não encosta no que veio de outro relatório que divide a mesma
    tabela (o 264 e o 339 são os dois em fila_producao). */
+/* SIGLA que aparece na tela para cada rotina.
+   24/08/2026 (João): "Propostas x Pedidos é o RVEN002". As DUAS leituras saem da
+   mesma rotina do ERP — muda o parâmetro de emissão, não o relatório:
+     · agrupado por Região/Sub-Região, com Vendedor  → mapa pedido → UF/representante
+     · listagem de propostas x pedidos               → funil antes da carteira
+   O app guarda cada uma numa tabela (pedidos_regiao e propostas), e por isso as
+   chaves internas continuam separadas ('RVEN002' e 'PROP'); o que estava errado
+   era o NOME na tela, que fazia parecer relatório diferente.
+   De quebra: 'RVEN002' caía no fim da escada de ternários da pré-visualização e
+   era rotulado 'RPCPRVEN002'. */
+const ROT_SIGLA = { '241': 'REST241', '196': 'REST196', '339': 'RGER339', 'PROP': 'RVEN002', 'RVEN002': 'RVEN002' };
+const rotSigla = r => ROT_SIGLA[r] || ('RPCP' + r);
 const ROT_NOME = {
   '621': 'Produção (resumo)', '622': 'Produção detalhada / itens', '624': 'Refugo',
   '054': 'Perda por cliente', '643': 'Paradas', '646': 'Consumo de componentes',
   '196': 'REST196 · carteira', '241': 'REST241 · estoque', '264': 'Fila por recurso',
-  '339': 'Fila por data/pedido', 'RVEN002': 'RVEN002 · região e representante'
+  '339': 'Fila por data/pedido', 'RVEN002': 'RVEN002 · região e representante',
+  'PROP': 'RVEN002 · propostas × pedidos'
 };
 async function renderLimpaRotina() {
   const box = $('cardLimpaRot'); if (!box) return;
@@ -25270,7 +25287,7 @@ function renderPreview(id, dup) {
   previews[id].dup = ehDup;
   div.innerHTML = `
     <div class="prev-top">
-      <div><div class="rotina">${r.rotina === '241' ? 'REST241' : r.rotina === '196' ? 'REST196' : r.rotina === '339' ? 'RGER339' : r.rotina === 'PROP' ? 'PROPOSTAS' : 'RPCP' + r.rotina} — ${r.nome}</div><div class="arq">${nomeArquivo} · ${fmtData(r.periodo.de)}${r.periodo.ate && r.periodo.ate !== r.periodo.de ? ' a ' + fmtData(r.periodo.ate) : ''}</div></div>
+      <div><div class="rotina">${rotSigla(r.rotina)} — ${r.nome}</div><div class="arq">${nomeArquivo} · ${fmtData(r.periodo.de)}${r.periodo.ate && r.periodo.ate !== r.periodo.de ? ' a ' + fmtData(r.periodo.ate) : ''}</div></div>
       <span class="badge ${ehDup ? 'dup' : 'ok'}">${ehDup ? 'JÁ IMPORTADO' : 'PRONTO'}</span>
     </div>
     <div class="tot-grid">${tots}</div>
