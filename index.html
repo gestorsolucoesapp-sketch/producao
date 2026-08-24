@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.110.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.111.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3220,7 +3220,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.110.0';
+const APP_VER = '4.111.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28461,10 +28461,31 @@ function _cardDestravaBase(_semAlav) {
     return { ok, parcial, temDep: true, faltaKg };
   })();
   _resDivG = _resDiv;
-  const prazo = A.peds.filter(p => !p.blq.size && p.temFalta);
-  const t1 = A.peds.filter(p => p.blq.size === 1);
-  const t2 = A.peds.filter(p => p.blq.size === 2);
-  const t3 = A.peds.filter(p => p.blq.size >= 3);
+  /* ===== O CARD RESPEITA O FILTRO DA ABA — 24/08/2026 (pedido do João:
+     "a carteira tem que ser só do setor filtrado para não poluir") =====
+     A ALOCAÇÃO acima continua rodando na carteira INTEIRA, e isso não é
+     descuido: estoque é disputado item a item, na ordem de entrega. Se eu
+     filtrasse Injeção ANTES de alocar, o pedido de Termoformagem que leva o
+     material primeiro sumiria da fila e o de Injeção apareceria abastecido —
+     número com cara de certo que a expedição descobriria errado no pátio.
+     Então a conta é feita no todo e o RECORTE é aplicado na hora de MOSTRAR.
+     Mesmo princípio já usado na reserva: calcula uma vez, consulta depois.
+     Um pedido entra se tiver ao menos uma linha dentro do filtro — pedido misto
+     aparece pelo lado que interessa, em vez de sumir por ter item de outro
+     setor junto. */
+  const _pedsNoFiltro = (() => {
+    try {
+      const LIN = _cartFiltrada();
+      if (!LIN || LIN.length === ((_cart196 && _cart196.pend) || []).length) return null;  // sem filtro: nada a recortar
+      const s = new Set(); LIN.forEach(l => s.add(String(l.pedido || '').split('/')[0]));
+      return s;
+    } catch (_) { return null; }
+  })();
+  const _rec = L => _pedsNoFiltro ? L.filter(p => _pedsNoFiltro.has(String(p.num))) : L;
+  const prazo = _rec(A.peds.filter(p => !p.blq.size && p.temFalta));
+  const t1 = _rec(A.peds.filter(p => p.blq.size === 1));
+  const t2 = _rec(A.peds.filter(p => p.blq.size === 2));
+  const t3 = _rec(A.peds.filter(p => p.blq.size >= 3));
   const S = L => L.reduce((s, p) => s + p.kg, 0);
   /* 20/08/2026 (Joao: "no celular esta travando o app") - PALETE ERA O GARGALO.
      pal() varria as 4.220 linhas da carteira INTEIRA a cada chamada, e ela e
@@ -28671,9 +28692,14 @@ function _cardDestravaBase(_semAlav) {
        É a primeira pergunta de quem abre esta tela — "o que dá para carregar
        agora?" — e estava no meio, depois de quinze linhas de setor. */
     + (_resDiv.temDep && comp.length ? (() => { _progResHTML = (() => {
-        const nOk = _resDiv.ok.length, nPa = _resDiv.parcial.length;
-        const kgOk = S(_resDiv.ok), kgPa = S(_resDiv.parcial);
-        const palOk = pal(_resDiv.ok), palPa = pal(_resDiv.parcial);
+        /* mesmas duas caixas, mas só dos pedidos que estão no filtro da aba.
+           _resDivG segue COMPLETO de propósito: é dele que o filtro de situação
+           lê o veredito, e recortá-lo faria o filtro julgar pelo próprio
+           recorte. Aqui é só o que aparece na tela. */
+        const _rOk = _rec(_resDiv.ok), _rPa = _rec(_resDiv.parcial);
+        const nOk = _rOk.length, nPa = _rPa.length;
+        const kgOk = S(_rOk), kgPa = S(_rPa);
+        const palOk = pal(_rOk), palPa = pal(_rPa);
         const cx = (rot, n, kgv, palv, cor, sub, gid) =>
           `<div onclick="destravaReserva('${gid}')" style="flex:1;min-width:210px;cursor:pointer;background:${cor.bg};border-left:5px solid ${cor.b};border-radius:11px;padding:13px 15px">
              <div style="font-size:12.5px;font-weight:900;color:${cor.t};text-transform:uppercase;letter-spacing:.4px">${rot} 🔎</div>
@@ -32617,11 +32643,16 @@ function mapaLimpaFiltro() {
 }
 function cmPintaMapa() {
   const b = $('cmMapa'); if (!b) return;
+  /* PRIMEIRO o destrava, e a ordem importa: é ele que recalcula a alocação e
+     grava _resDivG, de onde o filtro de situação e o resumo da barra leem o
+     veredito. Montar a barra antes leria o resultado da pintura anterior. */
+  const dest = (typeof cardDestravaSemAlavanca === 'function') ? cardDestravaSemAlavanca() : '';
   b.innerHTML = cmBarraFiltro()
     + (typeof cardCarteiraMes === 'function' ? cardCarteiraMes() : '')
     + cardMapaBrasil()
     + (typeof cardCargaCidade === 'function' ? cardCargaCidade() : '')
     + (typeof cardRepBoca === 'function' ? cardRepBoca() : '');
+  const d = document.getElementById('cmDestrava'); if (d) d.innerHTML = dest;
 }
 
 /* geografia por pedido, buscada uma vez e guardada em memória: são ~4 mil linhas
@@ -32704,7 +32735,10 @@ async function cmAbrir(forcar) {
     try { await carregarItemMaquina(); } catch (_) { }
     try { await carregarItemSetorFila(forcar); } catch (_) { }
     _itemSetorCache = null;
-    if (box) box.innerHTML = '<div id="cmMapa"></div>' + cardDestravaSemAlavanca() + _faixaFoto196();
+    /* o destrava saiu daqui e passou a ser repintado junto com o resto: ele era
+       montado UMA vez, na abertura, então mudar o filtro repintava o mapa e os
+       cards e deixava este com os números da fábrica inteira ao lado. */
+    if (box) box.innerHTML = '<div id="cmMapa"></div><div id="cmDestrava"></div>' + _faixaFoto196();
     try { cmPintaMapa(); } catch (_) { }
   } catch (e) {
     if (box) box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Erro ao carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
