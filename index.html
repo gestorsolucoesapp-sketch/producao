@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.121.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.122.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.121.0';
+const APP_VER = '4.122.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35754,7 +35754,7 @@ function _mtAbrirGaleria(urls, turno) {
 
    ACESSO. Só quem tem a flag 'desenvolvedor' no perfil (hoje só o João), no app
    e no banco (RLS com sou_dono()). Salário não é dado de chão de fábrica. */
-let _promoRegs = null, _promoTab = null, _promoColabs = null;
+let _promoRegs = null, _promoTab = null, _promoColabs = null, _promoRemun = {};
 let _promoAba = 'nova', _promoSel = null, _promoEnc = null;
 let _promoFiltro = '';
 
@@ -35773,16 +35773,29 @@ const _pmNum = s => {
 async function promoCarregar(forcar) {
   if (_promoRegs && !forcar) return;
   await carregarCargoMapa(!!forcar);
-  const [pr, ts, co, cfg] = await Promise.all([
+  /* 24/08/2026 (João: "esse valor e cargo tem que pegar no relatório que acabei
+     de importar — você já tinha essa informação").
+     Tinha mesmo: rh_remuneracao guarda cargo E salário por matrícula, vindo do
+     relatório do RH. É a fonte certa do ponto de PARTIDA — é o que a pessoa
+     ganha hoje, de verdade, sem depender de eu adivinhar a faixa pelo nome do
+     cargo. A tabela salarial fica sendo o que sempre deveria ter sido: a régua
+     do DESTINO, para onde a promoção leva. */
+  const [pr, ts, co, cfg, rm] = await Promise.all([
     sb.from('promocoes').select('*').order('criado_em', { ascending: false }).limit(1000),
     sb.from('tabela_salarial').select('*').eq('ativo', true).order('cargo').order('nivel'),
     sb.from('colaboradores').select('matricula,nome,cargo,setor,admissao,ativo').eq('ativo', true).order('nome'),
-    sb.from('app_config').select('valor').eq('chave', 'promo_encargos').maybeSingle()
+    sb.from('app_config').select('valor').eq('chave', 'promo_encargos').maybeSingle(),
+    sb.from('rh_remuneracao').select('matricula,cargo,salario,referencia').order('referencia', { ascending: true })
   ]);
   if (pr.error) throw pr.error;
   _promoRegs = pr.data || [];
   _promoTab = ts.data || [];
   _promoColabs = co.data || [];
+  /* uma linha por matrícula; se houver mais de uma referência, vence a MAIS
+     NOVA — o arquivo do RH veio em duas datas e a antiga não é o salário de
+     hoje. Por isso o order acima é crescente: o último a escrever ganha. */
+  _promoRemun = {};
+  (rm.data || []).forEach(r => { if (r.matricula) _promoRemun[String(r.matricula)] = r; });
   let e = null;
   try { e = cfg.data ? parseFloat(String(cfg.data.valor).replace(',', '.')) : null; } catch (_) { }
   _promoEnc = (e && e > 0) ? e : null;      // null = ainda não definido, e a tela avisa
@@ -35853,11 +35866,21 @@ function _promoAtual(mat) {
     .sort((a, b) => String(b.data_efeito || b.criado_em).localeCompare(String(a.data_efeito || a.criado_em)))[0];
   if (ap) return { cargo: ap.cargo_para, nivel: ap.nivel_para, salario: +ap.salario_para || null,
                    origem: 'promoção aplicada', cargoErp: c.cargo || null };
-  /* sem promoção aplicada, a posição sai do CADASTRO — e o salário sai da
-     tabela pela dupla (cargo, nível) que o próprio cargo carrega. */
+  /* sem promoção aplicada, a origem é a FOLHA: cargo e salário como estão hoje.
+     Não passa pela tabela salarial — ela é a régua do destino, não do presente,
+     e forçar o presente a caber nela criava um "não achei o cargo" para gente
+     que tem salário conhecido. */
+  const rr = _promoRemun[String(mat)];
+  if (rr && +rr.salario > 0) {
+    const p = _pmParteCargo(rr.cargo || c.cargo);
+    return { cargo: rr.cargo || c.cargo || null, nivel: p.nivel, salario: +rr.salario,
+             origem: 'folha do RH' + (rr.referencia ? ' · ' + fmtData(String(rr.referencia).slice(0, 10)) : ''),
+             cargoErp: c.cargo || null };
+  }
+  // sem folha: última tentativa é a tabela, pelo cargo do cadastro
   const r = _pmResolve(c.cargo);
   if (r) return { cargo: r.cargo, nivel: r.nivel, salario: _promoSal(r.cargo, r.nivel),
-                  origem: 'cadastro do ERP' + (r.auto ? '' : ' · de-para'), cargoErp: c.cargo || null };
+                  origem: 'tabela salarial' + (r.auto ? '' : ' · de-para'), cargoErp: c.cargo || null };
   return { cargo: c.cargo || null, nivel: null, salario: null, origem: 'cadastro do ERP',
            cargoErp: c.cargo || null, semMapa: true };
 }
@@ -35933,16 +35956,17 @@ function _promoNova() {
     + '<div class="desc" style="font-size:12px">' + escapeHtml(c.matricula) + ' · ' + escapeHtml(c.setor || '—')
     + (c.admissao ? ' · admitido em ' + fmtData(c.admissao) : '') + '</div>'
     + '<div class="desc" style="font-size:11.5px;margin-top:3px">cargo atual: <b>' + escapeHtml(at.cargo || 'não cadastrado')
-    + '</b> · fonte: ' + escapeHtml(at.origem) + '</div></div>';
+    + '</b>' + (at.salario != null ? ' · ganha hoje <b style="color:var(--navy)">' + _pmMoeda(at.salario) + '</b>' : '')
+    + ' · fonte: ' + escapeHtml(at.origem) + '</div></div>';
 
   /* nada de perguntar o nível: ele vem do cargo. Se não deu para casar com a
      tabela, o caminho é o de-para — uma vez por cargo, não por pessoa. */
   if (at.salario == null) {
     h += '<div style="margin-top:10px;padding:10px 12px;background:#FDF3E7;border-left:4px solid var(--laranja);border-radius:10px;font-size:12.5px;color:#8A5A12">'
-      + 'Não consegui achar o cargo <b>' + escapeHtml(at.cargoErp || '—') + '</b> na tabela salarial.'
-      + '<div style="margin-top:5px">' + ((_promoTab || []).length
-        ? 'Ligue esse cargo a uma faixa em <b>🔗 Cargos</b> — vale para todo mundo com o mesmo cargo, não só para ele.'
-        : 'A tabela salarial ainda está vazia.') + '</div>'
+      + '<b>' + escapeHtml(c.nome || 'Esta pessoa') + '</b> não está no relatório de remuneração do RH, '
+      + 'e o cargo <b>' + escapeHtml(at.cargoErp || '—') + '</b> também não casou com a tabela salarial. '
+      + 'Sem salário de partida não dá para medir o impacto.'
+      + '<div style="margin-top:5px">Importe o relatório do RH com essa pessoa, ou ligue o cargo a uma faixa em <b>🔗 Cargos</b>.</div>'
       + '<button class="btn btn-borda" style="width:auto;padding:6px 13px;font-size:12.5px;margin-top:7px" onclick="promoAba(\'cargos\')">Abrir o de-para</button></div>';
   }
   const cargos = _promoCargos();
