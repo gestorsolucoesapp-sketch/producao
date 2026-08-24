@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.134.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.135.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.134.0';
+const APP_VER = '4.135.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35962,7 +35962,12 @@ async function promoDesempenho(mat) {
     const d1 = new Date(hoje + 'T12:00:00'); d1.setFullYear(d1.getFullYear() - 1);
     const desdeAno = d1.toISOString().slice(0, 10);
     const [pr, mt, af, fb, ins] = await Promise.all([
-      out.aloc ? sb.from('producao_resumo').select('dia,turno,peso,caixas')
+      /* 24/08/2026 — pedia a coluna 'caixas', que NÃO EXISTE em producao_resumo
+         (as colunas são quantidade/unidade/peso). O PostgREST devolvia erro, o
+         `pr.data` vinha nulo e a caixa mostrava 0 kg como se a pessoa não
+         tivesse produzido nada: a 704 tem 36 t no turno da Noite desde julho.
+         Sobrou de quando eu media em caixas, antes de trocar para kg. */
+      out.aloc ? sb.from('producao_resumo').select('dia,turno,peso')
         .eq('recurso_cod', String(out.aloc.maquina_codigo)).gte('dia', desde).order('dia') : { data: [] },
       out.aloc ? sb.from('metas').select('meta').eq('recurso_cod', String(out.aloc.maquina_codigo))
         .eq('bloco', out.aloc.turno).maybeSingle() : { data: null },
@@ -35979,6 +35984,9 @@ async function promoDesempenho(mat) {
     out.fbPos = out.fb.filter(x => String(x.tipo) === 'reconhecimento').length;
     out.fbDes = out.fb.filter(x => String(x.tipo) === 'desenvolvimento').length;
     out.instrutorDe = ins.data || [];
+    /* erro de consulta não pode virar zero na tela: zero parece desempenho
+       ruim, e foi exatamente assim que a coluna inexistente passou batida. */
+    if (pr && pr.error) throw pr.error;
     out.meta = mt && mt.data ? +mt.data.meta : null;
     // só os turnos do BLOCO da pessoa: Manhã=T1+T3, Tarde=T2+T4, Noite=T5
     const BL = { 'Manhã': ['1', '3'], 'Tarde': ['2', '4'], 'Noite': ['5'] };
@@ -36195,17 +36203,29 @@ function ultimaPromocao(mat) {
   if (m && m.data) return { data: String(m.data).slice(0, 10), fonte: 'informado por você' };
   return { data: null, fonte: null };
 }
+/* 24/08/2026 (João: "não está deixando eu digitar o ano") — o campo se
+   REDESENHAVA no meio da digitação. Um <input type=date> dispara change assim
+   que a data fica válida, e "14/09/0002" já é válida: ao teclar o segundo
+   dígito do ano o app salvava, refazia a tela e criava um campo novo com o ano
+   truncado. Agora grava em silêncio, sem redesenhar nada — a tela só se atualiza
+   quando a pessoa muda de colaborador. E ano fora de 1950–hoje é ignorado:
+   é digitação pela metade, não uma data. */
 async function promoSetUltima(mat, v) {
+  if (v) {
+    const a = +String(v).slice(0, 4);
+    if (!(a >= 1950) || String(v) > hojeISO()) return;   // ainda digitando, ou data impossível
+  }
   if (!v) {
     await sb.from('colaborador_ultima_promo').delete().eq('matricula', String(mat));
     delete (_ultPromo || {})[String(mat)];
+    toast('Data removida.');
   } else {
     const linha = { matricula: String(mat), data: v };
     const { error } = await sb.from('colaborador_ultima_promo').upsert(linha, { onConflict: 'matricula' });
     if (error) { toast('❌ ' + error.message); return; }
     (_ultPromo || {})[String(mat)] = linha;
+    toast('Última promoção: ' + fmtData(v));
   }
-  renderOrgPromo();
 }
 function _promoCampoUltima(mat) {
   const u = ultimaPromocao(mat);
