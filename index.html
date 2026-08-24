@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.133.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.134.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.133.0';
+const APP_VER = '4.134.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31961,7 +31961,7 @@ function _flChips() {
   return partes.length
     ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + partes.join('') + '</div>' : '';
 }
-let _fDe = '', _fAte = '';
+let _fDe = '', _fAte = '', _fFalta = false;
 /* PERÍODO = DATA DE ENTREGA PROMETIDA, não data de emissão do pedido.
    Numa carteira em aberto a pergunta é sempre "o que tenho de entregar até
    quando" — emissão é história, entrega é compromisso. É a mesma data que
@@ -32517,6 +32517,34 @@ function _cartFiltrada() {
       return _fMisto === 'misto' ? cache[n] > 1 : cache[n] === 1;
     });
   }
+  /* ===== SÓ O QUE FALTA PARA FECHAR O PEDIDO (24/08/2026, pedido do João) =====
+     A carteira mostra o PROMETIDO. Boa parte disso já está pronta no depósito —
+     o pedido 230283 pede 3,4 t e tem tudo em estoque, não falta produzir nada.
+     Ligando este filtro, cada linha passa a valer só o pedaço que o estoque NÃO
+     cobre, e a linha inteiramente coberta sai da lista.
+     O quanto já está reservado vem de _resPorPed, o MESMO índice que a caixa
+     verde de reserva usa — calculado uma vez, na ordem de entrega. Recalcular
+     aqui daria outro número na primeira diferença de ordenação: o estoque é um
+     monte só, disputado por vários pedidos, e quem chega antes leva.
+     As linhas são COPIADAS antes de ter o peso trocado. Mexer no objeto original
+     estragaria o cache da carteira para todas as outras telas. */
+  if (_fFalta) {
+    const out = [];
+    LIN.forEach(l => {
+      const num = String(l.pedido || '').split('/')[0];
+      const pega = (_resPorPed && _resPorPed[num + '|' + String(l.item_cod)]) || 0;
+      const kg = +l.peso_pendente || 0;
+      const falta = kg - pega;
+      if (falta <= 0.001) return;                       // já tem material: some
+      const f = falta / (kg || 1);
+      out.push(Object.assign({}, l, {
+        peso_pendente: falta,
+        qtd_pendente: (+l.qtd_pendente || 0) * f,
+        _kgOriginal: kg, _jaReservado: pega
+      }));
+    });
+    LIN = out;
+  }
   return LIN;
 }
 /* frase curta do recorte, para todo título de detalhe dizer o que está mostrando */
@@ -32531,6 +32559,7 @@ function _cartRecorte() {
     else if (_fDe) p.push('entrega a partir de ' + fmtData(_fDe));
     else if (_fAte) p.push('entrega até ' + fmtData(_fAte));
   } else if (_fPer) p.push(_PER_ROT[_fPer] || ('entrega em ' + _fPer));
+  if (_fFalta) p.push('só o que falta produzir');
   if (_fSetor.length) p.push(_fSetor.join(' + '));
   if (_fItem) p.push('item "' + _fItem + '"');
   if (_fCanal.length) p.push(_fCanal.map(c => CANAL_NOME[c] || c).join(' + '));
@@ -32633,7 +32662,7 @@ function cardCarteiraMes() {
       <td style="text-align:right"><b>${kg(i.kg)}</b><div style="font-size:10.5px;color:var(--fraco-2)">${i.peds.size} ped</div></td></tr>`).join('');
   return `<div class="card">
     <div class="titulo-sec">📈 Carteira por mês de entrega</div>
-    <p class="desc" style="margin-bottom:9px"><b>${kg(totKg)}</b> ${_mapaFiltroSit === 'completa' ? 'com <b>reserva completa</b>' : _mapaFiltroSit === 'parcial' ? '<b>a separar</b>' : _mapaFiltroSit === 'reservados' ? 'com material <b>reservado ou a separar</b>' : _mapaFiltroSit === 'sem' ? '<b>sem nenhuma reserva</b> — nada separado para carregar' : 'prometidos e ainda não entregues'}. A Análise de Tendência olha o que a fábrica <b>produziu</b>; esta olha o que ela <b>deve entregar</b>.</p>
+    <p class="desc" style="margin-bottom:9px"><b>${kg(totKg)}</b> ${_mapaFiltroSit === 'completa' ? 'com <b>reserva completa</b>' : _mapaFiltroSit === 'parcial' ? '<b>a separar</b>' : _mapaFiltroSit === 'reservados' ? 'com material <b>reservado ou a separar</b>' : _fFalta ? '<b>que faltam produzir</b> — já descontado o que está pronto no depósito' : _mapaFiltroSit === 'sem' ? '<b>sem nenhuma reserva</b> — nada separado para carregar' : 'prometidos e ainda não entregues'}. A Análise de Tendência olha o que a fábrica <b>produziu</b>; esta olha o que ela <b>deve entregar</b>.</p>
     ${vencKg > 0 ? `<div style="background:var(--crit-bg3);border:1px solid #F3C4C4;border-radius:9px;padding:8px 10px;margin-bottom:9px;font-size:12.5px;color:#8C2F2F">
       <b>⚠️ ${kg(vencKg)} com entrega vencida</b> em ${venc.reduce((s, m) => s + m.peds.size, 0)} pedido(s). Isso não é carteira do mês — é atraso, e por isso aparece em vermelho.</div>` : ''}
     <div style="display:flex;gap:5px;align-items:flex-end;margin-bottom:7px;overflow-x:auto;padding-bottom:2px">${barras}</div>
@@ -32752,7 +32781,7 @@ function detItemCarteira(cod) {
   abreDet('📦 ' + cod,
     `<p class="idet-desc">${escapeHtml(String(L[0].item_desc || ''))}</p>`
     + `<div style="margin:6px 0 4px">${_seloFila(cod)}</div>`
-    + `<p class="desc" style="margin:0 0 9px"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b> a entregar`
+    + `<p class="desc" style="margin:0 0 9px"><b>${L.length}</b> linha(s) · <b>${kg(tot)}</b> ${_fFalta ? 'a produzir' : 'a entregar'}`
     + (_f && _f.maqs.length
         ? ` · na fila há <b>${kg(_f.kg)}</b> em ${_f.maqs.length} máquina(s)`
         : ``)
@@ -32818,7 +32847,7 @@ function cmBarraFiltro() {
     if (b) bocas[b] = 1;
   });
   const ativo = _mapaFiltroRep || _mapaFiltroSit !== 'todos' || _fCanal.length || _fProd.length
-    || _fBoca.length || _fMisto || _fSetor.length || _fItem || _fPer || _fDe || _fAte;
+    || _fBoca.length || _fMisto || _fSetor.length || _fItem || _fPer || _fDe || _fAte || _fFalta;
   return `<div class="card" style="padding:11px 13px">
     <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;font-weight:800;color:var(--fraco-2);letter-spacing:.5px">FILTRAR TUDO</span>
@@ -32849,6 +32878,10 @@ function cmBarraFiltro() {
       ${sel('cmProd', '', [['', _fProd.length ? '+ outro produto' : 'todos os produtos']].concat(Object.keys(prods).filter(x => !_fProd.includes(x)).sort().map(x => [x, x.toLowerCase()])), 'mapaProd')}
       ${sel('cmBoca', '', [['', _fBoca.length ? '+ outra boca' : 'todas as bocas']].concat(Object.keys(bocas).filter(b => !_fBoca.includes(b)).sort((a, b) => +a - +b).map(b => [b, 'boca ' + b])), 'mapaBoca')}
       ${sel('cmMisto', _fMisto, [['', 'boca única e mista'], ['misto', 'só pedido de mais de uma boca'], ['unica', 'só pedido de boca única']], 'mapaMisto')}
+      <button onclick="mapaFalta(${_fFalta ? 'false' : 'true'})" title="desconta o que já está pronto no depósito"
+        style="cursor:pointer;font-size:12px;font-weight:800;padding:7px 13px;border-radius:9px;white-space:nowrap;
+        border:1.5px solid ${_fFalta ? '#8A5A00' : 'var(--borda)'};background:${_fFalta ? '#FFF4D6' : '#fff'};color:${_fFalta ? '#8A5A00' : 'var(--navy)'}">
+        ${_fFalta ? '✔ ' : ''}só o que falta produzir</button>
       ${ativo ? '<button class="btn btn-borda" style="width:auto;padding:6px 12px;font-size:12px" onclick="mapaLimpaFiltro()">limpar</button>' : ''}
     </div>
     ${_flChips()}
@@ -32878,6 +32911,7 @@ function mapaData(qual, v) {
   if (qual === 'de') _fDe = v || ''; else _fAte = v || '';
   _mapaSel = ''; cmPintaMapa();
 }
+function mapaFalta(on) { _fFalta = !!on; _mapaSel = ''; cmPintaMapa(); }
 function mapaSetor(v) { _flAdd('setor', v); _mapaSel = ''; cmPintaMapa(); }
 /* o campo do item é de digitação: cmPintaMapa refaz o innerHTML e levaria o
    <input> junto. Como esse repinte é SÍNCRONO, devolver o foco na linha
@@ -32890,7 +32924,7 @@ function mapaItem(v) {
 }
 function mapaLimpaFiltro() {
   _mapaFiltroRep = ''; _mapaFiltroSit = 'todos'; _fCanal = []; _fProd = []; _fBoca = []; _fMisto = '';
-  _fSetor = []; _fItem = ''; _fPer = ''; _fDe = ''; _fAte = ''; _mapaSel = '';
+  _fSetor = []; _fItem = ''; _fPer = ''; _fDe = ''; _fAte = ''; _fFalta = false; _mapaSel = '';
   cmPintaMapa();
 }
 function cmPintaMapa() {
