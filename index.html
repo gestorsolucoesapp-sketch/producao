@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.141.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.142.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.141.0';
+const APP_VER = '4.142.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -36592,20 +36592,50 @@ async function promoSalvar() {
    um .in() só; a produção sai de um .in() nas máquinas envolvidas e é repartida
    por bloco na memória. Com 4 promoções isso seria irrelevante, mas a lista vai
    crescer e o padrão de uma consulta por linha é o que trava tela. */
-let _promoPerfAno = null, _promoPerfSeq = null;
+/* ===== ANO DO DESEMPENHO — 24/08/2026 (pedido do João: "ver o desempenho de
+   outro ano também") =====
+   A lista sempre olhou o ano corrente e ponto. Agora tem seletor.
+
+   Os anos oferecidos vêm do que existe em producao_resumo, não de um intervalo
+   chutado: oferecer 2025 quando não há uma linha de 2025 importada faria a tela
+   responder "0 kg", que numa conversa de promoção se lê como "essa pessoa não
+   produziu" em vez de "esse ano não está no banco". */
+let _promoPerfAno = null, _promoPerfSeq = null, _perfAno = null, _perfAnos = null;
+const _perfAnoSel = () => _perfAno || hojeISO().slice(0, 4);
+const _perfChave = regs => (regs || []).map(p => p.matricula).join(',') + '@' + _perfAnoSel();
+async function _perfCarregaAnos() {
+  if (_perfAnos) return _perfAnos;
+  const anos = new Set([hojeISO().slice(0, 4)]);
+  try {
+    const [a1, a2] = await Promise.all([
+      sb.from('producao_resumo').select('dia').order('dia', { ascending: true }).limit(1),
+      sb.from('producao_resumo').select('dia').order('dia', { ascending: false }).limit(1)
+    ]);
+    const y1 = +String(((a1.data || [])[0] || {}).dia || '').slice(0, 4);
+    const y2 = +String(((a2.data || [])[0] || {}).dia || '').slice(0, 4);
+    if (y1 && y2) for (let y = y1; y <= y2; y++) anos.add(String(y));
+  } catch (_) { }
+  _perfAnos = [...anos].sort().reverse();
+  return _perfAnos;
+}
+function promoPerfSetAno(v) {
+  _perfAno = String(v || '') || null;
+  _promoPerfAno = null; _promoPerfSeq = null;
+  renderOrgPromo();
+}
 async function promoPerfAno() {
-  const chave = (_promoRegs || []).map(p => p.matricula).join(',');
+  const chave = _perfChave(_promoRegs);
   if (_promoPerfAno && _promoPerfSeq === chave) return _promoPerfAno;
   const mats = [...new Set((_promoRegs || []).map(p => String(p.matricula)).filter(Boolean))];
   const out = {};
   mats.forEach(m => { out[m] = { aloc: null, meses: {}, kg: 0, turnos: 0, postoKg: 0, postoTurnos: 0, desde: null,
                                  faltas: 0, atestados: 0, fbPos: 0, fbDes: 0 }; });
   if (!mats.length) { _promoPerfAno = out; _promoPerfSeq = chave; return out; }
-  const ano = hojeISO().slice(0, 4), de = ano + '-01-01';
+  const ano = _perfAnoSel(), de = ano + '-01-01', ate = ano + '-12-31';
   try {
     const [al, af, fb] = await Promise.all([
       sb.from('org_alocacoes').select('matricula,setor,turno,maquina_codigo,funcao,vigencia_inicio').in('matricula', mats).is('vigencia_fim', null),
-      sb.from('org_afastamentos').select('matricula,tipo,dias,data').in('matricula', mats).gte('data', de),
+      sb.from('org_afastamentos').select('matricula,tipo,dias,data').in('matricula', mats).gte('data', de).lte('data', ate),
       sb.from('feedbacks').select('matricula,tipo').in('matricula', mats)
     ]);
     (al.data || []).forEach(a => { if (out[String(a.matricula)]) out[String(a.matricula)].aloc = a; });
@@ -36623,7 +36653,7 @@ async function promoPerfAno() {
       let linhas = [];
       for (let ini = 0; ini < 60000; ini += 1000) {
         const { data, error } = await sb.from('producao_resumo').select('dia,turno,recurso_cod,peso')
-          .in('recurso_cod', maqs).gte('dia', de).order('dia').range(ini, ini + 999);
+          .in('recurso_cod', maqs).gte('dia', de).lte('dia', ate).order('dia').range(ini, ini + 999);
         if (error) throw error;
         linhas = linhas.concat(data || []);
         if (!data || data.length < 1000) break;
@@ -36669,14 +36699,20 @@ async function promoPerfAno() {
 function _promoPerfHTML(mat) {
   const o = (_promoPerfAno || {})[String(mat)];
   if (!o) return '<div class="pperf desc" style="font-size:11px;margin-top:3px">carregando desempenho do ano…</div>';
-  const ano = hojeISO().slice(0, 4);
+  const ano = _perfAnoSel();
   const t = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
   const p = [];
   if (o.aloc) {
     const media = o.turnos ? o.kg / o.turnos : 0;
+    /* a alocação pode ter começado DEPOIS do ano escolhido; aí "dele" seria 0 e
+       0 se lê como "não produziu", quando na verdade é "não dá para atribuir" */
+    const foraDoAno = o.desde && o.desde > (ano + '-12-31');
     p.push('<b>' + escapeHtml(o.aloc.maquina_codigo) + '</b> · ' + escapeHtml(o.aloc.turno));
-    p.push('dele: <b>' + t(o.kg) + '</b>' + (o.desde ? ' desde ' + fmtData(o.desde) : ''));
-    if (o.turnos) p.push(Math.round(media).toLocaleString('pt-BR') + ' kg/turno · ' + o.turnos + ' turnos');
+    if (foraDoAno) p.push('<span style="color:#8A5A12">só o posto — o organograma dele começa em ' + fmtData(o.desde) + '</span>');
+    else {
+      p.push('dele: <b>' + t(o.kg) + '</b>' + (o.desde ? ' desde ' + fmtData(o.desde) : ''));
+      if (o.turnos) p.push(Math.round(media).toLocaleString('pt-BR') + ' kg/turno · ' + o.turnos + ' turnos');
+    }
     p.push('<span style="opacity:.8">posto em ' + ano + ': ' + t(o.postoKg) + '</span>');
   } else {
     p.push('<span style="color:#8A5A12">sem alocação no organograma</span>');
@@ -36714,9 +36750,17 @@ function _promoHist() {
   const regs = _promoRegs || [];
   if (!regs.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
   // uma consulta para a lista toda; a tela abre na hora e as linhas se completam
-  if (!_promoPerfAno || _promoPerfSeq !== regs.map(x => x.matricula).join(',')) setTimeout(_promoPerfCarrega, 0);
-  let h = '<div class="card"><div class="titulo-sec">📜 Histórico · ' + regs.length
-    + ' <span class="desc" style="font-size:11px;font-weight:600">· desempenho de ' + hojeISO().slice(0, 4) + '</span></div>';
+  if (!_promoPerfAno || _promoPerfSeq !== _perfChave(regs)) setTimeout(_promoPerfCarrega, 0);
+  if (!_perfAnos) setTimeout(async () => { await _perfCarregaAnos(); if (_promoAba === 'hist') renderOrgPromo(); }, 0);
+  const anos = _perfAnos || [_perfAnoSel()];
+  let h = '<div class="card"><div class="titulo-sec" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<span>📜 Histórico · ' + regs.length + '</span>'
+    + '<span class="desc" style="font-size:11px;font-weight:600">desempenho de</span>'
+    + '<select onchange="promoPerfSetAno(this.value)" class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px">'
+    + anos.map(a => '<option value="' + a + '"' + (a === _perfAnoSel() ? ' selected' : '') + '>' + a + '</option>').join('')
+    + '</select>'
+    + (anos.length < 2 ? '<span class="desc" style="font-size:11px;font-weight:600;color:#8A5A12">só ' + anos[0] + ' tem produção importada</span>' : '')
+    + '</div>';
   h += regs.map(p => {
     const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
     const d = (+p.salario_para || 0) - (+p.salario_de || 0);
