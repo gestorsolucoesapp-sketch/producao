@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.122.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.123.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.122.0';
+const APP_VER = '4.123.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35799,6 +35799,10 @@ async function promoCarregar(forcar) {
   let e = null;
   try { e = cfg.data ? parseFloat(String(cfg.data.valor).replace(',', '.')) : null; } catch (_) { }
   _promoEnc = (e && e > 0) ? e : null;      // null = ainda não definido, e a tela avisa
+  try {
+    const { data: cc } = await sb.from('app_config').select('valor').eq('chave', 'promo_encargos_comp').maybeSingle();
+    _encComp = cc ? JSON.parse(cc.valor) : { ..._ENC_PADRAO };
+  } catch (_) { _encComp = { ..._ENC_PADRAO }; }
 }
 
 /* posição ATUAL: última promoção aplicada vence o cadastro do ERP */
@@ -36113,18 +36117,93 @@ async function promoExcluir(id) {
    Conta só o que NÃO foi cancelado, e separa por status: rascunho é cenário,
    aplicada já está na folha. Somar tudo num número só esconde essa diferença,
    que é justamente a pergunta de quem aprova. */
+/* ===== ENCARGOS — COMPOSIÇÃO, NÃO UM NÚMERO MÁGICO (24/08/2026) =====
+   O João pediu para definir pela lei brasileira. Em vez de cravar "1,68", o app
+   mostra a conta aberta, com cada parcela editável, porque duas delas dependem
+   da empresa e não da lei:
+     · RAT/SAT: 1%, 2% ou 3% conforme o grau de risco do CNAE, e ainda
+       multiplicado pelo FAP (0,5 a 2,0), que muda todo ano por empresa.
+     · Multa rescisória: só existe se houver demissão sem justa causa; quem
+       provisiona usa a rotatividade real.
+   Os grupos seguem a decomposição clássica (Grupo A/B/C):
+     A · incide sobre a folha: INSS patronal 20% (art. 22, I, Lei 8.212/91),
+         RAT, Terceiros/Sistema S 5,8%, FGTS 8% (Lei 8.036/90).
+     B · tempo pago e não trabalhado: 13º (1/12 = 8,33%), férias (1/12 = 8,33%)
+         e o terço constitucional (1/3 de 8,33% = 2,78%).
+     C · o Grupo A incide TAMBÉM sobre o Grupo B — é a parcela que quase todo
+         mundo esquece e que sozinha vale 7 pontos.
+   IMPORTANTE: isto vale para empresa no Lucro Real/Presumido. No Simples
+   Nacional não há INSS patronal nem Terceiros sobre a folha, e o multiplicador
+   cai para perto de 1,35. Confirme o regime com a contabilidade. */
+const _ENC_PADRAO = { inss: 20, rat: 3, terceiros: 5.8, fgts: 8, decimo: 8.33, ferias: 8.33, terco: 2.78, multa: 3.82 };
+let _encComp = null;
+function _encCalc(c) {
+  const A = (+c.inss || 0) + (+c.rat || 0) + (+c.terceiros || 0) + (+c.fgts || 0);
+  const B = (+c.decimo || 0) + (+c.ferias || 0) + (+c.terco || 0);
+  const C = A * B / 100;
+  const D = +c.multa || 0;
+  return { A, B, C, D, total: A + B + C + D, fator: 1 + (A + B + C + D) / 100 };
+}
+function _encHTML() {
+  const c = _encComp || { ..._ENC_PADRAO };
+  const r = _encCalc(c);
+  const lin = (k, rot, nota, grupo) =>
+    '<tr><td style="padding:4px 6px;font-size:12px">' + escapeHtml(rot)
+    + (nota ? '<div style="font-size:10.5px;color:var(--fraco-2)">' + nota + '</div>' : '') + '</td>'
+    + '<td style="padding:4px 6px;text-align:right;white-space:nowrap">'
+    + '<input value="' + String(c[k]).replace('.', ',') + '" inputmode="decimal" onchange="promoEncSet(\'' + k + '\',this.value)" '
+    + 'style="width:66px;text-align:right;font-size:12.5px;padding:4px 6px;border:1px solid var(--linha);border-radius:7px">'
+    + ' %</td></tr>';
+  const tit = t => '<tr><td colspan="2" style="padding:8px 6px 2px;font-weight:800;font-size:11.5px;color:var(--navy)">' + t + '</td></tr>';
+  const tot = (rot, v) => '<tr><td style="padding:4px 6px;font-size:12px;font-weight:700">' + rot
+    + '</td><td style="padding:4px 6px;text-align:right;font-weight:800">' + v.toFixed(2).replace('.', ',') + ' %</td></tr>';
+  return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">'
+    + tit('A · incide sobre a folha')
+    + lin('inss', 'INSS patronal', 'art. 22, I, Lei 8.212/91')
+    + lin('rat', 'RAT / SAT', '1, 2 ou 3% pelo CNAE × FAP — confirme o seu')
+    + lin('terceiros', 'Terceiros (Sistema S)', 'SENAI, SESI, SEBRAE, INCRA, salário-educação')
+    + lin('fgts', 'FGTS', 'Lei 8.036/90')
+    + tot('Subtotal A', r.A)
+    + tit('B · tempo pago e não trabalhado')
+    + lin('decimo', '13º salário', '1/12')
+    + lin('ferias', 'Férias', '1/12')
+    + lin('terco', 'Terço constitucional', '1/3 das férias')
+    + tot('Subtotal B', r.B)
+    + tit('C · o grupo A incide também sobre o B')
+    + '<tr><td style="padding:4px 6px;font-size:12px">' + r.A.toFixed(2).replace('.', ',') + '% sobre ' + r.B.toFixed(2).replace('.', ',') + '%'
+    + '</td><td style="padding:4px 6px;text-align:right;font-weight:800">' + r.C.toFixed(2).replace('.', ',') + ' %</td></tr>'
+    + tit('D · provisão de rescisão')
+    + lin('multa', 'Multa de 40% do FGTS', 'depende da rotatividade — zere se não provisiona')
+    + '</table></div>'
+    + '<div style="margin-top:9px;padding:10px 12px;background:var(--leve);border-radius:10px">'
+    + '<div class="desc" style="font-size:11.5px">multiplicador resultante</div>'
+    + '<div style="font-size:26px;font-weight:800;color:var(--navy)">' + r.fator.toFixed(4).replace('.', ',') + '</div>'
+    + '<div class="desc" style="font-size:11.5px">cada R$ 1,00 de aumento custa <b>R$ ' + r.fator.toFixed(2).replace('.', ',') + '</b> para a empresa · encargos de ' + r.total.toFixed(2).replace('.', ',') + '%</div></div>'
+    + '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">'
+    + '<button class="btn btn-verde" style="width:auto;padding:7px 15px;font-size:13px" onclick="promoEncSalvar()">Usar este multiplicador</button>'
+    + '<button class="btn btn-borda" style="width:auto;padding:7px 15px;font-size:13px" onclick="promoEncPadrao()">Voltar ao padrão da lei</button></div>'
+    + '<div class="desc" style="font-size:11px;margin-top:7px;line-height:1.5">Vale para <b>Lucro Real ou Presumido</b>. No <b>Simples Nacional</b> não há INSS patronal nem Terceiros sobre a folha e o multiplicador cai para perto de 1,35 — confirme o regime com a contabilidade antes de levar o número para a Diretoria.</div>';
+}
+function promoEncSet(k, v) { _encComp = _encComp || { ..._ENC_PADRAO }; const n = _pmNum(v); _encComp[k] = (n == null ? 0 : n); renderOrgPromo(); }
+function promoEncPadrao() { _encComp = { ..._ENC_PADRAO }; renderOrgPromo(); }
+async function promoEncSalvar() {
+  const r = _encCalc(_encComp || _ENC_PADRAO);
+  const { error } = await sb.from('app_config').upsert([
+    { chave: 'promo_encargos', valor: String(+r.fator.toFixed(4)) },
+    { chave: 'promo_encargos_comp', valor: JSON.stringify(_encComp || _ENC_PADRAO) }
+  ], { onConflict: 'chave' });
+  if (error) { toast('❌ ' + error.message); return; }
+  _promoEnc = +r.fator.toFixed(4);
+  toast('✅ Multiplicador ' + r.fator.toFixed(4).replace('.', ',') + ' salvo.');
+  renderOrgPromo();
+}
 function _promoImpacto() {
   const enc = _promoEnc;
   let h = '<div class="card"><div class="titulo-sec">💰 Impacto na folha</div>'
-    + '<div class="campo" style="margin:0 0 10px"><label>Multiplicador de encargos</label>'
-    + '<input id="promoEnc" type="text" inputmode="decimal" value="' + (enc != null ? String(enc).replace('.', ',') : '') + '" '
-    + 'placeholder="ex.: 1,68" style="width:130px;font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px">'
-    + '<button class="btn btn-borda" style="width:auto;padding:6px 14px;font-size:13px;margin-left:8px" onclick="promoSalvarEnc()">Salvar</button>'
-    + '<div class="desc" style="font-size:11.5px;margin-top:4px">'
-    + (enc == null
-      ? '<b style="color:var(--laranja)">Ainda não definido.</b> Sem ele eu mostro só o salário bruto — não invento o número dos encargos da Rioplastic. Pegue o valor com o RH ou a contabilidade.'
-      : 'Todo valor "com encargos" abaixo é o delta do salário × ' + String(enc).replace('.', ',') + '.')
-    + '</div></div>';
+    + '<details' + (enc == null ? ' open' : '') + ' style="margin:0 0 12px;border:1px solid var(--linha);border-radius:12px;padding:9px 11px">'
+    + '<summary style="cursor:pointer;font-weight:800;font-size:13px;color:var(--navy)">Encargos sobre a folha'
+    + (enc != null ? ' · usando <b>' + String(enc).replace('.', ',') + '</b>' : ' <span style="color:var(--laranja)">· definir</span>') + '</summary>'
+    + '<div style="margin-top:8px">' + _encHTML() + '</div></details>';
   const regs = (_promoRegs || []).filter(p => p.status !== 'cancelada');
   if (!regs.length) return h + '<p class="desc" style="margin:0">Nada para somar ainda.</p></div>';
   const porStatus = {};
