@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.136.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.137.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.136.0';
+const APP_VER = '4.137.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -36301,52 +36301,105 @@ let _promoEd = null;
 function promoEditar(id) {
   _promoEd = (_promoRegs || []).find(p => p.id === id) || null;
   if (!_promoEd) return;
+  window._edCargoDe = _promoEd.cargo_de || '';
+  window._edNivelDe = _promoEd.nivel_de || '';
+  window._edSalDe = (_promoEd.salario_de != null && _promoEd.salario_de !== '') ? +_promoEd.salario_de : null;
   window._edCargo = _promoEd.cargo_para || '';
   window._edNivel = _promoEd.nivel_para || '';
   window._edData = _promoEd.data_efeito ? String(_promoEd.data_efeito).slice(0, 10) : hojeISO();
   window._edMotivo = _promoEd.motivo || '';
   _promoEdModal();
 }
+/* O modal se redesenha a cada troca de select. Sem capturar antes, tudo que foi
+   DIGITADO (motivo e salario atual) se perde no meio da edicao. */
+function _promoEdCapta() {
+  try { const m = document.getElementById('edMotivo'); if (m) window._edMotivo = m.value; } catch (_) { }
+  try {
+    const e = document.getElementById('edSalDe');
+    if (e) { const v = parseFloat(String(e.value).replace(',', '.')); window._edSalDe = isFinite(v) ? v : null; }
+  } catch (_) { }
+}
 function promoEdSet(k, v) {
+  _promoEdCapta();
   if (k === 'cargo') { window._edCargo = v; window._edNivel = ''; }
   else if (k === 'nivel') window._edNivel = v;
+  else if (k === 'cargoDe') {
+    window._edCargoDe = v; window._edNivelDe = '';
+    const s0 = _promoSal(v, ''); if (s0 != null) window._edSalDe = s0;
+  }
+  else if (k === 'nivelDe') {
+    window._edNivelDe = v;
+    const s0 = _promoSal(window._edCargoDe, v); if (s0 != null) window._edSalDe = s0;
+  }
   else if (k === 'data') window._edData = v;
   _promoEdModal();
 }
+/* o cargo/nivel gravado pode nao existir mais na tabela salarial; se sumir da
+   lista o select zera sozinho e o registro perde a origem sem ninguem ver */
+function _promoOpcCargo(sel) {
+  const l = _promoCargos();
+  if (sel && l.indexOf(sel) < 0) l.unshift(sel);
+  return '<option value="">— escolher —</option>'
+    + l.map(x => '<option' + (x === sel ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('');
+}
+function _promoOpcNivel(cargo, sel) {
+  const l = _promoNiveis(cargo) || [];
+  let h = '<option value="">— escolher —</option>'
+    + l.map(n => '<option value="' + escapeHtml(n.nivel) + '"' + (n.nivel === sel ? ' selected' : '') + '>'
+        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('');
+  if (sel && !l.some(n => n.nivel === sel)) {
+    h += '<option value="' + escapeHtml(sel) + '" selected>' + escapeHtml(sel) + ' (fora da tabela)</option>';
+  }
+  return h;
+}
 function _promoEdModal() {
   const p = _promoEd; if (!p) return;
+  const aplicada = (p.status === 'aplicada');
   const salPara = _promoSal(window._edCargo, window._edNivel);
-  const salDe = +p.salario_de || 0;
-  const d = (salPara != null) ? (salPara - salDe) : null;
-  let h = '<div class="desc" style="margin:0 0 8px">' + escapeHtml(p.nome || p.matricula) + ' · sai de <b>'
-    + escapeHtml((p.cargo_de || '—') + (p.nivel_de ? ' ' + p.nivel_de : '')) + '</b> · ' + _pmMoeda(salDe) + '</div>'
+  const salDe = (window._edSalDe != null) ? +window._edSalDe : null;
+  const d = (salPara != null && salDe != null) ? (salPara - salDe) : null;
+  const cx = 'style="width:100%;font-size:16px;padding:8px 9px;border:1px solid var(--linha);border-radius:10px"';
+  let h = '<div class="desc" style="margin:0 0 9px">' + escapeHtml(p.nome || p.matricula)
+    + ' · ' + escapeHtml(p.setor || '—') + ' · matrícula ' + escapeHtml(p.matricula || '—') + '</div>';
+  if (aplicada) {
+    h += '<div style="padding:9px 11px;border-radius:10px;background:#FFF4E0;color:#8A5A12;font-size:12px;font-weight:700;margin-bottom:10px">'
+      + '⚠️ Esta promoção já está <b>APLICADA</b>. Mexer aqui altera um registro que já foi para a folha — use só para corrigir erro de lançamento.</div>';
+  }
+  h += '<div style="font-size:11px;font-weight:800;color:var(--fraco);letter-spacing:.4px;margin:0 0 5px">SITUAÇÃO ATUAL — DE</div>'
+    + '<div class="campo"><label>Cargo atual</label><select onchange="promoEdSet(\'cargoDe\',this.value)" class="sel-pad" style="width:100%">'
+    + _promoOpcCargo(window._edCargoDe) + '</select></div>'
+    + '<div class="campo"><label>Nível atual</label><select onchange="promoEdSet(\'nivelDe\',this.value)" class="sel-pad" style="width:100%">'
+    + _promoOpcNivel(window._edCargoDe, window._edNivelDe) + '</select></div>'
+    + '<div class="campo"><label>Salário atual (R$)</label>'
+    + '<input id="edSalDe" type="number" step="0.01" inputmode="decimal" value="' + (salDe != null ? salDe.toFixed(2) : '') + '" ' + cx + '>'
+    + '<div class="desc" style="font-size:11px;margin-top:3px">Trocar cargo/nível acima já traz o valor da tabela. Ajuste à mão se o salário real dele for diferente.</div></div>'
+    + '<div style="font-size:11px;font-weight:800;color:var(--fraco);letter-spacing:.4px;margin:12px 0 5px">DESTINO — PARA</div>'
     + '<div class="campo"><label>Cargo de destino</label><select onchange="promoEdSet(\'cargo\',this.value)" class="sel-pad" style="width:100%">'
-    + '<option value="">— escolher —</option>'
-    + _promoCargos().map(x => '<option' + (x === window._edCargo ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('')
-    + '</select></div>'
+    + _promoOpcCargo(window._edCargo) + '</select></div>'
     + '<div class="campo"><label>Nível de destino</label><select onchange="promoEdSet(\'nivel\',this.value)" class="sel-pad" style="width:100%">'
-    + '<option value="">— escolher —</option>'
-    + _promoNiveis(window._edCargo).map(n => '<option value="' + escapeHtml(n.nivel) + '"' + (n.nivel === window._edNivel ? ' selected' : '') + '>'
-        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
-    + '</select></div>'
-    + '<div class="campo"><label>Vale a partir de</label><input type="date" value="' + escapeHtml(window._edData) + '" '
+    + _promoOpcNivel(window._edCargo, window._edNivel) + '</select></div>'
+    + '<div class="campo"><label>Vale a partir de</label><input type="date" value="' + escapeHtml(window._edData || hojeISO()) + '" '
     + 'onchange="promoEdSet(\'data\',this.value)" style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px"></div>'
-    + '<div class="campo"><label>Motivo</label><textarea id="edMotivo" rows="3" style="width:100%;font-size:15px;padding:8px;border:1px solid var(--linha);border-radius:10px">'
+    + '<div class="campo"><label>Motivo</label><textarea id="edMotivo" rows="3" ' + cx + '>'
     + escapeHtml(window._edMotivo || '') + '</textarea></div>';
   if (d != null) {
     h += '<div style="padding:9px 11px;border-radius:10px;background:var(--leve);margin-bottom:8px;font-size:13px">'
-      + 'vai para <b>' + _pmMoeda(salPara) + '</b> · <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">'
-      + (d >= 0 ? '+' : '') + _pmMoeda(d) + '</b></div>';
+      + _pmMoeda(salDe) + ' → <b>' + _pmMoeda(salPara) + '</b> · <b style="color:' + (d >= 0 ? 'var(--ok-2)' : 'var(--critico-s)') + '">'
+      + (d >= 0 ? '+' : '') + _pmMoeda(d) + '</b>' + (_promoEnc ? ' · ' + _pmMoeda(d * _promoEnc) + ' com encargos' : '') + '</div>';
   }
   h += '<button class="btn btn-verde" style="width:100%" onclick="promoEdSalvar()">Salvar alterações</button>';
   abreDet('✏️ Editar promoção', h);
 }
 async function promoEdSalvar() {
   const p = _promoEd; if (!p) return;
-  try { window._edMotivo = ($('edMotivo') || {}).value || ''; } catch (_) { }
+  _promoEdCapta();
   const salPara = _promoSal(window._edCargo, window._edNivel);
+  if (!window._edCargoDe) { toast('Escolha o cargo atual (de).'); return; }
+  if (!(window._edSalDe > 0)) { toast('Informe o salário atual.'); return; }
   if (salPara == null) { toast('Escolha cargo e nível de destino.'); return; }
+  if (p.status === 'aplicada' && !confirm('Esta promoção já está APLICADA. Confirma alterar o registro?')) return;
   const upd = {
+    cargo_de: window._edCargoDe, nivel_de: window._edNivelDe || null, salario_de: +window._edSalDe,
     cargo_para: window._edCargo, nivel_para: window._edNivel, salario_para: salPara,
     data_efeito: window._edData || hojeISO(), motivo: (window._edMotivo || '').trim() || null,
     atualizado_em: new Date().toISOString()
@@ -36654,7 +36707,7 @@ function _promoHist() {
           + escapeHtml(fmtData(String(p.promo_anterior).slice(0, 10))) + '</b></div>' : '')
       + _promoPerfHTML(p.matricula)
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
-      + (p.status !== 'aplicada' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoEditar(' + p.id + ')">✏️ Editar</button>' : '')
+      + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoEditar(' + p.id + ')">✏️ Editar</button>'
       + (p.status === 'rascunho' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aprovada\')">Aprovar</button>' : '')
       + (p.status === 'aprovada' ? '<button class="btn btn-verde" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'aplicada\')">Marcar aplicada</button>' : '')
       + (p.status !== 'cancelada' && p.status !== 'aplicada' ? '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="promoStatus(' + p.id + ',\'cancelada\')">Cancelar</button>' : '')
@@ -36867,13 +36920,16 @@ function _promoRelatorio() {
   h += (_promoRegs || []).filter(p => p.status !== 'cancelada').map(p => {
     const d = (+p.salario_para || 0) - (+p.salario_de || 0);
     const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
-    return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--linha);cursor:pointer">'
+    return '<div style="display:flex;gap:6px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--linha)">'
+      + '<label style="display:flex;gap:9px;align-items:flex-start;flex:1;min-width:0;cursor:pointer">'
       + '<input type="checkbox" style="margin-top:3px" ' + (s[p.id] ? 'checked' : '') + ' onchange="relTica(' + p.id + ',this.checked)">'
-      + '<span style="flex:1"><b style="font-size:13px">' + escapeHtml(p.nome || p.matricula) + '</b> '
+      + '<span style="flex:1;min-width:0"><b style="font-size:13px">' + escapeHtml(p.nome || p.matricula) + '</b> '
       + '<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:' + st[2] + ';color:' + st[1] + '">' + st[0] + '</span>'
       + '<div class="desc" style="font-size:11.5px">' + escapeHtml(p.setor || '—') + ' · '
       + escapeHtml((p.cargo_de || '') + ' → ' + (p.cargo_para || '') + (p.nivel_para ? ' ' + p.nivel_para : ''))
-      + ' · <b style="color:var(--ok-2)">+' + _pmMoeda(d) + '</b></div></span></label>';
+      + ' · <b style="color:var(--ok-2)">+' + _pmMoeda(d) + '</b></div></span></label>'
+      + '<button class="btn btn-borda" title="Editar" style="width:auto;flex:0 0 auto;padding:4px 10px;font-size:13px;margin-top:2px" onclick="promoEditar(' + p.id + ')">✏️</button>'
+      + '</div>';
   }).join('');
   h += '<div style="margin-top:11px;padding:11px 13px;background:var(--leve);border-radius:12px">'
     + '<div class="desc" style="font-size:11.5px">' + L.length + ' promoção(ões) no pacote · acréscimo mensal</div>'
