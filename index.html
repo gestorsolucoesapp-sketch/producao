@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.130.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.131.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.130.0';
+const APP_VER = '4.131.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37877,6 +37877,92 @@ function orgCelulaDaMaq(m) {
   return c ? c.nome : null;
 }
 
+/* ===== PAINEL DO LÍDER: SÓ MÁQUINA E SETOR (24/08/2026, pedido do João) =====
+   O organograma inteiro é ferramenta de gestor: identifica, troca pessoa,
+   remove posto, marca sem-auxiliar, cria aprendiz. Dar isso a líder e supervisor
+   seria abrir a estrutura da fábrica para quem precisa mexer em duas coisas.
+   E o inverso — deixar tudo travado — obriga o líder a ligar para o gestor toda
+   vez que alguém troca de máquina, que é o que acontece TODO dia.
+   Então aqui existe uma porta estreita: busca a pessoa, muda a MÁQUINA e muda o
+   SETOR. Mais nada. Sem remover posto, sem trocar quem é a pessoa, sem apagar.
+   A troca de setor grava em colaborador_setor (a correção que vence o ERP), e
+   não na tabela do ERP — mesmo motivo da v4.129: o próximo import apagaria. */
+function podePosto() { try { return !!(vePessoal || ehLider); } catch (_) { return false; } }
+let _lpFiltro = '', _lpSel = null;
+function lpBusca(v) {
+  _lpFiltro = String(v || '').trim();
+  const b = document.getElementById('lpLista');
+  if (b) b.innerHTML = _lpListaHTML(); else renderOrgVista();
+}
+function lpEscolhe(mat) { _lpSel = mat || null; renderOrgVista(); }
+function _lpListaHTML() {
+  const q = _lpFiltro.toLowerCase();
+  if (!q) return '<div class="desc" style="font-size:12px">Digite o nome ou a matrícula.</div>';
+  const lista = (orgDados.colab || []).filter(c => c.ativo !== false
+    && (String(c.nome || '').toLowerCase().includes(q) || String(c.matricula || '').includes(q))).slice(0, 20);
+  if (!lista.length) return '<div class="desc" style="font-size:12px">Ninguém com esse texto.</div>';
+  return lista.map(c => '<div onclick="lpEscolhe(\'' + escapeHtml(c.matricula) + '\')" '
+    + 'style="cursor:pointer;padding:8px 9px;border-bottom:1px solid var(--linha)">'
+    + '<b style="font-size:13px">' + escapeHtml(c.nome || '') + '</b>' + orgSeloCasa(c.matricula)
+    + '<div class="desc" style="font-size:11.5px">' + escapeHtml(c.matricula) + ' · ' + escapeHtml(c.setor || 'sem setor')
+    + ' · ' + escapeHtml(c.cargo || '') + '</div></div>').join('');
+}
+function orgCardPosto() {
+  if (!podePosto()) return '';
+  let h = '<div class="card"><div class="titulo-sec">🔁 Trocar de máquina ou setor</div>'
+    + '<p class="desc" style="margin:0 0 8px">Busque a pessoa e ajuste onde ela está. '
+    + 'Só estes dois campos são liberados aqui — identificar, remover posto e trocar quem é a pessoa continuam com o gestor.</p>'
+    + '<input id="lpBusca" value="' + escapeHtml(_lpFiltro) + '" oninput="lpBusca(this.value)" '
+    + 'placeholder="nome ou matrícula" style="width:100%;font-size:16px;padding:9px 11px;border:1px solid var(--linha);border-radius:10px">';
+  if (!_lpSel) return h + '<div id="lpLista" style="margin-top:8px;max-height:300px;overflow:auto">' + _lpListaHTML() + '</div></div>';
+  const c = (orgDados.colab || []).find(x => x.matricula === _lpSel);
+  if (!c) { _lpSel = null; return h + '</div>'; }
+  const postos = (orgDados.aloc || []).filter(a => String(a.matricula) === String(_lpSel) && orgAtivo(a));
+  const maqs = [...new Set((orgDados.maquinas || []).map(m => m.codigo))];
+  const setores = (typeof _bhSetoresConhecidos === 'function') ? _bhSetoresConhecidos() : [];
+  const corr = (typeof setorCorrigido === 'function') && setorCorrigido(_lpSel);
+  h += '<div style="margin-top:9px;padding:10px 12px;background:var(--leve-2);border-radius:12px">'
+    + '<b style="font-size:14px">' + escapeHtml(c.nome || '') + '</b>' + orgSeloCasa(c.matricula)
+    + '<button onclick="lpEscolhe(null)" style="float:right;border:none;background:transparent;color:var(--fraco);font-weight:800;cursor:pointer">trocar</button>'
+    + '<div class="desc" style="font-size:11.5px">' + escapeHtml(c.matricula) + ' · ' + escapeHtml(c.cargo || '') + '</div></div>';
+  // SETOR
+  h += '<div class="campo" style="margin-top:10px"><label>Setor</label>'
+    + '<select onchange="lpSetor(this.value)" class="sel-pad" style="width:100%">'
+    + '<option value="">— usar o do ERP' + (c.setor_erp || c.setor ? ' (' + escapeHtml(c.setor_erp || c.setor) + ')' : '') + ' —</option>'
+    + setores.map(s => '<option' + (s === c.setor && corr ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('')
+    + '</select>'
+    + (corr ? '<div class="desc" style="font-size:11px;margin-top:3px">✎ corrigido na mão · ERP diz <b>'
+        + escapeHtml(c.setor_erp || 'em branco') + '</b></div>' : '') + '</div>';
+  // MÁQUINA, um seletor por posto que a pessoa ocupa
+  h += '<div class="campo"><label>Máquina</label>';
+  if (!postos.length) {
+    h += '<div class="desc" style="font-size:12px;color:#8A5A12">Esta pessoa não está em nenhum posto do organograma. '
+      + 'Criar posto novo é com o gestor.</div>';
+  } else {
+    h += postos.map(a => '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">'
+      + '<span class="desc" style="font-size:11.5px;min-width:120px">' + escapeHtml(a.setor || '') + ' · ' + escapeHtml(a.turno || '')
+      + ' · ' + escapeHtml(a.funcao || '') + '</span>'
+      + '<select onchange="lpMaquina(' + a.id + ',this.value)" class="sel-pad" style="flex:1;min-width:130px">'
+      + maqs.map(m => '<option' + (String(m) === String(a.maquina_codigo) ? ' selected' : '') + '>' + escapeHtml(String(m)) + '</option>').join('')
+      + '</select></div>').join('');
+  }
+  return h + '</div></div>';
+}
+async function lpMaquina(id, maq) {
+  if (!podePosto()) { toast('Sem permissão.'); return; }
+  const { error } = await sb.from('org_alocacoes').update({ maquina_codigo: String(maq) }).eq('id', id);
+  if (error) { toast('❌ ' + error.message); return; }
+  toast('Máquina alterada para ' + maq + '.');
+  await carregarOrganograma();
+  renderOrgVista();
+}
+async function lpSetor(v) {
+  if (!podePosto()) { toast('Sem permissão.'); return; }
+  const c = (orgDados.colab || []).find(x => x.matricula === _lpSel);
+  await bhSalvaSetor(_lpSel, v, (c && (c.setor_erp || c.setor)) || '');
+  renderOrgVista();
+}
+
 function renderOrg() {
   const wrap = $('orgWrap');
   const maqSetor = orgDados.maquinas.filter(m => orgEhSetor(m.setor)).map(m => m.codigo);
@@ -37887,6 +37973,7 @@ function renderOrg() {
   let h = '<div class="orgv2">';
   if (orgTodosSetores()) h += '<div class="card" style="border-left:5px solid var(--azul-marca);margin-bottom:10px;padding:9px 12px"><b>👁️ Todos os setores</b><div class="desc" style="margin-top:2px">Visão consolidada, só leitura. Para editar escala, férias ou observações, escolha um setor.</div></div>';
   h += orgCardFicha();
+  h += orgCardPosto();          // líder e supervisor: só máquina e setor
   h += orgCardSituacao();
   if (pend) h += '<div class="card" onclick="orgVerPendentes()" title="ver a lista" style="cursor:pointer;border-left:5px solid var(--laranja);margin-bottom:10px"><b>⚠️ ' + pend + ' vínculo(s) pendente(s).</b><div class="desc">Toque aqui para ver quais são.</div></div>';
   h += orgSeloAuditoria();
@@ -42243,7 +42330,9 @@ async function bhSalvaSetor(mat, novo, setorErp) {
     toast('Setor corrigido para ' + novo + '.');
   }
   try { await carregarOrganograma(); } catch (_) { }
-  renderOrgHoras();
+  /* volta para a vista em que a pessoa estava: chamado do Banco de Horas
+     redesenha o Banco de Horas; chamado do card do líder, o organograma. */
+  try { renderOrgVista(); } catch (_) { }
 }
 
 /* ---- busca + edição de setor dentro do Banco de Horas ---- */
