@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.115.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.116.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3228,7 +3228,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.115.0';
+const APP_VER = '4.116.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28257,10 +28257,17 @@ function detSeparar(filtro) {
     `<p class="desc" style="margin:0 0 10px"><b>${L.length} pedido(s)</b> · falta separar <b>${kg(totF)}</b>.<br>
       O material existe, mas está fora do depósito de reservados — alguém precisa movê-lo no ERP antes de a carga ser chamada.
       Os menores primeiro: destravam um pedido inteiro com pouco esforço.</p>`
-    + tabSimples(['Pedido', 'Falta separar'], L.map(p => `<tr onclick="detPedido('${escapeHtml(p.num)}')" style="cursor:pointer">
-        <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} ›
-          <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s) · ${kg(p.kg)} no pedido · entrega ${escapeHtml(fmtDataSem(p.ent))}</div></td>
-        <td style="text-align:right"><b style="color:#8A5A00">${kg(+p._faltaRes || 0)}</b></td></tr>`).join('')));
+    + tabSimples(['Pedido · item a separar', 'Falta separar'], L.map(p => {
+        const its = (p._faltaItens || []).map(x =>
+          `<div style="margin-top:3px;font-size:11.5px;line-height:1.3">
+             <span class="cod">${escapeHtml(String(x.item))}</span> ${escapeHtml(_descItem(x.item))}
+             <b style="color:#8A5A00">· ${kg(x.falta)}</b></div>`).join('');
+        return `<tr onclick="detPedido('${escapeHtml(p.num)}')" style="cursor:pointer">
+        <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || ''))} ›
+          <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s) · ${kg(p.kg)} no pedido · entrega ${escapeHtml(fmtDataSem(p.ent))}</div>
+          ${its}</td>
+        <td style="text-align:right"><b style="color:#8A5A00">${kg(+p._faltaRes || 0)}</b></td></tr>`;
+      }).join('')));
 }
 
 function destravaReserva(qual) {
@@ -28978,11 +28985,15 @@ function reservaTexto() {
   const pa = [];
   fila.forEach(p => {
     let falta = 0;
+    const its = [];
     (porPed[String(p.num)] || []).forEach(l => {
       const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
-      saldo[l.item] = d - pega; falta += Math.max(0, l.kg - pega);
+      saldo[l.item] = d - pega;
+      const f = Math.max(0, l.kg - pega);
+      falta += f;
+      if (f > 0.001) its.push({ item: l.item, falta: f });
     });
-    if (falta > 0.001) { p._faltaRes = falta; pa.push(p); }
+    if (falta > 0.001) { p._faltaRes = falta; p._faltaItens = its.sort((a, b) => b.falta - a.falta); pa.push(p); }
   });
   if (!pa.length) return '*SEPARAÇÃO*\n\nTudo que está pronto já está reservado. Nada a separar. ✅';
   const tot = pa.reduce((s, p) => s + p._faltaRes, 0);
@@ -28991,9 +29002,12 @@ function reservaTexto() {
     '*' + pa.length + ' pedido(s) · ' + kg(tot) + ' a separar*', ''];
   /* ordenado por entrega: quem vence primeiro é quem separa primeiro */
   pa.slice(0, 25).forEach(p => {
-    L.push('• *' + p.num + '* ' + String(p.cli || '').slice(0, 22)
+    /* quem vai ao depósito procura ITEM na prateleira, não pedido — sem o
+       código a lista obriga a abrir o app para saber o que pegar. */
+    L.push('• *' + p.num + '* ' + String(p.cli || '')
       + '\n   separar ' + kg(p._faltaRes) + (p.ent ? ' · entrega ' + fmtDataSem(p.ent) : '')
-      + ((+p.atraso || 0) > 0 ? ' · *' + p.atraso + 'd VENCIDO*' : ''));
+      + ((+p.atraso || 0) > 0 ? ' · *' + p.atraso + 'd VENCIDO*' : '')
+      + (p._faltaItens || []).map(x => '\n   → ' + x.item + ' ' + _descItem(x.item) + ' · ' + kg(x.falta)).join(''));
   });
   if (pa.length > 25) L.push('', '_… e mais ' + (pa.length - 25) + ' pedido(s). Lista completa no app._');
   L.push('', '_Gerado no app de Produção._');
