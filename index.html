@@ -942,6 +942,17 @@ main.telanova .animdraw{stroke-dasharray:1600;stroke-dashoffset:1600;animation:s
    layout é o tipo de coisa que se ajusta cinco vezes até ficar bom, e ajuste de
    layout não pode ter chance de mexer no que a fábrica lê. */
 
+/* ===== SEPARAÇÃO ENTRE CARDS — 24/08/2026 (João: "não está claro onde começa
+   e termina os cards, falta uma cor mais escura de fundo") =====
+   O fundo era #F2F5F8 e o card #FFFFFF: 3% de diferença de luminosidade. Num
+   monitor claro, ou com reflexo, os cards se derretiam num bloco só. Agora o
+   fundo desce para um cinza-azulado de verdade e o card ganha borda um pouco
+   mais firme — o branco do card passa a ser o elemento que salta, que é o
+   contrário do que estava acontecendo. */
+body{background:#DDE5EC}
+.card{border-color:#CBD6E1;box-shadow:0 1px 2px rgba(11,42,74,.10),0 3px 10px rgba(11,42,74,.07)}
+.prog-grupo{background:transparent;border:0;box-shadow:none;padding:0}
+
 /* ---------- COMPACTO ---------- */
 html.rp-compacto header{padding-top:calc(env(safe-area-inset-top) + 4px);padding-bottom:2px;padding-left:12px;padding-right:12px}
 html.rp-compacto .marca h1{font-size:14px}
@@ -1096,7 +1107,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.149.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.151.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3296,7 +3307,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.149.0';
+const APP_VER = '4.151.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26073,11 +26084,21 @@ async function carregarProgramacao(forcar) {
   const alvo = $('progConteudo');
   if (alvo) alvo.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando a fila…</p>';
   try {
-    const { data, error } = await sb.from('v_fila_op')
-      .select('dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo,cores,estoque,prazo_dias,data_pedido,suprimento_op,largura,espessura,pedido')
-      .limit(8000);
-    if (error) throw error;
-    _progDados = data || [];
+    /* ===== 24/08/2026 — .limit(8000) NÃO VENCE O TETO DO SERVIDOR =====
+       O PostgREST corta em 1.000 linhas e ignora limite maior do cliente. A fila
+       tem 1.259 OPs: a aba inteira vinha trabalhando com 1.000 delas e o
+       cabeçalho anunciava "1.000 ordens · 2.920,9 t" como se fosse o total. É
+       3.350,7 t de verdade — 430 t de fila que ninguém via. Agora pagina. */
+    const COLS = 'dia_foto,recurso_cod,recurso_nome,setor,op,item_cod,item_desc,cliente,entrega,quantidade,kg_programado,inicio,termino,ordem,kg_produzido,pct_concluido,ja_deveria_ter_saido,inicio_absurdo,cores,estoque,prazo_dias,data_pedido,suprimento_op,largura,espessura,pedido';
+    const _lin = [];
+    for (let ini = 0; ini < 40000; ini += 1000) {
+      const { data, error } = await sb.from('v_fila_op').select(COLS)
+        .order('recurso_cod').order('ordem').range(ini, ini + 999);
+      if (error) throw error;
+      (data || []).forEach(x => _lin.push(x));
+      if (!data || data.length < 1000) break;
+    }
+    _progDados = _lin;
     try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
     /* a fila do ERP guarda a entrega de quando a OP foi gerada e não acompanha
        reprogramação do pedido — sem isto, OP com prazo novo aparece VENCIDA. */
@@ -30741,6 +30762,46 @@ function cardFilaSetor(rows) {
     + '<div id="fsCorpo">' + fsRender() + '</div></div>';
 }
 
+/* ===== QUANTAS VEZES A OP JÁ FOI REPROGRAMADA — 24/08/2026 (pedido do João) =====
+   Cada importação do RPCP264 é uma FOTO da fila. Comparando o término previsto
+   de uma foto com o da anterior dá para contar quantas vezes aquela OP mudou de
+   data — e separar o que ADIOU do que ADIANTOU, que são leituras opostas: adiar
+   sete vezes é promessa que não se cumpre; adiantar é fila se acomodando.
+
+   A conta é feita no banco (view v_fila_reprog, uma janela sobre fila_producao):
+   são 20.396 linhas em 18 fotos, e varrer isso no navegador travaria o iPhone
+   como já travou com a carteira em agosto. A view devolve uma linha por OP.
+
+   O retrato de hoje: 1.731 OPs já foram reprogramadas, média de 4,3 vezes cada,
+   e a campeã mudou 14 vezes em 17 fotos. */
+let _fsReprog = null;
+async function carregarReprog(forcar) {
+  if (_fsReprog && !forcar) return _fsReprog;
+  const m = {};
+  try {
+    for (let ini = 0; ini < 40000; ini += 1000) {
+      const { data, error } = await sb.from('v_fila_reprog')
+        .select('op,reprog,adiou,adiantou,fotos,janela_h').order('op').range(ini, ini + 999);
+      if (error) throw error;
+      (data || []).forEach(r => { m[String(r.op)] = r; });
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) { try { console.warn('reprog:', e && e.message); } catch (_) { } }
+  _fsReprog = m; return m;
+}
+/* selo do contador. Sem reprogramação não desenha nada: poluir a lista com
+   "0 reprog." em toda linha esconde justamente as que interessam. */
+function _seloReprog(op) {
+  const r = (_fsReprog || {})[String(op)];
+  if (!r || !(+r.reprog > 0)) return '';
+  const n = +r.reprog, ad = +r.adiou || 0;
+  const cor = n >= 8 ? ['#B3261E', '#FDE8E8'] : n >= 4 ? ['#8A5A00', '#FFF4E0'] : ['#5C7186', '#EEF3F8'];
+  return ' <span title="' + n + ' mudança(s) de data · ' + ad + ' adiando, ' + (+r.adiantou || 0) + ' adiantando"'
+    + ' style="background:' + cor[1] + ';color:' + cor[0] + ';border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800;white-space:nowrap">'
+    + '↻ ' + n + '</span>';
+}
+/* aceita os dois nomes: v_fila_op traz kg_programado, fila_producao traz peso */
+const _fsKg = r => (+r.kg_programado || +r.peso || 0);
 function fsRender() {
   const R = _fsRows || [];
   if (!R.length) return '<p class="vazio-painel">Fila vazia.</p>';
@@ -30750,11 +30811,15 @@ function fsRender() {
     const st = setorDe(r.recurso_cod) || '—';
     if (!porSetor[st]) porSetor[st] = { st, ops: 0, kg: 0, cx: 0, atras: 0, maqs: {} };
     const g = porSetor[st];
-    g.ops++; g.kg += (+r.peso || 0); g.cx += (+r.quantidade || 0);
+    /* 24/08/2026 (João: "o peso está 0 kg na fila") — este card somava r.peso,
+       campo que NÃO EXISTE em v_fila_op: lá o peso se chama kg_programado. Some
+       um campo inexistente 1.259 vezes e o total é zero, em toda máquina e em
+       todo setor. Zero não pareceu erro porque tinha cara de número. */
+    g.ops++; g.kg += _fsKg(r); g.cx += (+r.quantidade || 0);
     if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.atras++;
     const m = String(r.recurso_cod);
     if (!g.maqs[m]) g.maqs[m] = { cod: m, nome: r.recurso_nome || m, ops: 0, kg: 0, atras: 0, fila: [] };
-    g.maqs[m].ops++; g.maqs[m].kg += (+r.peso || 0);
+    g.maqs[m].ops++; g.maqs[m].kg += _fsKg(r);
     if (r.entrega && String(r.entrega).slice(0, 10) < hoje) g.maqs[m].atras++;
     g.maqs[m].fila.push(r);   // 13/08/2026 (João): guarda a OP para mostrar a SEQUÊNCIA
   });
@@ -30769,7 +30834,16 @@ function fsRender() {
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Peso</div>'
     + '<b style="font-size:17px;color:var(--azul-marca)">' + fmtKg(totKg) + '</b></div>'
     + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Entrega vencida</div>'
-    + '<b style="font-size:17px;color:' + (totAtr ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + totAtr + '</b></div></div>';
+    + '<b style="font-size:17px;color:' + (totAtr ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + totAtr + '</b></div>'
+    + (() => {
+        if (!_fsReprog) { setTimeout(async () => { await carregarReprog(); const c = document.getElementById('fsCorpo'); if (c) c.innerHTML = fsRender(); }, 0); return ''; }
+        let n = 0, mx = 0;
+        R.forEach(r => { const x = _fsReprog[String(r.op)]; if (x && +x.reprog > 0) { n++; if (+x.reprog > mx) mx = +x.reprog; } });
+        if (!n) return '';
+        return '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Já reprogramadas</div>'
+          + '<b style="font-size:17px;color:#8A5A00">' + n + '</b> <span style="font-size:11px;color:var(--fraco)">de ' + R.length + ' · até ' + mx + '×</span></div>';
+      })()
+    + '</div>';
 
   L.forEach(g => {
     const pc = Math.round(g.kg / maxKg * 100), ab = _fsAberto === g.st;
@@ -30820,11 +30894,12 @@ function fsSequencia(m) {
       + '<div style="flex:1;min-width:0">'
       + '<b>OP ' + escapeHtml(String(r.op || '—')) + '</b>'
       + (i === 0 ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">EM 1º</span>' : '')
+      + _seloReprog(r.op)
       + '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(String(r.item_desc || r.item_cod || ''))
       + (iniTxt ? ' · início ' + iniTxt : '') + '</div></div>'
       + '<span style="white-space:nowrap;font-size:10.5px;color:' + (venc ? 'var(--critico-s)' : 'var(--fraco)') + ';font-weight:' + (venc ? '800' : '600') + '">'
       + (r.entrega ? fmtDataSem(String(r.entrega).slice(0, 10)).slice(0, 10) : '—') + '</span>'
-      + '<b style="white-space:nowrap;color:var(--azul-marca)">' + fmtKg(+r.peso || 0) + '</b></div>';
+      + '<b style="white-space:nowrap;color:var(--azul-marca)">' + fmtKg(_fsKg(r)) + '</b></div>';
   });
   h += '</div>';
   return h;
