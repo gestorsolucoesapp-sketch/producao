@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.138.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.139.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.138.0';
+const APP_VER = '4.139.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -36232,6 +36232,17 @@ async function carregarUltPromo(forcar) {
   } catch (_) { }
   _ultPromo = m; return m;
 }
+/* mesma coisa, mas ignorando UM registro — ao editar uma promoção já aplicada
+   ela seria a "última promoção" dela mesma, e o campo se apontaria em círculo */
+function ultimaPromocaoExceto(mat, id) {
+  const ap = (_promoRegs || [])
+    .filter(p => String(p.matricula) === String(mat) && p.status === 'aplicada' && p.data_efeito && p.id !== id)
+    .sort((a, b) => String(b.data_efeito).localeCompare(String(a.data_efeito)))[0];
+  if (ap) return { data: String(ap.data_efeito).slice(0, 10), fonte: 'histórico do app' };
+  const m = (_ultPromo || {})[String(mat)];
+  if (m && m.data) return { data: String(m.data).slice(0, 10), fonte: 'informado por você' };
+  return { data: null, fonte: null };
+}
 /* devolve { data, fonte } — histórico do app primeiro, cadastro manual depois */
 function ultimaPromocao(mat) {
   const ap = (_promoRegs || [])
@@ -36380,6 +36391,13 @@ function _promoEdModal() {
     + _promoOpcNivel(window._edCargo, window._edNivel) + '</select></div>'
     + '<div class="campo"><label>Vale a partir de</label><input type="date" value="' + escapeHtml(window._edData || hojeISO()) + '" '
     + 'onchange="promoEdSet(\'data\',this.value)" style="font-size:16px;padding:7px 9px;border:1px solid var(--linha);border-radius:10px"></div>'
+    /* 24/08/2026 (João: "não está aparecendo o campo última promoção"). Só existia
+       na tela de Nova. Quem edita um rascunho antigo ficava sem o dado que é o
+       argumento mais forte do pacote: há quanto tempo a pessoa não é promovida.
+       O campo grava direto no cadastro da pessoa (colaborador_ultima_promo), sem
+       redesenhar o modal — se redesenhar, o <input type=date> perde a digitação
+       do ano no meio. */
+    + _promoCampoUltima(p.matricula)
     + '<div class="campo"><label>Motivo</label><textarea id="edMotivo" rows="3" ' + cx + '>'
     + escapeHtml(window._edMotivo || '') + '</textarea></div>';
   if (d != null) {
@@ -36398,10 +36416,17 @@ async function promoEdSalvar() {
   if (!(window._edSalDe > 0)) { toast('Informe o salário atual.'); return; }
   if (salPara == null) { toast('Escolha cargo e nível de destino.'); return; }
   if (p.status === 'aplicada' && !confirm('Esta promoção já está APLICADA. Confirma alterar o registro?')) return;
+  /* avisa, mas não bloqueia: nem todo mundo tem promoção anterior, e travar o
+     salvamento por causa disso faria o João inventar uma data para passar */
+  const u = ultimaPromocaoExceto(p.matricula, p.id);
+  if (!u.data && !confirm('Falta a data da ÚLTIMA PROMOÇÃO de ' + (p.nome || p.matricula) + '.\n\n'
+      + 'Sem ela o relatório não mostra há quanto tempo essa pessoa está sem promoção — que costuma ser o argumento mais forte do pacote na Diretoria.\n\n'
+      + 'Preencher agora é só fechar este aviso e usar o campo "Última promoção".\n\nSalvar assim mesmo?')) return;
   const upd = {
     cargo_de: window._edCargoDe, nivel_de: window._edNivelDe || null, salario_de: +window._edSalDe,
     cargo_para: window._edCargo, nivel_para: window._edNivel, salario_para: salPara,
     data_efeito: window._edData || hojeISO(), motivo: (window._edMotivo || '').trim() || null,
+    promo_anterior: u.data || null,
     atualizado_em: new Date().toISOString()
   };
   const { error } = await sb.from('promocoes').update(upd).eq('id', p.id);
@@ -36540,6 +36565,9 @@ async function promoSalvar() {
   const salPara = _promoSal(window._pmCargoPara, window._pmNivelPara);
   if (salDe == null) { toast('O cargo atual dele ainda não está ligado à tabela — veja em Cargos.'); return; }
   if (salPara == null) { toast('Escolha o cargo e o nível de destino.'); return; }
+  const _u = ultimaPromocao(_promoSel);
+  if (!_u.data && !confirm('Falta a data da ÚLTIMA PROMOÇÃO de ' + (c.nome || c.matricula) + '.\n\n'
+      + 'Sem ela o relatório não mostra há quanto tempo essa pessoa está sem promoção.\n\nGravar o rascunho assim mesmo?')) return;
   const linha = {
     matricula: c.matricula, nome: c.nome, setor: c.setor,
     cargo_de: at.cargo, nivel_de: at.nivel || null, salario_de: salDe,
