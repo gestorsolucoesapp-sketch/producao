@@ -1041,7 +1041,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.097.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.098.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3215,7 +3215,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.097.0';
+const APP_VER = '4.098.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -3491,26 +3491,63 @@ function equivDia(dia) {      // peso do dia na BASE DE CÁLCULO — dia incompl
 }
 function _diasDoMes(ym) { const p = ym.split('-'), a = +p[0], m = +p[1]; const n = new Date(a, m, 0).getDate(); const out = []; for (let d = 1; d <= n; d++) out.push(`${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`); return out; }
 // projeta a média por dia-equivalente decorrido sobre o mês inteiro (só p/ o mês em curso)
+/* ===== 24/08/2026 — A PREVISAO SOMA, NAO REESCREVE O PASSADO =====
+   A conta antiga era ritmo x MES INTEIRO. Como domingo e dia sinalizado valem 0
+   na base de calculo, a producao feita neles sumia da previsao, e os dias ja
+   vividos voltavam recriados pela media em vez de entrarem pelo numero real.
+   Flagrante do Joao em 24/08: Termoformagem com 585,5 t no chao ate 22/08 e o
+   card prevendo 778,5 t para o mes. Isso e 193 t em 7 dias = 27,6 t/dia, contra
+   uma media de 33,4 t/dia na propria linha do grafico. A previsao estava
+   dizendo que a fabrica ia desacelerar 17% sem motivo nenhum. As 18,4 t dos
+   domingos 02 e 09/08 tinham sido simplesmente apagadas.
+   Agora: REALIZADO (tudo, inclusive domingo e hora extra) + ritmo x os
+   equivalentes que FALTAM. O que ja aconteceu entra pelo numero real; so o
+   futuro e estimado. Termoformagem passa de 778,5 t para ~801 t.
+   O ritmo tambem mudou: agora e a MESMA media da linha do grafico (dia util
+   cheio). Antes o card mostrava 33,4 e previa usando 33,7 — ninguem conseguia
+   refazer a conta de cabeca a partir do que estava na tela.
+   Sabado nao e dia cheio (0,46): a legenda passa a escrever "faltam 6 dias e
+   1 sabado" em vez de "faltam 7 dias". (Pedido do Joao, 24/08/2026) */
+function _faltaMes(ym, ultimo) {
+  let eqDecorr = 0, eqFalta = 0, cheios = 0, sabados = 0, reduzidos = 0;
+  _diasDoMes(ym).forEach(d => {
+    if (d <= ultimo) { eqDecorr += equivDia(d); return; }
+    const e = equivDiaCal(d);
+    if (!(e > 0)) return;                                  // domingo/folga: nao entra
+    eqFalta += e;
+    if (e >= 0.99) { cheios++; return; }
+    let dw = 6; try { dw = new Date(d + 'T12:00:00').getDay(); } catch (_) { }
+    if (dw === 6) sabados++; else reduzidos++;
+  });
+  const partes = [];
+  if (cheios) partes.push(cheios + ' dia' + (cheios > 1 ? 's' : ''));
+  if (sabados) partes.push(sabados + ' sábado' + (sabados > 1 ? 's' : ''));
+  if (reduzidos) partes.push(reduzidos + ' dia' + (reduzidos > 1 ? 's' : '') + ' reduzido' + (reduzidos > 1 ? 's' : ''));
+  const txt = partes.length ? partes.join(' e ') : 'nenhum dia';
+  return { eqDecorr, eqFalta, faltam: cheios + sabados + reduzidos, cheios, sabados, reduzidos, txt };
+}
 function previsaoMes(rows, valFn) {
   if (!rows || !rows.length) return null;
   const dias = rows.map(r => String(r.dia || '').slice(0, 10)).filter(Boolean).sort();
   if (!dias.length) return null;
   const ultimo = dias[dias.length - 1], ym = ultimo.slice(0, 7);
   if (ym !== hojeISO().slice(0, 7)) return null;                 // só o mês em curso
-  // hora extra em domingo/folga (equivDia=0) não entra na base da média — não é dia normal
-  const prodMes = rows.filter(r => String(r.dia || '').slice(0, 7) === ym && equivDia(String(r.dia || '').slice(0, 10)) > 0).reduce((a, r) => a + (valFn(r) || 0), 0);
-  let eqDecorr = 0, eqTotal = 0, diasFalta = 0;
-  /* eqTotal usa o CALENDÁRIO: o dia do incidente existe no mês e a fábrica vai
-     trabalhá-lo — tirá-lo do total encolhia o mês e a previsão saía por baixo
-     (Impressão caiu de 329 t para 307 t quando devia subir).
-     eqDecorr usa a base de cálculo: dia incompleto não serve de régua. */
-  _diasDoMes(ym).forEach(d => {
-    eqTotal += equivDiaCal(d);
-    const e = equivDia(d);
-    if (d <= ultimo) eqDecorr += e; else if (equivDiaCal(d) > 0) diasFalta++;
-  });
-  if (eqDecorr <= 0 || prodMes <= 0) return null;
-  return { previsao: prodMes / eqDecorr * eqTotal, prodMes, diasFalta, ultimo };
+  const doMes = rows.filter(r => String(r.dia || '').slice(0, 7) === ym);
+  const porDia = {};
+  doMes.forEach(r => { const d = String(r.dia || '').slice(0, 10); if (d) porDia[d] = (porDia[d] || 0) + (valFn(r) || 0); });
+  // REALIZADO entra inteiro: domingo e hora extra sairam da maquina, existem no estoque
+  const realizado = doMes.reduce((a, r) => a + (valFn(r) || 0), 0);
+  const f = _faltaMes(ym, ultimo);
+  // RITMO = media do dia util cheio, identica a linha do grafico (barrasVerticalScroll)
+  const uteis = Object.keys(porDia).filter(d => porDia[d] > 0 && equivDia(d) >= 0.99);
+  let ritmo = uteis.length ? uteis.reduce((a, d) => a + porDia[d], 0) / uteis.length : 0;
+  if (!(ritmo > 0)) {                                      // setor que so rodou fim de semana
+    const base = Object.keys(porDia).filter(d => equivDia(d) > 0).reduce((a, d) => a + porDia[d], 0);
+    ritmo = f.eqDecorr > 0 ? base / f.eqDecorr : 0;
+  }
+  if (!(realizado > 0) || !(ritmo > 0)) return null;
+  return { previsao: realizado + ritmo * f.eqFalta, realizado, prodMes: realizado, ritmo,
+           eqFalta: f.eqFalta, diasFalta: f.faltam, faltaTxt: f.txt, ultimo };
 }
 const COR_FER = { 'Nacional': 'var(--azul-2)', 'Estadual (SP)': 'var(--ok-3)', 'Municipal': 'var(--laranja)', 'Facultativo': 'var(--fraco-4)' };
 /* monta a lista de CARTÕES do letreiro: próximo feriado, avisos válidos e,
@@ -23716,7 +23753,7 @@ function renderPainel() {
       const totSt = dOrd.reduce((a, d) => a + pd[d], 0);
       const prevSt = previsaoMes(rowsSt, valSt);
       html += card(s.titulo + ' · ' + st,
-        (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(s.dados) + (prevSt ? ` · 📈 previsão do mês: <b>${fmtVSt(prevSt.previsao)}</b> (faltam ${prevSt.diasFalta} dias)` : ''),
+        (emCx ? 'quantidade (cxs)' : soKg ? 'peso (kg) · bobina' : (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)')) + ' · total ' + fmtVSt(totSt) + ' · arraste →' + (s.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(s.dados) + (prevSt ? ` · 📈 previsão do mês: <b>${fmtVSt(prevSt.previsao)}</b> (faltam ${prevSt.faltaTxt})` : ''),
         barrasVerticalScroll(s.dados, () => CORES[SETORES.indexOf(st) % CORES.length], { media: true, fmt: fmtBarSt, margemEsq: 44, meta: (!s.porMes && (emCx || soKg || metrica === 'peso')) ? metaDiariaSetor(st) : null }) + `<div style="margin:8px 0 0"><button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:13px" onclick="detSetorTurnos('${st}')">📊 Ver turnos</button></div>`,
         'Produção por dia · ' + st);
       /* 13/08/2026 (João): o peso da peça entra logo ABAIXO do gráfico do setor,
@@ -23860,7 +23897,7 @@ function renderPainel() {
     const mediaDiaS = diasOrdS.length ? diasOrdS.reduce((a, d) => a + porDiaS[d], 0) / diasOrdS.length : 0;
     if (diasOrdS.length) { const sS = serieProducao(porDiaS, diasOrdS, fmtBar, d => `detDia('${setor}','${d}')`, diasFimDeSemana(prodS));
       const prevSS = previsaoMes(prodS, val);
-      html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(sS.dados) + (prevSS ? ` · 📈 previsão do mês: <b>${fmtV(prevSS.previsao)}</b> (faltam ${prevSS.diasFalta} dias)` : ''),
+      html += card(sS.titulo, (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · arraste para o lado →' + (sS.porMes ? ' · linha = média mensal' : '') + resumoDiasSerie(sS.dados) + (prevSS ? ` · 📈 previsão do mês: <b>${fmtV(prevSS.previsao)}</b> (faltam ${prevSS.faltaTxt})` : ''),
         barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && (setorEmCx(setor) ? metrica === 'quantidade' : metrica === 'peso')) ? metaDiariaSetor(setor) : null }) + `<div style="margin:8px 0 0"><button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:13px" onclick="detSetorTurnos('${(setor || '').replace(/'/g, '')}')">📊 Ver turnos</button></div>`, 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq,
@@ -32909,7 +32946,7 @@ async function csImagem() {
     { const pv = _csPrevisao(R, S);
       if (pv) {
         x.fillStyle = '#FFD98A'; x.font = F(15, 800);
-        x.fillText('previsão do mês ' + t(pv.prev) + '  ·  ' + t(pv.feito) + ' até aqui  ·  faltam ' + pv.faltam + ' dia' + (pv.faltam === 1 ? '' : 's'), 18, 112);
+        x.fillText('previsão do mês ' + t(pv.prev) + '  ·  ' + t(pv.feito) + ' até aqui  ·  faltam ' + (pv.faltaTxt || (pv.faltam + ' dias')), 18, 112);
       }
       /* 22/08/2026 (João: "na hora de enviar não vai com as informações que
          pedi"). A previsão eu tinha posto na imagem, mas a linha de tendência e
@@ -33050,14 +33087,11 @@ function _csPrevisao(R, S) {
     if (ym !== hojeISO().slice(0, 7)) return null;
     const kgFeito = (S || []).reduce((s, x) => s + (+x.kg || 0), 0);
     if (!(kgFeito > 0)) return null;
-    let eqDecorr = 0, eqTotal = 0, faltam = 0;
-    _diasDoMes(ym).forEach(d => {
-      eqTotal += equivDiaCal(d);
-      if (d <= String(R.ate)) eqDecorr += equivDia(d);
-      else if (equivDiaCal(d) > 0) faltam++;
-    });
-    if (eqDecorr <= 0) return null;
-    return { prev: kgFeito / eqDecorr * eqTotal, feito: kgFeito, faltam, porDiaEq: kgFeito / eqDecorr };
+    // mesma regra do previsaoMes: realizado + ritmo x equivalentes que faltam
+    const f = _faltaMes(ym, String(R.ate));
+    if (f.eqDecorr <= 0) return null;
+    const porDiaEq = kgFeito / f.eqDecorr;
+    return { prev: kgFeito + porDiaEq * f.eqFalta, feito: kgFeito, faltam: f.faltam, faltaTxt: f.txt, porDiaEq };
   } catch (_) { return null; }
 }
 
@@ -33252,7 +33286,7 @@ function csRender(R, box) {
             <span style="font-size:12.5px;font-weight:800">📈 previsão do mês <b style="color:#FFD98A;font-size:14px">${kg(pv.prev)}</b></span>
             <span style="font-size:11.5px;opacity:.9">${kg(pv.feito)} até ${escapeHtml(dm(R.ate))}</span>
             <span style="font-size:11.5px;opacity:.9">ritmo ${kg(pv.porDiaEq)}/dia</span>
-            <span style="font-size:11.5px;opacity:.75">faltam ${pv.faltam} dia${pv.faltam === 1 ? '' : 's'} de produção</span>
+            <span style="font-size:11.5px;opacity:.75">faltam ${escapeHtml(pv.faltaTxt || (pv.faltam + ' dias'))} de produção</span>
             ${(() => {
               const td = _csTend(S);
               if (!td) return '';
