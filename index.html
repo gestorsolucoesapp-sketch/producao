@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.116.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.117.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3228,7 +3228,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.116.0';
+const APP_VER = '4.117.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35659,6 +35659,7 @@ const _pmNum = s => {
 
 async function promoCarregar(forcar) {
   if (_promoRegs && !forcar) return;
+  await carregarCargoMapa(!!forcar);
   const [pr, ts, co, cfg] = await Promise.all([
     sb.from('promocoes').select('*').order('criado_em', { ascending: false }).limit(1000),
     sb.from('tabela_salarial').select('*').eq('ativo', true).order('cargo').order('nivel'),
@@ -35675,13 +35676,77 @@ async function promoCarregar(forcar) {
 }
 
 /* posição ATUAL: última promoção aplicada vence o cadastro do ERP */
+/* ===== O CARGO DO CADASTRO JÁ CARREGA O NÍVEL — 24/08/2026 (João: "nível atual
+   já tem no cadastro, como o salário") =====
+   "Impressor Jr. III" é função + faixa + degrau numa string só. Então o app não
+   pergunta mais o nível de ninguém: ele LÊ do cargo. O degrau é o algarismo
+   romano no fim; sem romano, é o primeiro degrau.
+   A normalização tira acento, ponto e caixa porque o cadastro escreve o mesmo
+   cargo de três jeitos — "Auxiliar De Producao", "Auxiliar De Produção" e
+   "Auxiliar de Produção" são 108 pessoas no mesmo cargo, em três grafias. */
+function _pmChave(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\./g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+const _PM_ROM = { I: 'I', II: 'II', III: 'III', IV: 'IV', V: 'V' };
+function _pmParteCargo(cargo) {
+  const t = String(cargo || '').trim().replace(/\s+/g, ' ');
+  const m = /^(.*?)[\s.]*\b(I{1,3}|IV|V)\.?$/.exec(t);
+  if (m && m[1].trim()) return { base: m[1].trim(), nivel: _PM_ROM[m[2]] || m[2] };
+  return { base: t, nivel: 'I' };
+}
+let _cargoMapa = null;
+async function carregarCargoMapa(forcar) {
+  if (_cargoMapa && !forcar) return _cargoMapa;
+  const m = {};
+  try {
+    const { data } = await sb.from('cargo_mapa').select('*');
+    (data || []).forEach(r => { m[_pmChave(r.cargo_erp)] = r; });
+  } catch (_) { }
+  _cargoMapa = m; return m;
+}
+/* resolve cargo do cadastro -> (cargo da tabela, nível). Ordem: mapa confirmado
+   pelo João primeiro; depois tentativa automática. Nunca inventa em silêncio —
+   quando não acha, devolve null e a tela pede a escolha. */
+function _pmResolve(cargoErp) {
+  const k = _pmChave(cargoErp);
+  if (!k) return null;
+  const m = (_cargoMapa || {})[k];
+  if (m) return { cargo: m.cargo_tab, nivel: m.nivel, auto: !!m.auto };
+  const tab = _promoTab || [];
+  const achaCargo = kk => tab.find(t => _pmChave(t.cargo) === kk);
+  // a) cargo inteiro bate com uma linha da tabela e o degrau é o nível
+  const p = _pmParteCargo(cargoErp);
+  const c1 = achaCargo(_pmChave(p.base));
+  if (c1 && tab.some(t => _pmChave(t.cargo) === _pmChave(p.base) && _pmChave(t.nivel) === _pmChave(p.nivel)))
+    return { cargo: c1.cargo, nivel: tab.find(t => _pmChave(t.cargo) === _pmChave(p.base) && _pmChave(t.nivel) === _pmChave(p.nivel)).nivel, auto: true };
+  // b) a faixa está no NÍVEL (bloco do Auxiliar: "Jr. II", "Pl."): tira a faixa
+  //    do fim do cargo e procura ela junto do degrau
+  const mf = /^(.*?)\s+(Jr|Pl|Sr)\.?$/i.exec(p.base);
+  if (mf) {
+    const c2 = achaCargo(_pmChave(mf[1]));
+    if (c2) {
+      const alvo = _pmChave(mf[2] + (p.nivel !== 'I' ? ' ' + p.nivel : ''));
+      const l = tab.find(t => _pmChave(t.cargo) === _pmChave(mf[1]) && _pmChave(t.nivel) === alvo);
+      if (l) return { cargo: l.cargo, nivel: l.nivel, auto: true };
+    }
+  }
+  return null;
+}
 function _promoAtual(mat) {
   const c = (_promoColabs || []).find(x => x.matricula === mat) || {};
   const ap = (_promoRegs || [])
     .filter(p => p.matricula === mat && p.status === 'aplicada')
     .sort((a, b) => String(b.data_efeito || b.criado_em).localeCompare(String(a.data_efeito || a.criado_em)))[0];
-  if (ap) return { cargo: ap.cargo_para, nivel: ap.nivel_para, salario: +ap.salario_para || null, origem: 'promoção aplicada' };
-  return { cargo: c.cargo || null, nivel: null, salario: null, origem: 'cadastro do ERP' };
+  if (ap) return { cargo: ap.cargo_para, nivel: ap.nivel_para, salario: +ap.salario_para || null,
+                   origem: 'promoção aplicada', cargoErp: c.cargo || null };
+  /* sem promoção aplicada, a posição sai do CADASTRO — e o salário sai da
+     tabela pela dupla (cargo, nível) que o próprio cargo carrega. */
+  const r = _pmResolve(c.cargo);
+  if (r) return { cargo: r.cargo, nivel: r.nivel, salario: _promoSal(r.cargo, r.nivel),
+                  origem: 'cadastro do ERP' + (r.auto ? '' : ' · de-para'), cargoErp: c.cargo || null };
+  return { cargo: c.cargo || null, nivel: null, salario: null, origem: 'cadastro do ERP',
+           cargoErp: c.cargo || null, semMapa: true };
 }
 const _promoCargos = () => [...new Set((_promoTab || []).map(t => t.cargo))].sort();
 const _promoNiveis = cargo => (_promoTab || []).filter(t => t.cargo === cargo)
@@ -35701,7 +35766,8 @@ async function renderOrgPromo() {
       + escapeHtml(String(e.message || e)) + '</p></div>';
     return;
   }
-  const abas = [['nova', '➕ Nova'], ['hist', '📜 Histórico'], ['impacto', '💰 Impacto'], ['tabela', '📋 Tabela salarial']];
+  const abas = [['nova', '➕ Nova'], ['hist', '📜 Histórico'], ['impacto', '💰 Impacto'],
+                ['tabela', '📋 Tabela salarial'], ['cargos', '🔗 Cargos']];
   let h = '<div class="orgv2"><div class="card">'
     + '<div class="titulo-sec">💼 Promoções <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🔒 só você</span></div>'
     + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
@@ -35719,6 +35785,7 @@ async function renderOrgPromo() {
   if (_promoAba === 'nova') h += _promoNova();
   else if (_promoAba === 'hist') h += _promoHist();
   else if (_promoAba === 'impacto') h += _promoImpacto();
+  else if (_promoAba === 'cargos') h += _promoDePara();
   else h += _promoTabela();
   wrap.innerHTML = h + '</div>';
 }
@@ -35742,7 +35809,7 @@ function _promoNova() {
   }
   const c = (_promoColabs || []).find(x => x.matricula === _promoSel) || {};
   const at = _promoAtual(_promoSel);
-  const salDe = at.salario != null ? at.salario : _promoSal(at.cargo, window._pmNivelDe || '');
+  const salDe = at.salario;
   const cargoPara = window._pmCargoPara || '';
   const nivelPara = window._pmNivelPara || '';
   const salPara = _promoSal(cargoPara, nivelPara);
@@ -35755,17 +35822,15 @@ function _promoNova() {
     + '<div class="desc" style="font-size:11.5px;margin-top:3px">cargo atual: <b>' + escapeHtml(at.cargo || 'não cadastrado')
     + '</b> · fonte: ' + escapeHtml(at.origem) + '</div></div>';
 
-  // nível ATUAL — só aparece quando a última posição não veio de promoção aplicada
+  /* nada de perguntar o nível: ele vem do cargo. Se não deu para casar com a
+     tabela, o caminho é o de-para — uma vez por cargo, não por pessoa. */
   if (at.salario == null) {
-    const niv = _promoNiveis(at.cargo);
-    h += '<div class="campo" style="margin-top:10px"><label>Nível ATUAL (para saber de quanto ele sai)</label>'
-      + '<select onchange="promoSetNivelDe(this.value)" class="sel-pad" style="width:100%">'
-      + '<option value="">— escolher —</option>'
-      + niv.map(n => '<option value="' + escapeHtml(n.nivel) + '"' + ((window._pmNivelDe === n.nivel) ? ' selected' : '') + '>'
-        + escapeHtml(n.nivel) + ' · ' + _pmMoeda(n.salario) + '</option>').join('')
-      + '</select>'
-      + (niv.length ? '' : '<div class="desc" style="color:var(--laranja);margin-top:4px">O cargo <b>'
-        + escapeHtml(at.cargo || '—') + '</b> não existe na tabela salarial.</div>') + '</div>';
+    h += '<div style="margin-top:10px;padding:10px 12px;background:#FDF3E7;border-left:4px solid var(--laranja);border-radius:10px;font-size:12.5px;color:#8A5A12">'
+      + 'Não consegui achar o cargo <b>' + escapeHtml(at.cargoErp || '—') + '</b> na tabela salarial.'
+      + '<div style="margin-top:5px">' + ((_promoTab || []).length
+        ? 'Ligue esse cargo a uma faixa em <b>🔗 Cargos</b> — vale para todo mundo com o mesmo cargo, não só para ele.'
+        : 'A tabela salarial ainda está vazia.') + '</div>'
+      + '<button class="btn btn-borda" style="width:auto;padding:6px 13px;font-size:12.5px;margin-top:7px" onclick="promoAba(\'cargos\')">Abrir o de-para</button></div>';
   }
   const cargos = _promoCargos();
   h += '<div class="campo" style="margin-top:8px"><label>Cargo de destino</label>'
@@ -35842,12 +35907,13 @@ async function promoSalvar() {
   const c = (_promoColabs || []).find(x => x.matricula === _promoSel);
   if (!c) { toast('Escolha o colaborador.'); return; }
   const at = _promoAtual(_promoSel);
-  const salDe = at.salario != null ? at.salario : _promoSal(at.cargo, window._pmNivelDe || '');
+  const salDe = at.salario;
   const salPara = _promoSal(window._pmCargoPara, window._pmNivelPara);
-  if (salDe == null || salPara == null) { toast('Faltou o nível de origem ou de destino.'); return; }
+  if (salDe == null) { toast('O cargo atual dele ainda não está ligado à tabela — veja em Cargos.'); return; }
+  if (salPara == null) { toast('Escolha o cargo e o nível de destino.'); return; }
   const linha = {
     matricula: c.matricula, nome: c.nome, setor: c.setor,
-    cargo_de: at.cargo, nivel_de: at.nivel || window._pmNivelDe || null, salario_de: salDe,
+    cargo_de: at.cargo, nivel_de: at.nivel || null, salario_de: salDe,
     cargo_para: window._pmCargoPara, nivel_para: window._pmNivelPara, salario_para: salPara,
     data_efeito: window._pmData || hojeISO(), status: 'rascunho',
     motivo: (window._pmMotivo || '').trim() || null
@@ -35958,6 +36024,82 @@ async function promoSalvarEnc() {
   _promoEnc = v; toast('✅ Multiplicador salvo.'); renderOrgPromo();
 }
 
+/* ---------- DE-PARA DE CARGOS ----------
+   33 cargos no cadastro contra as faixas da tabela do RH. O app tenta casar
+   sozinho e mostra o resultado; o que não casar, o João liga na mão UMA vez e
+   vale para todo mundo daquele cargo. Sem isso a alternativa seria perguntar o
+   nível pessoa por pessoa, 244 vezes. */
+function _promoDePara() {
+  const porCargo = {};
+  (_promoColabs || []).forEach(c => {
+    const k = _pmChave(c.cargo);
+    if (!k) return;
+    (porCargo[k] = porCargo[k] || { cargo: c.cargo, n: 0, grafias: new Set() });
+    porCargo[k].n++; porCargo[k].grafias.add(c.cargo);
+  });
+  const lista = Object.entries(porCargo).sort((a, b) => b[1].n - a[1].n);
+  const tab = _promoTab || [];
+  let h = '<div class="card"><div class="titulo-sec">🔗 Cargo do cadastro → faixa da tabela</div>'
+    + '<p class="desc" style="margin:0 0 9px">O cadastro escreve o nível junto do cargo (<b>Impressor Jr. III</b>), '
+    + 'e é daí que sai o salário de quem vai ser promovido. Ligue uma vez por cargo — vale para todos que o têm.</p>';
+  if (!tab.length) return h + '<p class="desc" style="color:var(--laranja);margin:0"><b>A tabela salarial está vazia.</b> Importe-a antes.</p></div>';
+  const cargos = _promoCargos();
+  let nOk = 0, nFalta = 0;
+  const linhas = lista.map(([k, v]) => {
+    const r = _pmResolve(v.cargo);
+    if (r) nOk += v.n; else nFalta += v.n;
+    const p = _pmParteCargo(v.cargo);
+    const cargoSel = r ? r.cargo : '';
+    const nivSel = r ? r.nivel : '';
+    const grafias = [...v.grafias];
+    return '<div style="padding:9px 0;border-bottom:1px solid var(--linha)">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+      + '<b style="font-size:13px">' + escapeHtml(v.cargo) + '</b>'
+      + '<span class="desc" style="font-size:11.5px">' + v.n + ' pessoa(s)'
+      + (grafias.length > 1 ? ' · ' + grafias.length + ' grafias' : '') + '</span>'
+      + (r ? '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;background:#E8F3E8;color:#2C6B2F">'
+             + (r.auto ? 'automático' : 'confirmado') + '</span>'
+           : '<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;background:#FDF3E7;color:#8A5A12">falta ligar</span>')
+      + '</div>'
+      + '<div class="desc" style="font-size:11px;margin:2px 0 5px">lido como: cargo <b>' + escapeHtml(p.base) + '</b> · nível <b>' + escapeHtml(p.nivel) + '</b></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      + '<select onchange="promoMapCargo(\'' + escapeHtml(k).replace(/'/g, '&#39;') + '\',this.value)" class="sel-pad" style="flex:1;min-width:150px">'
+      + '<option value="">— cargo da tabela —</option>'
+      + cargos.map(x => '<option' + (x === cargoSel ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('')
+      + '</select>'
+      + '<select onchange="promoMapNivel(\'' + escapeHtml(k).replace(/'/g, '&#39;') + '\',this.value)" class="sel-pad" style="flex:1;min-width:120px">'
+      + '<option value="">— nível —</option>'
+      + _promoNiveis(cargoSel).map(nn => '<option value="' + escapeHtml(nn.nivel) + '"' + (nn.nivel === nivSel ? ' selected' : '') + '>'
+          + escapeHtml(nn.nivel) + ' · ' + _pmMoeda(nn.salario) + '</option>').join('')
+      + '</select></div></div>';
+  }).join('');
+  return h
+    + '<div style="display:flex;gap:14px;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:8px;font-size:12.5px">'
+    + '<span><b style="color:#2C6B2F">' + nOk + '</b> pessoa(s) com salário resolvido</span>'
+    + (nFalta ? '<span><b style="color:#8A5A12">' + nFalta + '</b> ainda sem faixa</span>' : '')
+    + '</div>' + linhas + '</div>';
+}
+async function promoMapCargo(chave, v) {
+  const m = (_cargoMapa || {})[chave] || {};
+  await _promoMapGrava(chave, v, (v && m.cargo_tab === v) ? m.nivel : '');
+}
+async function promoMapNivel(chave, v) {
+  const m = (_cargoMapa || {})[chave] || {};
+  await _promoMapGrava(chave, m.cargo_tab || '', v);
+}
+async function _promoMapGrava(chave, cargo, nivel) {
+  if (!cargo) {
+    await sb.from('cargo_mapa').delete().eq('cargo_erp', chave);
+    delete (_cargoMapa || {})[chave];
+    renderOrgPromo(); return;
+  }
+  const linha = { cargo_erp: chave, cargo_tab: cargo, nivel: nivel || (_promoNiveis(cargo)[0] || {}).nivel || '-', auto: false };
+  const { error } = await sb.from('cargo_mapa').upsert(linha, { onConflict: 'cargo_erp' });
+  if (error) { toast('❌ ' + error.message); return; }
+  (_cargoMapa || {})[chave] = linha;
+  renderOrgPromo();
+}
+
 /* ---------- TABELA SALARIAL ---------- */
 function _promoTabela() {
   const t = _promoTab || [];
@@ -35965,7 +36107,9 @@ function _promoTabela() {
     + '<p class="desc" style="margin:0 0 8px">Selecione a grade no Excel e <b>cole aqui inteira</b>, com a linha de cabeçalho dos degraus. '
     + 'Leio o formato do RH direto: uma linha por cargo, um par de colunas por degrau (salário e %). '
     + 'As colunas de % são ignoradas, e “-” vale como degrau que aquele cargo não tem. '
-    + 'Cole <b>um bloco por vez</b> quando os degraus tiverem nomes diferentes.</p>'
+    + 'Cole <b>um bloco por vez</b> quando os degraus tiverem nomes diferentes.<br>'
+    + '<b>Do Excel</b> os nomes dos degraus vêm junto. <b>Do PDF</b> as colunas chegam alinhadas por espaço e '
+    + 'os nomes se perdem — os valores continuam certos e você preenche os nomes na conferência.</p>'
     + '<textarea id="promoCola" rows="6" placeholder="NÍVEL SALARIAL\t%\tII\t%\tIII\t%&#10;Operador Sr\t3.880,41\t6,8%\t4.142,36\t5,0%\t4.349,49\t5,0%" '
     + 'style="width:100%;font:13px/1.5 ui-monospace,Menlo,monospace;padding:9px;border:1px solid var(--linha);border-radius:10px"></textarea>'
     + '<button class="btn btn-navy" style="width:100%;margin-top:8px" onclick="promoLerMatriz()">Ler e conferir</button>';
@@ -36048,7 +36192,11 @@ function promoParseMatriz(txt) {
      outro. Sem isso o "Auxiliar" (Produção, Jr. II, Pl. …) era encaixado no
      bloco do Operador só porque as colunas caíam nos mesmos índices, e herdava
      os degraus errados. */
-  const linhas = String(txt || '').split(/\r?\n/).map(l => l.split(/\t|;/).map(c => c.trim()));
+  /* 24/08/2026: colar do PDF não traz tabulação — as colunas chegam alinhadas
+     por ESPAÇO. Dois ou mais espaços passam a valer como separador; um espaço
+     só continua sendo parte do texto, senão "Operador de Termoformagem" viraria
+     três colunas. */
+  const linhas = String(txt || '').split(/\r?\n/).map(l => l.split(/\t|;|\s{2,}/).map(c => c.trim()));
   const blocos = [];
   let atual = null, ultimoCab = null, forcarNovo = true;
   for (const cs of linhas) {
