@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.127.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.128.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.127.0';
+const APP_VER = '4.128.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35789,6 +35789,7 @@ async function promoCarregar(forcar) {
   ]);
   if (pr.error) throw pr.error;
   _promoRegs = pr.data || [];
+  _relSel = null;                      // a lista mudou: a seleção volta ao padrão
   _promoTab = ts.data || [];
   _promoColabs = co.data || [];
   /* uma linha por matrícula; se houver mais de uma referência, vence a MAIS
@@ -36102,7 +36103,7 @@ async function renderOrgPromo() {
     return;
   }
   const abas = [['nova', '➕ Nova'], ['hist', '📜 Histórico'], ['impacto', '💰 Impacto'],
-                ['tabela', '📋 Tabela salarial'], ['cargos', '🔗 Cargos']];
+                ['rel', '🖨️ Relatório'], ['tabela', '📋 Tabela salarial'], ['cargos', '🔗 Cargos']];
   let h = '<div class="orgv2"><div class="card">'
     + '<div class="titulo-sec">💼 Promoções <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🔒 só você</span></div>'
     + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
@@ -36120,6 +36121,11 @@ async function renderOrgPromo() {
   if (_promoAba === 'nova') h += _promoNova();
   else if (_promoAba === 'hist') h += _promoHist();
   else if (_promoAba === 'impacto') h += _promoImpacto();
+  else if (_promoAba === 'rel') {
+    // o relatório usa o desempenho do ano; carrega em segundo plano se ainda não veio
+    if (!_promoPerfAno) setTimeout(_promoPerfCarrega, 0);
+    h += _promoRelatorio();
+  }
   else if (_promoAba === 'cargos') h += _promoDePara();
   else h += _promoTabela();
   wrap.innerHTML = h + '</div>';
@@ -36561,6 +36567,174 @@ async function promoSalvarEnc() {
   const { error } = await sb.from('app_config').upsert({ chave: 'promo_encargos', valor: String(v) }, { onConflict: 'chave' });
   if (error) { toast('❌ ' + error.message); return; }
   _promoEnc = v; toast('✅ Multiplicador salvo.'); renderOrgPromo();
+}
+
+/* ===== RELATÓRIO DE IMPACTO PARA IMPRIMIR (24/08/2026, pedido do João) =====
+   A tela de Impacto soma tudo que não foi cancelado. Isso responde "quanto custa
+   a fila inteira", que não é a pergunta de quem vai à Diretoria — lá se leva um
+   PACOTE escolhido a dedo. Então aqui o João tica quem entra, e o relatório sai
+   com esse recorte.
+
+   Três decisões:
+   · O denominador é a FOLHA DO SETOR (rh_remuneracao), não a folha da empresa:
+     o gestor de Impressão responde pelo dele, e um aumento que é 0,4% da fábrica
+     pode ser 3% de um setor pequeno. É a leitura que muda a conversa.
+   · Faltas, atestados e desempenho saem por padrão LIGADOS mas dá para desligar:
+     documento que vai circular fora do RH não deveria carregar absenteísmo
+     nominal sem necessidade.
+   · A folha impressa não tem botão, menu nem cor de fundo — abre em janela
+     própria com CSS de impressão, e não depende do print da tela inteira. */
+let _relSel = null, _relFaltas = true, _relDesemp = true;
+function _relIni() {
+  if (_relSel) return _relSel;
+  _relSel = {};
+  (_promoRegs || []).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = true; });
+  return _relSel;
+}
+function relTica(id, on) { _relIni()[id] = !!on; renderOrgPromo(); }
+function relTodos(on) { _relIni(); (_promoRegs || []).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = !!on; }); renderOrgPromo(); }
+function relOpc(k, on) { if (k === 'faltas') _relFaltas = !!on; else _relDesemp = !!on; renderOrgPromo(); }
+function _relEscolhidas() { const s = _relIni(); return (_promoRegs || []).filter(p => s[p.id]); }
+/* folha mensal por setor: base de comparação do impacto */
+function _folhaSetor() {
+  const f = {};
+  (_promoColabs || []).forEach(c => {
+    const r = _promoRemun[String(c.matricula)];
+    if (!r || !(+r.salario > 0)) return;
+    const s = c.setor || '—';
+    f[s] = (f[s] || 0) + (+r.salario);
+  });
+  return f;
+}
+function _promoRelatorio() {
+  const L = _relEscolhidas();
+  const enc = _promoEnc;
+  const folha = _folhaSetor();
+  const porSetor = {};
+  let tot = 0;
+  L.forEach(p => {
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    tot += d;
+    const s = p.setor || '—';
+    if (!porSetor[s]) porSetor[s] = { d: 0, n: 0 };
+    porSetor[s].d += d; porSetor[s].n++;
+  });
+  let h = '<div class="card"><div class="titulo-sec">🖨️ Relatório de impacto</div>'
+    + '<p class="desc" style="margin:0 0 8px">Tique quem entra no pacote. O relatório sai só com o que estiver marcado, '
+    + 'e o impacto é comparado com a <b>folha do setor</b> — não com a da fábrica.</p>'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;margin-bottom:9px">'
+    + '<label><input type="checkbox" ' + (_relFaltas ? 'checked' : '') + ' onchange="relOpc(\'faltas\',this.checked)"> mostrar faltas e atestados</label>'
+    + '<label><input type="checkbox" ' + (_relDesemp ? 'checked' : '') + ' onchange="relOpc(\'desemp\',this.checked)"> mostrar desempenho</label>'
+    + '</div>'
+    + '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="relTodos(true)">marcar todos</button>'
+    + '<button class="btn btn-borda" style="width:auto;padding:5px 12px;font-size:12px" onclick="relTodos(false)">desmarcar</button></div>';
+  const s = _relIni();
+  h += (_promoRegs || []).filter(p => p.status !== 'cancelada').map(p => {
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
+    return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--linha);cursor:pointer">'
+      + '<input type="checkbox" style="margin-top:3px" ' + (s[p.id] ? 'checked' : '') + ' onchange="relTica(' + p.id + ',this.checked)">'
+      + '<span style="flex:1"><b style="font-size:13px">' + escapeHtml(p.nome || p.matricula) + '</b> '
+      + '<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:' + st[2] + ';color:' + st[1] + '">' + st[0] + '</span>'
+      + '<div class="desc" style="font-size:11.5px">' + escapeHtml(p.setor || '—') + ' · '
+      + escapeHtml((p.cargo_de || '') + ' → ' + (p.cargo_para || '') + (p.nivel_para ? ' ' + p.nivel_para : ''))
+      + ' · <b style="color:var(--ok-2)">+' + _pmMoeda(d) + '</b></div></span></label>';
+  }).join('');
+  h += '<div style="margin-top:11px;padding:11px 13px;background:var(--leve);border-radius:12px">'
+    + '<div class="desc" style="font-size:11.5px">' + L.length + ' promoção(ões) no pacote · acréscimo mensal</div>'
+    + '<div style="font-size:22px;font-weight:800;color:var(--navy)">' + _pmMoeda(enc ? tot * enc : tot) + '</div>'
+    + '<div class="desc" style="font-size:11.5px">' + _pmMoeda(tot) + ' de salário' + (enc ? ' × ' + String(enc).replace('.', ',') : ' · sem encargos') + '</div>';
+  Object.keys(porSetor).sort().forEach(k => {
+    const base = folha[k] || 0;
+    const pc = base > 0 ? (porSetor[k].d / base * 100) : null;
+    h += '<div style="font-size:12px;margin-top:5px">' + escapeHtml(k) + ' · ' + porSetor[k].n + ': <b>' + _pmMoeda(porSetor[k].d) + '</b>'
+      + (pc != null ? ' — <b>' + pc.toFixed(2).replace('.', ',') + '%</b> da folha do setor (' + _pmMoeda(base) + ')'
+                    : ' <span style="color:#8A5A12">— folha do setor desconhecida</span>') + '</div>';
+  });
+  h += '</div>'
+    + '<button class="btn btn-navy" style="width:100%;margin-top:10px" onclick="relImprimir()">🖨️ Gerar relatório para imprimir</button>'
+    + (enc ? '' : '<div class="desc" style="font-size:11.5px;color:#8A5A12;margin-top:6px">Sem o multiplicador de encargos o relatório sai só com salário bruto. Defina em <b>Impacto</b>.</div>');
+  return h + '</div>';
+}
+function relImprimir() {
+  const L = _relEscolhidas();
+  if (!L.length) { toast('Nenhuma promoção marcada.'); return; }
+  const enc = _promoEnc, folha = _folhaSetor();
+  const esc = escapeHtml;
+  let tot = 0; const porSetor = {};
+  L.forEach(p => {
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    tot += d; const s = p.setor || '—';
+    if (!porSetor[s]) porSetor[s] = { d: 0, n: 0 };
+    porSetor[s].d += d; porSetor[s].n++;
+  });
+  const perf = _promoPerfAno || {};
+  const kgt = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const linhas = L.map((p, i) => {
+    const d = (+p.salario_para || 0) - (+p.salario_de || 0);
+    const o = perf[String(p.matricula)] || {};
+    let extra = '';
+    if (_relDesemp && o.aloc) {
+      extra += '<div class="ex">Posto ' + esc(o.aloc.maquina_codigo) + ' · ' + esc(o.aloc.turno)
+        + ' — ' + kgt(o.kg || 0) + (o.turnos ? ' em ' + o.turnos + ' turnos' : '')
+        + (o.desde ? ' desde ' + esc(fmtData(o.desde)) : '') + '</div>';
+    }
+    if (_relFaltas) {
+      extra += '<div class="ex">' + (o.faltas || 0) + ' falta(s) · ' + (o.atestados || 0) + ' atestado(s) no ano'
+        + (o.fbPos ? ' · ' + o.fbPos + ' reconhecimento(s)' : '') + '</div>';
+    }
+    return '<tr><td>' + (i + 1) + '</td>'
+      + '<td><b>' + esc(p.nome || p.matricula) + '</b><div class="ex">' + esc(p.matricula) + ' · ' + esc(p.setor || '—') + '</div>'
+      + (p.motivo ? '<div class="ex mot">' + esc(p.motivo) + '</div>' : '') + extra + '</td>'
+      + '<td>' + esc((p.cargo_de || '—')) + '<br><b>→ ' + esc((p.cargo_para || '—') + (p.nivel_para ? ' ' + p.nivel_para : '')) + '</b></td>'
+      + '<td class="r">' + _pmMoeda(p.salario_de) + '<br><b>' + _pmMoeda(p.salario_para) + '</b></td>'
+      + '<td class="r"><b>+' + _pmMoeda(d) + '</b><div class="ex">' + (enc ? _pmMoeda(d * enc) + ' c/ enc.' : '') + '</div></td></tr>';
+  }).join('');
+  const setores = Object.keys(porSetor).sort().map(k => {
+    const base = folha[k] || 0, pc = base > 0 ? (porSetor[k].d / base * 100) : null;
+    return '<tr><td>' + esc(k) + '</td><td class="r">' + porSetor[k].n + '</td>'
+      + '<td class="r">' + _pmMoeda(porSetor[k].d) + '</td>'
+      + '<td class="r">' + (enc ? _pmMoeda(porSetor[k].d * enc) : '—') + '</td>'
+      + '<td class="r">' + (base > 0 ? _pmMoeda(base) : '—') + '</td>'
+      + '<td class="r"><b>' + (pc != null ? pc.toFixed(2).replace('.', ',') + '%' : '—') + '</b></td></tr>';
+  }).join('');
+  const win = window.open('', '_blank');
+  if (!win) { toast('O navegador bloqueou a janela. Libere o pop-up.'); return; }
+  win.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
+    + '<title>Impacto de promocoes</title><style>'
+    + '@page{size:A4;margin:14mm}'
+    + 'body{font:12px/1.45 Arial,Helvetica,sans-serif;color:#1b2733;margin:0}'
+    + 'h1{font-size:17px;margin:0 0 2px}h2{font-size:13px;margin:16px 0 5px;border-bottom:1px solid #ccd6e0;padding-bottom:3px}'
+    + '.sub{color:#5a6b7c;font-size:11px;margin-bottom:12px}'
+    + 'table{width:100%;border-collapse:collapse;margin-bottom:6px}'
+    + 'th{font-size:10px;text-transform:uppercase;color:#5a6b7c;text-align:left;border-bottom:1px solid #1b2733;padding:4px}'
+    + 'td{padding:5px 4px;border-bottom:1px solid #e6ecf2;vertical-align:top}'
+    + '.r{text-align:right;white-space:nowrap}'
+    + '.ex{font-size:10px;color:#5a6b7c;margin-top:2px}.mot{font-style:italic}'
+    + '.box{border:1px solid #1b2733;border-radius:6px;padding:9px 11px;margin:10px 0}'
+    + '.big{font-size:20px;font-weight:bold}'
+    + '.nota{font-size:10px;color:#5a6b7c;margin-top:14px;line-height:1.5;border-top:1px solid #e6ecf2;padding-top:8px}'
+    + 'tr{break-inside:avoid}'
+    + '</style></head><body>'
+    + '<h1>Proposta de promocoes — impacto na folha</h1>'
+    + '<div class="sub">Rioplastic Embalagens · gerado em ' + esc(fmtData(hojeISO())) + ' · ' + L.length + ' colaborador(es)</div>'
+    + '<div class="box"><div style="font-size:11px;color:#5a6b7c">acrescimo mensal na folha</div>'
+    + '<div class="big">' + _pmMoeda(enc ? tot * enc : tot) + '</div>'
+    + '<div style="font-size:11px;color:#5a6b7c">' + _pmMoeda(tot) + ' de salario'
+    + (enc ? ' x ' + String(enc).replace('.', ',') + ' de encargos' : ' (sem encargos)')
+    + ' · ' + _pmMoeda((enc ? tot * enc : tot) * 12) + ' em 12 meses. 13o e ferias nao estao nesta conta.</div></div>'
+    + '<h2>Por setor</h2><table><tr><th>Setor</th><th class="r">Pessoas</th><th class="r">Salario</th>'
+    + '<th class="r">Com encargos</th><th class="r">Folha do setor</th><th class="r">% da folha</th></tr>' + setores + '</table>'
+    + '<h2>Colaboradores</h2><table><tr><th>#</th><th>Nome</th><th>Cargo</th><th class="r">Salario</th><th class="r">Acrescimo</th></tr>'
+    + linhas + '</table>'
+    + '<div class="nota">Folha do setor: soma dos salarios do relatorio de remuneracao do RH para os colaboradores ativos daquele setor.'
+    + (_relDesemp ? ' Producao apontada por maquina e turno, nao por pessoa: e o resultado do posto no periodo em que a alocacao esta vigente.' : '')
+    + (enc ? ' Encargos: multiplicador ' + String(enc).replace('.', ',') + ' definido na aba Impacto.' : '')
+    + '</div>'
+    + '<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>'
+    + '</body></html>');
+  win.document.close();
 }
 
 /* ---------- DE-PARA DE CARGOS ----------
