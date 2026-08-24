@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.124.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.125.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.124.0';
+const APP_VER = '4.125.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35913,7 +35913,8 @@ function _promoSal(cargo, nivel) {
 let _promoDesCache = {};
 async function promoDesempenho(mat) {
   if (_promoDesCache[mat]) return _promoDesCache[mat];
-  const out = { erro: null, aloc: null, dias: [], meta: null, faltas: 0, atestados: 0, outros: 0, ultOco: null };
+  const out = { erro: null, aloc: null, dias: [], meta: null, faltas: 0, atestados: 0, outros: 0, ultOco: null,
+                fb: [], fbPos: 0, fbDes: 0, instrutorDe: [] };
   try {
     const { data: al } = await sb.from('org_alocacoes')
       .select('setor,turno,maquina_codigo,funcao').eq('matricula', String(mat))
@@ -35924,13 +35925,24 @@ async function promoDesempenho(mat) {
     const desde = d0.toISOString().slice(0, 10);
     const d1 = new Date(hoje + 'T12:00:00'); d1.setFullYear(d1.getFullYear() - 1);
     const desdeAno = d1.toISOString().slice(0, 10);
-    const [pr, mt, af] = await Promise.all([
+    const [pr, mt, af, fb, ins] = await Promise.all([
       out.aloc ? sb.from('producao_resumo').select('dia,turno,peso,caixas')
         .eq('recurso_cod', String(out.aloc.maquina_codigo)).gte('dia', desde).order('dia') : { data: [] },
       out.aloc ? sb.from('metas').select('meta').eq('recurso_cod', String(out.aloc.maquina_codigo))
         .eq('bloco', out.aloc.turno).maybeSingle() : { data: null },
-      sb.from('org_afastamentos').select('data,tipo,dias').eq('matricula', String(mat)).gte('data', desdeAno).order('data', { ascending: false })
+      sb.from('org_afastamentos').select('data,tipo,dias').eq('matricula', String(mat)).gte('data', desdeAno).order('data', { ascending: false }),
+      /* SBI do módulo de Feedback: 'reconhecimento' é elogio, 'desenvolvimento'
+         é ponto a melhorar. São esses dois valores e nenhum outro. */
+      sb.from('feedbacks').select('tipo,quando,comportamento,autor_nome').eq('matricula', String(mat)).order('quando', { ascending: false }).limit(30),
+      /* MULTIPLICADOR: quem aparece como instrutor de alguém no organograma.
+         Não é um cadastro à parte — é o próprio desenho da equipe dizendo que
+         confiaram um aprendiz a essa pessoa. */
+      sb.from('org_alocacoes').select('matricula,maquina_codigo,turno').eq('instrutor_matricula', String(mat)).is('vigencia_fim', null)
     ]);
+    out.fb = fb.data || [];
+    out.fbPos = out.fb.filter(x => String(x.tipo) === 'reconhecimento').length;
+    out.fbDes = out.fb.filter(x => String(x.tipo) === 'desenvolvimento').length;
+    out.instrutorDe = ins.data || [];
     out.meta = mt && mt.data ? +mt.data.meta : null;
     // só os turnos do BLOCO da pessoa: Manhã=T1+T3, Tarde=T2+T4, Noite=T5
     const BL = { 'Manhã': ['1', '3'], 'Tarde': ['2', '4'], 'Noite': ['5'] };
@@ -35962,8 +35974,42 @@ function _promoDesHTML(mat) {
   if (!d) return '<div id="promoDes" class="desc" style="margin-top:10px">carregando desempenho…</div>';
   if (d.erro) return '<div id="promoDes" class="desc" style="margin-top:10px;color:var(--critico-s)">Não consegui ler o desempenho: ' + escapeHtml(d.erro) + '</div>';
   const cx = v => Math.round(v).toLocaleString('pt-BR') + ' cx';
+  const c0 = (_promoColabs || []).find(x => x.matricula === mat) || {};
+  const at0 = _promoAtual(mat);
+  /* TEMPO DE CASA e TEMPO NO CARGO respondem coisas diferentes numa promoção:
+     um diz lealdade, o outro diz há quanto tempo a pessoa está parada no mesmo
+     degrau. O tempo no cargo sai da última promoção APLICADA aqui; sem nenhuma,
+     o melhor que existe é a referência da folha do RH, e a tela diz "pelo menos
+     desde", porque o cargo pode ser bem mais antigo que o arquivo. */
+  const _dif = (de, ate) => {
+    try {
+      const a = new Date(String(de).slice(0, 10) + 'T12:00:00'), b = new Date((ate || hojeISO()) + 'T12:00:00');
+      let mm = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+      if (b.getDate() < a.getDate()) mm--;
+      if (mm < 0) return null;
+      const an = Math.floor(mm / 12), me = mm % 12;
+      return (an ? an + (an > 1 ? ' anos' : ' ano') : '') + (an && me ? ' e ' : '') + (me ? me + (me > 1 ? ' meses' : ' mês') : (an ? '' : 'menos de 1 mês'));
+    } catch (_) { return null; }
+  };
+  const apl = (_promoRegs || []).filter(x => x.matricula === mat && x.status === 'aplicada')
+    .sort((a, b) => String(b.data_efeito || '').localeCompare(String(a.data_efeito || '')))[0];
+  const rr0 = _promoRemun[String(mat)];
+  const descargo = apl ? apl.data_efeito : (rr0 && rr0.referencia ? String(rr0.referencia).slice(0, 10) : null);
+  const selo = (bg, cor, txt, tit) => '<span title="' + escapeHtml(tit || '') + '" style="display:inline-block;font-size:10.5px;font-weight:800;'
+    + 'padding:3px 9px;border-radius:999px;background:' + bg + ';color:' + cor + ';white-space:nowrap">' + txt + '</span>';
+  const selos = [];
+  if (c0.admissao) selos.push(selo('#EEF2F7', '#2C3E50', '🏠 ' + _dif(c0.admissao) + ' de casa',
+    'admitido em ' + fmtData(String(c0.admissao).slice(0, 10))));
+  if (descargo) selos.push(selo('#EEF2F7', '#2C3E50', '📌 ' + (apl ? '' : 'pelo menos ') + _dif(descargo) + ' no cargo',
+    apl ? 'desde a promoção aplicada em ' + fmtData(descargo) : 'o cargo já constava na folha de ' + fmtData(descargo) + ' — pode ser mais antigo'));
+  if ((d.instrutorDe || []).length) selos.push(selo('#FFF4D6', '#8A5A12',
+    '⭐ multiplicador · ' + d.instrutorDe.length + ' aprendiz(es)',
+    'é instrutor de ' + d.instrutorDe.map(x => x.matricula).join(', ') + ' no organograma'));
+  if (d.fbPos) selos.push(selo('#E8F3E8', '#2C6B2F', '👏 ' + d.fbPos + ' reconhecimento(s)'));
+  if (d.fbDes) selos.push(selo('#FDF3E7', '#8A5A12', '🎯 ' + d.fbDes + ' de desenvolvimento'));
   let h = '<div id="promoDes" style="margin-top:10px;border:1px solid var(--linha);border-radius:12px;padding:10px 12px">'
-    + '<div style="font-weight:800;font-size:12.5px;color:var(--navy);margin-bottom:6px">Desempenho</div>';
+    + '<div style="font-weight:800;font-size:12.5px;color:var(--navy);margin-bottom:6px">Desempenho</div>'
+    + (selos.length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">' + selos.join('') + '</div>' : '');
   if (!d.aloc) {
     h += '<div class="desc" style="font-size:12px;color:#8A5A12">Esta pessoa não está alocada no organograma, '
       + 'então não há máquina nem turno para medir a produção. Faltas e atestados abaixo continuam valendo.</div>';
@@ -36011,6 +36057,26 @@ function _promoDesHTML(mat) {
       + ' <span class="desc" style="font-weight:600">' + escapeHtml(d.ultOco.tipo) + '</span></div></div>' : '')
     + (!tot && !d.outros ? '<div class="desc" style="font-size:12px;color:var(--ok-2)">Nenhuma falta ou atestado em 12 meses.</div>' : '')
     + '</div>';
+  /* os feedbacks por extenso: numa promoção, o que foi ESCRITO sobre a pessoa
+     vale mais que a contagem — é o que sustenta a decisão na frente da
+     Diretoria. Os três mais recentes, com data e quem escreveu. */
+  if ((d.fb || []).length) {
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--linha)">'
+      + '<div class="desc" style="font-size:10.5px;margin-bottom:4px">feedbacks registrados</div>'
+      + d.fb.slice(0, 3).map(f => {
+        const pos = String(f.tipo) === 'reconhecimento';
+        return '<div style="font-size:11.5px;line-height:1.45;padding:4px 0;border-left:3px solid '
+          + (pos ? 'var(--ok-2)' : 'var(--laranja)') + ';padding-left:8px;margin-bottom:4px">'
+          + (pos ? '👏 ' : '🎯 ') + escapeHtml(String(f.comportamento || '').slice(0, 160))
+          + '<div class="desc" style="font-size:10px">' + escapeHtml(f.quando ? fmtData(String(f.quando).slice(0, 10)) : '')
+          + (f.autor_nome ? ' · ' + escapeHtml(f.autor_nome) : '') + '</div></div>';
+      }).join('')
+      + (d.fb.length > 3 ? '<div class="desc" style="font-size:10.5px">… e mais ' + (d.fb.length - 3) + '. A lista completa está em <b>Feedback</b>.</div>' : '')
+      + '</div>';
+  } else {
+    h += '<div class="desc" style="font-size:11px;margin-top:7px;padding-top:7px;border-top:1px solid var(--linha)">'
+      + 'Nenhum feedback registrado para esta pessoa. Promoção sem nada escrito antes é difícil de defender — vale abrir a aba <b>Feedback</b> e registrar.</div>';
+  }
   return h + '</div>';
 }
 async function _promoDesCarrega(mat) {
