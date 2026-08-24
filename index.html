@@ -1025,7 +1025,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.076.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.079.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3199,7 +3199,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.076.0';
+const APP_VER = '4.079.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24984,7 +24984,29 @@ function renderPreview(id, dup) {
       <tr><th>Dep</th><th>Nome</th><th>Categoria</th><th>Itens</th><th>Peso</th></tr>
       ${(dg.deps || []).map(d => `<tr><td class="mono">${d.cod}</td><td style="text-align:left">${escapeHtml(String(d.nome || ''))}</td><td class="mono" style="color:${CORCAT[d.cat] || '#8A97A6'};font-weight:800">${(dg.catNome && dg.catNome[d.cat]) || d.cat}</td><td class="mono">${fmt(d.n, 0)}</td><td class="mono">${fmt(d.peso, 0)}</td></tr>`).join('')}
     </table></div>`;
-    const alerta = dg.naoFecham > 0 || dg.depositosTotal < 2;
+    /* ===== OS ONZE QUE PRECISAM ESTAR AQUI — 23/08/2026 (pedido do João) =====
+       O 241 é o único relatório sem "Total Geral" no rodapé: todos os outros o
+       app confere contra o PDF, este ele grava no escuro. Hoje veio errado DUAS
+       vezes seguidas — com 47 depósitos de insumo e sem o 6 · PRODUTOS
+       RESERVADOS — e o que salvou foi o João reparar na tela. Amanhã pode ser
+       outra pessoa importando.
+       Aqui o app passa a saber quais depósitos ele espera e a gritar o nome dos
+       que faltaram. Não bloqueia a gravação, porque o ERP pode legitimamente
+       emitir um recorte; mas ninguém mais grava sem ver o que ficou de fora.
+       O 6 tem tratamento à parte: sem ele não existe reserva nenhuma, e a
+       Programação inteira cai para zero sem dizer por quê. */
+    const DEP_ESPERADOS = {
+      '2': 'PRODUTOS - RÍGIDO TERMOFORMAGEM', '4': 'BOBINAS - EXTRUSÃO',
+      '6': 'PRODUTOS RESERVADOS', '13': 'CQ - DEVOLUÇÃO', '14': 'CQ - RETRABALHO',
+      '24': 'EMBALADEIRA - RÍGIDO', '109': 'BOBINAS - TERMOFORMAGEM',
+      '111': 'ESTOQUE INDUSTRIAL - INJEÇÃO', '180': 'DEPÓSITO 3 - PRODUTOS RÍGIDOS 2',
+      '200': 'ESTOQUE INDUSTRIAL', '250': 'DEPÓSITO SLEEVE - RÍGIDO'
+    };
+    const vieram = new Set((dg.deps || []).map(d => String(d.cod)));
+    const faltando = Object.keys(DEP_ESPERADOS).filter(c => !vieram.has(c));
+    const semReservado = faltando.includes('6');
+    const intrusos = (dg.deps || []).filter(d => !DEP_ESPERADOS[String(d.cod)]).length;
+    const alerta = dg.naoFecham > 0 || dg.depositosTotal < 2 || faltando.length > 0;
     confereHtml = `<div class="confere" style="background:${alerta ? '#fff8e1' : '#e8f5e9'};color:${alerta ? '#8a6d00' : '#1b5e20'};border-color:${alerta ? '#ffe082' : '#a5d6a7'}">`
       + `${alerta ? '🟡' : '✅'} <b>${fmt(res.linhas, 0)}</b> itens vão ser gravados, de <b>${dg.depositosTotal}</b> depósito(s) lidos`
       + ` · <b>${fmt(dg.zeradas, 0)}</b> zerada(s) descartada(s)`
@@ -24992,6 +25014,18 @@ function renderPreview(id, dup) {
       + (dg.duplicadas ? ` · ${fmt(dg.duplicadas, 0)} repetida(s)` : '')
       + `<br>quantidade × unitário = valor: <b>${dg.naoFecham === 0 ? 'fecha em todas' : fmt(dg.naoFecham, 0) + ' linha(s) NÃO fecham'}</b>`
       + (dg.depositosTotal < 2 ? '<br><b>Só um depósito reconhecido</b> — confira se a faixa "Depósito: N - NOME" saiu no PDF.' : '')
+      + (semReservado
+          ? '<div style="margin-top:9px;background:#B03030;color:#fff;border-radius:9px;padding:9px 11px;font-size:13px;font-weight:800">'
+            + '⛔ O depósito <b>6 · PRODUTOS RESERVADOS</b> NÃO veio neste arquivo.<br>'
+            + '<span style="font-weight:600">Gravando assim, a <b>Reserva Completa</b> da Programação vai para zero e o mapa e a montagem de carga param de mostrar o que está separado. '
+            + 'Refaça a seleção de depósitos no ERP antes de gravar.</span></div>'
+          : '')
+      + (faltando.length && !semReservado
+          ? '<div style="margin-top:8px;background:#8A5A00;color:#fff;border-radius:9px;padding:8px 10px;font-size:12.5px;font-weight:700">'
+            + '⚠️ Faltaram ' + faltando.length + ' depósito(s) esperado(s): '
+            + faltando.map(c => c + ' · ' + DEP_ESPERADOS[c]).join(' · ')
+            + '</div>' : '')
+      + (intrusos ? `<div style="margin-top:6px;font-size:11.5px;color:#8a6d00">${intrusos} depósito(s) fora da lista dos 11 — normalmente é sinal de que a seleção do ERP saiu invertida.</div>` : '')
       + `<div style="margin-top:7px">${resumoCat}</div>`
       + `<div style="margin-top:6px;font-weight:700">Confira a classificação dos depósitos abaixo antes de gravar.</div>`
       + tabDeps
@@ -25137,6 +25171,28 @@ async function gravar(id, substituir = false) {
   const mapa = MAPA[r.rotina];
   try {
     if (!mapa) throw new Error('Relatório RPCP' + r.rotina + ' ainda não tem tabela mapeada.');
+    /* ===== O 241 ENTRA SEMPRE EM MESA LIMPA — 23/08/2026 (pedido do João) =====
+       "antes de importar o 241 apaga tudo e importa limpo, porque esse negócio
+       da carteira é sério."
+       Ele tem razão e o motivo é a natureza do relatório: o 241 é uma FOTO do
+       depósito, não um histórico. Duas fotos do mesmo dia convivendo na tabela
+       fazem o app somar saldo que existe uma vez só — e foi isso que aconteceu
+       hoje três vezes, com recortes diferentes de depósito se misturando.
+       Diferente dos relatórios diários, aqui não há nada a preservar: a foto
+       nova substitui a anterior por completo. Apagar antes é o comportamento
+       correto, não uma precaução.
+       Fica DEPOIS da leitura do PDF: se o arquivo estiver ruim, o erro estoura
+       antes e o depósito velho continua no lugar. */
+    if (r.rotina === '241') {
+      try {
+        toast('🧹 limpando o depósito anterior…');
+        const { error: eDel } = await sb.from('estoque_deposito').delete().gte('id', 0);
+        if (eDel) throw eDel;
+        await sb.from('importacoes').delete().eq('rotina', '241');
+      } catch (e) {
+        throw new Error('Não consegui limpar o estoque anterior: ' + ((e && e.message) || e));
+      }
+    }
     // FIX período nulo: quando o PDF não traz a linha "Período: dd/mm - dd/mm",
     // acharPeriodo() devolve {de:null, ate:null} e o DELETE abaixo quebrava com
     // "invalid input syntax for type date: null". Cada registro já carrega seu
@@ -25416,6 +25472,10 @@ async function carregarProgReal() {
    mesma ate o Joao definir quais depositos valem como faturaveis. */
 let _depoItem = null;
 const _DEP_RESERV = ['6'];
+/* produto acabado disponível para a carteira. Bobina (4, 109) e estoque
+   industrial (111, 200) ficam de fora: são matéria-prima e semiacabado, e
+   contá-los como estoque faz a comparação com o REST196 mentir para mais. */
+const _DEP_ACABADO = ['2', '6', '180', '250', '24', '13', '14'];
 const _DEP_QUAL = ['13', '14', '26', '36', '70', '113'];
 async function carregarDepositoItem() {
   try {
@@ -25561,6 +25621,11 @@ function _depoOndeLinha(itemCod, precisaKg, pedNum) {
      depósito, o que importa não é "de onde sai", é O QUE AINDA PRECISA SER
      SEPARADO. Essa é a tarefa de alguém no depósito antes de a carga poder ser
      chamada. Agora a linha separa os dois montes e diz o número da tarefa. */
+  /* 23/08 — o aviso de "X kg a menos no depósito" comparava com TODOS os
+     depósitos, e o 241 traz bobina (352 t na Extrusão) e estoque industrial
+     junto. Matéria-prima e semiacabado não são material disponível para a
+     carteira; contá-los inflava a diferença reportada. Agora só os depósitos de
+     PRODUTO ACABADO entram na comparação. */
   const _kgRes = _mostra.reduce((s, x) => s + (_DEP_RESERV.includes(String(x.cod)) ? (+x.kg || 0) : 0), 0);
   const _kgFora = _mostra.reduce((s, x) => s + (_DEP_RESERV.includes(String(x.cod)) ? 0 : (+x.kg || 0)), 0);
   const varios = _kgFora > 0
@@ -27664,7 +27729,7 @@ function _selo196(k, pedNum) {
       const precisaPed = (n ? pend.filter(p => String(p.pedido || '').split('/')[0] === n) : pend)
         .reduce((a, p) => a + (+p.peso_pendente || 0), 0);
       const e = _depoEstado && _depoEstado(cod);
-      const totDep = e ? (e.deps || []).reduce((s, d) => s + (+d.kg || 0), 0) : 0;
+      const totDep = e ? (e.deps || []).reduce((s, d) => s + (_DEP_ACABADO.includes(String(d.cod)) ? (+d.kg || 0) : 0), 0) : 0;
       temMaterial = precisaPed > 0 && totDep >= precisaPed * 0.999;
     } catch (_) { }
     if (temMaterial) return '';
