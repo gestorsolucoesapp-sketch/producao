@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.156.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.157.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.156.0';
+const APP_VER = '4.157.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42623,12 +42623,63 @@ async function ferGravarImport() {
 /* ---------- programar / editar ---------- */
 function ferNova() { ferForm(null); }
 function ferEditar(id) { ferForm(orgFerias.find(f => f.id === id) || null); }
+/* ===== ENVIAR O PER\u00cdODO PELO WHATSAPP — 25/08/2026 (pedido do Jo\u00e3o) =====
+   wa.me sem n\u00famero abre a lista de contatos do pr\u00f3prio aparelho: o app n\u00e3o
+   precisa saber o telefone de ningu\u00e9m, e nenhum dado sai daqui sem o Jo\u00e3o
+   escolher para quem. */
+function ferTxt(f) {
+  const nome = orgNome(f.matricula) || ('matr\u00edcula ' + f.matricula);
+  const d = x => x ? String(x).slice(0, 10).split('-').reverse().join('/') : '\u2014';
+  const inf = (typeof _ferInfoMap !== 'undefined' && _ferInfoMap) ? (_ferInfoMap[f.matricula] || {}) : {};
+  let t = '*F\u00c9RIAS \u00b7 ' + nome.toUpperCase() + '*\n';
+  t += (f.setor ? f.setor : '') + (inf.turno ? ' \u00b7 ' + inf.turno : '') + (f.nivel ? ' \u00b7 ' + f.nivel : '') + '\n\n';
+  t += 'In\u00edcio: ' + d(f.inicio) + '\n';
+  t += '\u00daltimo dia: ' + d(f.fim) + '\n';
+  t += 'Volta: ' + (f.fim ? ferRetornoTxt(f.fim) : '\u2014') + '\n';
+  if (f.dias) t += 'Dias: ' + f.dias + '\n';
+  if (inf.maq) t += '\nPosto: ' + inf.maq + (String(f.nivel || '').toUpperCase() === 'OP' ? ' \u2014 *precisa de substituto*' : '');
+  return t;
+}
+function ferWhats(id) {
+  const f = (orgFerias || []).find(x => x.id === id);
+  if (!f) { toast('N\u00e3o achei esse per\u00edodo.'); return; }
+  if (!f.inicio || !f.fim) { toast('Este per\u00edodo ainda est\u00e1 sem data \u2014 preencha e salve antes de enviar.'); return; }
+  try { window.open('https://wa.me/?text=' + encodeURIComponent(ferTxt(f)), '_blank'); }
+  catch (_) { toast('N\u00e3o consegui abrir o WhatsApp.'); }
+}
 
 function ferForm(f) {
+  /* ===== 25/08/2026 (João: "ao clicar no nome do Adriano Carvalho está dando
+     Kelvin Santana") — E NÃO ERA SÓ A TELA =====
+     As opções vinham de orgColabSetor(), que só devolve gente do setor filtrado,
+     e a pessoa do registro era marcada com `selected`. Quando ela NÃO estava
+     nessa lista, nenhuma opção ficava marcada — e um <select> sem opção marcada
+     mostra a PRIMEIRA. O formulário abria com outra pessoa no campo.
+
+     Acontece de verdade: o Kelvin Santana Martins está cadastrado em Rotulagem,
+     mas o período de férias dele foi gravado como Impressão. A lista mostra o
+     registro (casa pela matrícula); o select não (casa pelo setor).
+
+     O perigo não era o rótulo. ferSalvar() grava $('ferMat').value — quem
+     abrisse um período e clicasse Salvar transferia as férias para outra pessoa,
+     sem aviso. Erro silencioso, e daqueles que só aparecem quando alguém não
+     volta de férias no dia certo.
+
+     Agora a pessoa do registro entra na lista sempre, mesmo fora do filtro, e a
+     tela explica por que ela está ali. */
   const pes = orgColabSetor().filter(c => c.ativo !== false)
     .sort((a, b) => a.nome.localeCompare(b.nome));
+  let fora = null;
+  if (f && f.matricula && !pes.some(c => String(c.matricula) === String(f.matricula))) {
+    const c = (orgDados.colab || []).find(x => String(x.matricula) === String(f.matricula));
+    fora = c || { matricula: f.matricula, nome: 'matrícula ' + f.matricula, setor: null };
+    pes.unshift(fora);
+  }
   let h = '<div class="campo"><label>Colaborador</label><select id="ferMat" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:10px">' +
-    pes.map(c => '<option value="' + c.matricula + '"' + (f && f.matricula === c.matricula ? ' selected' : '') + '>' + escapeHtml(c.nome) + '</option>').join('') + '</select></div>';
+    pes.map(c => '<option value="' + c.matricula + '"' + (f && String(f.matricula) === String(c.matricula) ? ' selected' : '') + '>' + escapeHtml(c.nome) + (c === fora ? ' \u2014 ' + (c.setor || 'sem setor') : '') + '</option>').join('') + '</select></div>';
+  if (fora) h += '<div style="margin:-4px 0 8px;padding:8px 10px;background:#FFF4E0;border:1px solid #F0D18A;border-radius:10px;font-size:11.5px;color:#8A5A12">'
+    + '\u26a0\ufe0f <b>' + escapeHtml(fora.nome) + '</b> n\u00e3o aparece no filtro de setor atual (est\u00e1 em <b>' + escapeHtml(fora.setor || 'sem setor') + '</b>, e o per\u00edodo foi gravado como <b>' + escapeHtml((f && f.setor) || '\u2014') + '</b>). '
+    + 'Confira antes de salvar \u2014 n\u00e3o troque a pessoa sem querer.</div>';
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
   h += '<div class="campo" style="flex:1 1 130px"><label>Início</label><input type="date" id="ferIni" value="' + (f && f.inicio ? f.inicio : '') + '" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px"></div>';
   h += '<div class="campo" style="flex:1 1 90px"><label>Dias</label><input type="number" id="ferDias" value="' + (f && f.dias ? f.dias : 30) + '" min="1" max="30" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px"></div>';
@@ -42637,6 +42688,10 @@ function ferForm(f) {
     ['', 'OP', 'AUX', 'AP'].map(n => '<option value="' + n + '"' + (f && (f.nivel || '') === n ? ' selected' : '') + '>' + (n || '—') + '</option>').join('') + '</select></div>';
   h += '<div id="ferAviso"></div>';
   h += '<button class="btn btn-verde" style="width:100%;margin-top:8px" onclick="ferSalvar(' + (f ? f.id : 'null') + ')">Salvar</button>';
+  /* 25/08/2026 (João: "permitir o envio do período pelo WhatsApp"). O texto sai
+     com o RETORNO já calculado pela regra do sábado — é o dado que o supervisor
+     precisa e o único que ninguém consegue deduzir olhando o último dia. */
+  if (f) h += '<button class="btn" style="width:100%;margin-top:8px;background:#25D366;color:#fff;font-weight:800" onclick="ferWhats(' + f.id + ')">▶ Enviar pelo WhatsApp</button>';
   if (f) h += '<button class="btn" style="width:100%;margin-top:8px;background:var(--critico-3);color:#fff" onclick="ferExcluir(' + f.id + ')">Excluir período</button>';
   orgModal(f ? 'Editar férias' : 'Programar férias', h);
   setTimeout(ferChecaConflito, 60);
@@ -42724,6 +42779,15 @@ async function ferSalvar(id) {
   };
   const mat = $('ferMat').value;
   if (!mat) { trava('Escolha o colaborador.'); return; }
+  /* rede de segurança: sair de uma edição com OUTRA pessoa no campo é o tipo de
+     troca que ninguém percebe depois */
+  if (id) {
+    const orig = (orgFerias || []).find(x => x.id === id);
+    if (orig && String(orig.matricula) !== String(mat)) {
+      const de = orgNome(orig.matricula) || orig.matricula, para = orgNome(mat) || mat;
+      if (!confirm('Este período é de ' + de + ' e será transferido para ' + para + '.\n\nConfirma a troca?')) return;
+    }
+  }
   const ini = $('ferIni').value || null, dias = parseInt($('ferDias').value, 10) || null;
   const cad = (orgDados.colab || []).find(c => String(c.matricula) === String(mat));
   const setor = (cad && cad.setor) || (orgTodosSetores() ? null : orgSetorSel);
