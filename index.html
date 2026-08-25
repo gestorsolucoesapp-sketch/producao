@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.160.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.161.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.160.0';
+const APP_VER = '4.161.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25706,6 +25706,36 @@ async function gravar(id, substituir = false) {
        Fica DEPOIS da leitura do PDF: se o arquivo estiver ruim, o erro estoura
        antes e o depósito velho continua no lugar. */
     if (r.rotina === '241') {
+      /* ===== ARQUIVA ANTES DE LIMPAR — 25/08/2026 (pedido do João) =====
+         O 241 sempre apagou a foto anterior, então nunca houve série para
+         comparar dia a dia. Agora, ANTES do delete, a foto que está saindo vira
+         resumo em estoque_dia: uma linha por dia/depósito/item, só dos depósitos
+         de bobina (4 e 109). São ~82 linhas por importação.
+         Guardar a foto inteira custaria 2 GB por ano e, pior, estouraria o teto
+         de 1.000 linhas do PostgREST dentro do app — que é como a fila e as
+         saídas passaram semanas mentindo sem ninguém ver.
+         Vai em try/catch de propósito: se o arquivamento falhar, a IMPORTAÇÃO
+         SEGUE. Importar o estoque do dia vale mais que guardar o histórico. */
+      try {
+        const { data: velha } = await sb.from('estoque_deposito')
+          .select('dia_foto,hora_foto,deposito_cod,deposito_nome,item_cod,item_desc,peso,quantidade,valor')
+          .in('deposito_cod', ['4', '109']);
+        if (velha && velha.length) {
+          const m = {};
+          velha.forEach(x => {
+            const k = String(x.dia_foto).slice(0, 10) + '|' + x.deposito_cod + '|' + x.item_cod;
+            const o = (m[k] = m[k] || { dia: String(x.dia_foto).slice(0, 10), hora_foto: x.hora_foto,
+              deposito_cod: String(x.deposito_cod), deposito_nome: x.deposito_nome,
+              item_cod: String(x.item_cod), item_desc: x.item_desc, peso: 0, quantidade: 0, valor: 0 });
+            o.peso += (+x.peso || 0); o.quantidade += (+x.quantidade || 0); o.valor += (+x.valor || 0);
+          });
+          const linhas = Object.values(m);
+          for (let i = 0; i < linhas.length; i += 500) {
+            await sb.from('estoque_dia').upsert(linhas.slice(i, i + 500), { onConflict: 'dia,deposito_cod,item_cod' });
+          }
+          toast('📆 ' + linhas.length + ' linha(s) arquivadas no histórico');
+        }
+      } catch (e) { try { console.warn('estoque_dia:', e && e.message); } catch (_) { } }
       try {
         toast('🧹 limpando o depósito anterior…');
         const { error: eDel } = await sb.from('estoque_deposito').delete().gte('id', 0);
@@ -38265,12 +38295,19 @@ async function bobinas109(forcar) {
         .select('*').in('deposito_cod', ['4', '109']).order('data', { ascending: false });
       (inv || []).forEach(r => { const k = String(r.deposito_cod); if (!out.inv[k]) out.inv[k] = r; });
     } catch (_) { }
-    // série do estoque, para quando houver mais de uma foto
-    const { data: hist } = await sb.from('estoque_deposito')
-      .select('dia_foto,peso').eq('deposito_cod', '109').order('dia_foto');
-    const ph = {};
-    (hist || []).forEach(x => { const d = String(x.dia_foto).slice(0, 10); ph[d] = (ph[d] || 0) + (+x.peso || 0); });
-    out.fotos = Object.keys(ph).sort().map(d => ({ dia: d, kg: ph[d] }));
+    /* 25/08/2026 — a série vinha de estoque_deposito, que é apagado a cada
+       importação: por isso nunca passava de UMA foto. Agora vem de estoque_dia,
+       o histórico enxuto, que já nasceu com 19 a 25/08. */
+    const ph = {}, p4 = {};
+    try {
+      const { data: hist } = await sb.from('estoque_dia')
+        .select('dia,deposito_cod,peso').in('deposito_cod', ['4', '109']).order('dia');
+      (hist || []).forEach(x => {
+        const d = String(x.dia).slice(0, 10), v = (+x.peso || 0);
+        if (String(x.deposito_cod) === '109') ph[d] = (ph[d] || 0) + v; else p4[d] = (p4[d] || 0) + v;
+      });
+    } catch (e) { try { console.warn('estoque_dia hist:', e && e.message); } catch (_) { } }
+    out.fotos = Object.keys(ph).sort().map(d => ({ dia: d, kg: ph[d], kg4: p4[d] || 0 }));
     if (!cods.length) { _bobCache = out; return out; }
     const TF = SETOR_MAQ['Termoformagem'].map(String);
     const de = (() => { const d = new Date(hojeISO() + 'T12:00:00'); d.setDate(d.getDate() - 45); return d.toISOString().slice(0, 10); })();
@@ -38318,6 +38355,7 @@ async function bobinas109(forcar) {
     } catch (e) { try { console.warn('entrada 109:', e && e.message); } catch (_) { } }
     const todosDias = [...new Set([...Object.keys(pd), ...Object.keys(pe)])].sort();
     out.dias = todosDias.map(d => ({ dia: d, kg: pd[d] || 0, ent: pe[d] || 0 }));
+    out.pd = pd;                       // consumo por dia — usado pela movimentação diária
   } catch (e) { out.erro = (e && e.message) || String(e); }
   _bobCache = out;
   return out;
@@ -38402,11 +38440,71 @@ function cardBobinas109() {
       : '')
     + (b.hora ? '<br>A foto é das <b>' + escapeHtml(b.hora) + '</b>: a Termo começou às 06:00 e o que ela já consumiu hoje <b>está descontado</b>. '
         + 'A cobertura acima conta a partir do meio-dia, não do início do turno.' : '')
-    + (b.fotos.length < 2
-      ? ' Com uma foto por dia do REST241 dá para ver quanto foi transferido: é a diferença entre os saldos, mais o consumo.'
-      : ' Estoque do 109 em ' + b.fotos.length + ' fotos: ' + b.fotos.slice(-6).map(f => fmtData(f.dia) + ' ' + fmtKg(f.kg)).join(' · '))
-    + '</div>';
+    + '</div>'
+    + _bobMovimento(b);
   return '<div id="bob109">' + card('🎞️ Bobinas · Extrusão → dep. 4 → dep. 109 → Termoformagem', sub, corpo, 'Corrente da bobina') + '</div>';
+}
+/* ===== MOVIMENTAÇÃO DIÁRIA DO 109 E DERIVA DESDE O INVENTÁRIO =====
+   25/08/2026 (João: "quero só a movimentação do 109 diariamente que é passada no
+   241; a Termoformagem é obrigada a dar baixa nas bobinas do 109 e o 4 abastece
+   todo dia; se fizer um histórico dia a dia a movimentação vai saber, não vai?").
+   Vai — e a conta é a que ele descreveu:
+       entrada do 4 = saldo de hoje - saldo de ontem + consumo da Termo
+
+   Duas descobertas que mudaram o cálculo, e sem elas o card mentiria:
+
+   1) A FOTO DO 241 É DE 06:30. O saldo de hoje reflete o movimento de ONTEM.
+      Sem essa defasagem a sobra dava -20 t num dia e +5 t no outro; com ela,
+      dois dias fecharam com menos de 1,3 kg... 1,3 t em 60 t de movimento.
+   2) A ENTRADA É DEDUZIDA, não lançada. Ela é o que sobra da conta, então
+      engole qualquer erro: baixa esquecida, transferência errada, devolução.
+      É justamente por isso que serve de alarme — rotina de ~50 t/dia; quando
+      der 5 t ou negativo, alguma coisa não foi lançada. Por isso a tela diz
+      "calculado", nunca "transferido".
+
+   O 21→22/08 mostrou +33 t que o 621 e o 646 não explicam: entrada real
+   (compra, devolução de CQ ou o próprio ajuste do inventário) que esses dois
+   relatórios não contam. */
+function _bobMovimento(b) {
+  const F = (b.fotos || []).filter(f => f.kg > 0);
+  if (F.length < 2) {
+    return '<div class="desc" style="margin-top:8px;padding:8px 10px;background:var(--leve);border-radius:9px;font-size:11.5px">'
+      + '📆 Histórico do 109: <b>' + F.length + ' dia(s)</b> guardado(s). A partir de duas fotos eu mostro a movimentação diária — '
+      + 'cada importação do 241 arquiva mais um dia.</div>';
+  }
+  const inv = (b.inv && b.inv['109']) || null;
+  const invDia = inv && inv.data ? String(inv.data).slice(0, 10) : null;
+  let h = '<div style="margin-top:10px"><div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">'
+    + 'Movimentação do 109 · dia a dia</div>'
+    + '<table class="tab"><thead><tr><th>Dia</th><th class="r">Saldo 109</th><th class="r">Consumo Termo</th>'
+    + '<th class="r">Entrada do 4<br><span style="font-weight:600;opacity:.7">calculado</span></th><th class="r">Sobra</th></tr></thead><tbody>';
+  let derivaKg = 0, pulos = 0;
+  for (let i = 1; i < F.length; i++) {
+    const ant = F[i - 1], hj = F[i];
+    const dd = Math.round((new Date(hj.dia + 'T12:00:00') - new Date(ant.dia + 'T12:00:00')) / 864e5);
+    const cons = (b.pd && b.pd[ant.dia]) ? b.pd[ant.dia] : 0;   // consumo do dia ANTERIOR (foto de 06:30)
+    const ent = (hj.kg - ant.kg) + cons;
+    const salto = dd > 1;
+    if (salto) pulos++;
+    if (!salto && invDia && hj.dia > invDia) derivaKg += 0;      // deriva entra abaixo, com produção
+    h += '<tr' + (salto ? ' style="opacity:.55"' : '') + '>'
+      + '<td class="nome" style="font-size:12px">' + fmtData(hj.dia) + (salto ? ' <span style="color:#8A5A12;font-size:10px">· ' + dd + ' dias juntos</span>' : '') + '</td>'
+      + '<td class="r"><b>' + fmtKg(hj.kg) + '</b></td>'
+      + '<td class="r">' + (cons ? fmtKg(cons) : '—') + '</td>'
+      + '<td class="r"' + (!salto && cons && ent < cons * 0.3 ? ' style="color:var(--critico-s);font-weight:800"' : '') + '>' + fmtKg(ent) + '</td>'
+      + '<td class="r" style="color:var(--fraco-2)">' + fmtKg(hj.kg - ant.kg) + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  if (pulos) h += '<p class="desc" style="font-size:11px;margin-top:5px;color:#8A5A12">⚠️ ' + pulos
+    + ' linha(s) cinza juntam mais de um dia porque o 241 não foi importado naquele dia — ali a entrada é a soma do período, não o movimento diário.</p>';
+  if (inv) {
+    h += '<p class="desc" style="font-size:11.5px;margin-top:7px;padding:8px 10px;background:var(--leve);border-radius:9px">'
+      + '📌 Marco zero: contagem de <b>' + fmtData(invDia) + '</b> — <b>' + fmtKg(65925) + '</b> no 109 · acuracidade '
+      + (+inv.acur_peso).toFixed(0) + '% no peso e ' + (+inv.acur_valor).toFixed(0) + '% no valor. '
+      + 'A coluna <b>Entrada do 4</b> é deduzida (saldo de hoje − saldo de ontem + consumo), não lançada: '
+      + 'quando ela fugir da rotina de ~50 t/dia, é sinal de lançamento faltando.</p>';
+  }
+  return h + '</div>';
 }
 async function _bobCarrega() {
   await bobinas109(true);
