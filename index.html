@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.139.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.140.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.139.0';
+const APP_VER = '4.140.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23833,6 +23833,12 @@ function renderPainel() {
         const _d2 = String(dOrd[dOrd.length - 1]).length === 7 ? fimDoMes(dOrd[dOrd.length - 1]) : dOrd[dOrd.length - 1];
         html += cardPesoPeca(st, _d1, _d2);   // as datas ANTES de montar o card
       }
+      /* 24/08/2026 (João) — bobinas do 109 logo abaixo da produção da Termo:
+         é o gráfico de quanto ela CONSOME contra o que existe no depósito. */
+      if (st === 'Termoformagem') {
+        html += cardBobinas109();
+        if (!_bobCache) setTimeout(_bobCarrega, 0);
+      }
     });
 
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5) · todos os setores' + (metrica === 'peso' ? ' · linha preta = meta do turno · verde bateu, vermelho não' : ''), gTurnoPeso(D.producao, val, fmtBar, '', '', metrica === 'peso'));
@@ -37344,6 +37350,115 @@ document.addEventListener('focusout', () => {
   }, 400);
 }, true);
 window.addEventListener('scroll', () => { if (_fgAlvo) _fgScroll = window.scrollY || window.pageYOffset || 0; }, { passive: true });
+
+/* ===== BOBINAS DO DEPÓSITO 109 x CONSUMO DA TERMOFORMAGEM =====
+   24/08/2026 (pedido do João). O 109 é "BOBINAS - TERMOFORMAGEM": é dali que a
+   Termo puxa a matéria-prima. A pergunta que este card responde é a única que
+   importa às 6 da manhã: com o que está no depósito, a Termo roda até quando?
+
+   COMO SE LIGA UMA COISA NA OUTRA. O REST241 diz o que HÁ no 109 (19 itens);
+   o RPCP646 diz o que foi CONSUMIDO, por OP e recurso. Cruzo os dois pelo
+   código do componente e filtro as 24 máquinas da Termoformagem — assim o card
+   mostra o consumo do que sai DESTE depósito, e não bobina que a Extrusão puxou
+   do 4.
+
+   O QUE ESTE CARD AINDA NÃO FAZ, e a tela diz isso: o REST241 tem UMA foto só
+   (24/08). Não existe série histórica de estoque para comparar dia a dia — ela
+   começa a existir a partir de agora, uma foto por importação. Enquanto isso o
+   estoque entra como LINHA de referência sobre o consumo, que é o que dá para
+   afirmar sem inventar. */
+let _bobCache = null;
+async function bobinas109(forcar) {
+  if (_bobCache && !forcar) return _bobCache;
+  const out = { est: 0, itens: 0, foto: null, dias: [], fotos: [], erro: null };
+  try {
+    const { data: f } = await sb.from('estoque_deposito').select('dia_foto')
+      .order('dia_foto', { ascending: false }).limit(1);
+    out.foto = f && f[0] ? String(f[0].dia_foto).slice(0, 10) : null;
+    if (!out.foto) { _bobCache = out; return out; }
+    const { data: es, error: e1 } = await sb.from('estoque_deposito')
+      .select('item_cod,peso').eq('deposito_cod', '109').eq('dia_foto', out.foto);
+    if (e1) throw e1;
+    const cods = [...new Set((es || []).map(x => String(x.item_cod)))];
+    out.est = (es || []).reduce((a, x) => a + (+x.peso || 0), 0);
+    out.itens = cods.length;
+    // série do estoque, para quando houver mais de uma foto
+    const { data: hist } = await sb.from('estoque_deposito')
+      .select('dia_foto,peso').eq('deposito_cod', '109').order('dia_foto');
+    const ph = {};
+    (hist || []).forEach(x => { const d = String(x.dia_foto).slice(0, 10); ph[d] = (ph[d] || 0) + (+x.peso || 0); });
+    out.fotos = Object.keys(ph).sort().map(d => ({ dia: d, kg: ph[d] }));
+    if (!cods.length) { _bobCache = out; return out; }
+    const TF = SETOR_MAQ['Termoformagem'].map(String);
+    const de = (() => { const d = new Date(hojeISO() + 'T12:00:00'); d.setDate(d.getDate() - 45); return d.toISOString().slice(0, 10); })();
+    let linhas = [];
+    for (let ini = 0; ini < 40000; ini += 1000) {
+      const { data, error } = await sb.from('consumo').select('dia,componente_cod,recurso_cod,peso')
+        .in('componente_cod', cods).gte('dia', de).order('dia').range(ini, ini + 999);
+      if (error) throw error;
+      linhas = linhas.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+    const pd = {};
+    linhas.forEach(r => {
+      if (!TF.includes(String(r.recurso_cod))) return;      // só o que a Termo puxou
+      const d = String(r.dia).slice(0, 10);
+      pd[d] = (pd[d] || 0) + (+r.peso || 0);
+    });
+    out.dias = Object.keys(pd).sort().map(d => ({ dia: d, kg: pd[d] }));
+  } catch (e) { out.erro = (e && e.message) || String(e); }
+  _bobCache = out;
+  return out;
+}
+function cardBobinas109() {
+  const b = _bobCache;
+  if (!b) return '<div id="bob109" class="card"><p class="desc" style="margin:0">carregando bobinas do depósito 109…</p></div>';
+  if (b.erro) return '<div id="bob109" class="card"><p class="desc" style="margin:0;color:var(--critico-s)">Não consegui ler as bobinas: ' + escapeHtml(b.erro) + '</p></div>';
+  if (!b.dias.length && !b.est) return '<div id="bob109"></div>';
+  /* média de DIA ÚTIL: sábado e domingo entram com uma fração e afundariam a
+     média, fazendo a cobertura parecer maior do que é. */
+  const uteis = b.dias.filter(x => { const w = new Date(x.dia + 'T12:00:00').getDay(); return w >= 1 && w <= 5 && x.kg > 0; });
+  const med = uteis.length ? uteis.reduce((a, x) => a + x.kg, 0) / uteis.length : 0;
+  const cob = med > 0 ? b.est / med : null;
+  const ult = b.dias.length ? b.dias[b.dias.length - 1] : null;
+  const corCob = cob == null ? 'var(--fraco)' : cob < 1 ? 'var(--critico)' : cob < 2 ? 'var(--laranja)' : 'var(--ok-2)';
+  const dados = b.dias.slice(-30).map(x => {
+    const w = new Date(x.dia + 'T12:00:00').getDay();
+    return { l: x.dia.slice(8) + '/' + x.dia.slice(5, 7), v: Math.round(x.kg), fds: (w === 0 || w === 6) };
+  });
+  const sub = 'estoque de <b>' + fmtKg(b.est) + '</b> em ' + b.itens + ' item(ns) · foto do REST241 de ' + fmtData(b.foto)
+    + ' · consumo médio de dia útil <b>' + fmtKg(med) + '</b>'
+    + (cob != null ? ' · <b style="color:' + corCob + '">' + cob.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dia(s) de bobina</b>' : '');
+  let corpo = barrasVerticalScroll(dados, d => d.fds ? '#B9C6D4' : '#1D5C8A',
+    { media: true, fmt: v => fmtKg(v), margemEsq: 48, meta: b.est || null });
+  corpo += '<div class="desc" style="font-size:11.5px;margin-top:7px;line-height:1.5">'
+    + 'A linha é o <b>estoque de hoje</b> (' + fmtKg(b.est) + '): onde a barra passa dela, aquele dia sozinho consumiria tudo que há no depósito. '
+    + 'Barra cinza é fim de semana.'
+    + (b.fotos.length < 2
+      ? '<br><b>Ainda não dá para comparar o estoque dia a dia:</b> o REST241 tem só a foto de ' + fmtData(b.foto)
+        + '. A partir da próxima importação o app passa a guardar uma foto por dia e a curva do estoque aparece aqui sozinha.'
+      : '<br>Estoque em ' + b.fotos.length + ' fotos: '
+        + b.fotos.slice(-6).map(f => fmtData(f.dia) + ' ' + fmtKg(f.kg)).join(' · '))
+    + '</div>';
+  if (ult && cob != null) {
+    const amanha = b.est - med;
+    corpo = '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:9px">'
+      + '<div><div class="desc" style="font-size:10.5px">hoje no depósito</div><div style="font-size:19px;font-weight:800">' + fmtKg(b.est) + '</div></div>'
+      + '<div><div class="desc" style="font-size:10.5px">consumo de um dia útil</div><div style="font-size:19px;font-weight:800;color:#1D5C8A">' + fmtKg(med) + '</div></div>'
+      + '<div><div class="desc" style="font-size:10.5px">sobra amanhã, no mesmo ritmo</div>'
+      + '<div style="font-size:19px;font-weight:800;color:' + (amanha < 0 ? 'var(--critico)' : amanha < med ? 'var(--laranja)' : 'var(--ok-2)') + '">'
+      + (amanha < 0 ? 'acaba antes do fim' : fmtKg(amanha)) + '</div></div>'
+      + '<div><div class="desc" style="font-size:10.5px">cobertura</div><div style="font-size:19px;font-weight:800;color:' + corCob + '">'
+      + cob.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dia(s)</div></div>'
+      + '</div>' + corpo;
+  }
+  return '<div id="bob109">' + card('🎞️ Bobinas · depósito 109 → Termoformagem', sub, corpo, 'Bobinas 109 x consumo') + '</div>';
+}
+async function _bobCarrega() {
+  await bobinas109(true);
+  const el = document.getElementById('bob109');
+  if (el) el.outerHTML = cardBobinas109();
+}
 
 /* ================= SERVICE WORKER ================= */
 /* ===== Service Worker com AUTO-UPDATE (nunca precisa reinstalar) ===== */
