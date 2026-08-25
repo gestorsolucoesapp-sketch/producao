@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.178.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.179.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3485,7 +3485,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.178.0';
+const APP_VER = '4.179.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28705,6 +28705,79 @@ async function _opsDoPedido(itens, num) {
     box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px;color:var(--critico-s)">Não consegui carregar as OPs: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
 }
+/* ===== ANÁLISE DO PRAZO E DATA POSSÍVEL — 25/08/2026 (pedido do João) =====
+   O caso que motivou: o 225715 foi digitado em 17/06 com entrega para 05/08 —
+   49 dias de prazo. ARTES segurou 54,7 dias e só liberou em 12/08. A fábrica
+   recebeu o pedido SETE DIAS DEPOIS da data prometida, sem que nenhuma máquina
+   tivesse tocado nele. O prazo estava perdido antes de começar, e nada na tela
+   dizia isso — o card mostrava as barras, mas não a conclusão.
+
+   O veredito responde três coisas, uma linha cada:
+     · onde a data se perdeu — a primeira etapa cuja SAÍDA já passou da entrega;
+     · quanto falta, pela MEDIANA de cada etapa que ainda vem. Mediana, não
+       média: neste fluxo a média é puxada por casos extremos (COMERCIAL tem
+       mediana de 1 minuto e média de 2.698) e prometeria data que ninguém cumpre;
+     · a data possível, para o comercial reprogramar com número na mão.
+
+   Ele SUGERE e mostra a conta. Não muda data nenhuma sozinho. */
+const FLX_ORDEM = ['DIGITACAO', 'COMERCIAL', 'PCP', 'ARTES', 'LIBERADO PARA PRODUZIR',
+  'PRODUCAO', 'TÉRMINO DE PRODUÇÃO', 'MONT.CARGA', 'FATURAMENTO', 'EXPEDIDOS'];
+function _fluxoVeredito(num, data, prod) {
+  try {
+    const hm = m => { const a = Math.abs(Math.round(+m || 0)); const d = Math.floor(a / 1440), h = Math.floor((a % 1440) / 60);
+      return d ? d + 'd ' + h + 'h' : h ? h + 'h' : (a % 60) + 'm'; };
+    const dISO = t => new Date(t).toISOString().slice(0, 10);
+    const L = ((_cart196 && _cart196.pend) || []).filter(l => String(l.pedido).split('/')[0] === String(num));
+    const ent = L.length && L[0].entrega ? String(L[0].entrega).slice(0, 10) : null;
+    const ini = data[0] && data[0].data_inclusao ? String(data[0].data_inclusao).slice(0, 10) : null;
+    const ult = data[data.length - 1];
+    const FIM = ['EXPEDIDOS', 'DESPACHADO', 'CANCELAMENTO', 'NFE'];
+    const encerrado = FIM.includes(flxNome(ult.setor).toUpperCase());
+    let culpado = null;
+    if (ent) {
+      for (let i = 0; i < data.length - 1; i++) {
+        const saiu = String(data[i + 1].data_inclusao).slice(0, 10);
+        if (saiu > ent) { culpado = { setor: flxNome(data[i].setor), saiu: saiu, min: +data[i].tempo_min || 0 }; break; }
+      }
+    }
+    const med = {};
+    ((_flxCache && _flxCache.setores) || []).forEach(x => { med[flxNome(x.setor)] = +x.mediana_min || 0; });
+    const feitas = new Set(data.map(r => flxNome(r.setor)));
+    const atual = flxNome(ult.setor);
+    const ix = FLX_ORDEM.indexOf(atual);
+    let faltam = 0, quais = [];
+    if (!encerrado && ix >= 0) {
+      FLX_ORDEM.slice(ix + 1).forEach(k => { if (!feitas.has(k) && med[k] != null) { faltam += med[k]; quais.push(k); } });
+    }
+    const provavel = (!encerrado && faltam > 0) ? dISO(Date.now() + faltam * 60000) : null;
+    let txt = '';
+    if (culpado) {
+      txt += '<div style="font-size:12.5px;margin-bottom:5px">🔴 <b>A data se perdeu em ' + escapeHtml(culpado.setor) + '.</b> '
+        + 'A entrega era <b>' + fmtDataSem(ent) + '</b> e o pedido só saiu dessa etapa em <b>' + fmtDataSem(culpado.saiu) + '</b>'
+        + (culpado.min ? ' — ficou ' + hm(culpado.min) + ' lá' : '') + '.</div>';
+      if (ini) txt += '<div class="desc" style="font-size:11.5px;margin-bottom:5px">Digitado em <b>' + fmtDataSem(ini)
+        + '</b> · prazo prometido de <b>' + Math.round((new Date(ent + 'T12:00:00') - new Date(ini + 'T12:00:00')) / 864e5) + ' dias</b>.</div>';
+    } else if (ent && ini) {
+      txt += '<div style="font-size:12.5px;margin-bottom:5px">🟢 Digitado em <b>' + fmtDataSem(ini) + '</b> para entregar em <b>' + fmtDataSem(ent) + '</b> — nenhuma etapa estourou o prazo até aqui.</div>';
+    }
+    if (provavel) {
+      const atrasa = ent && provavel > ent;
+      txt += '<div style="font-size:12.5px;padding:8px 10px;border-radius:9px;margin-top:4px;background:' + (atrasa ? '#FFF4E0' : '#E8F5EC') + ';color:' + (atrasa ? '#8A5A12' : '#1F7A46') + '">'
+        + '📅 <b>Data possível: ' + fmtDataSem(provavel) + '</b> — está em <b>' + escapeHtml(atual) + '</b> e ainda faltam '
+        + escapeHtml(quais.join(' → ')) + ', que costumam levar <b>' + hm(faltam) + '</b> somados.'
+        + (atrasa ? '<br><b>Sugestão: reprogramar a entrega para ' + fmtDataSem(provavel) + '</b> — a data atual não é mais alcançável.' : '')
+        + '</div>';
+    } else if (encerrado && ent) {
+      const fim = String(ult.data_inclusao).slice(0, 10);
+      const d = Math.round((new Date(fim + 'T12:00:00') - new Date(ent + 'T12:00:00')) / 864e5);
+      txt += '<div class="desc" style="font-size:11.5px">Encerrado em <b>' + fmtDataSem(fim) + '</b> · '
+        + (d > 0 ? '<b style="color:var(--critico-s)">' + d + ' dia(s) depois</b>' : '<b style="color:#1F7A46">dentro</b>') + ' da entrega prometida.</div>';
+    }
+    if (!txt) return '';
+    return '<div style="margin-top:11px;padding:9px 11px;border-left:3px solid var(--navy);background:var(--leve-s);border-radius:10px">'
+      + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">Análise do prazo</div>' + txt + '</div>';
+  } catch (e) { try { console.warn('veredito:', e && e.message); } catch (_) { } return ''; }
+}
 async function _fluxoCarrega(num) {
   const box = document.getElementById('fluxoPed'); if (!box) return;
   const n = String(num).split('/')[0];
@@ -28713,6 +28786,7 @@ async function _fluxoCarrega(num) {
       .select('seq,linha,setor,data_inclusao,tempo_min,total_min,usuario_inclusao')
       .eq('documento', n).order('seq');
     if (error) throw error;
+    try { if (!_flxCache) await fluxoAnalise(); } catch (_) { }
     if (!data || !data.length) {
       box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px">Sem fluxo importado para este pedido — o RVEN304 cobre de 03/08 a 25/08.</p>';
       try { const A = (_alocarEstoque() || { linhas: [] }).linhas.filter(l => String(l.pedido).split('/')[0] === String(num));
@@ -28775,7 +28849,8 @@ async function _fluxoCarrega(num) {
     const SS = Object.keys(porSetor).map(k => ({ setor: k, min: porSetor[k] })).sort((a, b) => b.min - a.min);
     const somaTot = SS.reduce((a, b) => a + b.min, 0) || 1;
     const mxS = SS[0] ? SS[0].min : 1;
-    let h = '<div style="margin-top:12px">'
+    let h = _fluxoVeredito(n, data, _prod)
+      + '<div style="margin-top:12px">'
       + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">Quanto ficou em cada setor</div>'
       + SS.filter(x => x.min > 0 || SS.length <= 4).map(x => {
           const pc = Math.round(x.min / somaTot * 100);
