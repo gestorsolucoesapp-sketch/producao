@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.159.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.160.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.159.0';
+const APP_VER = '4.160.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -38791,9 +38791,9 @@ function orgAbrirFicha() {
 async function fichaColaborador(mat) {
   mat = String(mat);
   abreDet('🗂️ Ficha · ' + mat, '<p class="idet-desc">carregando…</p>');
-  let co, al, af, fe, ob, bh, an, rm;
+  let co, al, af, fe, ob, bh, an, bhe, rm;
   try {
-    [co, al, af, fe, ob, bh, an, rm] = await Promise.all([
+    [co, al, af, fe, ob, bh, an, bhe, rm] = await Promise.all([
       sb.from('colaboradores').select('*').eq('matricula', mat).limit(1),
       sb.from('org_alocacoes').select('*').eq('matricula', mat).order('vigencia_inicio', { ascending: false }),
       sb.from('org_afastamentos').select('*').eq('matricula', mat).order('data', { ascending: false }),
@@ -38801,6 +38801,13 @@ async function fichaColaborador(mat) {
       sb.from('org_observacoes').select('*').eq('matricula', mat).order('data', { ascending: false }),
       sb.from('org_banco_horas').select('*').eq('matricula', mat).order('data', { ascending: false }),
       sb.from('rh_analise_individual').select('*').eq('matricula', mat).limit(1),
+      /* 25/08/2026 (João: "mostra horas negativas ou positivas") — a ficha só
+         lia org_banco_horas, que é a tabela de LANÇAMENTO MANUAL e está vazia
+         (0 linhas). O saldo de verdade mora no espelho do Saturno, em
+         v_banco_horas_atual: 222 pessoas, emissão de 24/08. Existia o dado e a
+         ficha dizia "nada lançado ainda" — dois caminhos para a mesma pergunta,
+         e a ficha estava no caminho vazio. */
+      sb.from('v_banco_horas_atual').select('*').eq('matricula', mat).limit(1),
       vejoFolha ? sb.from('rh_remuneracao').select('*').eq('matricula', mat).order('referencia', { ascending: false }).limit(1) : Promise.resolve({ data: [] })   // salário: espelha a policy rem_folha
     ]);
   } catch (e) {
@@ -38810,6 +38817,7 @@ async function fichaColaborador(mat) {
   const c = (co && co.data && co.data[0]) || (orgDados.colab || []).find(x => String(x.matricula) === mat) || { matricula: mat };
   const A = (al && al.data) || [], AF = (af && af.data) || [], FE = (fe && fe.data) || [];
   const OB = (ob && ob.data) || [], BH = (bh && bh.data) || [];
+  const ESP = (bhe && bhe.data && bhe.data[0]) || null;   // saldo do espelho do Saturno
   const AN = (an && an.data && an.data[0]) || null, RM = (rm && rm.data && rm.data[0]) || null;
 
   // --- identificação
@@ -38868,7 +38876,19 @@ async function fichaColaborador(mat) {
         <span class="desc">${saldo < 0 ? 'horas a pagar (deve à empresa)' : 'horas a receber'}</span></div>` +
       tabSimples(['Data', 'Horas', 'Motivo'], BH.slice(0, 30).map(x =>
         `<tr><td class="nome" style="font-size:12px">${fmtData(x.data)}</td><td><span class="cel ${(+x.horas || 0) < 0 ? 'baixo' : 'neutra'}">${fmtH(+x.horas || 0)}</span></td><td style="text-align:left;font-size:12px">${escapeHtml(x.motivo || x.observacao || '—')}</td></tr>`).join('')));
-  } else h += _fchBloco('Banco de horas', _fchVazio('Nada lançado ainda — vai popular quando importarmos o relatório.'));
+  } else if (ESP && ESP.saldo_atual != null) {
+    const min = +ESP.saldo_atual || 0, neg = min < 0;
+    const fmt = m2 => { const a2 = Math.abs(Math.round(m2)); return (m2 < 0 ? '-' : '+') + Math.floor(a2 / 60) + 'h' + String(a2 % 60).padStart(2, '0'); };
+    const lin = (r, v) => v == null ? '' : '<tr><td class="nome" style="font-size:12px">' + r + '</td><td style="text-align:right"><b>' + fmt(+v) + '</b></td></tr>';
+    h += _fchBloco('Banco de horas', '<div style="display:flex;align-items:center;gap:11px;margin-bottom:8px;flex-wrap:wrap">'
+      + '<span style="display:inline-block;padding:7px 16px;border-radius:10px;font-size:19px;font-weight:800;'
+      + 'background:' + (neg ? 'var(--crit-bg)' : '#E8F5EC') + ';color:' + (neg ? 'var(--critico-2s)' : '#1F7A46') + '">' + fmt(min) + '</span>'
+      + '<span class="desc" style="flex:1;min-width:120px">' + (neg ? '<b>negativo</b> — deve horas à empresa' : min > 0 ? '<b>positivo</b> — horas a receber' : 'zerado') + '</span></div>'
+      + (ESP.saldo_ini != null || ESP.credito != null || ESP.debito != null
+          ? tabSimples(['Movimento', 'Horas'], lin('Saldo inicial', ESP.saldo_ini) + lin('Crédito', ESP.credito) + lin('Débito', ESP.debito == null ? null : -Math.abs(ESP.debito)))
+          : '')
+      + '<p class="desc" style="font-size:11px;margin-top:6px">espelho do Saturno · emissão ' + fmtData(ESP.emissao) + '</p>');
+  } else h += _fchBloco('Banco de horas', _fchVazio('Nada lançado ainda — vai popular quando importarmos o espelho do Saturno.'));
 
   // --- observações
   if (OB.length) h += _fchBloco('Observações', tabSimples(['Data', 'Tipo', 'Texto'], OB.slice(0, 20).map(x =>
