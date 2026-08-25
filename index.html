@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.169.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.170.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.169.0';
+const APP_VER = '4.170.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28512,9 +28512,8 @@ function detPedido(num, voltar) {
     + _avisoDep
     + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas)
-    + '<div id="opsPed"></div>'
-    + '<div id="fluxoPed"></div>');
-  _opsDoPedido(L.map(l => String(l.item_cod)), num);
+    + '<div id="fluxoPed"></div>'
+    + '<div id="opsPed"></div>');
   _fluxoCarrega(num);
 }
 
@@ -28546,6 +28545,20 @@ function detPedido(num, voltar) {
    rodadas, não de uma OP feita para ele.
 
    Quando a OP ainda está na fila de hoje, marco — aí sim é produção que vem. */
+/* ===== 25/08/2026 (João: "esse monte de informação de OP contamina a análise")
+   Ele está certo. A lista de OPs é histórico do ITEM — as rodadas de reposição
+   dos últimos meses — e não responde "onde este pedido ficou parado". Posta ao
+   lado do fluxo, ela disputava a atenção com a resposta e ainda sugeria um
+   vínculo que, em 62% dos casos, não existe.
+   Continua acessível num toque, para quem for atrás de propósito, mas sai da
+   frente de quem abriu o pedido para entender o atraso. */
+function _opsLink(itens, num) {
+  const box = document.getElementById('opsPed'); if (!box) return;
+  window._opsArgs = { itens: itens, num: num };
+  box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:10px">'
+    + '<span style="color:var(--azul-marca);cursor:pointer;font-weight:700" onclick="_opsDoPedido(window._opsArgs.itens, window._opsArgs.num)">'
+    + '▸ ver as ordens de produção destes itens</span> <span style="color:var(--fraco-2)">— histórico do item, não deste pedido</span></p>';
+}
 async function _opsDoPedido(itens, num) {
   const box = document.getElementById('opsPed'); if (!box) return;
   const cods = [...new Set((itens || []).map(String).filter(Boolean))];
@@ -28659,6 +28672,8 @@ async function _fluxoCarrega(num) {
     if (error) throw error;
     if (!data || !data.length) {
       box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px">Sem fluxo importado para este pedido — o RVEN304 cobre de 03/08 a 25/08.</p>';
+      try { const A = (_alocarEstoque() || { linhas: [] }).linhas.filter(l => String(l.pedido).split('/')[0] === String(num));
+        _opsLink(A.map(l => String(l.item_cod)), num); } catch (_) { }
       return;
     }
     const hm = m => { const a = Math.abs(Math.round(+m || 0)); const d = Math.floor(a / 1440), h = Math.floor((a % 1440) / 60), mi = a % 60;
@@ -28667,7 +28682,30 @@ async function _fluxoCarrega(num) {
     const porLinha = {};
     data.forEach(r => { (porLinha[r.linha || '—'] = porLinha[r.linha || '—'] || []).push(r); });
     const mx = Math.max(1, ...data.map(r => +r.tempo_min || 0));
-    let h = '<div style="margin-top:12px"><div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">Fluxo do pedido · por onde passou</div>';
+    /* ===== QUANTO ESTE PEDIDO FICOU EM CADA SETOR — 25/08/2026 (pedido do João)
+       O detalhe cronológico continua abaixo, mas a resposta vem primeiro e
+       somada: um pedido pode voltar duas vezes ao COMERCIAL, e o que interessa
+       é o total que ele passou lá, não cada visita separada. */
+    const porSetor = {};
+    data.forEach(r => {
+      const k = String(r.setor || '—');
+      porSetor[k] = (porSetor[k] || 0) + (+r.tempo_min || 0);
+    });
+    const SS = Object.keys(porSetor).map(k => ({ setor: k, min: porSetor[k] })).sort((a, b) => b.min - a.min);
+    const somaTot = SS.reduce((a, b) => a + b.min, 0) || 1;
+    const mxS = SS[0] ? SS[0].min : 1;
+    let h = '<div style="margin-top:12px">'
+      + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">Quanto ficou em cada setor</div>'
+      + SS.filter(x => x.min > 0 || SS.length <= 4).map(x => {
+          const pc = Math.round(x.min / somaTot * 100);
+          return '<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px">'
+            + '<span style="flex:0 0 104px;font-weight:' + (pc >= 40 ? '800' : '600') + ';color:' + (pc >= 40 ? 'var(--critico-s)' : 'inherit') + '">' + escapeHtml(x.setor) + '</span>'
+            + '<span style="flex:1;min-width:40px;height:11px;border-radius:6px;background:var(--linha);overflow:hidden">'
+            + '<span style="display:block;height:100%;width:' + Math.round(x.min / mxS * 100) + '%;background:' + (pc >= 40 ? 'var(--critico-s)' : 'var(--azul-marca)') + '"></span></span>'
+            + '<span style="flex:0 0 86px;text-align:right;font-weight:800">' + hm(x.min) + '</span>'
+            + '<span style="flex:0 0 34px;text-align:right;font-size:10.5px;color:var(--fraco)">' + pc + '%</span></div>';
+        }).join('')
+      + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin:12px 0 6px">Passo a passo</div>';
     Object.keys(porLinha).forEach(k => {
       const E = porLinha[k].sort((a, b) => a.seq - b.seq);
       const tot = E[0].total_min;
@@ -28697,6 +28735,8 @@ async function _fluxoCarrega(num) {
     });
     box.innerHTML = h + '<p class="desc" style="font-size:11px">Cada barra é o tempo que o pedido ficou <b>naquela etapa</b>. Em vermelho, a etapa que consome mais de 40% do total. '
       + 'A última linha, em laranja, é onde o pedido <b>está agora</b> — o relatório traz 0m nela porque ainda não houve repasse.</p></div>';
+    try { const A = (_alocarEstoque() || { linhas: [] }).linhas.filter(l => String(l.pedido).split('/')[0] === String(num));
+      _opsLink(A.map(l => String(l.item_cod)), num); } catch (_) { }
   } catch (e) {
     box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px;color:var(--critico-s)">Não consegui carregar o fluxo: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
