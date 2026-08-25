@@ -1049,7 +1049,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.141.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.142.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3248,7 +3248,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.141.0';
+const APP_VER = '4.142.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -37351,26 +37351,35 @@ document.addEventListener('focusout', () => {
 }, true);
 window.addEventListener('scroll', () => { if (_fgAlvo) _fgScroll = window.scrollY || window.pageYOffset || 0; }, { passive: true });
 
-/* ===== BOBINAS DO DEPÓSITO 109 x CONSUMO DA TERMOFORMAGEM =====
-   24/08/2026 (pedido do João). O 109 é "BOBINAS - TERMOFORMAGEM": é dali que a
-   Termo puxa a matéria-prima. A pergunta que este card responde é a única que
-   importa às 6 da manhã: com o que está no depósito, a Termo roda até quando?
+/* ===== A CORRENTE DA BOBINA: EXTRUSÃO → 4 → 109 → TERMOFORMAGEM =====
+   24/08/2026 (correção do João). Eu tinha desenhado errado: pus a Extrusão
+   despejando direto no 109. Não é isso. A extrusora produz a bobina e ela entra
+   no depósito 4 (BOBINAS - EXTRUSÃO, 333,7 t hoje); de lá alguém TRANSFERE para
+   o 109 (BOBINAS - TERMOFORMAGEM, 70,6 t), e só então a Termo consome.
+   Dos 19 itens do 109, 17 também estão no 4 — os mesmos códigos, esperando a
+   transferência.
 
-   COMO SE LIGA UMA COISA NA OUTRA. O REST241 diz o que HÁ no 109 (19 itens);
-   o RPCP646 diz o que foi CONSUMIDO, por OP e recurso. Cruzo os dois pelo
-   código do componente e filtro as 24 máquinas da Termoformagem — assim o card
-   mostra o consumo do que sai DESTE depósito, e não bobina que a Extrusão puxou
-   do 4.
+   O QUE EU NÃO CONSIGO MEDIR, e a tela diz isso em vez de fingir: a
+   TRANSFERÊNCIA. Nenhum relatório importado registra movimentação entre
+   depósitos. Tenho a produção (entra no 4), o consumo (sai do 109) e as fotos
+   dos dois saldos — o passo do meio é cego. Por isso a barra deste card é o
+   CONSUMO, que é medido, e não um saldo inventado a partir de uma entrada que
+   eu estimaria.
 
-   O QUE ESTE CARD AINDA NÃO FAZ, e a tela diz isso: o REST241 tem UMA foto só
-   (24/08). Não existe série histórica de estoque para comparar dia a dia — ela
-   começa a existir a partir de agora, uma foto por importação. Enquanto isso o
-   estoque entra como LINHA de referência sobre o consumo, que é o que dá para
-   afirmar sem inventar. */
+   E a leitura de cobertura muda: o 109 sozinho é o pulmão do dia; o estoque de
+   bobina de verdade é 4 + 109.
+
+   COMO SE LIGA UMA COISA NA OUTRA. O REST241 diz o que HÁ em cada depósito; o
+   RPCP646 diz o que foi CONSUMIDO, por OP e recurso. Cruzo os dois pelo código
+   do componente e filtro as 24 máquinas da Termoformagem — assim o card mostra
+   o consumo do que sai DESTE depósito.
+
+   E o REST241 tem UMA foto só (24/08): não há série de estoque para comparar
+   dia a dia. Ela começa a existir a partir de agora, uma foto por importação. */
 let _bobCache = null;
 async function bobinas109(forcar) {
   if (_bobCache && !forcar) return _bobCache;
-  const out = { est: 0, itens: 0, foto: null, dias: [], fotos: [], erro: null };
+  const out = { est: 0, est4: 0, est4Mesmos: 0, itens: 0, foto: null, dias: [], fotos: [], erro: null };
   try {
     const { data: f } = await sb.from('estoque_deposito').select('dia_foto')
       .order('dia_foto', { ascending: false }).limit(1);
@@ -37382,6 +37391,14 @@ async function bobinas109(forcar) {
     const cods = [...new Set((es || []).map(x => String(x.item_cod)))];
     out.est = (es || []).reduce((a, x) => a + (+x.peso || 0), 0);
     out.itens = cods.length;
+    // o depósito de trás: bobina pronta esperando transferência para o 109
+    try {
+      const { data: e4 } = await sb.from('estoque_deposito')
+        .select('item_cod,peso').eq('deposito_cod', '4').eq('dia_foto', out.foto);
+      out.est4 = (e4 || []).reduce((a, x) => a + (+x.peso || 0), 0);
+      out.est4Mesmos = (e4 || []).filter(x => cods.includes(String(x.item_cod)))
+        .reduce((a, x) => a + (+x.peso || 0), 0);
+    } catch (_) { out.est4 = 0; out.est4Mesmos = 0; }
     // série do estoque, para quando houver mais de uma foto
     const { data: hist } = await sb.from('estoque_deposito')
       .select('dia_foto,peso').eq('deposito_cod', '109').order('dia_foto');
@@ -37447,41 +37464,48 @@ function cardBobinas109() {
   /* média de DIA ÚTIL: sábado e domingo entram com uma fração e afundariam a
      média, fazendo a cobertura parecer maior do que é. */
   const eUtil = x => { const w = new Date(x.dia + 'T12:00:00').getDay(); return w >= 1 && w <= 5; };
-  const uteis = b.dias.filter(x => eUtil(x) && (x.kg > 0 || x.ent > 0));
-  const md = f => uteis.length ? uteis.reduce((a, x) => a + f(x), 0) / uteis.length : 0;
-  const medSai = md(x => x.kg || 0), medEnt = md(x => x.ent || 0);
-  const saldoDia = medEnt - medSai;
-  const cob = medSai > 0 ? b.est / medSai : null;
-  /* o saldo é o que decide, não a cobertura: com a Extrusão repondo o mesmo
-     tanto que a Termo consome, um pulmão de um dia é normal, não é alerta. */
-  const corSaldo = saldoDia >= 0 ? 'var(--ok-2)' : (b.est + saldoDia * 2 > 0 ? 'var(--laranja)' : 'var(--critico)');
+  const uteis = b.dias.filter(x => eUtil(x) && x.kg > 0);
+  const medSai = uteis.length ? uteis.reduce((a, x) => a + x.kg, 0) / uteis.length : 0;
+  const medEnt = (() => { const u = b.dias.filter(x => eUtil(x) && x.ent > 0); return u.length ? u.reduce((a, x) => a + x.ent, 0) / u.length : 0; })();
+  const cob109 = medSai > 0 ? b.est / medSai : null;
+  const cobTudo = medSai > 0 ? (b.est + (b.est4Mesmos || 0)) / medSai : null;
+  const cor109 = cob109 == null ? 'var(--fraco)' : cob109 < 1 ? 'var(--critico)' : cob109 < 2 ? 'var(--laranja)' : 'var(--ok-2)';
   const dados = b.dias.slice(-30).map(x => ({
-    l: x.dia.slice(8) + '/' + x.dia.slice(5, 7),
-    v: Math.round((x.ent || 0) - (x.kg || 0)),
-    fds: !eUtil(x), ent: x.ent || 0, sai: x.kg || 0
+    l: x.dia.slice(8) + '/' + x.dia.slice(5, 7), v: Math.round(x.kg || 0), fds: !eUtil(x)
   }));
-  const sub = 'a Extrusão abastece este depósito e a Termoformagem puxa dele · foto do REST241 de ' + fmtData(b.foto)
-    + ' · por dia útil entram <b>' + fmtKg(medEnt) + '</b> e saem <b>' + fmtKg(medSai) + '</b>';
-  let corpo = '<div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 11px;background:var(--leve);border-radius:10px;margin-bottom:9px">'
-    + '<div><div class="desc" style="font-size:10.5px">hoje no depósito</div><div style="font-size:19px;font-weight:800">' + fmtKg(b.est) + '</div></div>'
-    + '<div><div class="desc" style="font-size:10.5px">entra por dia útil · Extrusão</div><div style="font-size:19px;font-weight:800;color:var(--ok-2)">' + fmtKg(medEnt) + '</div></div>'
-    + '<div><div class="desc" style="font-size:10.5px">sai por dia útil · Termo</div><div style="font-size:19px;font-weight:800;color:#1D5C8A">' + fmtKg(medSai) + '</div></div>'
-    + '<div><div class="desc" style="font-size:10.5px">saldo do dia</div><div style="font-size:19px;font-weight:800;color:' + corSaldo + '">'
-    + (saldoDia >= 0 ? '+' : '−') + fmtKg(Math.abs(saldoDia)) + '</div></div>'
-    + '<div><div class="desc" style="font-size:10.5px">pulmão</div><div style="font-size:19px;font-weight:800">'
-    + (cob != null ? cob.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dia' : '—') + '</div></div>'
+  const sub = 'a extrusora produz e a bobina cai no <b>4</b>; de lá é <b>transferida</b> para o <b>109</b>, e só então a Termo consome'
+    + ' · foto do REST241 de ' + fmtData(b.foto);
+  /* a corrente inteira em uma linha: os dois saldos que eu MEÇO e, entre eles,
+     o passo que eu não meço. */
+  let corpo = '<div style="display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div style="flex:1;min-width:150px;padding:9px 11px;background:var(--leve);border-radius:10px">'
+    + '<div class="desc" style="font-size:10.5px">dep. 4 · bobinas Extrusão</div>'
+    + '<div style="font-size:19px;font-weight:800">' + fmtKg(b.est4 || 0) + '</div>'
+    + '<div class="desc" style="font-size:10.5px">' + fmtKg(b.est4Mesmos || 0) + ' são dos itens que a Termo usa</div></div>'
+    + '<div style="display:flex;align-items:center;padding:0 2px;color:var(--fraco);font-size:11px;text-align:center;max-width:104px">'
+    + 'transferência<br><b>não medida</b></div>'
+    + '<div style="flex:1;min-width:150px;padding:9px 11px;background:var(--leve);border-radius:10px">'
+    + '<div class="desc" style="font-size:10.5px">dep. 109 · pé de máquina</div>'
+    + '<div style="font-size:19px;font-weight:800">' + fmtKg(b.est) + '</div>'
+    + '<div class="desc" style="font-size:10.5px;color:' + cor109 + '"><b>' + (cob109 != null ? cob109.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dia de máquina' : '—') + '</b></div></div>'
+    + '<div style="flex:1;min-width:150px;padding:9px 11px;background:var(--leve);border-radius:10px">'
+    + '<div class="desc" style="font-size:10.5px">Termo consome por dia útil</div>'
+    + '<div style="font-size:19px;font-weight:800;color:#1D5C8A">' + fmtKg(medSai) + '</div>'
+    + '<div class="desc" style="font-size:10.5px">4 + 109 = <b>' + (cobTudo != null ? cobTudo.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dias' : '—') + '</b> de bobina</div></div>'
     + '</div>';
-  corpo += barrasVerticalScroll(dados, d => d.fds ? '#B9C6D4' : (d.v >= 0 ? '#2C6B2F' : '#C0392B'),
-    { media: true, fmt: v => (v >= 0 ? '+' : '−') + fmtKg(Math.abs(v)), margemEsq: 52 });
+  corpo += barrasVerticalScroll(dados, d => d.fds ? '#B9C6D4' : '#1D5C8A',
+    { media: true, fmt: v => fmtKg(v), margemEsq: 50, meta: b.est || null });
   corpo += '<div class="desc" style="font-size:11.5px;margin-top:7px;line-height:1.5">'
-    + 'Cada barra é <b>entrada menos saída</b> do dia: verde o depósito encheu, vermelho esvaziou. Cinza é fim de semana. '
-    + 'O 109 é um <b>pulmão</b> entre a Extrusão e a Termo, não um estoque de reserva — por isso o que importa é o saldo, e não quantos dias o que está lá duraria parado.'
+    + 'A barra é o <b>consumo da Termoformagem</b> — o único lado desta corrente que eu meço dia a dia. A linha é o estoque do 109 hoje ('
+    + fmtKg(b.est) + '): onde a barra passa dela, aquele dia sozinho esvaziaria o pé de máquina. Cinza é fim de semana.'
+    + '<br><b>A transferência do 4 para o 109 não aparece em relatório nenhum</b> que o app importe — por isso não invento a entrada. '
+    + 'A extrusora produziu <b>' + fmtKg(medEnt) + '</b> por dia útil desses mesmos itens, mas isso cai no <b>4</b>, não no 109.'
+    + '<br>Lendo a corrente inteira: o <b>109 é o pé de máquina</b> (pouco mais de um dia, e é para ser assim mesmo); o estoque de bobina de verdade é <b>4 + 109</b>.'
     + (b.fotos.length < 2
-      ? '<br><b>O estoque ainda não tem série:</b> o REST241 tem só a foto de ' + fmtData(b.foto)
-        + '. Com uma foto por dia dá para conferir se o saldo calculado bate com o que o depósito realmente marcou.'
-      : '<br>Estoque medido em ' + b.fotos.length + ' fotos: ' + b.fotos.slice(-6).map(f => fmtData(f.dia) + ' ' + fmtKg(f.kg)).join(' · '))
+      ? ' Com uma foto por dia do REST241 dá para ver quanto foi transferido: é a diferença entre os saldos, mais o consumo.'
+      : ' Estoque do 109 em ' + b.fotos.length + ' fotos: ' + b.fotos.slice(-6).map(f => fmtData(f.dia) + ' ' + fmtKg(f.kg)).join(' · '))
     + '</div>';
-  return '<div id="bob109">' + card('🎞️ Bobinas · depósito 109 · Extrusão → Termoformagem', sub, corpo, 'Bobinas 109 entra x sai') + '</div>';
+  return '<div id="bob109">' + card('🎞️ Bobinas · Extrusão → dep. 4 → dep. 109 → Termoformagem', sub, corpo, 'Corrente da bobina') + '</div>';
 }
 async function _bobCarrega() {
   await bobinas109(true);
