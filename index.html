@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.167.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.168.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.167.0';
+const APP_VER = '4.168.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -33855,6 +33855,65 @@ function detItemCarteira(cod) {
    Agora estado escolhido abre o modal padrão do app (o mesmo do detalhe de OP e
    de pedido), por cima de tudo: o mapa fica inteiro no lugar, com o zoom, e a
    caixa fecha no X ou no toque fora dela. */
+/* ===== ANÁLISE DO FLUXO COMERCIAL — 25/08/2026 =====
+   (João: "faz do que tem e marque o que não tem")
+   É isso que a tela faz. Duas coisas estão incompletas e as DUAS aparecem
+   marcadas, em vez de sumirem numa média bonita:
+
+   1) NOME DE ETAPA CORTADO. A coluna "Histórico" do PDF quebra e o nome continua
+      na linha de baixo. O parser da 4.165 já corrige, mas o que está gravado
+      veio da importação anterior — então "PEDIDOS INTERNOS -", "TAMPAS
+      COMPRESSÃO -", "TERMINO DE" e "NFE -" ainda são pedaços. Ficam na tabela
+      com um selo laranja, não escondidos: some-los faria o total não fechar
+      100%, e ninguém saberia por quê.
+   2) VÍNCULO OP↔PEDIDO. O ERP grava o número do pedido em 38% das ordens: dos
+      1.133 pedidos do fluxo, 302 têm OP identificável e 831 não têm. A tela diz
+      isso na cara, porque é o limite do que dá para afirmar.
+
+   Uma leitura que o dado entrega e vale mais que o card: a MEDIANA do COMERCIAL
+   é 1 minuto e a MÉDIA é 2.698. Quase todo pedido passa direto, e uns poucos
+   ficam parados semanas. Média aqui não descreve ninguém — por isso a tabela
+   mostra as duas. */
+let _flxCache = null;
+async function fluxoAnalise(forcar) {
+  const box = document.getElementById('fluxoAnalise'); if (!box) return;
+  try {
+    if (!_flxCache || forcar) {
+      const [a, c] = await Promise.all([
+        sb.from('v_fluxo_setor').select('*').order('total_min', { ascending: false }),
+        sb.from('v_fluxo_cobertura').select('*').limit(1)
+      ]);
+      if (a.error) throw a.error;
+      _flxCache = { setores: a.data || [], cob: (c.data || [])[0] || null };
+    }
+    const S = (_flxCache.setores || []).filter(x => x.etapas >= 20);
+    if (!S.length) { box.innerHTML = ''; return; }
+    const cob = _flxCache.cob;
+    const hm = m => { const a2 = Math.abs(Math.round(+m || 0)); const d = Math.floor(a2 / 1440), h = Math.floor((a2 % 1440) / 60);
+      return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + (a2 % 60) + 'm' : (a2 % 60) + 'm'; };
+    const mx = Math.max(1, ...S.map(x => +x.total_min || 0));
+    const linhas = S.map(x => {
+      const inc = x.nome_incompleto;
+      return '<tr>'
+        + '<td class="nome" style="font-size:12px">' + escapeHtml(String(x.setor))
+        + (inc ? ' <span title="o nome veio cortado do PDF — reimporte o RVEN304 para corrigir" style="background:#FFF4E0;color:#8A5A12;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">nome cortado</span>' : '')
+        + '<div style="height:6px;border-radius:4px;background:var(--linha);margin-top:3px;overflow:hidden"><div style="height:100%;width:'
+        + Math.round((+x.total_min || 0) / mx * 100) + '%;background:' + (inc ? '#C9A227' : 'var(--azul-marca)') + '"></div></div></td>'
+        + '<td style="text-align:right"><b>' + hm(x.mediana_min) + '</b><div style="font-size:10px;color:var(--fraco)">média ' + hm(x.media_min) + '</div></td>'
+        + '<td style="text-align:right"><b>' + (x.pct_tempo || 0).toString().replace('.', ',') + '%</b><div style="font-size:10px;color:var(--fraco)">' + x.pedidos + ' ped</div></td>'
+        + '<td style="text-align:right;font-size:11px;color:var(--critico-s)">' + hm(x.pior_min) + '</td></tr>';
+    }).join('');
+    box.innerHTML = '<div class="card"><div class="titulo-sec">⏱️ Fluxo comercial · onde o pedido espera</div>'
+      + '<p class="desc" style="margin-bottom:8px">Do RVEN304. <b>Mediana</b> é o pedido típico; <b>média</b> só sobe quando alguns ficam parados demais — quando as duas se afastam muito, o problema são casos isolados, não a rotina.</p>'
+      + tabSimples(['Setor', 'Mediana', '% do tempo', 'Pior'], linhas)
+      + (cob ? '<div style="margin-top:9px;padding:8px 10px;background:#FFF4E0;border:1px solid #F0D18A;border-radius:10px;font-size:11.5px;color:#8A5A12">'
+          + '⚠️ <b>O que não dá para cruzar:</b> dos <b>' + cob.pedidos_no_fluxo + '</b> pedidos com fluxo, só <b>' + cob.com_op + '</b> têm ordem de produção identificável — '
+          + '<b>' + cob.sem_op + '</b> não têm, porque o ERP deixa o campo pedido em branco na maioria das ordens. '
+          + 'Então este card mede o caminho comercial do pedido, não o tempo de fábrica dele.</div>' : '')
+      + (S.some(x => x.nome_incompleto) ? '<p class="desc" style="font-size:11px;margin-top:6px">Os setores marcados <b>nome cortado</b> vieram truncados da importação anterior. Reimportar o RVEN304 corrige — o leitor já foi ajustado.</p>' : '')
+      + '</div>';
+  } catch (e) { box.innerHTML = ''; try { console.warn('fluxoAnalise:', e && e.message); } catch (_) { } }
+}
 function mapaSel(uf) {
   _mapaSel = (_mapaSel === uf ? '' : uf); _mapaCid = '';
   cmPintaMapa();
@@ -34032,10 +34091,12 @@ function cmPintaMapa() {
      ela que comanda o mapa, e empurrá-la para baixo do mapa faria o usuário
      mexer num controle que está depois do resultado que ele muda. */
   b.innerHTML = cmBarraFiltro()
+    + '<div id="fluxoAnalise"></div>'
     + cardMapaBrasil()
     + (typeof cardCarteiraMes === 'function' ? cardCarteiraMes() : '')
     + (typeof cardCargaCidade === 'function' ? cardCargaCidade() : '')
     + (typeof cardRepBoca === 'function' ? cardRepBoca() : '');
+  setTimeout(fluxoAnalise, 0);
   const d = document.getElementById('cmDestrava'); if (d) d.innerHTML = dest;
 }
 
