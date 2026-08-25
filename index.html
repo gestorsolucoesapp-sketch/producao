@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.175.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.177.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2773,6 +2773,16 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         if (/^\d{1,3}\s/.test(nx) || /\d{2}\/\d{2}\/\d{4}/.test(nx)) break;
         if (/^Seq\.|^Documento:|^Hist[óo]rico|^P[áa]gina|^ROTINA/i.test(nx)) break;
         if (!/^[A-ZÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÂÃÉÊÍÓÔÕÚÇ\s.\-\/]{1,38}$/.test(nx)) break;
+        /* ===== 25/08/2026 — a regra estava engolindo SOBRENOME =====
+           A coluna de usuário também quebra: "ISABELA CRISTINA VASCONCELLOS
+           FIRMINO" deixa "FIRMINO" sozinho na linha seguinte, e eu colava no
+           nome da etapa. Nasceram motivos como "COMERCIAL FIRMINO FIRMINO" e
+           "LIBERADO PARA PRODUZIR FIRMINO", que o app contava como setores
+           diferentes.
+           Só continuo quando o nome está VISIVELMENTE cortado: termina em "-",
+           em "." ou numa palavra de ligação (DE, DA, PARA...). "COMERCIAL" é
+           palavra inteira e fecha ali; "TERMINO DE" e "LIBERADO PARA" não. */
+        if (!/(?:-|\.|\b(?:DE|DA|DO|DAS|DOS|E|EM|PARA|POR|COM|SEM|A|AO))\s*$/i.test(me[2])) break;
         me[2] = me[2] + ' ' + nx;
         i++; _cont++;
       }
@@ -3475,7 +3485,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.175.0';
+const APP_VER = '4.177.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34067,15 +34077,75 @@ const flxNome = s => FLX_NOME[String(s || '').trim().toUpperCase()] || String(s 
 /* as etapas em que o pedido está NA FÁBRICA */
 const FLX_FABRICA = ['PRODUCAO', 'TÉRMINO DE PRODUÇÃO', 'LIBERADO PARA PRODUZIR'];
 const flxEhFabrica = s => FLX_FABRICA.includes(flxNome(s));
+/* ===== POR QUE O PEDIDO DEMORA — 25/08/2026 (pedido do João) =====
+   "Tem como criar um campo que filtre os motivos maiores de atraso do pedido?
+   Financeiro, produção, artes... e graficamente cada situação?"
+
+   Não criei campo para alguém preencher: campo digitado à mão vira "outros" em
+   três semanas. O motivo é DEDUZIDO — para cada pedido, o setor onde ele passou
+   mais tempo. Se um pedido levou 21 dias e 8 foram em ARTES, o motivo é ARTES,
+   com o percentual do tempo que aquele setor consumiu.
+
+   Um aviso que precisa ficar dito: FINANCEIRO não existe neste relatório. As
+   etapas do RVEN304 são comerciais e de fábrica — comercial, artes, PCP,
+   produção, montagem de carga, faturamento, expedição. Se o pedido trava por
+   crédito ou por cobrança, isso não aparece aqui, e nenhum número desta tela
+   está medindo isso. */
+let _motCache = null, _motSel = '';
+function motSel(m) { _motSel = (_motSel === m ? '' : m); fluxoAnalise(); }
+function _cardMotivos() {
+  const D = (_motCache || []).filter(x => x.pedidos >= 8);
+  if (!D.length) return '';
+  const mx = Math.max(1, ...D.map(x => x.lentos));
+  const dd = m => (m / 1440).toFixed(1).replace('.', ',') + 'd';
+  const linhas = D.map(x => {
+    const on = _motSel === x.motivo;
+    return '<div onclick="motSel(\'' + escapeHtml(x.motivo).replace(/'/g, "&#39;") + '\')" '
+      + 'style="display:flex;gap:8px;align-items:center;padding:5px 6px;font-size:12px;cursor:pointer;border-radius:8px;'
+      + (on ? 'background:var(--leve);outline:1.5px solid var(--navy)' : '') + '">'
+      + '<span style="flex:0 0 118px;font-weight:' + (on ? '800' : '600') + '">' + escapeHtml(x.motivo) + '</span>'
+      + '<span style="flex:1;min-width:40px;height:13px;border-radius:7px;background:var(--linha);overflow:hidden">'
+      + '<span style="display:block;height:100%;width:' + Math.round(x.lentos / mx * 100) + '%;background:'
+      + (x.mediana_min >= 10 * 1440 ? 'var(--critico-s)' : x.mediana_min >= 3 * 1440 ? '#E8862B' : 'var(--azul-marca)') + '"></span></span>'
+      + '<span style="flex:0 0 62px;text-align:right;font-weight:800">' + x.lentos + '</span>'
+      + '<span style="flex:0 0 58px;text-align:right;font-size:11px;color:var(--fraco)">' + dd(x.mediana_min) + '</span></div>';
+  }).join('');
+  const sel = D.find(x => x.motivo === _motSel);
+  return '<div class="card"><div class="titulo-sec">🧭 Por que o pedido demora</div>'
+    + '<p class="desc" style="margin-bottom:7px">Cada pedido é atribuído ao setor onde <b>mais tempo ficou</b>. A barra conta os que passaram de <b>3 dias</b> no total; ao lado, a mediana de duração desses pedidos. Toque para filtrar.</p>'
+    + '<div style="display:flex;gap:8px;padding:0 6px 3px;font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">'
+    + '<span style="flex:0 0 118px">Motivo</span><span style="flex:1"></span><span style="flex:0 0 62px;text-align:right">+3 dias</span><span style="flex:0 0 58px;text-align:right">mediana</span></div>'
+    + linhas
+    + (sel ? '<div style="margin-top:8px;padding:8px 10px;background:var(--leve);border-radius:9px;font-size:11.5px">'
+        + '<b>' + escapeHtml(sel.motivo) + '</b>: ' + sel.pedidos + ' pedido(s), ' + sel.lentos + ' passaram de 3 dias. '
+        + 'Nesses, o setor sozinho respondeu por <b>' + sel.pct + '%</b> do tempo total do pedido. '
+        + '<span style="color:var(--azul-marca);cursor:pointer" onclick="motSel(\'' + escapeHtml(sel.motivo).replace(/'/g, "&#39;") + '\')">limpar filtro</span></div>' : '')
+    + '<p class="desc" style="font-size:11px;margin-top:7px;color:#8A5A12">⚠️ <b>Financeiro não aparece aqui.</b> O RVEN304 só registra etapas comerciais e de fábrica — se o pedido trava por crédito ou cobrança, esse tempo não está sendo medido por nenhum número desta tela.</p>'
+    + '</div>';
+}
 let _flxCache = null;
 async function fluxoAnalise(forcar) {
   const box = document.getElementById('fluxoAnalise'); if (!box) return;
   try {
     if (!_flxCache || forcar) {
-      const [a, c] = await Promise.all([
+      const [a, c, m] = await Promise.all([
         sb.from('v_fluxo_setor').select('*').order('total_min', { ascending: false }),
-        sb.from('v_fluxo_cobertura').select('*').limit(1)
+        sb.from('v_fluxo_cobertura').select('*').limit(1),
+        sb.from('v_fluxo_motivo').select('motivo,min_setor,total_etapas,pct,demorou')
       ]);
+      const mm = {};
+      (m.data || []).forEach(r => {
+        const k = String(r.motivo);
+        const o = (mm[k] = mm[k] || { motivo: k, pedidos: 0, lentos: 0, pcts: [], durs: [] });
+        o.pedidos++; if (r.demorou) { o.lentos++; o.durs.push(+r.total_etapas || 0); }
+        if (r.pct != null) o.pcts.push(+r.pct);
+      });
+      _motCache = Object.values(mm).map(o => {
+        o.durs.sort((x, y) => x - y);
+        o.mediana_min = o.durs.length ? o.durs[Math.floor(o.durs.length / 2)] : 0;
+        o.pct = o.pcts.length ? Math.round(o.pcts.reduce((x, y) => x + y, 0) / o.pcts.length) : 0;
+        return o;
+      }).sort((x, y) => y.lentos - x.lentos);
       if (a.error) throw a.error;
       _flxCache = { setores: a.data || [], cob: (c.data || [])[0] || null };
     }
@@ -34097,7 +34167,7 @@ async function fluxoAnalise(forcar) {
         + '<td style="text-align:right"><b>' + (x.pct_tempo || 0).toString().replace('.', ',') + '%</b><div style="font-size:10px;color:var(--fraco)">' + x.pedidos + ' ped</div></td>'
         + '<td style="text-align:right;font-size:11px;color:var(--critico-s)">' + hm(x.pior_min) + '</td></tr>';
     }).join('');
-    box.innerHTML = '<div class="card"><div class="titulo-sec">⏱️ Fluxo comercial · onde o pedido espera</div>'
+    box.innerHTML = _cardMotivos() + '<div class="card"><div class="titulo-sec">⏱️ Fluxo comercial · onde o pedido espera</div>'
       + '<p class="desc" style="margin-bottom:8px">Do RVEN304. <b>Mediana</b> é o pedido típico; <b>média</b> só sobe quando alguns ficam parados demais — quando as duas se afastam muito, o problema são casos isolados, não a rotina.</p>'
       + tabSimples(['Setor', 'Mediana', '% do tempo', 'Pior'], linhas)
       + (cob ? '<div style="margin-top:9px;padding:8px 10px;background:#FFF4E0;border:1px solid #F0D18A;border-radius:10px;font-size:11.5px;color:#8A5A12">'
