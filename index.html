@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.177.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.178.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3485,7 +3485,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.177.0';
+const APP_VER = '4.178.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -39216,9 +39216,10 @@ function togDicas() {
   document.body.classList.toggle('sem-dicas', nova === 'off');
   _pintaBtnDicas();
   try { toast(nova === 'off' ? 'Dicas escondidas — só dados na tela' : 'Dicas visíveis de novo'); } catch (_) { }
-  /* redesenha a aba atual: os blocos são marcados na montagem, então quem já
-     estava na tela precisa ser remontado para receber (ou perder) a marca. */
-  try { if (typeof trocarAba === 'function' && typeof _abaAtual !== 'undefined' && _abaAtual) trocarAba(_abaAtual); } catch (_) { }
+  /* a marcação agora vive no DOM: basta garantir que tudo que está na tela foi
+     avaliado, e o CSS faz o resto. Sem remontar a aba — remontar perdia o
+     scroll e recarregava consulta à toa. */
+  try { aplicaDicas(); } catch (_) { }
 }
 try {
   /* aplica antes de qualquer render: se a pessoa deixou desligado, a tela já
@@ -39234,17 +39235,54 @@ function _pintaBtnDicas() {
   b.title = on ? 'Esconder as dicas e deixar só os dados' : 'Mostrar as dicas de novo';
   b.style.opacity = on ? '1' : '.55';
 }
-/* marca como dica todo bloco .desc que seja prosa pura (sem dígito) */
-function _marcaDicas(html) {
-  if (!html || typeof html !== 'string') return html;
-  if (html.indexOf('class="desc') < 0) return html;
-  return html.replace(/<(p|div|span)\s+class="desc"([^>]*)>([^<]*)</g, (m, tag, resto, txt) => {
-    const t = txt.trim();
-    if (t.length < _DICA_MIN) return m;          // rótulo curto: fica
-    if (/\d/.test(t)) return m;                  // tem número: é dado, fica
-    return '<' + tag + ' class="desc dica"' + resto + '>' + txt + '<';
-  });
+/* ===== 25/08/2026 (João: "não tá funcionando isso de esconder informação") =====
+   Não estava mesmo, por dois motivos que se somavam:
+
+   1) A marcação era feita em CIMA DA STRING de HTML, e só em dois pontos do app
+      (o detalhe e um card). Todo o resto — Programação, Comercial, Estoque,
+      Pessoas — monta o HTML por conta própria e nunca passava por aqui. Ou seja,
+      o botão funcionava em duas telas e ficava mudo nas outras vinte.
+   2) O regex exigia texto puro entre as tags: <p class="desc">([^<]*)<. Quase
+      toda dica do app tem um <b> no meio ("Reservar é ato manual — alguém move
+      o material para o depósito no <b>ERP</b>"). Com uma tag interna, não
+      casava, e mesmo nas duas telas certas a maioria escapava.
+
+   A troca: parei de mexer em string e passei a marcar no DOM depois que a tela
+   é pintada. Um observador vigia o <main>; a cada mudança, todo .desc novo é
+   avaliado uma única vez. Funciona em qualquer tela, inclusive nas que ainda
+   nem foram escritas, porque não depende de quem montou o HTML.
+   O critério é o mesmo de antes e continua conservador: prosa longa e SEM
+   NENHUM DÍGITO é dica; qualquer coisa com número é dado e fica. Errar para o
+   lado de mostrar é melhor que sumir com um número no meio do expediente. */
+function _marcaDicas(html) { return html; }   /* mantido: ainda é chamado em 2 lugares */
+function _dicaEh(el) {
+  const t = (el.textContent || '').trim();
+  if (t.length < _DICA_MIN) return false;      // rótulo curto: fica
+  if (/\d/.test(t)) return false;              // tem número: é dado, fica
+  return true;
 }
+function aplicaDicas(raiz) {
+  try {
+    const base = raiz || document.querySelector('main') || document.body;
+    if (!base || !base.querySelectorAll) return;
+    base.querySelectorAll('.desc:not([data-dica])').forEach(el => {
+      el.setAttribute('data-dica', _dicaEh(el) ? '1' : '0');
+      if (el.getAttribute('data-dica') === '1') el.classList.add('dica');
+    });
+  } catch (_) { }
+}
+try {
+  let _dicaTimer = null;
+  const _obs = new MutationObserver(() => {
+    clearTimeout(_dicaTimer);
+    _dicaTimer = setTimeout(() => aplicaDicas(), 120);   /* agrupa rajadas de render */
+  });
+  document.addEventListener('DOMContentLoaded', () => {
+    aplicaDicas();
+    const alvo = document.querySelector('main') || document.body;
+    if (alvo) _obs.observe(alvo, { childList: true, subtree: true });
+  });
+} catch (_) { }
 
 /* ================= SERVICE WORKER ================= */
 /* ===== Service Worker com AUTO-UPDATE (nunca precisa reinstalar) ===== */
