@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.158.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.159.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.158.0';
+const APP_VER = '4.159.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42286,9 +42286,34 @@ function ferTurnoDe(mat) {
   const a = ((orgDados && orgDados.aloc) || []).find(x => x.matricula === mat && x.turno);
   return a ? a.turno : null;
 }
+/* ===== BUSCA DE COLABORADOR NA TELA DE FÉRIAS — 25/08/2026 (pedido do João) =====
+   O filtro entra no ferLinhas, que é a fonte de TODOS os blocos da tela. Assim a
+   linha do tempo, os contadores, a carga por mês e o remonte por turno falam da
+   mesma pessoa — se eu filtrasse só a lista, os números de cima continuariam do
+   setor inteiro e a tela se contradiria.
+   Casa por nome OU matrícula, ignorando acento, caixa e pontuação, e aceita
+   pedaço solto ("iara pressete" acha "Iara Regina Hilario Pressete"). */
+let ferBusca = '';
+function ferBuscar(v) {
+  ferBusca = String(v || '').trim();
+  renderOrgFerias();
+  /* o render refaz o HTML: devolve o cursor para quem estava digitando */
+  setTimeout(() => { const e = $('ferBusca'); if (e) { e.focus(); e.value = ferBusca; e.setSelectionRange(e.value.length, e.value.length); } }, 0);
+}
+function ferBuscaLimpa() { ferBusca = ''; renderOrgFerias(); }
+function ferCasa(mat) {
+  if (!ferBusca) return true;
+  const alvo = _pesNorm(ferBusca);
+  if (!alvo) return true;
+  const nome = _pesNorm(orgNome(mat) || ''), m = String(mat || '');
+  if (m.includes(ferBusca.trim())) return true;
+  const toks = alvo.split(' ').filter(t => t.length > 1);
+  return toks.length ? toks.every(t => nome.includes(t)) : nome.includes(alvo);
+}
 function ferLinhas() {
   const mats = new Set(orgColabSetor().map(c => c.matricula));
   let L = orgFerias.filter(f => orgEhSetor(f.setor) || mats.has(f.matricula));
+  if (ferBusca) L = L.filter(f => ferCasa(f.matricula));
   // a tela de Ferias ignorava o seletor de turno do organograma: com "Noite"
   // escolhido ela seguia mostrando a fabrica inteira.
   if (orgTurnoSel) L = L.filter(f => ferTurnoDe(f.matricula) === orgTurnoSel);
@@ -42473,6 +42498,20 @@ function _renderOrgFerias() {
     (ferModo === 'mes' ? '📅 Ano' : '🔍 Dia a dia') + '</button>';
   h += '<button class="btn btn-verde" style="display:inline-block;width:auto;font-size:13px;padding:7px 13px" onclick="ferNova()">+ Programar</button>';
   h += '</div>';
+
+  h += '<div class="card" style="padding:8px 11px">'
+    + '<div style="display:flex;gap:7px;align-items:center">'
+    + '<input id="ferBusca" type="search" inputmode="search" placeholder="🔎 nome ou matrícula do colaborador…" value="' + escapeHtml(ferBusca) + '"'
+    + ' oninput="ferBuscar(this.value)" style="flex:1;min-width:0;font-size:16px;padding:7px 11px;border:1px solid var(--borda);border-radius:10px">'
+    + (ferBusca ? '<button class="btn" style="width:auto;padding:7px 12px;font-size:13px" onclick="ferBuscaLimpa()">✕ limpar</button>' : '')
+    + '</div>'
+    + (ferBusca ? '<div class="desc" style="font-size:11.5px;margin-top:5px;color:#8A5A12">Mostrando só <b>' + escapeHtml(ferBusca) + '</b> — <b>' + lista.length + '</b> período(s). Os números e o remonte abaixo também estão recortados.</div>' : '')
+    + '</div>';
+  if (ferBusca && !lista.length) {
+    h += '<div class="card"><p class="vazio-painel">Ninguém com “' + escapeHtml(ferBusca) + '” tem férias no filtro atual. '
+      + 'Confira o setor e o turno lá em cima — a pessoa pode estar em outro.</p></div></div>';
+    wrap.innerHTML = h; return;
+  }
   if (ferModo === 'mes') {
     const MN = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
     h += '<div class="card" style="padding:8px 12px;display:flex;align-items:center;gap:8px">';
