@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.179.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.180.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3485,7 +3485,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.179.0';
+const APP_VER = '4.180.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28757,6 +28757,14 @@ function _fluxoVeredito(num, data, prod) {
         + (culpado.min ? ' — ficou ' + hm(culpado.min) + ' lá' : '') + '.</div>';
       if (ini) txt += '<div class="desc" style="font-size:11.5px;margin-bottom:5px">Digitado em <b>' + fmtDataSem(ini)
         + '</b> · prazo prometido de <b>' + Math.round((new Date(ent + 'T12:00:00') - new Date(ini + 'T12:00:00')) / 864e5) + ' dias</b>.</div>';
+    } else if (ent && !encerrado && String(new Date().toISOString().slice(0, 10)) > ent) {
+      /* nenhuma etapa ANTERIOR estourou, mas o pedido está parado numa etapa e a
+         data já passou: o responsável é onde ele está agora, não o histórico. */
+      const parado = Math.max(0, Math.round((Date.now() - new Date(ult.data_inclusao).getTime()) / 60000));
+      txt += '<div style="font-size:12.5px;margin-bottom:5px">🔴 <b>Parado em ' + escapeHtml(atual) + ' há ' + hm(parado) + '.</b> '
+        + 'A entrega era <b>' + fmtDataSem(ent) + '</b> e o pedido ainda não saiu dessa etapa.</div>'
+        + (ini ? '<div class="desc" style="font-size:11.5px;margin-bottom:5px">Digitado em <b>' + fmtDataSem(ini)
+            + '</b> · prazo prometido de <b>' + Math.round((new Date(ent + 'T12:00:00') - new Date(ini + 'T12:00:00')) / 864e5) + ' dias</b>.</div>' : '');
     } else if (ent && ini) {
       txt += '<div style="font-size:12.5px;margin-bottom:5px">🟢 Digitado em <b>' + fmtDataSem(ini) + '</b> para entregar em <b>' + fmtDataSem(ent) + '</b> — nenhuma etapa estourou o prazo até aqui.</div>';
     }
@@ -28798,15 +28806,31 @@ async function _fluxoCarrega(num) {
     /* o relatório recomeça a sequência a cada linha de produto: agrupo por linha */
     const porLinha = {};
     data.forEach(r => { (porLinha[r.linha || '—'] = porLinha[r.linha || '—'] || []).push(r); });
-    const mx = Math.max(1, ...data.map(r => +r.tempo_min || 0));
+    const mx = Math.max(1, ...data.map(r => +r.tempo_min || 0), _emCurso || 0);
     /* ===== QUANTO ESTE PEDIDO FICOU EM CADA SETOR — 25/08/2026 (pedido do João)
        O detalhe cronológico continua abaixo, mas a resposta vem primeiro e
        somada: um pedido pode voltar duas vezes ao COMERCIAL, e o que interessa
        é o total que ele passou lá, não cada visita separada. */
+    /* ===== 25/08/2026 (João: "se tá em MONT.CARGA por que as barras não estão
+       preenchidas?") =====
+       Porque eu usava só o `tempo_min` do relatório, e a ÚLTIMA etapa vem sempre
+       com 0: não houve repasse depois dela, então o ERP não tem o que somar.
+       Só que é justamente ali que o pedido ESTÁ. No 225935 são 29 dias parado em
+       MONT.CARGA — mais que qualquer etapa fora a produção — e a barra aparecia
+       vazia, e o setor sumia do resumo por ter valor zero. A tela escondia o
+       problema atual e mostrava só o passado.
+       Agora a etapa em curso vale o tempo CORRIDO até agora, marcada como "em
+       curso" para não se confundir com tempo fechado. */
+    const _FIMV = ['EXPEDIDOS', 'DESPACHADO', 'CANCELAMENTO', 'NFE'];
+    const _ultimo = data[data.length - 1];
+    const _encerrado = _FIMV.includes(flxNome(_ultimo.setor).toUpperCase());
+    const _emCurso = (!_encerrado && _ultimo.data_inclusao)
+      ? Math.max(0, Math.round((Date.now() - new Date(_ultimo.data_inclusao).getTime()) / 60000)) : 0;
     const porSetor = {};
-    data.forEach(r => {
+    data.forEach((r, i) => {
       const k = flxNome(r.setor);
-      porSetor[k] = (porSetor[k] || 0) + (+r.tempo_min || 0);
+      const v = (i === data.length - 1 && _emCurso) ? _emCurso : (+r.tempo_min || 0);
+      porSetor[k] = (porSetor[k] || 0) + v;
     });
     /* ===== A FÁBRICA ENTRA NO HISTÓRICO — 25/08/2026 =====
        (João: "a produção não está entrando no histórico")
@@ -28856,6 +28880,7 @@ async function _fluxoCarrega(num) {
           const pc = Math.round(x.min / somaTot * 100);
           return '<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px">'
             + '<span style="flex:0 0 104px;font-weight:' + (pc >= 40 ? '800' : '600') + ';color:' + (pc >= 40 ? 'var(--critico-s)' : 'inherit') + '">' + escapeHtml(x.setor)
+            + (_emCurso && flxNome(_ultimo.setor) === x.setor ? '<div style="font-size:9.5px;font-weight:800;color:#8A5A12">em curso</div>' : '')
             + (_prod && flxEhFabrica(x.setor) ? '<div style="font-size:9.5px;font-weight:600;color:var(--navy)">máquina ' + fmtData(_prod.de).slice(0, 5) + '→' + fmtData(_prod.ate).slice(0, 5) + '</div>' : '')
             + '</span>'
             + '<span style="flex:1;min-width:40px;height:11px;border-radius:6px;background:var(--linha);overflow:hidden">'
@@ -28888,7 +28913,11 @@ async function _fluxoCarrega(num) {
       h += '<div style="margin-bottom:9px"><div style="font-size:11.5px;font-weight:800;color:var(--txt-2s);margin-bottom:3px">'
         + escapeHtml(k) + (tot ? ' <span style="font-weight:600;color:var(--fraco)">· total ' + hm(tot) + '</span>' : '') + '</div>';
       E.forEach((r, ix) => {
-        const t = +r.tempo_min || 0, pc = Math.round(t / mx * 100);
+        /* identidade do objeto: `r` é a MESMA linha de `data`, então basta
+           comparar com a última — sem depender de índice dentro do grupo */
+        const emC = !!_emCurso && r === _ultimo;
+        const t = emC ? _emCurso : (+r.tempo_min || 0);
+        const pc = Math.round(t / Math.max(mx, _emCurso || 0) * 100);
         const gargalo = tot && t > tot * 0.4;
         /* a ÚLTIMA etapa sempre vem com 0m no relatório: não há etapa seguinte
            para fechar a conta. Mostrar "0m" ali faz parecer que o pedido passou
