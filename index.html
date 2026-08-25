@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.170.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.171.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.170.0';
+const APP_VER = '4.171.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28691,6 +28691,34 @@ async function _fluxoCarrega(num) {
       const k = String(r.setor || '—');
       porSetor[k] = (porSetor[k] || 0) + (+r.tempo_min || 0);
     });
+    /* ===== A FÁBRICA ENTRA NO HISTÓRICO — 25/08/2026 =====
+       (João: "a produção não está entrando no histórico")
+       O RVEN304 é um relatório COMERCIAL: ele registra o repasse entre setores
+       administrativos e trata "PRODUCAO" como uma caixa por onde o pedido passa,
+       sem saber o que aconteceu dentro dela. Quando o pedido tem OP amarrada,
+       dá para preencher essa caixa com o apontamento real — os dias em que a
+       máquina de fato rodou aquelas ordens.
+       Só entra quando o vínculo existe. Estimar produção por proximidade de data
+       seria inventar: o item roda em ciclo o ano todo e qualquer rodada próxima
+       "encaixaria". */
+    let _prod = null;
+    try {
+      const { data: fp } = await sb.from('fila_producao')
+        .select('op').ilike('pedido', n + '%');
+      const ops = [...new Set((fp || []).map(x => String(x.op)))];
+      if (ops.length) {
+        const { data: pr } = await sb.from('producao')
+          .select('op,dia,recurso_cod,peso').in('op', ops);
+        if (pr && pr.length) {
+          const dias = pr.map(x => String(x.dia).slice(0, 10)).sort();
+          _prod = { ops: ops, de: dias[0], ate: dias[dias.length - 1],
+            kg: pr.reduce((a2, x) => a2 + (+x.peso || 0), 0),
+            maq: [...new Set(pr.map(x => String(x.recurso_cod)))],
+            min: Math.round((new Date(dias[dias.length - 1] + 'T12:00:00') - new Date(dias[0] + 'T12:00:00')) / 60000) + 1440 };
+        }
+      }
+    } catch (_) { }
+    if (_prod) porSetor['PRODUÇÃO (fábrica)'] = _prod.min;
     const SS = Object.keys(porSetor).map(k => ({ setor: k, min: porSetor[k] })).sort((a, b) => b.min - a.min);
     const somaTot = SS.reduce((a, b) => a + b.min, 0) || 1;
     const mxS = SS[0] ? SS[0].min : 1;
@@ -28705,6 +28733,15 @@ async function _fluxoCarrega(num) {
             + '<span style="flex:0 0 86px;text-align:right;font-weight:800">' + hm(x.min) + '</span>'
             + '<span style="flex:0 0 34px;text-align:right;font-size:10.5px;color:var(--fraco)">' + pc + '%</span></div>';
         }).join('')
+      + (_prod
+          ? '<div style="margin-top:7px;padding:8px 10px;background:#EEF3F8;border-left:3px solid var(--navy);border-radius:9px;font-size:11.5px">'
+            + '🏭 <b>Produção real</b> · OP ' + _prod.ops.slice(0, 4).join(', ') + (_prod.ops.length > 4 ? '…' : '')
+            + ' · máquina ' + escapeHtml(_prod.maq.join(', '))
+            + '<br>rodou de <b>' + fmtData(_prod.de) + '</b> a <b>' + fmtData(_prod.ate) + '</b> · ' + fmtKg(_prod.kg) + '</div>'
+          : '<div style="margin-top:7px;padding:8px 10px;background:#FFF4E0;border:1px solid #F0D18A;border-radius:9px;font-size:11.5px;color:#8A5A12">'
+            + '🏭 <b>Sem produção neste histórico.</b> O RVEN304 é um relatório comercial — ele mostra o repasse entre setores, não o que a máquina fez. '
+            + 'Para trazer a fábrica é preciso que o ERP amarre uma OP ao pedido, e neste não amarrou. '
+            + 'Repare que o fluxo também não tem etapa de PCP nem de PRODUÇÃO: <b>este pedido foi atendido de estoque</b>, não foi produzido para o cliente.</div>')
       + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin:12px 0 6px">Passo a passo</div>';
     Object.keys(porLinha).forEach(k => {
       const E = porLinha[k].sort((a, b) => a.seq - b.seq);
