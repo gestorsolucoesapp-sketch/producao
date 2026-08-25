@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.165.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.166.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.165.0';
+const APP_VER = '4.166.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28512,7 +28512,9 @@ function detPedido(num, voltar) {
     + _avisoDep
     + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas)
+    + '<div id="opsPed"></div>'
     + '<div id="fluxoPed"></div>');
+  _opsDoPedido(L.map(l => String(l.item_cod)), num);
   _fluxoCarrega(num);
 }
 
@@ -28529,6 +28531,73 @@ function detPedido(num, voltar) {
    A barra de cada etapa é proporcional ao tempo, então o gargalo salta à vista
    sem precisar ler número — no 230461, MONT.CARGA sozinha come 4.644 dos 4.645
    minutos do pedido. */
+/* ===== ORDENS DE PRODUÇÃO DOS ITENS DO PEDIDO — 25/08/2026 (pedido do João) =====
+   "Tem como fazer o histórico de cada ordem de produção desses itens do pedido?"
+
+   Tem — com uma ressalva que precisa ficar na tela, não escondida aqui.
+   O ERP não amarra OP a pedido: 55% das linhas da fila vêm com o campo pedido em
+   branco, e nas OPs já encerradas ele some de vez. Então NÃO existe "a OP deste
+   pedido". O que existe, e é o que mostro, são as OPs que produziram AQUELE ITEM
+   — as últimas, com data, máquina e quantidade.
+
+   Para este pedido isso é bem visível: os quatro itens rodam em ciclo, sempre
+   nas mesmas máquinas (1603914 na 707, 1603915 na 708, 1603373 na 705), a cada
+   1 ou 2 meses, com lote sempre igual. O material do pedido saiu de uma dessas
+   rodadas, não de uma OP feita para ele.
+
+   Quando a OP ainda está na fila de hoje, marco — aí sim é produção que vem. */
+async function _opsDoPedido(itens, num) {
+  const box = document.getElementById('opsPed'); if (!box) return;
+  const cods = [...new Set((itens || []).map(String).filter(Boolean))];
+  if (!cods.length) return;
+  try {
+    let L = [];
+    for (let ini = 0; ini < 8000; ini += 1000) {
+      const { data, error } = await sb.from('producao')
+        .select('op,item_cod,dia,recurso_cod,peso,quantidade,unidade')
+        .in('item_cod', cods).order('dia', { ascending: false }).range(ini, ini + 999);
+      if (error) throw error;
+      L = L.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+    if (!L.length) { box.innerHTML = ''; return; }
+    const naFila = new Set((_progDados || []).map(r => String(r.op)));
+    const ops = {};
+    L.forEach(r => {
+      const k = String(r.op);
+      const o = (ops[k] = ops[k] || { op: k, item: String(r.item_cod), de: r.dia, ate: r.dia, kg: 0, qtd: 0, un: r.unidade, maq: new Set() });
+      if (r.dia < o.de) o.de = r.dia;
+      if (r.dia > o.ate) o.ate = r.dia;
+      o.kg += (+r.peso || 0); o.qtd += (+r.quantidade || 0); o.maq.add(String(r.recurso_cod));
+    });
+    const porItem = {};
+    Object.values(ops).forEach(o => { (porItem[o.item] = porItem[o.item] || []).push(o); });
+    const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+    let h = '<div style="margin-top:12px"><div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">Ordens de produção destes itens</div>';
+    cods.forEach(c => {
+      const O = (porItem[c] || []).sort((a, b) => String(b.ate).localeCompare(String(a.ate))).slice(0, 5);
+      if (!O.length) return;
+      const desc = ((_cart196 && _cart196.pend) || []).find(p => String(p.item_cod) === c);
+      h += '<div style="margin-bottom:8px"><div style="font-size:11.5px;font-weight:800;color:var(--txt-2s)"><span class="cod">' + escapeHtml(c) + '</span> '
+        + escapeHtml(String((desc && desc.item_desc) || '').slice(0, 38)) + '</div>';
+      O.forEach(o => {
+        const fila = naFila.has(o.op);
+        h += '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-size:11.5px;border-bottom:1px solid var(--linha)">'
+          + '<span style="flex:0 0 62px;font-weight:700;cursor:pointer;color:var(--navy)" onclick="detOP(\'' + o.op + '\',\'' + [...o.maq][0] + '\')">OP ' + o.op + '</span>'
+          + '<span style="flex:0 0 96px;color:var(--fraco);font-size:10.5px">' + fmtData(o.de) + (o.ate !== o.de ? ' → ' + fmtData(o.ate) : '') + '</span>'
+          + '<span style="flex:0 0 46px;font-size:10.5px">' + escapeHtml([...o.maq].join(',')) + '</span>'
+          + '<span style="flex:1;text-align:right"><b>' + kg(o.kg) + '</b><span style="color:var(--fraco)"> · ' + fmt(o.qtd, 0) + ' ' + escapeHtml(String(o.un || '')) + '</span>'
+          + (fila ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">NA FILA</span>' : '') + '</span></div>';
+      });
+      h += '</div>';
+    });
+    h += '<p class="desc" style="font-size:11px">São as OPs que produziram <b>estes itens</b>, não necessariamente para este pedido: '
+      + 'o ERP não amarra OP a pedido — mais da metade das linhas da fila vem sem o número. Toque numa OP para ver o detalhe.</p></div>';
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px;color:var(--critico-s)">Não consegui carregar as OPs: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+  }
+}
 async function _fluxoCarrega(num) {
   const box = document.getElementById('fluxoPed'); if (!box) return;
   const n = String(num).split('/')[0];
