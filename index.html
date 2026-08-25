@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.172.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.173.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.172.0';
+const APP_VER = '4.173.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28762,24 +28762,38 @@ async function _fluxoCarrega(num) {
         /* a ÚLTIMA etapa sempre vem com 0m no relatório: não há etapa seguinte
            para fechar a conta. Mostrar "0m" ali faz parecer que o pedido passou
            num piscar, quando na verdade é onde ele ESTÁ — e pode estar há dias. */
+        /* ===== 25/08/2026 — "AQUI HÁ X" SÓ VALE PARA PEDIDO VIVO =====
+           (João vai importar os meses anteriores.)
+           A última etapa vem com 0m porque não houve repasse depois dela. Para o
+           pedido que ainda está em andamento, isso é "onde ele está agora" e o
+           tempo corrido importa. Para um pedido de abril já expedido, contar até
+           hoje diria "aqui há 4 meses" — e não está parado coisa nenhuma, está
+           entregue. Com um mês de dados isso não aparecia; com o histórico
+           inteiro apareceria em quase toda tela.
+           Então: etapa final de saída (expedido, despachado, cancelado) encerra
+           o pedido; e mesmo sem ser final, acima de 45 dias eu trato como
+           encerrado sem repasse, não como espera em curso. */
         const ultima = ix === E.length - 1;
+        const FIM = ['EXPEDIDOS', 'DESPACHADO', 'CANCELAMENTO', 'NFE'];
         let paradoTxt = '';
         if (ultima && r.data_inclusao) {
           const min = Math.max(0, Math.round((Date.now() - new Date(r.data_inclusao).getTime()) / 60000));
-          paradoTxt = 'aqui há ' + hm(min);
+          const encerrou = FIM.includes(flxNome(r.setor).toUpperCase()) || min > 45 * 1440;
+          paradoTxt = encerrou ? 'fim em ' + fmtData(String(r.data_inclusao).slice(0, 10)) : 'aqui há ' + hm(min);
+          r._encerrou = encerrou;
         }
         h += '<div style="display:flex;gap:7px;align-items:center;padding:3px 0;font-size:11.5px">'
           + '<span style="flex:0 0 96px;font-weight:' + (gargalo ? '800' : '600') + ';color:' + (gargalo ? 'var(--critico-s)' : 'inherit') + '">' + escapeHtml(flxNome(r.setor)) + '</span>'
           + '<span style="flex:0 0 78px;color:var(--fraco);font-size:10.5px">' + (r.data_inclusao ? fmtData(String(r.data_inclusao).slice(0, 10)) + ' ' + String(r.data_inclusao).slice(11, 16) : '—') + '</span>'
           + '<span style="flex:1;min-width:40px;height:9px;border-radius:5px;background:var(--linha);overflow:hidden">'
           + '<span style="display:block;height:100%;width:' + pc + '%;background:' + (gargalo ? 'var(--critico-s)' : 'var(--azul-marca)') + '"></span></span>'
-          + '<span style="flex:0 0 74px;text-align:right;font-weight:' + (gargalo || ultima ? '800' : '600') + ';color:' + (ultima ? '#8A5A12' : 'inherit') + '">'
+          + '<span style="flex:0 0 74px;text-align:right;font-weight:' + (gargalo || ultima ? '800' : '600') + ';color:' + (ultima ? (r._encerrou ? 'var(--fraco)' : '#8A5A12') : 'inherit') + '">'
           + (ultima ? paradoTxt : hm(t)) + '</span></div>';
       });
       h += '</div>';
     });
     box.innerHTML = h + '<p class="desc" style="font-size:11px">Cada barra é o tempo que o pedido ficou <b>naquela etapa</b>. Em vermelho, a etapa que consome mais de 40% do total. '
-      + 'A última linha, em laranja, é onde o pedido <b>está agora</b> — o relatório traz 0m nela porque ainda não houve repasse.</p></div>';
+      + 'A última linha, quando em laranja, é onde o pedido <b>está agora</b>; em cinza, é onde ele <b>terminou</b>.</p></div>';
     try { const A = (_alocarEstoque() || { linhas: [] }).linhas.filter(l => String(l.pedido).split('/')[0] === String(num));
       _opsLink(A.map(l => String(l.item_cod)), num); } catch (_) { }
   } catch (e) {
