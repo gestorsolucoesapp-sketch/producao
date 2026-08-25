@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.163.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.163.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3451,7 +3451,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.163.0';
+const APP_VER = '4.163.1';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25786,6 +25786,28 @@ async function gravar(id, substituir = false) {
        correto, não uma precaução.
        Fica DEPOIS da leitura do PDF: se o arquivo estiver ruim, o erro estoura
        antes e o depósito velho continua no lugar. */
+    /* ===== RVEN304: SUBSTITUI POR DOCUMENTO — 25/08/2026 =====
+       Na primeira tentativa eu tinha posto chave única em (documento, seq) e a
+       gravação estourou com "duplicate key". A causa: o RVEN304 agrupa por LINHA
+       DE PRODUTO — o pedido 227704 aparece uma vez em "*RIGIDO IMPRESSO" e outra
+       em "WEB - LISO", e cada bloco recomeça a sequência em 1. Documento+seq se
+       repete de forma legítima e não serve de chave.
+       Sem chave única, reimportar o mesmo PDF duplicaria tudo. Então, antes de
+       gravar, apago os documentos que estão entrando: reimportar passa a ser
+       seguro e o histórico de cada pedido fica sempre com a versão mais recente.
+       Em blocos de 200 porque a lista tem milhares de números e URL tem limite. */
+    if (r.rotina === 'RVEN304') {
+      try {
+        const docs = [...new Set((r.registros || []).map(x => String(x.documento)).filter(Boolean))];
+        for (let i = 0; i < docs.length; i += 200) {
+          const { error } = await sb.from('fluxo_pedido').delete().in('documento', docs.slice(i, i + 200));
+          if (error) throw error;
+        }
+        if (docs.length) toast('♻️ ' + docs.length + ' pedido(s) serão substituídos');
+      } catch (e) {
+        throw new Error('Não consegui limpar o fluxo anterior: ' + ((e && e.message) || e));
+      }
+    }
     if (r.rotina === '241') {
       /* ===== ARQUIVA ANTES DE LIMPAR — 25/08/2026 (pedido do João) =====
          O 241 sempre apagou a foto anterior, então nunca houve série para
