@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.174.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.175.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.174.0';
+const APP_VER = '4.175.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26371,8 +26371,29 @@ function _depoOndeLinha(itemCod, precisaKg, pedNum) {
    considera aberto. Ate o envio ser corrigido na origem, o app AVISA — nao
    apaga, porque apagar dado por suposicao e pior do que mostrar com ressalva.
    Corte: entrega vencida ha mais de 30 dias (25 pedidos / 10,6 t em 19/08). */
-function _pedidoSuspeito(entrega) {
+/* ===== ENTREGA REPROGRAMADA PARA TRÁS NÃO É ATRASO — 25/08/2026 (aval do João)
+   Caso que abriu a conversa: o pedido 230461 foi digitado em 21/08 com entrega
+   para 25/09. Entre as fotos de 24 e 25/08 ele foi faturado em parte e a entrega
+   foi PUXADA PARA TRÁS, para 02/08 — data anterior à própria digitação. A tela
+   passou a gritar "vencida há 23 dias" para um pedido cujo prazo real ainda nem
+   chegou.
+   O REST196 guarda a data original na coluna `origem`, e o app nunca a lia.
+   Agora, quando a original está no futuro, o pedido deixa de contar como
+   vencido — mas NÃO some: vira "reprogramado", visível e contado à parte.
+   Número que desaparece calado é pior que número errado. */
+function _entOriginal(l) {
+  const o = l && l.origem ? String(l.origem).slice(0, 10) : '';
+  const e = l && l.entrega ? String(l.entrega).slice(0, 10) : '';
+  return (o && e && o !== e) ? o : '';
+}
+function _reprogPraTras(l) {
+  const o = _entOriginal(l); if (!o) return false;
+  const ref = (_cart196 && _cart196.dia) || hojeISO();
+  return o > String(l.entrega).slice(0, 10) && o > ref;   // original ainda no futuro
+}
+function _pedidoSuspeito(entrega, linha) {
   const e = String(entrega || '').slice(0, 10); if (!e) return 0;
+  if (linha && _reprogPraTras(linha)) return 0;
   const ref = (_cart196 && _cart196.dia) || hojeISO();
   const dias = Math.round((new Date(ref + 'T12:00:00') - new Date(e + 'T12:00:00')) / 86400000);
   return dias > 30 ? dias : 0;
@@ -27170,7 +27191,10 @@ async function carregarCarteira196() {
   const dia = f.dia;
   const filtro = q => { const x = q.eq('dia_foto', dia); return f.hora ? x.eq('hora_foto', f.hora) : x; };
   const [pend, est, hist] = await Promise.all([
-    fetchTudoFoto('rest196_pendente', 'item_cod,item_desc,un,cliente,pedido,entrega,dias,peso_pendente,qtd_pendente', filtro),
+    /* 25/08/2026 — `origem` é a ENTREGA ORIGINAL do pedido. O REST196 sempre
+       trouxe essa coluna e o app nunca a leu: por isso pedido com entrega
+       reprogramada para trás aparecia como vencido. */
+    fetchTudoFoto('rest196_pendente', 'item_cod,item_desc,un,cliente,pedido,entrega,dias,peso_pendente,qtd_pendente,origem', filtro),
     /* rest196_estoque nao tem hora_foto: ele e reescrito por emissao, entao o
        dia basta — mas se um dia ganhar a coluna, o filtro acima cobre. */
     fetchTudoSimples('rest196_estoque', 'item_cod,item_desc,qtd,peso', 'dia_foto', dia),
@@ -28505,7 +28529,11 @@ function detPedido(num, voltar) {
           })())
     + `${L[0].entrega ? ' · entrega ' + escapeHtml(fmtDataSem(L[0].entrega)) : ''}</p>`
     + (() => {
-        const d = _pedidoSuspeito(L[0].entrega);
+        const rp = L.find(l => _reprogPraTras(l));
+        if (rp) return _avisoCx('#33506E', '#EEF3FA',
+          '📅 Entrega reprogramada: ' + escapeHtml(fmtDataSem(rp.entrega)) + ', originalmente ' + escapeHtml(fmtDataSem(_entOriginal(rp))) + '.',
+          'A data foi puxada para trás depois do pedido emitido — o prazo original ainda não venceu, então este pedido não entra na conta de atrasados.');
+        const d = _pedidoSuspeito(L[0].entrega, L[0]);
         if (!d) return '';
         /* 20/08/2026: o texto anterior culpava o filtro do REST196, conclusão que
            depois se mostrou errada — a emissão automática não traz pedido fechado,
