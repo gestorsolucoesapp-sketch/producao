@@ -1056,7 +1056,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.145.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.146.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3255,7 +3255,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.145.0';
+const APP_VER = '4.146.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27841,17 +27841,45 @@ async function detPedidoFila(num) {
    mesmo vendedor na mesma cidade muda a decisão. Vem do RVEN002, e some sozinho
    se ele não estiver importado — informação que falta é melhor ausente do que
    inventada. */
+/* 25/08/2026 (João: "mostre a região, cidade e representante") — a faixa já
+   existia, mas SÓ aparecia se a pessoa tivesse passado pela aba Comercial
+   antes: é lá que _pedReg era carregado. Abrindo o pedido pela Programação ou
+   pelo card de faturamento, ela vinha vazia sem dizer por quê.
+   Agora, se o índice não estiver em memória, o modal já sai com o espaço da
+   faixa e ela se preenche sozinha quando a consulta volta. */
+/* região do país pela UF — a emissão atual do RVEN002 não traz a coluna Região,
+   e ficar sem nenhum agrupamento geográfico é pior do que derivar do estado. */
+const _UF_REG = { AC:'Norte',AP:'Norte',AM:'Norte',PA:'Norte',RO:'Norte',RR:'Norte',TO:'Norte',
+  AL:'Nordeste',BA:'Nordeste',CE:'Nordeste',MA:'Nordeste',PB:'Nordeste',PE:'Nordeste',PI:'Nordeste',RN:'Nordeste',SE:'Nordeste',
+  DF:'Centro-Oeste',GO:'Centro-Oeste',MT:'Centro-Oeste',MS:'Centro-Oeste',
+  ES:'Sudeste',MG:'Sudeste',RJ:'Sudeste',SP:'Sudeste',
+  PR:'Sul',RS:'Sul',SC:'Sul' };
+function _regiaoDaUF(uf) { return _UF_REG[String(uf || '').toUpperCase().trim()] || null; }
 function _faixaComercial(num) {
   try {
-    const g = _pedReg && _pedReg[String(num).split('/')[0]];
+    const chave = String(num).split('/')[0];
+    if (!_pedReg) {
+      setTimeout(async () => {
+        try { await carregarPedidosRegiao(); } catch (_) { return; }
+        const el = document.getElementById('fxCom' + chave);
+        if (el) el.outerHTML = _faixaComercial(chave);
+      }, 0);
+      return '<div id="fxCom' + escapeHtml(chave) + '"></div>';
+    }
+    const g = _pedReg[chave];
     if (!g) return '';
     const bits = [];
-    if (g.vendedor_nome) bits.push('<b>' + escapeHtml(String(g.vendedor_nome).replace(/^VR\s*-\s*/, '')) + '</b>');
+    if (g.vendedor_nome) bits.push('<b>' + escapeHtml(String(g.vendedor_nome).replace(/^V[RD]\s*-\s*/, '')) + '</b>');
     if (g.cidade) bits.push(escapeHtml(g.cidade) + (g.uf ? '/' + escapeHtml(g.uf) : ''));
     if (g.regiao) bits.push(escapeHtml(String(g.regiao).replace(/^\d+\s*-\s*/, '')));
     if (g.sub_regiao) bits.push('<span style="opacity:.75">' + escapeHtml(String(g.sub_regiao).replace(/^\d+\s*-\s*/, '')) + '</span>');
+    /* a emissão atual do RVEN002 vem SEM região preenchida em todas as 1.085
+       linhas — só cidade/UF e vendedor. Em vez de deixar um buraco mudo, a UF
+       serve de região quando ela falta: é o recorte que a logística usa. */
+    if (!g.regiao && g.uf) bits.push('<span style="opacity:.75">' + escapeHtml(_regiaoDaUF(g.uf) || ('UF ' + g.uf)) + '</span>');
+    if (g.situacao) bits.push('<span style="opacity:.7">' + escapeHtml(String(g.situacao).replace(/^WEB\s*-\s*/, '')) + '</span>');
     if (!bits.length) return '';
-    return '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--fraco);'
+    return '<div id="fxCom' + escapeHtml(chave) + '" style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--fraco);'
       + 'background:var(--leve-2,#F4F7FA);border-radius:8px;padding:6px 9px;margin:6px 0 2px">'
       + '<span>🧭</span><span>' + bits.join(' · ') + '</span></div>';
   } catch (_) { return ''; }
