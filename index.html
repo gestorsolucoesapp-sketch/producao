@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.157.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.158.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.157.0';
+const APP_VER = '4.158.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -40538,10 +40538,8 @@ function detSituacao(modo) {
     tit = S.ferias.length + ' de férias hoje';
     corpo = S.ferias.sort((a, b) => (a.fim || '').localeCompare(b.fim || '')).map(f => {
       /* conta até o dia em que ela REALMENTE volta (pulando o fim de semana) */
-      const _r = ferRetorno(f.fim);
-      const faltam = _r ? Math.round((new Date(_r + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5) : null;
       return linha(f.matricula, ferFmt(f.inicio) + ' → ' + ferFmt(f.fim),
-        faltam != null ? (faltam <= 0 ? 'volta hoje' : faltam === 1 ? 'volta amanhã' : 'volta em ' + faltam + 'd') : 'férias', '#2563eb');
+        f.fim ? ferVoltaTxt(f.fim) : 'férias', '#2563eb');
     }).join('');
   } else if (modo === 'faltas') {
     tit = S.faltas.length + ' com falta ou atestado hoje';
@@ -42391,7 +42389,7 @@ function ferTimeline(lista) {
       '<span style="overflow:hidden;text-overflow:ellipsis">' + escapeHtml(orgPrimeiro(nome) || nome) + '</span></div>' +
       '<div style="font-size:10px;color:' + (emCurso ? 'var(--critico-s)' : 'var(--fraco-2s)') + ';font-weight:' + (emCurso ? '800' : '600') + ';white-space:nowrap">' +
       ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd' +
-      (emCurso ? ' · <b>faltam ' + Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd</b>' : '') + '</div></div>';
+      (emCurso ? ' · <b>' + ferVoltaTxt(f.fim) + '</b>' : '') + '</div></div>';
     h += '<div style="flex:1;position:relative;height:100%">';
     if (porMes) {
       for (let d = 0; d < totalDias; d++) {
@@ -42410,7 +42408,7 @@ function ferTimeline(lista) {
     h += '<div onclick="ferEditar(' + f.id + ')" title="' + escapeHtml(nome + ' · ' + ferFmt(f.inicio) + ' a ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + ' dias') +
       '" style="position:absolute;left:' + off.toFixed(3) + '%;width:' + larg.toFixed(3) + '%;top:4px;bottom:4px;background:' + cor +
       ';border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:800;overflow:hidden">' +
-      (larg > 3.4 ? (emCurso ? (Math.max(0, Math.round((b - hoje) / 86400000) + 1) + 'd') : (f.dias || '')) : '') + '</div>';
+      (larg > 3.4 ? (emCurso ? (Math.max(0, ferDiasAteVolta(f.fim) || 0) + 'd') : (f.dias || '')) : '') + '</div>';
     h += '</div></div>';
   });
   return h + '</div></div>';
@@ -42715,6 +42713,29 @@ function ferForm(f) {
    segunda. Isto é CÁLCULO DE EXIBIÇÃO — o `fim` gravado continua sendo o último
    dia gozado, e `dias` continua sendo o que o RH concedeu. Não mexo em dado
    guardado para consertar um rótulo. */
+/* ===== QUANTOS DIAS ATÉ A VOLTA — 25/08/2026 =====
+   (João: "por que a Iara volta em 2 dias se é amanhã que ela volta?")
+   A timeline calculava Math.round((fim - hoje)/86400000) + 1, e aí dois erros
+   se somavam:
+     · `hoje` nascia à MEIA-NOITE e `fim` ao MEIO-DIA (ferData usa T12:00:00).
+       No mesmo dia a diferença dava 0,5 — e Math.round(0.5) é 1 em JavaScript.
+     · Em cima disso vinha um "+1" que tentava compensar o último dia inclusivo.
+   Resultado: 0,5 → 1 → 2. A Iara, cujo último dia é hoje e que volta amanhã,
+   aparecia com "faltam 2d".
+   Agora existe uma conta só, em dias inteiros de calendário, contando até o dia
+   em que a pessoa REALMENTE volta (já com a regra do sábado). */
+function ferDiasAteVolta(fimISO) {
+  const r = ferRetorno(fimISO);
+  if (!r) return null;
+  const hj = new Date(); hj.setHours(0, 0, 0, 0);
+  const dv = new Date(r + 'T00:00:00');
+  return Math.round((dv - hj) / 86400000);
+}
+function ferVoltaTxt(fimISO) {
+  const n = ferDiasAteVolta(fimISO);
+  if (n == null) return '';
+  return n <= 0 ? 'volta hoje' : n === 1 ? 'volta amanhã' : 'volta em ' + n + 'd';
+}
 function ferRetorno(fimISO) {
   if (!fimISO) return null;
   const d = new Date(String(fimISO).slice(0, 10) + 'T12:00:00');
