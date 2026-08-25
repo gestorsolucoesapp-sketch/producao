@@ -1056,7 +1056,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.148.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.149.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2395,6 +2395,24 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         const u = out[out.length - 1];
         if (!u.cliente_cod) { u.cliente_cod = m[1]; u.cliente_nome = m[2].trim(); }
       }
+      /* ===== VALOR DO PEDIDO — 25/08/2026 (pedido do João) =====
+         A última coluna útil da linha de item é "Saldo Valor": o quanto ainda
+         falta faturar daquela linha. Somando por pedido sai o valor do que está
+         em aberto.
+         Não usei o unitário do REST241 no lugar: aquilo é CUSTO de estoque, não
+         preço de venda, e só cobre 229 dos 686 itens da carteira. Número de
+         dinheiro errado é pior que número de dinheiro ausente.
+         A linha de item termina em: ... Peso SaldoPeso SaldoValor [OrdemCompra].
+         Pego o penúltimo ou o último número conforme o fim da linha, e só quando
+         a linha começa com item/versão — assim total e cabeçalho ficam de fora. */
+      if (out.length && /^\d{6,7}\/\d+\s/.test(t)) {
+        const nums = t.match(/[\d.]+,\d{2}/g) || [];
+        if (nums.length >= 2) {
+          const v = numBR(nums[nums.length - 1]);
+          const u = out[out.length - 1];
+          if (v != null && v > 0) u.saldo_valor = (u.saldo_valor || 0) + v;
+        }
+      }
     });
     return out.map(o => { delete o._i; return o; });
   }
@@ -3255,7 +3273,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.148.0';
+const APP_VER = '4.149.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24862,7 +24880,8 @@ const MAPA = {
       pedido: r.pedido, emissao: r.emissao, cidade: r.cidade, uf: r.uf,
       regiao: r.regiao, sub_regiao: r.sub_regiao,
       vendedor_cod: r.vendedor_cod, vendedor_nome: r.vendedor_nome,
-      cliente_cod: r.cliente_cod, cliente_nome: r.cliente_nome, situacao: r.situacao }) },
+      cliente_cod: r.cliente_cod, cliente_nome: r.cliente_nome, situacao: r.situacao,
+      saldo_valor: r.saldo_valor != null ? r.saldo_valor : null }) },
   '621': { tabela: 'producao_resumo', linha: r => ({ dia: r.dia, turno: r.turno, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '622': { tabela: 'producao', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, ident: r.ident, data_inicio: r.data_inicio, data_fim: r.data_fim, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
   '624': { tabela: 'perdas', linha: r => ({ dia: r.dia, turno: r.turno, op: r.op, item_cod: r.item_cod, item_versao: r.item_versao, item_desc: r.item_desc, data: r.data, ordem: r.ordem, acessorio: r.acessorio, tipo_perda_cod: r.tipo_perda_cod, tipo_perda_desc: r.tipo_perda_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, peso: r.peso }) },
@@ -27873,6 +27892,13 @@ const _UF_REG = { AC:'Norte',AP:'Norte',AM:'Norte',PA:'Norte',RO:'Norte',RR:'Nor
   ES:'Sudeste',MG:'Sudeste',RJ:'Sudeste',SP:'Sudeste',
   PR:'Sul',RS:'Sul',SC:'Sul' };
 function _regiaoDaUF(uf) { return _UF_REG[String(uf || '').toUpperCase().trim()] || null; }
+function fxValor(el) {
+  const o = el.querySelector('.fx-olho'), v = el.querySelector('.fx-val');
+  if (!o || !v) return;
+  const mostrar = v.style.display === 'none';
+  v.style.display = mostrar ? '' : 'none';
+  o.style.display = mostrar ? 'none' : '';
+}
 function _faixaComercial(num) {
   try {
     const chave = String(num).split('/')[0];
@@ -27896,6 +27922,17 @@ function _faixaComercial(num) {
        serve de região quando ela falta: é o recorte que a logística usa. */
     if (!g.regiao && g.uf) bits.push('<span style="opacity:.75">' + escapeHtml(_regiaoDaUF(g.uf) || ('UF ' + g.uf)) + '</span>');
     if (g.situacao) bits.push('<span style="opacity:.7">' + escapeHtml(String(g.situacao).replace(/^WEB\s*-\s*/, '')) + '</span>');
+    /* ===== O VALOR FICA ATRÁS DE UM OLHO — 25/08/2026 (pedido do João) =====
+       Preço numa tela que roda no chão de fábrica não pode aparecer sozinho:
+       o modal é aberto na frente de operador, de conferente, de quem passa. Sai
+       escondido e só aparece se alguém pedir. Volta a se esconder ao fechar o
+       pedido, porque a próxima abertura é outra conversa. */
+    if (g.saldo_valor > 0) {
+      bits.push('<span style="cursor:pointer;user-select:none" onclick="fxValor(this)" title="mostrar ou esconder o valor">'
+        + '<span class="fx-olho">👁 <span style="opacity:.75">valor</span></span>'
+        + '<span class="fx-val" style="display:none"><b>' + _pmMoeda(+g.saldo_valor) + '</b>'
+        + '<span style="opacity:.7;font-weight:600"> em aberto</span></span></span>');
+    }
     if (!bits.length) return '';
     return '<div id="fxCom' + escapeHtml(chave) + '" style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--fraco);'
       + 'background:var(--leve-2,#F4F7FA);border-radius:8px;padding:6px 9px;margin:6px 0 2px">'
@@ -33123,7 +33160,7 @@ async function carregarPedidosRegiao(forcar) {
      Aqui a paginação é própria, ordenando por `id`, que é o que a tabela tem. */
   try {
     const m = {};
-    const COLS = 'pedido,cidade,uf,regiao,sub_regiao,vendedor_cod,vendedor_nome,cliente_nome';
+    const COLS = 'pedido,cidade,uf,regiao,sub_regiao,vendedor_cod,vendedor_nome,cliente_nome,situacao,saldo_valor';
     for (let ini = 0; ini < 40000; ini += 1000) {
       const { data, error } = await sb.from('pedidos_regiao').select(COLS)
         .order('id', { ascending: true }).range(ini, ini + 999);
