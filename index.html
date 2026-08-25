@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.164.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.165.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2752,7 +2752,31 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         if (me) i++;
       }
       if (!me) continue;
-      const etapa = me[2].replace(/\s+/g, ' ').trim();
+      /* ===== O NOME DA ETAPA CONTINUA NA LINHA DE BAIXO — 25/08/2026 =====
+         (João: "o tempo em cada fluxo está estranho")
+         O tempo estava certo; o NOME é que vinha cortado. No PDF a coluna
+         "Histórico" é estreita e o nome quebra, mas a data e o tempo ficam
+         alinhados na PRIMEIRA linha:
+             1  WEB - TAMPAS COMPRESSÃO -    03/08/2026 08:32  0m  FULANO
+                COMERCIAL
+         Como a primeira linha já casava com o padrão, eu dava a etapa por
+         completa e o resto virava lixo: no banco apareceram setores como
+         "TERMINO DE", "PEDIDOS INTERNOS -", "LIBERADO PARA" e "MONT." — pedaços
+         de nome tratados como se fossem setores diferentes.
+         Agora, depois de casar, olho as linhas seguintes: se forem continuação
+         (sem data, sem número de sequência, sem ser cabeçalho), emendo no nome. */
+      let _cont = 0;
+      while (_cont < 2) {
+        const nx = txt[i + 1];
+        if (!nx) break;
+        if (RX_DOC.test(nx) || RX_TOT.test(nx) || RX_ETP.test(nx)) break;
+        if (/^\d{1,3}\s/.test(nx) || /\d{2}\/\d{2}\/\d{4}/.test(nx)) break;
+        if (/^Seq\.|^Documento:|^Hist[óo]rico|^P[áa]gina|^ROTINA/i.test(nx)) break;
+        if (!/^[A-ZÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÂÃÉÊÍÓÔÕÚÇ\s.\-\/]{1,38}$/.test(nx)) break;
+        me[2] = me[2] + ' ' + nx;
+        i++; _cont++;
+      }
+      const etapa = me[2].replace(/\s*-\s*$/, '').replace(/\s+/g, ' ').trim();
       const corte = etapa.lastIndexOf(' - ');
       const [dd, mm, aa] = me[3].split('/');
       out.push({
@@ -3451,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.164.0';
+const APP_VER = '4.165.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28529,19 +28553,30 @@ async function _fluxoCarrega(num) {
       const tot = E[0].total_min;
       h += '<div style="margin-bottom:9px"><div style="font-size:11.5px;font-weight:800;color:var(--txt-2s);margin-bottom:3px">'
         + escapeHtml(k) + (tot ? ' <span style="font-weight:600;color:var(--fraco)">· total ' + hm(tot) + '</span>' : '') + '</div>';
-      E.forEach(r => {
+      E.forEach((r, ix) => {
         const t = +r.tempo_min || 0, pc = Math.round(t / mx * 100);
         const gargalo = tot && t > tot * 0.4;
+        /* a ÚLTIMA etapa sempre vem com 0m no relatório: não há etapa seguinte
+           para fechar a conta. Mostrar "0m" ali faz parecer que o pedido passou
+           num piscar, quando na verdade é onde ele ESTÁ — e pode estar há dias. */
+        const ultima = ix === E.length - 1;
+        let paradoTxt = '';
+        if (ultima && r.data_inclusao) {
+          const min = Math.max(0, Math.round((Date.now() - new Date(r.data_inclusao).getTime()) / 60000));
+          paradoTxt = 'aqui há ' + hm(min);
+        }
         h += '<div style="display:flex;gap:7px;align-items:center;padding:3px 0;font-size:11.5px">'
           + '<span style="flex:0 0 96px;font-weight:' + (gargalo ? '800' : '600') + ';color:' + (gargalo ? 'var(--critico-s)' : 'inherit') + '">' + escapeHtml(String(r.setor || '—')) + '</span>'
           + '<span style="flex:0 0 78px;color:var(--fraco);font-size:10.5px">' + (r.data_inclusao ? fmtData(String(r.data_inclusao).slice(0, 10)) + ' ' + String(r.data_inclusao).slice(11, 16) : '—') + '</span>'
           + '<span style="flex:1;min-width:40px;height:9px;border-radius:5px;background:var(--linha);overflow:hidden">'
           + '<span style="display:block;height:100%;width:' + pc + '%;background:' + (gargalo ? 'var(--critico-s)' : 'var(--azul-marca)') + '"></span></span>'
-          + '<span style="flex:0 0 74px;text-align:right;font-weight:' + (gargalo ? '800' : '600') + '">' + hm(t) + '</span></div>';
+          + '<span style="flex:0 0 74px;text-align:right;font-weight:' + (gargalo || ultima ? '800' : '600') + ';color:' + (ultima ? '#8A5A12' : 'inherit') + '">'
+          + (ultima ? paradoTxt : hm(t)) + '</span></div>';
       });
       h += '</div>';
     });
-    box.innerHTML = h + '<p class="desc" style="font-size:11px">Cada barra é o tempo que o pedido ficou <b>naquela etapa</b>. Em vermelho, a etapa que consome mais de 40% do total.</p></div>';
+    box.innerHTML = h + '<p class="desc" style="font-size:11px">Cada barra é o tempo que o pedido ficou <b>naquela etapa</b>. Em vermelho, a etapa que consome mais de 40% do total. '
+      + 'A última linha, em laranja, é onde o pedido <b>está agora</b> — o relatório traz 0m nela porque ainda não houve repasse.</p></div>';
   } catch (e) {
     box.innerHTML = '<p class="desc" style="font-size:11.5px;margin-top:9px;color:var(--critico-s)">Não consegui carregar o fluxo: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
