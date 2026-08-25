@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.161.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.162.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.161.0';
+const APP_VER = '4.162.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28064,6 +28064,59 @@ function _alocarEstoque() {
    perguntas diferentes: aqui é ONDE ESTÁ; lá é SE TEM MATÉRIA-PRIMA. */
 const _soNum = v => String(v == null ? '' : v).split('/')[0].replace(/\D/g, '');
 const _progNumPed = rows => { const S = new Set(); (rows || []).forEach(r => { const n = _soNum(r.pedido); if (n) S.add(n); }); return S; };
+/* ===== LINHA DO TEMPO DO PEDIDO — 25/08/2026 (João: "tem como pôr o histórico
+   desse pedido?") =====
+   O modal dizia só "esteve na carteira de 22/08 até 23/08 (2 fotos)" — o número
+   de fotos sem o que aconteceu dentro delas. Agora mostra foto a foto: quanto
+   estava pendente, qual era a entrega e, principalmente, O QUE MUDOU de um dia
+   para o outro. Pedido que encolhe está sendo entregue em parte; pedido que não
+   mexe há dias está parado; entrega que muda de data é reprogramação do cliente.
+
+   Um aviso que precisa estar na tela: a carteira só começou a ser fotografada em
+   22/08 — são 4 fotos no total. Antes disso não existe histórico, e não dá para
+   confundir "entrou na carteira em 22/08" com "não existia antes". */
+function _pedLinhaDoTempo(H, fotos) {
+  if (!H || !H.length) return '';
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  const porDia = {};
+  H.forEach(h => {
+    const d = String(h.dia_foto).slice(0, 10);
+    const o = (porDia[d] = porDia[d] || { dia: d, kg: 0, qtd: 0, itens: 0, entrega: null });
+    o.kg += (+h.peso_pendente || 0); o.qtd += (+h.qtd_pendente || 0); o.itens++;
+    const e = h.entrega ? String(h.entrega).slice(0, 10) : null;
+    if (e && (!o.entrega || e < o.entrega)) o.entrega = e;
+  });
+  const D = Object.values(porDia).sort((a, b) => a.dia.localeCompare(b.dia));
+  if (D.length < 1) return '';
+  const linhas = D.map((d, i) => {
+    const ant = i ? D[i - 1] : null;
+    let mud = '<span style="color:var(--fraco-2)">entrou na carteira</span>';
+    if (ant) {
+      const dk = d.kg - ant.kg;
+      if (Math.abs(dk) > 0.5) mud = '<b style="color:' + (dk < 0 ? '#1F7A46' : 'var(--critico-s)') + '">'
+        + (dk < 0 ? '−' : '+') + kg(Math.abs(dk)) + '</b> ' + (dk < 0 ? 'entregue' : 'acrescentado');
+      else if (ant.entrega && d.entrega && ant.entrega !== d.entrega) mud = '<b style="color:#8A5A12">entrega mudou</b> de ' + fmtData(ant.entrega);
+      else mud = '<span style="color:var(--fraco-2)">sem movimento</span>';
+    }
+    return '<tr><td class="nome" style="font-size:12px">' + fmtData(d.dia) + '</td>'
+      + '<td><span class="cel neutra">' + (d.entrega ? fmtData(d.entrega) : '—') + '</span></td>'
+      + '<td><span class="cel cel-tot">' + kg(d.kg) + '<div style="font-size:10px;font-weight:600;opacity:.85">' + fmt(d.qtd, 0) + ' cx · ' + d.itens + ' item(ns)</div></span></td>'
+      + '<td style="font-size:11.5px">' + mud + '</td></tr>';
+  }).join('');
+  /* a última foto da carteira é a de hoje; se o pedido não está nela, saiu */
+  const ult = D[D.length - 1];
+  let fim = '';
+  try {
+    const hojeCart = (_cart196 && _cart196.foto) ? String(_cart196.foto).slice(0, 10) : hojeISO();
+    if (ult.dia < hojeCart) fim = '<tr style="opacity:.75"><td class="nome" style="font-size:12px">depois de ' + fmtData(ult.dia) + '</td>'
+      + '<td><span class="cel neutra">—</span></td><td><span class="cel cel-tot">0 kg</span></td>'
+      + '<td style="font-size:11.5px"><b style="color:#1F7A46">saiu da carteira</b> · faturado</td></tr>';
+  } catch (_) { }
+  return '<div style="margin-top:11px"><div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">Linha do tempo na carteira</div>'
+    + tabSimples(['Foto', 'Entrega', 'Pendente', 'O que mudou'], linhas + fim)
+    + '<p class="desc" style="font-size:11px;margin-top:5px">A carteira começou a ser fotografada em <b>' + fmtData(fotos[0]) + '</b>. '
+    + 'O que aconteceu com este pedido antes disso não está no app — só a partir daí dá para ver a evolução.</p></div>';
+}
 async function detPedidoFila(num) {
   const n = _soNum(num);
   const L = (_progDados || []).filter(r => _soNum(r.pedido) === n)
@@ -28099,6 +28152,7 @@ async function detPedidoFila(num) {
         '<p class="idet-desc">fora da fila e da carteira de hoje · esteve na carteira de <b>' + fmtData(fotos[0]) + '</b> até <b>' + fmtData(fotos[fotos.length - 1]) + '</b> (' + fotos.length + ' fotos)</p>'
         + (sumiuDepois ? '<div style="background:#F2F7F4;border-left:4px solid #1F7A46;border-radius:9px;padding:7px 10px;margin-bottom:8px;font-size:12px">Saiu da carteira depois de ' + fmtData(String(ult.dia_foto).slice(0, 10)) + ' — o normal é ter sido <b>faturado/entregue</b>' + (ult.entrega ? ' (entrega prevista: ' + fmtData(String(ult.entrega).slice(0, 10)) + ')' : '') + '. Se o cliente diz que não recebeu, confira no ERP.</div>' : '')
         + tabSimples(['Item (última foto)', 'Entrega', 'Pendente na época'], linhas)
+        + _pedLinhaDoTempo(H, fotos)
         + '<p class="desc" style="margin-top:8px">Toque num item para ver em que máquinas ele roda e o histórico de produção.</p>');
     } catch (e) {
       abreDet('Pedido ' + n, '<p class="desc" style="color:var(--critico-s)">Erro ao consultar o histórico: ' + escapeHtml((e && e.message) || String(e)) + '</p>');
