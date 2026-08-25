@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.166.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.167.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3475,7 +3475,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.166.0';
+const APP_VER = '4.167.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28551,6 +28551,20 @@ async function _opsDoPedido(itens, num) {
   const cods = [...new Set((itens || []).map(String).filter(Boolean))];
   if (!cods.length) return;
   try {
+    /* ===== 25/08/2026 (João: "quero o histórico da OP correspondente ao pedido
+       filtrado") =====
+       O elo OP↔pedido existe, só é parcial: no histórico da fila, 939 das 2.467
+       OPs (38%) têm o número do pedido preenchido, cobrindo 636 pedidos. Quando
+       existe, é ele que manda — mostro só as OPs DESTE pedido e o resto vira
+       contexto secundário.
+       Procuro em TODAS as fotos da fila, não só na de hoje: OP encerrada some da
+       foto atual, e é justamente o histórico dela que se quer ver aqui. */
+    let opsPed = [];
+    try {
+      const { data: fp } = await sb.from('fila_producao')
+        .select('op,item_cod,pedido').ilike('pedido', String(num).split('/')[0] + '%');
+      opsPed = [...new Set((fp || []).map(x => String(x.op)))];
+    } catch (_) { }
     let L = [];
     for (let ini = 0; ini < 8000; ini += 1000) {
       const { data, error } = await sb.from('producao')
@@ -28572,23 +28586,39 @@ async function _opsDoPedido(itens, num) {
     });
     const porItem = {};
     Object.values(ops).forEach(o => { (porItem[o.item] = porItem[o.item] || []).push(o); });
+    const doPedido = Object.values(ops).filter(o => opsPed.includes(o.op));
     const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
-    let h = '<div style="margin-top:12px"><div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">Ordens de produção destes itens</div>';
+    const linhaOP = (o, destaque) => {
+      const fila = naFila.has(o.op);
+      return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-size:11.5px;border-bottom:1px solid var(--linha)'
+        + (destaque ? ';background:#F2F7F4' : '') + '">'
+        + '<span style="flex:0 0 62px;font-weight:700;cursor:pointer;color:var(--navy)" onclick="detOP(\'' + o.op + '\',\'' + [...o.maq][0] + '\')">OP ' + o.op + '</span>'
+        + '<span style="flex:0 0 96px;color:var(--fraco);font-size:10.5px">' + fmtData(o.de) + (o.ate !== o.de ? ' → ' + fmtData(o.ate) : '') + '</span>'
+        + '<span style="flex:0 0 46px;font-size:10.5px">' + escapeHtml([...o.maq].join(',')) + '</span>'
+        + '<span style="flex:1;text-align:right"><b>' + kg(o.kg) + '</b><span style="color:var(--fraco)"> · ' + fmt(o.qtd, 0) + ' ' + escapeHtml(String(o.un || '')) + '</span>'
+        + (fila ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">NA FILA</span>' : '') + '</span></div>';
+    };
+    let h = '<div style="margin-top:12px">';
+    if (doPedido.length) {
+      h += '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">'
+        + 'Ordens deste pedido <span style="color:#1F7A46">· ' + doPedido.length + '</span></div>'
+        + doPedido.sort((a, b) => String(b.ate).localeCompare(String(a.ate))).map(o => linhaOP(o, true)).join('')
+        + '<p class="desc" style="font-size:11px;margin:5px 0 10px">OPs em que o ERP gravou o número <b>' + escapeHtml(String(num)) + '</b>.</p>';
+    } else {
+      h += '<div style="padding:8px 10px;background:#FFF4E0;border:1px solid #F0D18A;border-radius:10px;font-size:11.5px;color:#8A5A12;margin-bottom:9px">'
+        + '⚠️ <b>Nenhuma OP está amarrada a este pedido no ERP.</b> O campo pedido vem preenchido em 38% das ordens '
+        + '(939 de 2.467) — esta não é uma delas. Abaixo, o histórico dos <b>itens</b>, que é o que dá para afirmar.</div>';
+    }
+    h += '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:6px">'
+      + (doPedido.length ? 'Outras ordens destes itens' : 'Ordens de produção destes itens') + '</div>';
     cods.forEach(c => {
-      const O = (porItem[c] || []).sort((a, b) => String(b.ate).localeCompare(String(a.ate))).slice(0, 5);
+      const O = (porItem[c] || []).filter(o => !opsPed.includes(o.op))
+        .sort((a, b) => String(b.ate).localeCompare(String(a.ate))).slice(0, 5);
       if (!O.length) return;
       const desc = ((_cart196 && _cart196.pend) || []).find(p => String(p.item_cod) === c);
       h += '<div style="margin-bottom:8px"><div style="font-size:11.5px;font-weight:800;color:var(--txt-2s)"><span class="cod">' + escapeHtml(c) + '</span> '
         + escapeHtml(String((desc && desc.item_desc) || '').slice(0, 38)) + '</div>';
-      O.forEach(o => {
-        const fila = naFila.has(o.op);
-        h += '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-size:11.5px;border-bottom:1px solid var(--linha)">'
-          + '<span style="flex:0 0 62px;font-weight:700;cursor:pointer;color:var(--navy)" onclick="detOP(\'' + o.op + '\',\'' + [...o.maq][0] + '\')">OP ' + o.op + '</span>'
-          + '<span style="flex:0 0 96px;color:var(--fraco);font-size:10.5px">' + fmtData(o.de) + (o.ate !== o.de ? ' → ' + fmtData(o.ate) : '') + '</span>'
-          + '<span style="flex:0 0 46px;font-size:10.5px">' + escapeHtml([...o.maq].join(',')) + '</span>'
-          + '<span style="flex:1;text-align:right"><b>' + kg(o.kg) + '</b><span style="color:var(--fraco)"> · ' + fmt(o.qtd, 0) + ' ' + escapeHtml(String(o.un || '')) + '</span>'
-          + (fila ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">NA FILA</span>' : '') + '</span></div>';
-      });
+      O.forEach(o => { h += linhaOP(o, false); });
       h += '</div>';
     });
     h += '<p class="desc" style="font-size:11px">São as OPs que produziram <b>estes itens</b>, não necessariamente para este pedido: '
