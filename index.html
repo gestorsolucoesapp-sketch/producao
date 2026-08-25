@@ -1070,7 +1070,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.152.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.153.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3288,7 +3288,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.152.0';
+const APP_VER = '4.153.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -15213,11 +15213,32 @@ const _horasOrig = p => (p && p._totOrig != null) ? p._totOrig : ((p && p.tempo_
    mesmos. Some qualquer um dos três, refaz. */
 let _fpCache = null;
 function _fpInvalida() { _fpCache = null; }
+/* ===== ISOLAR UM MOTIVO — 25/08/2026 (pedido do João) =====
+   O filtro que existia só EXCLUÍA motivo: dava para tirar "PARADA PARA
+   INTERVALO" da conta, mas não para olhar só FALTA DE RECURSO HUMANO.
+   São perguntas diferentes: excluir é limpar ruído da conta geral; isolar é
+   investigar um motivo específico — em quais máquinas ele bate, em que turno,
+   quanto ele custa de produção.
+   Fica no MESMO funil que todo o Painel usa, então isolar reflete de uma vez no
+   Pareto, no card por máquina, no OEE, na produção perdida e no KPI de horas
+   paradas. Sem isso, cada card teria a sua própria ideia do que está filtrado. */
+let paradaSo = '';
+try { paradaSo = localStorage.getItem('rp_par_so') || ''; } catch (_) { }
+function parIsolar(motivo) {
+  const m = String(motivo || '').replace(/&#39;/g, "'");
+  paradaSo = (paradaSo === m) ? '' : m;
+  try { localStorage.setItem('rp_par_so', paradaSo); } catch (_) { }
+  _fpCache = null;
+  try { abrirFiltroParadas(); } catch (_) { }
+  clearTimeout(window._fparT);
+  window._fparT = setTimeout(() => { try { renderPainel(); } catch (_) { } }, 250);
+}
 const filtraParadas = rows => {
   const t = (typeof turnoSelAtual === 'function') ? turnoSelAtual() : '';
-  const selo = paradasExcluidas.size;
+  const selo = paradasExcluidas.size + '|' + paradaSo;
   if (_fpCache && _fpCache.src === rows && _fpCache.t === t && _fpCache.selo === selo) return _fpCache.out;
-  const base = (rows || []).filter(p => !paradasExcluidas.has(p.motivo_desc || '—'));
+  const base = (rows || []).filter(p => !paradasExcluidas.has(p.motivo_desc || '—')
+    && (!paradaSo || (p.motivo_desc || '—') === paradaSo));
   if (!t) { _fpCache = { src: rows, t, selo, out: base }; return base; }
   const out = [];
   base.forEach(p => {
@@ -15245,7 +15266,14 @@ function abrirFiltroParadas() {
   $("fparResumo").innerHTML = fparResumoHtml(motivos);
   $('fparLista').innerHTML = motivos.map(m => {
     const off = paradasExcluidas.has(m);
-    return `<label class="fpar-item ${off ? 'off' : ''}"><input type="checkbox" ${off ? '' : 'checked'} onchange="fparToggle(this, '${escapeHtml(m).replace(/'/g, '&#39;')}')"> <span>${escapeHtml(m)}</span><span class="h">${Math.round(horas[m])}h</span></label>`;
+    const esc = escapeHtml(m).replace(/'/g, '&#39;');
+    const so = paradaSo === m;
+    return `<label class="fpar-item ${off ? 'off' : ''}"><input type="checkbox" ${off ? '' : 'checked'} onchange="fparToggle(this, '${esc}')"> `
+      + `<span>${escapeHtml(m)}</span>`
+      + `<button onclick="event.preventDefault();event.stopPropagation();parIsolar('${esc}')" title="${so ? 'voltar a ver todos' : 'ver só este motivo'}" `
+      + `style="border:1.5px solid ${so ? 'var(--navy)' : 'var(--borda)'};background:${so ? 'var(--navy)' : '#fff'};color:${so ? '#fff' : 'var(--navy)'};`
+      + `border-radius:7px;font-size:11px;font-weight:800;padding:2px 9px;margin-left:6px;cursor:pointer">${so ? '✓ só este' : 'só este'}</button>`
+      + `<span class="h">${Math.round(horas[m])}h</span></label>`;
   }).join('');
   fparMotivos = motivos;
   $('fparOverlay').classList.remove('oculto');
@@ -15253,12 +15281,16 @@ function abrirFiltroParadas() {
 let fparMotivos = [], fparHoras = {};
 function fparResumoHtml(motivos) {
   const mm = motivos || fparMotivos;
+  const iso = paradaSo
+    ? `<div class="fpar-ocultas" style="background:#EAF1F8;border-color:#1D5C8A"><b>Vendo só:</b> ${escapeHtml(paradaSo)}`
+      + ` <button onclick="parIsolar('${escapeHtml(paradaSo).replace(/'/g, '&#39;')}')" style="border:none;background:transparent;color:#1D5C8A;font-weight:800;cursor:pointer">✕ ver todos</button></div>`
+    : '';
   const ocultas = mm.filter(m => paradasExcluidas.has(m));
-  if (!ocultas.length) return `<div class="fpar-ocultas nenhuma">Nenhuma parada oculta — todas contam.</div>`;
+  if (!ocultas.length) return iso + `<div class="fpar-ocultas nenhuma">Nenhuma parada oculta — todas contam.</div>`;
   const horas = fparHoras || {};
   const detalhe = ocultas.map(m => `${escapeHtml(m)}${horas[m] != null ? ` (${Math.round(horas[m])}h)` : ''}`).join(' · ');
   const totOc = ocultas.reduce((a, m) => a + (horas[m] || 0), 0);
-  return `<div class="fpar-ocultas"><b>Ocultas (${ocultas.length}${totOc ? ' · ' + fmtHoras(totOc) : ''}):</b> ${detalhe}</div>`;
+  return iso + `<div class="fpar-ocultas"><b>Ocultas (${ocultas.length}${totOc ? ' · ' + fmtHoras(totOc) : ''}):</b> ${detalhe}</div>`;
 }
 function fparToggle(cb, motivo) {
   const m = motivo.replace(/&#39;/g, "'");
@@ -15271,7 +15303,9 @@ function fparToggle(cb, motivo) {
 }
 function fparTodos(marcar) {
   paradasExcluidas = new Set();
-  try { localStorage.setItem('rp_par_excl', '[]'); } catch (_) {}
+  paradaSo = '';
+  try { localStorage.setItem('rp_par_excl', '[]'); localStorage.setItem('rp_par_so', ''); } catch (_) {}
+  _fpCache = null;
   abrirFiltroParadas();
 }
 function fecharFiltroParadas() {
@@ -15282,8 +15316,9 @@ function fecharFiltroParadas() {
 function atualizarBadgeFiltroPar() {
   const b = $('btnFiltroPar'); if (!b) return;
   const n = paradasExcluidas.size;
-  const t = b.querySelector('span'); if (t) t.textContent = n ? `Paradas (${n})` : 'Paradas';
-  b.classList.toggle('ativo', n > 0);
+  const t = b.querySelector('span');
+  if (t) t.textContent = paradaSo ? 'Paradas · só 1 motivo' : (n ? `Paradas (${n})` : 'Paradas');
+  b.classList.toggle('ativo', n > 0 || !!paradaSo);
 }
 
 /* ================= ANÁLISE (622) ================= */
