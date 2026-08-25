@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.162.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.163.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -2128,6 +2128,11 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        o ERP mudar a largura das colunas. Fica DEPOIS do teste de Propostas, que
        é a outra emissão da mesma rotina e precisa continuar mandando. */
     if (/ROTINA:\s*RVEN\s*002/.test(cab)) return 'RVEN002';
+    /* 25/08/2026 (João) — RVEN304 "Histórico do Fluxo de Venda do Documento".
+       É o lead time comercial: cada etapa por onde o pedido passou, quanto tempo
+       ficou parado nela e quem repassou para quem. Duas marcas, como as outras:
+       a linha ROTINA e o título. O PDF do João tem 188 páginas. */
+    if (/ROTINA:\s*RVEN\s*304/.test(cab) || /Hist[óo]rico do Fluxo de Venda do Documento/i.test(cab)) return 'RVEN304';
     // 624 filtrado não tem cabeçalho: identifica pelo header de colunas
     if (linhas.some(l => /^Data Ordem Item\/Vers/.test(l.texto))) return '624';
     /* 22/08/2026 (João tirou o cabeçalho e o logo para o PDF encolher).
@@ -2691,9 +2696,79 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     '196': 'Saldos de Estoque × Pedidos (carteira em aberto)',
     /* as duas saem do RVEN002; o que muda é o parâmetro de emissão */
     'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)',
-    'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)'
+    'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)',
+    'RVEN304': 'Histórico do Fluxo de Venda do Documento (tempo do pedido em cada etapa)'
   };
 
+
+  /* ===== RVEN304 — FLUXO DO PEDIDO (25/08/2026, pedido do João) =====
+     Desenho do relatório:
+       Documento: 227709   Pedido Vendedor: P: 31/7 - 71946   Cliente: 35176 - LATICINIOS...
+       1  WEB - TAMPAS COMPRESSÃO - COMERCIAL  03/08/2026 08:32  0m       FULANO  BELTRANO
+       2  WEB - TAMPAS COMPRESSÃO - PCP        03/08/2026 08:32  6d 23h 10m  ...
+       Tempo Total do Pedido: 7d 1h 33m
+
+     Três armadilhas que os PDFs reais mostram e o parser cobre:
+     · A ETAPA quebra em duas linhas quando o nome é longo ("WEB - TAMPAS
+       COMPRESSÃO -" numa linha e "COMERCIAL" na seguinte). Junto antes de casar.
+     · "Pedido Vendedor:" às vezes vem VAZIO (227708, 227711) — o campo é
+       opcional, e exigir conteúdo ali faria o pedido inteiro ser descartado.
+     · Os dois usuários não têm separador: "FERNANDA CREMASCO SCILIANO TATIANE
+       LARA CANALLE" é um campo só no texto. Não tento adivinhar onde um termina
+       e o outro começa — guardo o bloco cru em usuario_inclusao e deixo
+       usuario_repasse nulo quando não dá para separar com segurança. Inventar
+       um corte aqui produziria nome de gente que não existe.
+     O tempo da linha é a PERMANÊNCIA NAQUELA ETAPA, não o acumulado. */
+  function _v304dur(t) {
+    if (!t) return null;
+    const d = /(\d+)\s*d/.exec(t), h = /(\d+)\s*h/.exec(t), m = /(\d+)\s*m/.exec(t);
+    if (!d && !h && !m) return null;
+    return (d ? +d[1] * 1440 : 0) + (h ? +h[1] * 60 : 0) + (m ? +m[1] : 0);
+  }
+  function parseRVEN304(linhas) {
+    const RX_DOC = /^Documento:\s*(\d+)\s*(?:Pedido Vendedor:\s*(.*?))?\s*Cliente:\s*(\d+)\s*-\s*(.+?)\s*$/;
+    const RX_TOT = /^Tempo Total do Pedido:\s*(.+?)\s*$/;
+    const RX_ETP = /^(\d{1,3})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})\s+((?:\d+\s*d\s*)?(?:\d+\s*h\s*)?\d+\s*m)\s*(.*)$/;
+    const out = []; let doc = null, ini = 0;
+    const txt = linhas.map(l => String(l.texto || '').trim());
+    for (let i = 0; i < txt.length; i++) {
+      let L = txt[i];
+      if (!L) continue;
+      const md = RX_DOC.exec(L);
+      if (md) {
+        doc = { documento: md[1], pedido_vendedor: (md[2] || '').trim() || null,
+                cliente_cod: md[3], cliente_nome: md[4].trim() };
+        ini = out.length;
+        continue;
+      }
+      const mt = RX_TOT.exec(L);
+      if (mt) { const tv = _v304dur(mt[1]); for (let k = ini; k < out.length; k++) out[k].total_min = tv; continue; }
+      if (!doc) continue;
+      /* etapa quebrada em duas linhas: junta com a próxima antes de desistir */
+      let me = RX_ETP.exec(L);
+      if (!me && /^\d{1,3}\s+\S/.test(L) && txt[i + 1] && !RX_DOC.test(txt[i + 1]) && !RX_TOT.test(txt[i + 1])) {
+        const j = L + ' ' + txt[i + 1];
+        me = RX_ETP.exec(j);
+        if (me) i++;
+      }
+      if (!me) continue;
+      const etapa = me[2].replace(/\s+/g, ' ').trim();
+      const corte = etapa.lastIndexOf(' - ');
+      const [dd, mm, aa] = me[3].split('/');
+      out.push({
+        documento: doc.documento, pedido_vendedor: doc.pedido_vendedor,
+        cliente_cod: doc.cliente_cod, cliente_nome: doc.cliente_nome,
+        seq: +me[1], etapa: etapa,
+        linha: corte > 0 ? etapa.slice(0, corte).trim() : null,
+        setor: corte > 0 ? etapa.slice(corte + 3).trim() : etapa,
+        data_inclusao: aa + '-' + mm + '-' + dd + 'T' + me[4] + ':00',
+        tempo_min: _v304dur(me[5]),
+        usuario_inclusao: (me[6] || '').trim().slice(0, 120) || null,
+        usuario_repasse: null, ocorrencia: null, total_min: null
+      });
+    }
+    return out;
+  }
 
   // ---------- RPCP264: fila de producao por recurso ----------
   // Um PDF por maquina. Cabecalho "Recurso: 501 - EXTRUSORA RULLI 01".
@@ -3318,6 +3393,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       case '196': registros = parse196(linhas, periodo); break;
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
       case 'RVEN002': registros = parseRVEN002(linhas, periodo); break;
+      case 'RVEN304': registros = parseRVEN304(linhas); break;
     }
     /* PDF DE UM DIA SO, SEM CABECALHO. O RPCP624 gerado dia a dia sai sem o bloco
        "Período:" — entao acharPeriodo devolve vazio e nao da para saber o dia pelo
@@ -3375,7 +3451,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.162.0';
+const APP_VER = '4.163.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25104,6 +25180,11 @@ const MAPA = {
      upsert do PostgREST so atualiza as colunas enviadas, omiti-las faz o dado do
      264 do mesmo dia SOBREVIVER a importacao do 339. */
   '339': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, pedido: r.pedido, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, fonte: '339' }) },
+  'RVEN304': { tabela: 'fluxo_pedido', conflito: 'documento,seq', linha: r => ({
+    documento: r.documento, pedido_vendedor: r.pedido_vendedor, cliente_cod: r.cliente_cod,
+    cliente_nome: r.cliente_nome, seq: r.seq, etapa: r.etapa, linha: r.linha, setor: r.setor,
+    data_inclusao: r.data_inclusao, tempo_min: r.tempo_min, usuario_inclusao: r.usuario_inclusao,
+    usuario_repasse: r.usuario_repasse, ocorrencia: r.ocorrencia, total_min: r.total_min }) },
   '241': { tabela: 'estoque_deposito', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, deposito_cod: r.deposito_cod, deposito_nome: r.deposito_nome, item_cod: r.item_cod, item_versao: r.item_versao || '', item_desc: r.item_desc, unidade: r.unidade, quantidade: r.quantidade, peso: r.peso, unitario: r.unitario, valor: r.valor, categoria: r.categoria }) },
   '646': { tabela: 'consumo', linha: r => ({ dia: r.dia, data: r.data, hora: r.hora, op: r.op, componente_cod: r.componente_cod, componente_versao: r.componente_versao, componente_desc: r.componente_desc, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, quantidade: r.quantidade, unidade: r.unidade, lote: r.lote, peso: r.peso }) }
 };
