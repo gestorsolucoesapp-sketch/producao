@@ -1145,7 +1145,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.155.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.156.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3375,7 +3375,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.155.1';
+const APP_VER = '4.156.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -40537,8 +40537,11 @@ function detSituacao(modo) {
   if (modo === 'ferias') {
     tit = S.ferias.length + ' de férias hoje';
     corpo = S.ferias.sort((a, b) => (a.fim || '').localeCompare(b.fim || '')).map(f => {
-      const faltam = f.fim ? Math.round((new Date(f.fim + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5) + 1 : null;
-      return linha(f.matricula, ferFmt(f.inicio) + ' → ' + ferFmt(f.fim), faltam != null ? 'volta em ' + faltam + 'd' : 'férias', '#2563eb');
+      /* conta até o dia em que ela REALMENTE volta (pulando o fim de semana) */
+      const _r = ferRetorno(f.fim);
+      const faltam = _r ? Math.round((new Date(_r + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5) : null;
+      return linha(f.matricula, ferFmt(f.inicio) + ' → ' + ferFmt(f.fim),
+        faltam != null ? (faltam <= 0 ? 'volta hoje' : faltam === 1 ? 'volta amanhã' : 'volta em ' + faltam + 'd') : 'férias', '#2563eb');
     }).join('');
   } else if (modo === 'faltas') {
     tit = S.faltas.length + ' com falta ou atestado hoje';
@@ -42314,7 +42317,8 @@ function ferDetMes(mes) {
     h += '<div onclick="orgFechaModal();ferEditar(' + f.id + ')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--leve-2s)">' +
       (nv ? '<span style="font-size:9px;font-weight:800;color:' + corNv + ';border:1px solid ' + corNv + '55;border-radius:6px;padding:1px 5px;flex:none">' + nv + '</span>' : '') +
       '<b style="flex:1;min-width:0;font-size:13px">' + escapeHtml(orgNome(f.matricula) || f.matricula) + '</b>' +
-      '<span style="font-size:11.5px;color:var(--fraco)">' + ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd</span></div>';
+      '<span style="font-size:11.5px;color:var(--fraco)">' + ferFmt(f.inicio) + ' → ' + ferFmt(f.fim) + ' · ' + (f.dias || '?') + 'd'
+      + (f.fim ? '<br><span style="color:var(--azul-marca);font-weight:700">volta ' + ferRetornoTxt(f.fim) + '</span>' : '') + '</span></div>';
   });
   h += '</div>';
   orgModal(MESN[mes - 1] + ' ' + ferAno + ' · ' + escapeHtml(orgSetorLabel()), h);
@@ -42639,6 +42643,39 @@ function ferForm(f) {
   ['ferMat', 'ferIni', 'ferDias'].forEach(id => { const e = $(id); if (e) e.addEventListener('change', ferChecaConflito); });
 }
 
+/* ===== RETORNO DE FÉRIAS — 25/08/2026 (regra do João: "quando ela sai de
+   férias, o retorno dela no sábado sempre é segunda-feira") =====
+   Duas coisas erradas de uma vez, e a segunda escondia a primeira:
+
+   1) O "Volta em" mostrava o campo `fim`, que é o ÚLTIMO DIA DE FÉRIAS, não o
+      dia da volta. Conferi nos 106 períodos gravados: em 106 deles
+      fim - inicio + 1 = dias, ou seja, `fim` é sempre o último dia gozado.
+      A tela errava um dia em todo período.
+   2) Faltava a regra do sábado. E ela pega quase tudo: em 66 dos 106 períodos
+      o último dia cai no SÁBADO, então a volta calculada dava DOMINGO — dia em
+      que a fábrica não roda. Por isso o João via "volta no sábado" e sabia, de
+      cabeça, que na prática era segunda.
+
+   Agora: retorno = último dia + 1; se cair em sábado ou domingo, anda para
+   segunda. Isto é CÁLCULO DE EXIBIÇÃO — o `fim` gravado continua sendo o último
+   dia gozado, e `dias` continua sendo o que o RH concedeu. Não mexo em dado
+   guardado para consertar um rótulo. */
+function ferRetorno(fimISO) {
+  if (!fimISO) return null;
+  const d = new Date(String(fimISO).slice(0, 10) + 'T12:00:00');
+  d.setDate(d.getDate() + 1);
+  const dow = d.getDay();                    // 0 dom · 6 sáb
+  if (dow === 6) d.setDate(d.getDate() + 2); // sábado  -> segunda
+  else if (dow === 0) d.setDate(d.getDate() + 1); // domingo -> segunda
+  return d.toISOString().slice(0, 10);
+}
+const _FER_DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+function ferRetornoTxt(fimISO) {
+  const r = ferRetorno(fimISO);
+  if (!r) return '—';
+  const d = new Date(r + 'T12:00:00');
+  return _FER_DIAS[d.getDay()] + ', ' + r.split('-').reverse().join('/');
+}
 function ferChecaConflito() {
   const av = $('ferAviso'); if (!av) return;
   const mat = $('ferMat').value, ini = $('ferIni').value, dias = parseInt($('ferDias').value, 10);
@@ -42650,7 +42687,10 @@ function ferChecaConflito() {
   const ops = junto.filter(f => (f.nivel || '').toUpperCase() === 'OP');
   // o operador tem posto na escala?
   const posto = orgDados.aloc.filter(x => x.matricula === mat && orgEhSetor(x.setor) && x.funcao === 'operador' && x.maquina_codigo);
-  let h = '<div style="font-size:12px;color:var(--txt-2s);margin-top:4px">Volta em <b>' + fimISO.split('-').reverse().join('/') + '</b></div>';
+  const _ret = ferRetorno(fimISO), _puxou = _ret && _ret !== (() => { const d = new Date(fimISO + 'T12:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+  let h = '<div style="font-size:12px;color:var(--txt-2s);margin-top:4px">Último dia <b>' + fimISO.split('-').reverse().join('/') + '</b>'
+    + ' · volta <b>' + ferRetornoTxt(fimISO) + '</b>'
+    + (_puxou ? '<span style="color:var(--fraco)"> (a volta cairia no fim de semana)</span>' : '') + '</div>';
   if (posto.length) h += '<div style="margin-top:6px;padding:8px 10px;background:var(--crit-bg);border:1px solid var(--crit-br);border-radius:10px;font-size:12px;color:var(--critico-2s)">⚠️ É operador de <b>' + posto.map(x => x.maquina_codigo).join(', ') + '</b> (' + posto[0].turno + ') — precisa de substituto</div>';
   if (junto.length) h += '<div style="margin-top:6px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:12px;color:var(--laranja-5)">' +
     junto.length + ' pessoa(s) de férias no mesmo intervalo' + (ops.length ? ', sendo <b>' + ops.length + ' operador(es)</b>' : '') + ':<br>' +
