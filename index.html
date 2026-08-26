@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.213.0';
+const APP_VER = '4.214.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35241,6 +35241,36 @@ const flxEhFabrica = s => FLX_FABRICA.includes(flxNome(s));
    está medindo isso. */
 let _motCache = null, _motSel = '';
 function motSel(m) { _motSel = (_motSel === m ? '' : m); fluxoAnalise(); }
+/* ===== 26/08/2026 (João: "quero clicar no gráfico e já abrir a lista") =====
+   O toque na barra só MARCAVA a linha; para ver os pedidos era preciso um
+   SEGUNDO toque no "▸ ver os N pedidos" que aparecia embaixo. No celular isso
+   é um passo escondido — a barra parece o botão, mas não era ela que abria.
+   Agora um toque faz as duas coisas: marca (o resumo com o % continua por
+   baixo, para quando o modal fechar) e abre a lista.
+   Sem toggle aqui de propósito: `motSel` alterna, e alternar no mesmo gesto que
+   abre a lista deixaria o filtro desmarcado com o modal aberto. Quem quer
+   desmarcar usa o "limpar filtro". */
+function motAbrir(m) { _motSel = m; fluxoAnalise(); motPedidos(m); }
+/* ===== O CARD ESTAVA CONTANDO 2/3 DOS PEDIDOS — 26/08/2026 =====
+   Achado ao conferir a lista contra o banco: o print do João dizia "COMERCIAL:
+   293 pedido(s), 204 passaram de 3 dias" e o banco dizia 552 e 263. Não era
+   dado novo: a `v_fluxo_motivo` tem 1.572 linhas e o PostgREST devolve no
+   MÁXIMO 1.000, ignorando qualquer limite maior — a leitura vinha truncada e o
+   número truncado é plausível, então passava despercebido. Mesmíssima pegadinha
+   que já tinha mordido a Edge Function do assistente.
+   Agora pagina por .range() até acabar. Ordeno por `documento` porque sem uma
+   ordem estável a paginação pode repetir ou pular linha entre as páginas. */
+async function _leTudoFlx(mkQuery) {
+  const P = 1000, out = [];
+  for (let i = 0; i < 40; i++) {
+    const { data, error } = await mkQuery().range(i * P, i * P + P - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    for (const x of data) out.push(x);
+    if (data.length < P) break;
+  }
+  return out;
+}
 /* ===== 25/08/2026 (João: "permita clicar e ver quais pedidos") =====
    O card dizia "214 pedidos passaram de 3 dias no COMERCIAL" e parava aí — o
    número acusava, mas não dava para agir. Agora abre a lista, do mais demorado
@@ -35251,10 +35281,9 @@ function motSel(m) { _motSel = (_motSel === m ? '' : m); fluxoAnalise(); }
 async function motPedidos(motivo) {
   try {
     abreDet('🧭 ' + motivo, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
-    const { data, error } = await sb.from('v_fluxo_motivo')
+    const data = await _leTudoFlx(() => sb.from('v_fluxo_motivo')
       .select('documento,motivo,min_setor,total_etapas,pct')
-      .eq('motivo', motivo).order('min_setor', { ascending: false }).limit(300);
-    if (error) throw error;
+      .eq('motivo', motivo).order('min_setor', { ascending: false }));
     const L = (data || []).filter(r => (+r.total_etapas || 0) >= 3 * 1440);
     if (!L.length) { abreDet('🧭 ' + motivo, '<p class="vazio-painel">Nenhum pedido acima de 3 dias neste motivo.</p>'); return; }
     const hm = m => { const a = Math.round(+m || 0), d = Math.floor(a / 1440), h = Math.floor((a % 1440) / 60);
@@ -35267,8 +35296,13 @@ async function motPedidos(motivo) {
       + '<div style="font-size:10.5px;color:var(--fraco-2)">total do pedido ' + hm(r.total_etapas) + '</div></td>'
       + '<td style="text-align:right"><b>' + hm(r.min_setor) + '</b>'
       + '<div style="font-size:10px;color:var(--fraco)">' + (r.pct || 0) + '% do total</div></td></tr>').join('');
+    /* o % e o total vinham só do resumo do card; agora que a barra abre direto
+       o modal, eles precisam viajar junto — senão o número que motivou o clique
+       fica para trás na tela de baixo. */
+    const _res = (_motCache || []).find(x => x.motivo === motivo);
     abreDet('🧭 ' + motivo + ' · ' + L.length + ' pedido(s)',
-      '<p class="idet-desc">Pedidos que passaram de <b>3 dias</b> e cujo maior tempo foi em <b>' + escapeHtml(motivo) + '</b>, do mais demorado para o menos.</p>'
+      '<p class="idet-desc">Pedidos que passaram de <b>3 dias</b> e cujo maior tempo foi em <b>' + escapeHtml(motivo) + '</b>, do mais demorado para o menos.'
+      + (_res ? ' Neles, <b>' + escapeHtml(motivo) + '</b> sozinho respondeu por <b>' + _res.pct + '%</b> do tempo total do pedido (' + _res.pedidos + ' pedido(s) no motivo).' : '') + '</p>'
       + tabSimples(['Pedido · cliente', 'Tempo em ' + motivo], linhas)
       + (L.length > 200 ? '<p class="desc" style="font-size:11px">Mostrando os 200 primeiros de ' + L.length + '.</p>' : ''));
   } catch (e) {
@@ -35282,7 +35316,7 @@ function _cardMotivos() {
   const dd = m => (m / 1440).toFixed(1).replace('.', ',') + 'd';
   const linhas = D.map(x => {
     const on = _motSel === x.motivo;
-    return '<div onclick="motSel(\'' + escapeHtml(x.motivo).replace(/'/g, "&#39;") + '\')" '
+    return '<div onclick="motAbrir(\'' + escapeHtml(x.motivo).replace(/'/g, "&#39;") + '\')" '
       + 'style="display:flex;gap:8px;align-items:center;padding:5px 6px;font-size:12px;cursor:pointer;border-radius:8px;'
       + (on ? 'background:var(--leve);outline:1.5px solid var(--navy)' : '') + '">'
       + '<span style="flex:0 0 118px;font-weight:' + (on ? '800' : '600') + '">' + escapeHtml(x.motivo) + '</span>'
@@ -35290,13 +35324,14 @@ function _cardMotivos() {
       + '<span style="display:block;height:100%;width:' + Math.round(x.lentos / mx * 100) + '%;background:'
       + (x.mediana_min >= 10 * 1440 ? 'var(--critico-s)' : x.mediana_min >= 3 * 1440 ? '#E8862B' : 'var(--azul-marca)') + '"></span></span>'
       + '<span style="flex:0 0 62px;text-align:right;font-weight:800">' + x.lentos + '</span>'
-      + '<span style="flex:0 0 58px;text-align:right;font-size:11px;color:var(--fraco)">' + dd(x.mediana_min) + '</span></div>';
+      + '<span style="flex:0 0 58px;text-align:right;font-size:11px;color:var(--fraco)">' + dd(x.mediana_min) + '</span>'
+      + '<span style="flex:0 0 9px;text-align:right;font-weight:800;color:var(--azul-marca)">\u203a</span></div>';
   }).join('');
   const sel = D.find(x => x.motivo === _motSel);
   return '<div class="card"><div class="titulo-sec">🧭 Por que o pedido demora</div>'
-    + '<p class="desc" style="margin-bottom:7px">Cada pedido é atribuído ao setor onde <b>mais tempo ficou</b>. A barra conta os que passaram de <b>3 dias</b> no total; ao lado, a mediana de duração desses pedidos. Toque para filtrar.</p>'
+    + '<p class="desc" style="margin-bottom:7px">Cada pedido é atribuído ao setor onde <b>mais tempo ficou</b>. A barra conta os que passaram de <b>3 dias</b> no total; ao lado, a mediana de duração desses pedidos. Toque num motivo para ver os pedidos.</p>'
     + '<div style="display:flex;gap:8px;padding:0 6px 3px;font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">'
-    + '<span style="flex:0 0 118px">Motivo</span><span style="flex:1"></span><span style="flex:0 0 62px;text-align:right">+3 dias</span><span style="flex:0 0 58px;text-align:right">mediana</span></div>'
+    + '<span style="flex:0 0 118px">Motivo</span><span style="flex:1"></span><span style="flex:0 0 62px;text-align:right">+3 dias</span><span style="flex:0 0 58px;text-align:right">mediana</span><span style="flex:0 0 9px"></span></div>'
     + linhas
     + (sel ? '<div style="margin-top:8px;padding:8px 10px;background:var(--leve);border-radius:9px;font-size:11.5px">'
         + '<b>' + escapeHtml(sel.motivo) + '</b>: ' + sel.pedidos + ' pedido(s), ' + sel.lentos + ' passaram de 3 dias. '
@@ -35314,10 +35349,10 @@ async function fluxoAnalise(forcar) {
       const [a, c, m] = await Promise.all([
         sb.from('v_fluxo_setor').select('*').order('total_min', { ascending: false }),
         sb.from('v_fluxo_cobertura').select('*').limit(1),
-        sb.from('v_fluxo_motivo').select('motivo,min_setor,total_etapas,pct,demorou')
+        _leTudoFlx(() => sb.from('v_fluxo_motivo').select('documento,motivo,min_setor,total_etapas,pct,demorou').order('documento'))
       ]);
       const mm = {};
-      (m.data || []).forEach(r => {
+      (m || []).forEach(r => {
         const k = String(r.motivo);
         const o = (mm[k] = mm[k] || { motivo: k, pedidos: 0, lentos: 0, pcts: [], durs: [] });
         o.pedidos++; if (r.demorou) { o.lentos++; o.durs.push(+r.total_etapas || 0); }
