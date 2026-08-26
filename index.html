@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.211.0';
+const APP_VER = '4.212.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23390,6 +23390,61 @@ function bocaBadge(cod) {
    Medido em 26/08 sobre 01→25/08 (683 linhas de MATERIAL RUIM com OP): 664 acham
    origem ÚNICA, ZERO ficam ambíguas e 19 ficam sem origem (OP que só rodou na
    própria máquina). Quando houver mais de um candidato o peso é rateado. */
+/* ===== PESO MÉDIO DA PEÇA (26/08/2026) =====
+   O 622 dá peso e quantidade, mas a quantidade vem em CAIXA (14.379 linhas do
+   mês), MIL, MT ou KG — nunca em peça. Quantas peças cabem na caixa só existe
+   escrito na DESCRIÇÃO do item, em formatos que brigam entre si:
+     "...GUARANA NATURAL 290ML - 1120 UNID"          → 1120
+     "COLHER ... (20 X 50) 1000 UNID - 77520"        → 1000  (77520 é código)
+     "...PACOCA JOAO E MARIA 20 UNID - 600"          →  600  (20 é o pacote!)
+     "SOBRE TAMPA ... PARA KIT CX 1296 (13mm)"       → 1296
+     "BANDEJA NATURAL 900ML C/ 3 DIVISORIAS 15X12"   →  180  (grade 15×12)
+   Repare que "N UNID" ora é a caixa (1120) ora o pacote dentro dela (20): não
+   existe regra de texto que acerte os dois. Por isso NÃO escolho pelo texto —
+   gero todos os candidatos e fico com o primeiro que produz uma GRAMATURA
+   PLAUSÍVEL para aquela linha. O peso é o juiz, não a descrição.
+   Medido em 26/08 nos 780 itens em CX desde 01/07: a gramatura real vive entre
+   1,06 g e 47 g, então a faixa aceita (0,5–120 g) tem folga larga dos dois
+   lados e ainda assim mata o "20 UNID" (daria 300 g).
+   Dimensões entre parênteses ("(101X157)" = boca × altura em mm) saem antes,
+   senão viravam grade de 15.857 peças. MIL é direto: kg por milheiro = grama
+   por peça. MT (bobina) e KG não têm peça. */
+const G_PECA_MIN = 0.5, G_PECA_MAX = 120;
+const _PPC = {};   // cache: descrição → candidatos de peças por caixa
+function _candPecasCaixa(desc) {
+  const d0 = String(desc || '');
+  if (!d0) return [];
+  if (_PPC[d0] !== undefined) return _PPC[d0];
+  const out = [];
+  try {
+    const lp = d0.toUpperCase().replace(/\(\s*\d+[.,]?\d*\s*X\s*\d+[.,]?\d*\s*\)/g, ' ');
+    const todos = (re, f) => { let m; const r = new RegExp(re, 'g'), v = []; while ((m = r.exec(lp)) !== null) v.push(f(m)); return v.reverse(); };
+    // ordem de preferência; duplicados e lixo saem depois
+    [].concat(
+      todos('(\\d{2,5})\\s*UNID', m => +m[1]),
+      todos('CX\\s*(\\d{2,5})', m => +m[1]),
+      todos('(\\d{1,3})\\s*X\\s*(\\d{1,3})', m => (+m[1]) * (+m[2])),
+      todos('(\\d{2,5})', m => +m[1])
+    ).forEach(n => { if (n > 0 && out.indexOf(n) < 0) out.push(n); });
+  } catch (_) { }
+  _PPC[d0] = out;
+  return out;
+}
+// peças de UMA linha de produção — null quando não dá para saber com confiança
+function _pecasLinha(r) {
+  const u = String(r.unidade || '').toUpperCase();
+  const q = +r.quantidade || 0, kg = +r.peso || 0;
+  if (!q) return null;
+  if (u === 'MIL') return q * 1000;
+  if (u !== 'CX') return null;   // MT (bobina) e KG não têm peça
+  if (!(kg > 0)) return null;
+  const cands = _candPecasCaixa(r.item_desc);
+  for (let i = 0; i < cands.length; i++) {
+    const g = kg / (q * cands[i]) * 1000;
+    if (g >= G_PECA_MIN && g <= G_PECA_MAX) return q * cands[i];
+  }
+  return null;   // nenhum candidato dá gramatura de peça plástica — melhor calar
+}
 function _perdaEhRecebida(r) {
   const d = String(r.tipo_perda_desc || '');
   return /^MATERIAL RUIM/i.test(d) || /^BOBINA/i.test(d) || /^CORTE DE BOBINA/i.test(d)
@@ -23616,7 +23671,7 @@ async function detProdMaqTurno(cod, bloco) {
     + (rows.length > 120 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando 120 de ${rows.length} apontamentos</p>` : ''));
 }
 
-function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes, clickCel, clickNome }) {
+function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes, clickCel, clickNome, pesoPeca }) {
   const cel = {}, nome = {};
   const ini = c => { c = String(c); if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
   if (incluirCods) incluirCods.forEach(c => { ini(c); if (nomes && nomes[c]) nome[String(c)] = nomes[c]; });
@@ -23624,7 +23679,7 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
      (MATERIAL RUIM SEM IMPRESSAO da 708 vira culpa da Termoformagem), a maquina
      de origem aparecia na tabela do setor culpado sem nenhuma pista. Guardamos
      o setor de origem para marcar a linha. */
-  const origem = {}, matRec = {};
+  const origem = {}, matRec = {}, pp = {};
   rows.forEach(r => {
     const c = String(r.recurso_cod);
     ini(c); cel[c][blocoTurno(r.turno, r.dia)] += (valFn(r) || 0);
@@ -23636,6 +23691,10 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
        a seta na frente da maquina; quem quiser saber de QUEM veio toca na
        celula e ve o rastreio pela OP (v4.210.0). */
     try { if (typeof _perdaEhRecebida === 'function' && _perdaEhRecebida(r)) matRec[c] = (matRec[c] || 0) + (+r.peso || 0); } catch (_) { }
+    /* peso medio da peca: so somo o kg das linhas em que SEI quantas pecas sao.
+       Somar o kg inteiro e dividir so pelas pecas conhecidas inflaria a gramatura. */
+    if (pesoPeca) { try { const n = _pecasLinha(r); const kgL = +r.peso || 0;
+      if (n && n > 0 && kgL > 0) { const o = (pp[c] = pp[c] || { kg: 0, pc: 0 }); o.kg += kgL; o.pc += n; } } catch (_) { } }
   });
   let linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; });
   if (!incluirCods) linhas = linhas.filter(l => l.tot > 0);
@@ -23665,6 +23724,16 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
   const selo = c => origem[c]
     ? `<span title="refugo apontado na ${escapeHtml(origem[c])} e atribuído a este setor pela regra de tipo de perda" style="display:inline-block;background:#EEF3FA;border:1px solid #BBCBE0;color:#33506E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-right:5px;white-space:nowrap">↩ ${escapeHtml(origem[c])}</span>`
     : '';
+  /* 26/08/2026: gramatura media ao lado da lupa, a pedido do Joao. Cinza e
+     discreta — e' referencia, nao KPI. Cada linha ja passou pelo filtro de
+     plausibilidade dentro de _pecasLinha, entao aqui so escondo quando NENHUMA
+     linha da maquina teve peca reconhecida (bobina, por exemplo). */
+  const seloPeca = c => {
+    const o = pp[c]; if (!o || !(o.pc > 0) || !(o.kg > 0)) return '';
+    const g = o.kg / o.pc * 1000;
+    const txt = g >= 100 ? Math.round(g).toLocaleString('pt-BR') : g.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return `<span title="peso médio da peça no recorte: ${fmtKg(o.kg)} \u00f7 ${Math.round(o.pc).toLocaleString('pt-BR')} peças. As peças por caixa saem da descrição do item e são conferidas pelo peso." style="display:inline-block;background:#F1F3F6;border:1px solid #D8DEE7;color:#55606F;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-left:5px;white-space:nowrap">\u2696\ufe0f ${txt} g</span>`;
+  };
   const setaRec = c => (matRec[c] > 0.05)
     ? `<span title="perda recebida de outro setor: ${fmtKg(matRec[c])} desta máquina são material que chegou ruim (material ruim / bobina / pigmento). Toque na célula do turno para ver de qual máquina veio, rastreado pela OP." style="display:inline-block;background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-right:5px;white-space:nowrap">↗ ${fmtKg(matRec[c])}</span>`
     : '';
@@ -23683,7 +23752,7 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
   };
   const rows2 = linhas.map(l => {
     const cn = cliNome(l.cod);
-    return `<tr><td class="nome"${cn ? ` onclick="${cn}" style="cursor:pointer"` : ''}>${selo(l.cod)}${setaRec(l.cod)}<span class="cod">${escapeHtml(l.cod)}</span> <span${cn ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${escapeHtml(l.nome)}</span>${bocaBadge(l.cod)}${cn ? ' 🔎' : ''}</td>${cH(l.m, 0, l.cod)}${cH(l.ta, 1, l.cod)}${cH(l.n, 2, l.cod)}${cH(l.tot, 3, l.cod)}</tr>`;
+    return `<tr><td class="nome"${cn ? ` onclick="${cn}" style="cursor:pointer"` : ''}>${selo(l.cod)}${setaRec(l.cod)}<span class="cod">${escapeHtml(l.cod)}</span> <span${cn ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${escapeHtml(l.nome)}</span>${bocaBadge(l.cod)}${cn ? ' 🔎' : ''}${seloPeca(l.cod)}</td>${cH(l.m, 0, l.cod)}${cH(l.ta, 1, l.cod)}${cH(l.n, 2, l.cod)}${cH(l.tot, 3, l.cod)}</tr>`;
   }).join('');
   const nOrig = Object.keys(origem).length;
   const nRec = Object.keys(matRec).filter(c => matRec[c] > 0.05).length;
@@ -25002,7 +25071,7 @@ function renderPainel() {
         barrasVerticalScroll(sS.dados, null, { media: true, fmt: fmtBar, margemEsq: 40, meta: (!sS.porMes && (setorEmCx(setor) ? metrica === 'quantidade' : metrica === 'peso')) ? metaDiariaSetor(setor) : null }) + `<div style="margin:8px 0 0"><button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:13px" onclick="detSetorTurnos('${(setor || '').replace(/'/g, '')}')">📊 Ver turnos</button></div>`, 'Produção por dia'); } }
   html += card('Produção por máquina e turno', (metrica === 'peso' ? 'peso (kg)' : 'quantidade (cxs)') + ' · todas as máquinas do setor',
     tabelaMaqTurno(prodS, { valFn: val, fmtCel: v => v > 0 ? fmtV(v) : '—', corTurno: true, incluirCods: SETOR_MAQ[setor] || null, nomes: D.nomeMaq,
-      clickCel: (c, b) => `detProdMaqTurno('${c}','${b}')` }));
+      pesoPeca: true, clickCel: (c, b) => `detProdMaqTurno('${c}','${b}')` }));
   try { if (p643('setup')) html += cardSetupsMaquina(D, setor); } catch (_) {}
 
   // paradas por máquina (período)
