@@ -1205,7 +1205,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.191.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.192.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3553,7 +3553,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.191.0';
+const APP_VER = '4.192.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34715,6 +34715,7 @@ async function fluxoAnalise(forcar) {
    A cor usa raiz quadrada, a mesma régua do mapa do Brasil: sem ela a capital
    esmaga a escala e todo o resto vira vermelho. */
 let _geoCid = {};
+let _geoUF = {};    /* contorno oficial do estado (geo_uf), simplificado no banco */
 function _geoNorm(t) {
   return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
     .replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -34722,9 +34723,13 @@ function _geoNorm(t) {
 async function _geoCarrega(uf) {
   if (_geoCid[uf]) return _geoCid[uf];
   try {
-    const { data } = await sb.from('geo_municipios').select('nome_norm,lat,lon').eq('uf', uf).limit(1200);
-    _geoCid[uf] = data || [];
-  } catch (_) { _geoCid[uf] = []; }
+    const [m, o] = await Promise.all([
+      sb.from('geo_municipios').select('nome_norm,lat,lon').eq('uf', uf).limit(1200),
+      sb.from('geo_uf').select('aneis').eq('uf', uf).limit(1)
+    ]);
+    _geoCid[uf] = m.data || [];
+    _geoUF[uf] = (o.data && o.data[0] && o.data[0].aneis) || null;
+  } catch (_) { _geoCid[uf] = _geoCid[uf] || []; }
   return _geoCid[uf];
 }
 function _mapaUFSvg(uf, s, cids) {
@@ -34739,14 +34744,32 @@ function _mapaUFSvg(uf, s, cids) {
   });
   let mnLa = 99, mxLa = -99, mnLo = 999, mxLo = -999;
   cids.forEach(c => { if (c.lat < mnLa) mnLa = c.lat; if (c.lat > mxLa) mxLa = c.lat; if (c.lon < mnLo) mnLo = c.lon; if (c.lon > mxLo) mxLo = c.lon; });
+  /* o contorno oficial manda no enquadramento: a fronteira vai além do centro
+     do último município, e sem isso o traço estourava a moldura */
+  const aneis = _geoUF[uf];
+  if (aneis) aneis.forEach(pl => pl.forEach(an => an.forEach(p => {
+    const lo = +p[0], la = +p[1];
+    if (la < mnLa) mnLa = la; if (la > mxLa) mxLa = la;
+    if (lo < mnLo) mnLo = lo; if (lo > mxLo) mxLo = lo;
+  })));
   const fLon = Math.cos((mnLa + mxLa) / 2 * Math.PI / 180);
   const W = 360, PAD = 20;
   const spanX = ((mxLo - mnLo) * fLon) || 1, spanY = (mxLa - mnLa) || 1;
   const H = Math.max(190, Math.min(440, Math.round((W - PAD * 2) * spanY / spanX) + PAD * 2));
   const X = lon => PAD + ((lon - mnLo) * fLon) / spanX * (W - PAD * 2);
   const Y = lat => PAD + (mxLa - lat) / spanY * (H - PAD * 2);
-  /* pontinhos de TODOS os municípios: a nuvem é o próprio contorno do estado */
+  /* contorno oficial do estado por baixo de tudo (tabela geo_uf, IBGE
+     simplificado para ~380 pontos no banco — 26/08/2026, pedido do João) */
   let fundo = '';
+  if (aneis) {
+    let d = '';
+    aneis.forEach(pl => pl.forEach(an => {
+      an.forEach((p, i) => { d += (i ? 'L' : 'M') + X(+p[0]).toFixed(1) + ' ' + Y(+p[1]).toFixed(1); });
+      d += 'Z';
+    }));
+    fundo += '<path d="' + d + '" fill="#F4F8FC" stroke="#8FA9C2" stroke-width="1.3" stroke-linejoin="round"/>';
+  }
+  /* pontinhos de TODOS os municípios por cima do contorno */
   cids.forEach(c => { fundo += '<circle cx="' + X(c.lon).toFixed(1) + '" cy="' + Y(c.lat).toFixed(1) + '" r="1.5" fill="#C7D4E1" opacity=".55"/>'; });
   const idx = {}; cids.forEach(c => { idx[c.nome_norm] = c; });
   const usa = [], semPos = [];
@@ -34755,6 +34778,17 @@ function _mapaUFSvg(uf, s, cids) {
   const max = usa.length ? usa[0].kg : 1;
   const corDe = v => { const p = Math.sqrt(v / (max || 1)); return p >= .62 ? '#1E9E4F' : p >= .3 ? '#E8912D' : '#D64541'; };
   let bolas = '', rotulos = '';
+  /* rótulo não pode cair em cima de rótulo (aconteceu com Balsa Nova ×
+     Fazenda Rio Grande no primeiro print) nem vazar da moldura (Ribeirão
+     Claro saiu cortado). Cada nome tenta a direita; se estoura a borda ou
+     colide com um já colocado, tenta a esquerda; se nada serve, fica sem
+     rótulo — o toque no círculo continua dizendo quem ele é. */
+  const _postos = [];
+  const _cabe = (x, y, w) => {
+    if (x < 2 || x + w > W - 2) return false;
+    for (const b of _postos) { if (Math.abs(y - b.y) < 11 && x < b.x + b.w && x + w > b.x) return false; }
+    _postos.push({ x, y, w }); return true;
+  };
   usa.forEach((v, i) => {
     const r = (4.5 + 11 * Math.sqrt(v.kg / max)).toFixed(1);
     const cor = corDe(v.kg), on = _mapaCid === v.rot;
@@ -34762,9 +34796,24 @@ function _mapaUFSvg(uf, s, cids) {
     bolas += '<circle cx="' + v.x.toFixed(1) + '" cy="' + v.y.toFixed(1) + '" r="' + r + '" fill="' + cor + '" fill-opacity=".82" ' +
       'stroke="' + (on ? '#0B2A4A' : '#fff') + '" stroke-width="' + (on ? 2.5 : 1.2) + '" style="cursor:pointer" ' +
       'onclick="event.stopPropagation();mapaCidade(\'' + cid + '\')"><title>' + cid + ' \u00b7 ' + kg(v.kg) + ' \u00b7 ' + v.ped + ' ped</title></circle>';
-    if (i < 6 || on) rotulos += '<text x="' + (v.x + (+r) + 3).toFixed(1) + '" y="' + (v.y + 3.5).toFixed(1) + '" font-size="9.5" font-weight="800" fill="#0B2A4A" stroke="#fff" stroke-width="2.6" paint-order="stroke" style="pointer-events:none">' + cid + '</text>';
+    if (i < 6 || on) {
+      const wTxt = String(v.rot).length * 5.9, yT = v.y + 3.5;
+      let xT = v.x + (+r) + 3;
+      if (!_cabe(xT, yT, wTxt)) xT = (_cabe(v.x - (+r) - 3 - wTxt, yT, wTxt) ? v.x - (+r) - 3 - wTxt : null);
+      if (xT != null || on) rotulos += '<text x="' + (xT == null ? (v.x + (+r) + 3) : xT).toFixed(1) + '" y="' + yT.toFixed(1) + '" font-size="9.5" font-weight="800" fill="#0B2A4A" stroke="#fff" stroke-width="2.6" paint-order="stroke" style="pointer-events:none">' + cid + '</text>';
+    }
   });
-  let h = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:440px;display:block;margin:0 auto">' + fundo + bolas + rotulos + '</svg>';
+  /* ===== ESTATÍSTICA DE COBERTURA — 26/08/2026 (João: "faça uma estatística
+     de que os pedidos só cobrem tantos % das cidades do estado") ===== */
+  const nCid = Object.keys(porCid).length;
+  const pctN = cids.length ? 100 * nCid / cids.length : 0;
+  const pctTx = (pctN > 0 && pctN < 1) ? '<1%' : Math.round(pctN) + '%';
+  let h = '<div style="display:flex;align-items:center;gap:9px;margin:0 0 7px;padding:7px 11px;border-radius:10px;background:var(--leve-s,#F2F6FA)">' +
+    '<div style="font-size:12px;line-height:1.35">A carteira alcança <b>' + nCid + '</b> das <b>' + cids.length + '</b> cidades do ' + uf +
+    ' — <b style="font-size:14px">' + pctTx + '</b> do estado</div>' +
+    '<div style="flex:1 1 60px;min-width:52px;height:7px;border-radius:99px;background:#DFE8F0;overflow:hidden">' +
+    '<div style="width:' + Math.max(1.5, pctN).toFixed(1) + '%;height:100%;background:linear-gradient(90deg,#1E9E4F,#7FD1A0)"></div></div></div>';
+  h += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:440px;display:block;margin:0 auto">' + fundo + bolas + rotulos + '</svg>';
   h += '<p class="idet-desc" style="font-size:10.5px;margin:2px 0 0;text-align:center;color:var(--fraco-2)">' +
     '<span style="color:#1E9E4F;font-weight:800">\u25CF</span> mais venda \u00b7 <span style="color:#E8912D;font-weight:800">\u25CF</span> m\u00e9dia \u00b7 ' +
     '<span style="color:#D64541;font-weight:800">\u25CF</span> pouca \u00b7 tamanho = peso na carteira \u00b7 toque no c\u00edrculo para recortar a cidade' +
