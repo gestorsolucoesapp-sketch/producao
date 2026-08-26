@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.209.0';
+const APP_VER = '4.210.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23359,6 +23359,80 @@ function bocaBadge(cod) {
   return h;
 }
 
+/* ===== DE QUEM VEIO O MATERIAL QUE CHEGOU RUIM (26/08/2026) =====
+   O RPCP624 só grava quem APONTOU a perda — nunca quem fabricou o material.
+   Por isso o card mostrava "MATERIAL RUIM IMPRESSO · 9,6 kg" na 1708 (Tarde do
+   dia 25) sem dizer em lugar nenhum que aquele material saiu da 702. Pior: como
+   a regra de tipo_perda_regra manda MATERIAL RUIM para a própria Termoformagem,
+   quando quem aponta JÁ É da Termoformagem a regra vira no-op e nem a setinha de
+   repasse aparece — a origem some da tela.
+   A única testemunha é a OP: cruzando perdas.op com a producao, a máquina de
+   OUTRO setor que rodou a mesma OP é a origem do material.
+   Medido em 26/08 sobre 01→25/08 (683 linhas de MATERIAL RUIM com OP): 664 acham
+   origem ÚNICA, ZERO ficam ambíguas e 19 ficam sem origem (OP que só rodou na
+   própria máquina). Quando houver mais de um candidato o peso é rateado. */
+function _perdaEhRecebida(r) {
+  const d = String(r.tipo_perda_desc || '');
+  return /^MATERIAL RUIM/i.test(d) || /^BOBINA/i.test(d) || /^CORTE DE BOBINA/i.test(d)
+    || /^PRODUTO.*BOBINA/i.test(d) || /QUINA MATERIAL RUIM$/i.test(d) || /PIGMENT/i.test(d);
+}
+async function _origemPorOP(rows) {
+  const alvo = (rows || []).filter(r => _perdaEhRecebida(r) && r.op != null && String(r.op).trim() !== '');
+  if (!alvo.length) return null;
+  const ops = [...new Set(alvo.map(r => String(r.op).trim()))];
+  let data = [];
+  try {
+    const q = await sb.from('producao').select('op,recurso_cod,recurso_nome').in('op', ops);
+    data = q.data || [];
+  } catch (_) { return null; }
+  const porOp = {};
+  data.forEach(p => {
+    const k = String(p.op || '').trim(); if (!k) return;
+    (porOp[k] = porOp[k] || {})[String(p.recurso_cod)] = p.recurso_nome || String(p.recurso_cod);
+  });
+  const res = {}; let semOrigem = 0, kgSem = 0;
+  alvo.forEach(r => {
+    const meu = String(r.recurso_cod), meuSetor = setorDe(meu), k = String(r.op).trim();
+    const cands = Object.keys(porOp[k] || {}).filter(c => c !== meu && setorDe(c) !== meuSetor);
+    if (!cands.length) { semOrigem++; kgSem += (+r.peso || 0); return; }
+    const kg = (+r.peso || 0) / cands.length;
+    cands.forEach(c => {
+      const o = (res[c] = res[c] || { nome: porOp[k][c], kg: 0, n: 0, tipos: {} });
+      o.kg += kg; o.n++;
+      const t = r.tipo_perda_desc || '\u2014'; o.tipos[t] = (o.tipos[t] || 0) + kg;
+    });
+  });
+  const lista = Object.entries(res).map(([c, o]) => ({ cod: c, nome: o.nome, kg: o.kg, n: o.n, tipos: o.tipos }))
+    .sort((a, b) => b.kg - a.kg);
+  if (!lista.length && !semOrigem) return null;
+  return { lista: lista, semOrigem: semOrigem, kgSem: kgSem };
+}
+/* O modal é síncrono (abreDet monta na hora); a origem chega depois e é injetada
+   no placeholder. _pmtSeq evita que uma busca lenta escreva num modal que o João
+   já trocou por outro. */
+let _pmtSeq = 0;
+async function _pmtOrigemRender(rows, seq) {
+  let o = null;
+  try { o = await _origemPorOP(rows); } catch (_) { o = null; }
+  if (seq !== _pmtSeq) return;
+  const box = document.getElementById('_pmtOrigem');
+  if (!box) return;
+  if (!o || !o.lista.length) { box.innerHTML = ''; return; }
+  const linhas = o.lista.map(x => {
+    const tps = Object.keys(x.tipos).map(t => escapeHtml(String(t).toLowerCase())).join(', ');
+    return '<tr onclick="detMaquina(\'' + escapeHtml(x.cod) + '\')" style="cursor:pointer">'
+      + '<td class="nome" style="font-size:11.5px">' + escapeHtml(x.cod) + ' ' + escapeHtml(x.nome || '')
+      + '<div style="font-size:9.5px;color:var(--fraco-2)">' + escapeHtml(setorDe(x.cod)) + ' \u00b7 ' + x.n + '\u00d7 \u00b7 ' + tps
+      + ' <span style="color:var(--azul-2);font-weight:800">\u203a</span></div></td>'
+      + '<td><span class="cel baixo">' + fmtKg(x.kg) + '</span></td></tr>';
+  }).join('');
+  box.innerHTML = '<div style="font-weight:800;font-size:12px;margin:10px 0 4px">\u2196 De onde veio o material'
+    + '<span style="font-weight:600;color:var(--fraco-2);font-size:10px"> \u00b7 rastreado pela OP \u00b7 o 624 n\u00e3o grava a origem</span></div>'
+    + tabSimples(['M\u00e1quina que produziu', 'Kg'], linhas)
+    + (o.semOrigem ? '<div style="font-size:10.5px;color:var(--fraco-2);margin-top:4px">'
+      + o.semOrigem + ' apontamento(s) \u00b7 ' + fmtKg(o.kgSem)
+      + ' sem origem identific\u00e1vel (a OP s\u00f3 rodou nesta m\u00e1quina)</div>' : '');
+}
 // tabela máquina × turno (Manhã/Tarde/Noite/Total)
 /* detalhe de uma celula da tabela maquina x turno — 04/08/2026.
    bloco vazio = periodo inteiro daquela maquina. O setor vem junto porque a
@@ -23393,8 +23467,10 @@ function detPerdaMaqTurno(cod, bloco, setor) {
     + `<p class="idet-desc"><b>${fmtKg(tot)}</b>${totCx > 0 ? ' · <b>' + nvx(totCx) + '</b> cxs' : ''} em ${rows.length} apontamento(s)${bloco ? ' · turno ' + escapeHtml(bloco) : ' · período inteiro'}${setor ? ' · contando para ' + escapeHtml(setor) : ''}</p>`
     + '<div style="font-weight:800;font-size:12px;margin:8px 0 4px">Por tipo de perda <span style="font-weight:600;color:var(--fraco-2);font-size:10px">· toque para ver os apontamentos</span></div>'
     + tabSimples(['Tipo', 'Kg', 'Cxs'], tipos.map(([k, v]) => `<tr onclick="detPerdaApont('${cod}','${bloco || ''}','${setor || ''}','${encodeURIComponent(k)}')" style="cursor:pointer"><td class="nome" style="font-size:11.5px">${escapeHtml(k)}<div style="font-size:9.5px;color:var(--fraco-2)">${v.n}× · ${(v.kg / tot * 100).toFixed(0)}% <span style="color:var(--azul-2);font-weight:800">›</span></div></td><td><span class="cel ${v.kg >= tot * 0.4 ? 'baixo' : 'neutra'}">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nvx(v.cx) : '—'}</span></td></tr>`).join(''))
+    + '<div id="_pmtOrigem"></div>'
     + (dias.length > 1 ? '<div style="font-weight:800;font-size:12px;margin:10px 0 4px">Por dia</div>'
       + tabSimples(['Dia', 'Kg', 'Cxs'], dias.map(([d, v]) => `<tr><td class="nome" style="font-size:11.5px">${diaSemana(d)}, ${fmtData(d)}</td><td><span class="cel neutra">${fmtKg(v.kg)}</span></td><td><span class="cel ${v.cx ? 'cel-cx' : 'vazio'}">${v.cx ? nvx(v.cx) : '—'}</span></td></tr>`).join('')) : ''));
+  _pmtOrigemRender(rows, ++_pmtSeq);
 }
 // Lista os apontamentos individuais de UM tipo de perda (drill-in do modal de perda).
 async function detPerdaApont(cod, bloco, setor, tipoEnc) {
