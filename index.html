@@ -1244,7 +1244,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.202.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.203.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3606,7 +3606,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.202.0';
+const APP_VER = '4.203.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4457,6 +4457,14 @@ function renderAbasOcultas() {
 }
 let souRH = false;      // Diagnóstico RH: só os e-mails da RLS (mesma dupla de UIDs da policy)
 let vejoFolha = false;  // salário na ficha: admin, dev ou ve_folha (espelha a policy rem_folha)
+/* ===== 26/08/2026 (João: "libere o Fábio para ver promoções e salários só do
+   setor dele; eu vejo de todos") ===== Antes Promoções exigia ser dev (dono do
+   app inteiro). Agora: dono vê tudo; quem tem folha de um setor (ve_folha +
+   folha_setor) vê e edita as promoções DAQUELE setor. O banco tem a mesma
+   trava no RLS (promo_acesso + promo_setor_permitido), então o app só espelha
+   o que o Postgres já garante — mostrar o botão não vaza salário de outro
+   setor. `vePromoSetor` = null quando vê tudo; senão o nome do setor. */
+let vePromo = false, vePromoSetor = null;
 /* 06/08/2026: jpferreira1356@icloud.com saiu daqui a pedido do Joao — ele vai
    usar esse e-mail como conta PESSOAL do GitHub, separada de tudo que e
    Rioplastic. Login com esse e-mail deixa de dar admin automatico. */
@@ -4580,6 +4588,8 @@ async function posLogin(userPronto) {
   souDev = !!(perfil && perfil.desenvolvedor === true);
   souRH = ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);  // espelha a policy so_joao
   vejoFolha = souAdmin || !!(perfil && perfil.ve_folha === true);  // ver folha não exige ser admin
+  vePromo = souDevReal || !!(perfil && perfil.ve_folha === true && perfil.folha_setor);
+  vePromoSetor = souDevReal ? null : (perfil && perfil.ve_folha === true ? (perfil.folha_setor || null) : null);
   if (souDev) souAdmin = true;   // desenvolvedor = tudo do gestor + Organograma
   /* 13/08/2026 (João): "faltas e atestados devem ser vistas somente pelo gestor
      e RH". Dado sensível de pessoa não pode ficar aberto para o chão de fábrica. */
@@ -4990,6 +5000,8 @@ async function revalidarPermissoes() {
     souRH = eAdminEmail;
     if (souDev) souAdmin = true;
     vejoFolha = souAdmin || p.ve_folha === true;
+    vePromo = souDevReal || (p.ve_folha === true && !!p.folha_setor);
+    vePromoSetor = souDevReal ? null : (p.ve_folha === true ? (p.folha_setor || null) : null);
     podeEditarEscala = souAdmin || !!p.pode_editar_escala;
     telasSetor = null;                                      // derruba o cache eterno do getTelasSetor
     const antes = abasPermitidas.slice().sort().join(',');
@@ -38243,15 +38255,20 @@ async function promoCarregar(forcar) {
     sb.from('rh_remuneracao').select('matricula,cargo,salario,referencia,setor').order('referencia', { ascending: true })
   ]);
   if (pr.error) throw pr.error;
-  _promoRegs = pr.data || [];
+  /* 26/08/2026 — recorte por setor para quem não é dono (Fábio vê só o dele).
+     O RLS de promocoes já corta no banco; aqui alinho colaboradores e
+     remuneração à mesma régua para a tela não exibir nome/salário de fora. */
+  const _soSetor = (typeof vePromoSetor !== 'undefined' && vePromoSetor) ? String(vePromoSetor).toLowerCase() : null;
+  const _mesmoSetor = x => !_soSetor || String(x && x.setor || '').toLowerCase() === _soSetor;
+  _promoRegs = (pr.data || []).filter(_mesmoSetor);
   _relSel = null;                      // a lista mudou: a seleção volta ao padrão
   _promoTab = ts.data || [];
-  _promoColabs = co.data || [];
+  _promoColabs = (co.data || []).filter(_mesmoSetor);
   /* uma linha por matrícula; se houver mais de uma referência, vence a MAIS
      NOVA — o arquivo do RH veio em duas datas e a antiga não é o salário de
      hoje. Por isso o order acima é crescente: o último a escrever ganha. */
   _promoRemun = {};
-  (rm.data || []).forEach(r => { if (r.matricula) _promoRemun[String(r.matricula)] = r; });
+  (rm.data || []).forEach(r => { if (r.matricula && _mesmoSetor(r)) _promoRemun[String(r.matricula)] = r; });
   let e = null;
   try { e = cfg.data ? parseFloat(String(cfg.data.valor).replace(',', '.')) : null; } catch (_) { }
   _promoEnc = (e && e > 0) ? e : null;      // null = ainda não definido, e a tela avisa
@@ -38568,7 +38585,7 @@ async function renderOrgPromo() {
   const abas = [['nova', '➕ Nova'], ['hist', '📜 Histórico'], ['impacto', '💰 Impacto'],
                 ['rel', '🖨️ Relatório'], ['tabela', '📋 Tabela salarial'], ['cargos', '🔗 Cargos']];
   let h = '<div class="orgv2"><div class="card">'
-    + '<div class="titulo-sec">💼 Promoções <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🔒 só você</span></div>'
+    + '<div class="titulo-sec">💼 Promoções <span style="background:var(--laranja);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:6px">🔒 ' + (vePromoSetor ? escapeHtml(vePromoSetor) : 'só você') + '</span></div>'
     + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
     + abas.map(([k, r]) => '<button onclick="promoAba(\'' + k + '\')" style="cursor:pointer;font-size:13px;font-weight:800;padding:8px 14px;border-radius:999px;'
       + 'border:1.5px solid ' + (k === _promoAba ? 'var(--navy)' : '#C3CEDA') + ';'
@@ -40823,7 +40840,7 @@ function orgVer(v) {
      'desenvolvedor' do perfil abre, e o banco repete a trava no RLS com
      sou_dono(). Não uso sou_dev() aqui: ela também libera quem tem a tela
      Organograma, que hoje é meio mundo. */
-  if (v === 'promo' && !souDevReal) { toast('Promoções: tela restrita.'); return; }
+  if (v === 'promo' && !vePromo) { toast('Promoções: tela restrita.'); return; }
   // o líder abre o Semáforo (versão sem nomes); a vista Faltas segue só p/ gestor e RH
   if (v === 'semaforo' && !vePessoal && !ehLider) { toast('Faltas e atestados: só gestor, RH e líderes.'); return; }
   if (v !== 'semaforo' && ORG_VISTAS_RH.includes(v) && !vePessoal) { toast('Faltas e atestados: só gestor e RH.'); return; }
@@ -40850,8 +40867,8 @@ function renderOrgVista() {
     const soSemaforo = b.getAttribute('data-v') === 'semaforo';
     b.classList.toggle('oculto', soSemaforo ? !(vePessoal || ehLider) : !vePessoal);
   });
-  document.querySelectorAll('.so-dono').forEach(b => b.classList.toggle('oculto', !souDevReal));
-  if (orgVista === 'promo' && !souDevReal) orgVista = 'org';
+  document.querySelectorAll('.so-dono').forEach(b => b.classList.toggle('oculto', !vePromo));
+  if (orgVista === 'promo' && !vePromo) orgVista = 'org';
   if (orgVista === 'semaforo' && !vePessoal && !ehLider) orgVista = 'organograma';
   if (orgVista !== 'semaforo' && ORG_VISTAS_RH.includes(orgVista) && !vePessoal) orgVista = 'organograma';
   orgGuardaScroll();
