@@ -1244,7 +1244,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.208.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.209.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.208.0';
+const APP_VER = '4.209.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16832,8 +16832,25 @@ function detMaquina(cod, dia) {
      Agora sai tudo, com o total de motivos e horas no cabecalho da tabela. */
   const motTodos = Object.entries(mot).sort((a, b) => b[1] - a[1]);
 
-  const per = D.perdas.filter(r => String(r.recurso_cod) === cod && perdaConta(r) && (!dia || r.dia === dia) && (!_turFiltro || blocoTurno(r.turno, r.dia) === _turFiltro));
+  /* ===== PERDA PRÓPRIA × REPASSADA — 26/08/2026 (João: "no Análise+ por turno a
+     perda repassada some e a máquina fica 0 sem explicação; mostre a setinha e
+     avise 'perda só repassada' e 'enviadas para outro setor'") =====
+     A regra de tipo de perda reatribui o SETOR CULPADO, mas a linha guarda a
+     máquina que APONTOU. Três recortes desta máquina, todos respeitando o turno:
+       • própria   → apontada aqui E ficou no setor desta máquina (é o refugo dela)
+       • recebida  → apontada em OUTRA máquina, mas a regra jogou a culpa no setor
+                     desta (refugo que "chegou" via material ruim)
+       • enviada   → apontada AQUI, mas a regra jogou a culpa em outro setor
+     Antes, `per` pegava tudo que a máquina apontou — misturando o enviado (que
+     não é culpa dela) e escondendo o recebido (que é). Agora separo os três. */
+  const _meuSetor = setorDe(cod);
+  const _noRecorte = r => perdaConta(r) && (!dia || r.dia === dia) && (!_turFiltro || blocoTurno(r.turno, r.dia) === _turFiltro);
+  const per = D.perdas.filter(r => String(r.recurso_cod) === cod && setorPerda(r) === _meuSetor && _noRecorte(r));
+  const perRecebida = D.perdas.filter(r => String(r.recurso_cod) !== cod && setorPerda(r) === _meuSetor && setorDe(r.recurso_cod) !== _meuSetor && _noRecorte(r));
+  const perEnviada = D.perdas.filter(r => String(r.recurso_cod) === cod && setorPerda(r) !== _meuSetor && _noRecorte(r));
   const perKg = per.reduce((a, r) => a + (r.peso || 0), 0);
+  const recKg = perRecebida.reduce((a, r) => a + (r.peso || 0), 0);
+  const envKg = perEnviada.reduce((a, r) => a + (r.peso || 0), 0);
   const perdaPct = (kg + perKg) > 0 ? (perKg / (kg + perKg) * 100).toFixed(1) : '0';
   const _turnosMostra = _turFiltro ? [_turFiltro] : ['Manhã', 'Tarde', 'Noite'];
   let aprovLinha = '';
@@ -16842,8 +16859,39 @@ function detMaquina(cod, dia) {
     const ap = (bob > 0 && kg > 0) ? (kg / bob * 100) : null;
     aprovLinha = `<div><b style="color:${ap != null && ap >= META_APROV ? 'var(--verde)' : 'var(--critico)'}">${ap == null ? '—' : ap.toFixed(1) + '%'}</b><span>aproveitamento de bobina (consumo ${fmtKg(bob)})</span></div>`;
   }
+  /* aviso de repasse — só aparece quando há refugo cruzando o setor desta
+     máquina. Explica o "0 que não é zero" e deixa clicar para ver os detalhes. */
+  let repasseAviso = '';
+  {
+    const _porOrigem = {};   // recebido: quem apontou → kg
+    perRecebida.forEach(r => { const k = String(r.recurso_cod); (_porOrigem[k] = _porOrigem[k] || { kg: 0, nome: r.recurso_nome || k }); _porOrigem[k].kg += (+r.peso || 0); });
+    const _porDestino = {};  // enviado: para qual setor → kg
+    perEnviada.forEach(r => { const k = setorPerda(r); _porDestino[k] = (_porDestino[k] || 0) + (+r.peso || 0); });
+    const linhas = [];
+    if (recKg > 0) {
+      const de = Object.values(_porOrigem).sort((a, b) => b.kg - a.kg)
+        .map(o => o.nome.replace(/^\d+\s*[-·]?\s*/, '') + ' (' + fmtKg(o.kg) + ')').join(', ');
+      linhas.push(`<div style="cursor:pointer" onclick="detRepasse('${cod}','rec')">↗ <b>recebeu ${fmtKg(recKg)}</b> de refugo apontado em outro setor` +
+        (de ? ` — de ${escapeHtml(de)}` : '') + ` <span style="color:var(--azul-2);font-weight:800">ver ›</span></div>`);
+    }
+    if (envKg > 0) {
+      const para = Object.entries(_porDestino).sort((a, b) => b[1] - a[1]).map(([se, v]) => escapeHtml(se) + ' (' + fmtKg(v) + ')').join(', ');
+      linhas.push(`<div style="cursor:pointer;margin-top:${recKg > 0 ? '4px' : '0'}" onclick="detRepasse('${cod}','env')">↘ <b>enviou ${fmtKg(envKg)}</b> de refugo para outro setor` +
+        (para ? ` — para ${para}` : '') + ` <span style="color:var(--azul-2);font-weight:800">ver ›</span></div>`);
+    }
+    /* o caso do print: a máquina não tem refugo PRÓPRIO no recorte, só repasse.
+       O "0%" acima ficaria mudo — aqui explico. */
+    const soRepasse = (perKg < 0.05) && (recKg > 0 || envKg > 0);
+    if (linhas.length) {
+      repasseAviso = `<div style="background:#FFF6E9;border:1px solid #F0D9B0;border-radius:10px;padding:8px 11px;font-size:11.5px;line-height:1.55;color:#7A5A1E;margin:0 0 8px">` +
+        (soRepasse ? `<div style="font-weight:800;margin-bottom:3px">⚠️ Sem refugo próprio neste recorte — perda só repassada.</div>` : '') +
+        linhas.join('') +
+        `<div style="font-size:10px;color:#9A7B3E;margin-top:5px">o repasse segue a regra de tipo de perda (material ruim conta para o setor de origem). O % de perda acima é só o refugo próprio desta máquina.</div></div>`;
+    }
+  }
   abreDet(cod + (dia ? ' · ' + fmtData(dia) : ''), `
     <p class="idet-desc">${escapeHtml(nome)}${_turFiltro ? ' · <b style="color:var(--azul-2)">Turno ' + _turFiltro + '</b>' : ''}</p>
+    ${repasseAviso}
     <button class="btn btn-borda" style="width:100%;margin:2px 0 8px" onclick="detMaquinaTurnos('${cod}')">📊 Produção por turno (dia a dia)</button>
     ${dia ? seloPeriodo('Resumo do dia', fmtDataSem(dia)) : seloPeriodo('Resumo do período')}
     <div class="idet-grid">
@@ -16997,6 +17045,41 @@ async function detMotivoParada(setor, motivo, dia) {
 
   abreDet(m + (dia ? ' · ' + fmtDataSem(dia) : ''), `${dia ? '' : seloPeriodo('Período analisado')}<p class="idet-desc">${setor || 'Todos os setores'}${dia ? ' · ' + fmtDataSem(dia) : ''} · total ${Math.round(tot)} h em ${par.length} parada(s)${trocasMaq ? ` · <b>${totTrocas} troca(s) real(is)</b> — em vermelho quem trocou mais de 1×` : ''}</p>
     ${tabSimples(cab, linhas)}${quebraFam}${blocoParadas}${blocoOS}`);
+}
+/* ===== 26/08/2026 — lista dos apontamentos de refugo REPASSADO (recebido ou
+   enviado) de uma máquina, respeitando o turno filtrado. Aberta pelo "ver ›"
+   do aviso de repasse no Análise+ da máquina. */
+function detRepasse(cod, modo) {
+  const D = dadosPainel; if (!D || !D.perdas) return;
+  cod = String(cod);
+  const _turFiltro = ($('turnoGlobal') && $('turnoGlobal').value) || '';
+  const _meuSetor = setorDe(cod);
+  const _noRecorte = r => perdaConta(r) && (!_turFiltro || blocoTurno(r.turno, r.dia) === _turFiltro);
+  const rows = (modo === 'rec')
+    ? D.perdas.filter(r => String(r.recurso_cod) !== cod && setorPerda(r) === _meuSetor && setorDe(r.recurso_cod) !== _meuSetor && _noRecorte(r))
+    : D.perdas.filter(r => String(r.recurso_cod) === cod && setorPerda(r) !== _meuSetor && _noRecorte(r));
+  if (!rows.length) { toast('Sem repasse neste recorte'); return; }
+  const _cx = r => (String(r.unidade || '').toUpperCase() === 'CX') ? (+r.quantidade || 0) : 0;
+  const tot = rows.reduce((a, r) => a + (+r.peso || 0), 0);
+  rows.sort((a, b) => (+b.peso || 0) - (+a.peso || 0));
+  const titulo = modo === 'rec' ? '↗ Refugo recebido de outro setor' : '↘ Refugo enviado para outro setor';
+  const _nm = c => (D.nomeMaq && D.nomeMaq[String(c)]) || String(c);
+  const linhas = rows.map(r => {
+    const origem = modo === 'rec'
+      ? _nm(r.recurso_cod).replace(/^\d+\s*[-·]?\s*/, '') + ' · ' + setorDe(r.recurso_cod)
+      : 'para ' + setorPerda(r);
+    return `<tr><td class="nome" style="font-size:11.5px">${escapeHtml(r.tipo_perda_desc || '—')}` +
+      `<div style="font-size:9.5px;color:var(--fraco-2)">${escapeHtml(origem)}${r.turno ? ' · T' + r.turno : ''}${r.dia ? ' · ' + fmtData(r.dia) : ''}${r.op ? ' · OP ' + escapeHtml(String(r.op)) : ''}</div></td>` +
+      `<td><span class="cel neutra">${fmtKg(+r.peso || 0)}</span></td>` +
+      `<td><span class="cel ${_cx(r) ? 'cel-cx' : 'vazio'}">${_cx(r) ? Math.round(_cx(r)).toLocaleString('pt-BR') : '—'}</span></td></tr>`;
+  }).join('');
+  abreDet(cod + ' · ' + (modo === 'rec' ? 'recebido' : 'enviado') + (_turFiltro ? ' · ' + _turFiltro : ''),
+    `<p class="idet-desc"><b>${titulo}</b> · ${fmtKg(tot)} em ${rows.length} apontamento(s)${_turFiltro ? ' · turno ' + escapeHtml(_turFiltro) : ''}</p>` +
+    `<div style="font-size:11px;color:var(--fraco-2);margin-bottom:6px">` +
+    (modo === 'rec'
+      ? 'Refugo que outra máquina apontou, mas que a regra de tipo de perda atribuiu ao setor desta (' + escapeHtml(_meuSetor) + ').'
+      : 'Refugo que esta máquina apontou, mas cuja causa a regra atribuiu a outro setor.') +
+    `</div>` + tabSimples(['Tipo · origem', 'Kg', 'Cxs'], linhas));
 }
 let _ppDetList = [];
 // detalhe de UM evento de parada/setup (clique na lista "Quando aconteceu")
