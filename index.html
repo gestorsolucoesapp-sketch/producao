@@ -1150,7 +1150,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.184.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.185.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1243,6 +1243,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
             <span>Imprimir</span></a>
         </div>
       </div>
+      <div id="cardAtrasoDia"></div>
       <div id="painelConteudo"><p class="desc" style="padding:20px;text-align:center">Carregando dados…</p></div>
     </section>
 
@@ -3490,7 +3491,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.184.0';
+const APP_VER = '4.185.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23996,7 +23997,72 @@ function cardMetaMilheiro() {
   return card('Meta em milheiro · Impressão' + ico('metaMil'),
     'capacidade nominal pela velocidade cadastrada × realizado por dia', corpo);
 }
+/* ===== ATRASO DIA A DIA — 25/08/2026 (pedido do João) =====
+   "Gráfico em painel de quantidade de pedidos atrasados diariamente na entrega
+   ou no processo, com possibilidade de pôr metas futuramente igual é na produção."
+
+   Duas linhas, porque são atrasos diferentes e confundir os dois esconde o
+   problema: ENTREGA é o prazo do cliente já vencido; A VENCER em 7 dias é o que
+   vira atraso na semana que vem — a fila que se forma antes do estouro.
+   A meta já tem coluna no banco (`meta_atraso`) e a linha tracejada aparece
+   sozinha quando o valor for preenchido, igual à meta de produção.
+
+   Uma ressalva que fica na tela: a série começa em 22/08 porque é de lá que
+   existe foto da carteira. Não é queda nem melhora antes disso — é ausência. */
+let _atrCache = null;
+async function cardAtrasoDia(forcar) {
+  const box = document.getElementById('cardAtrasoDia'); if (!box) return;
+  try {
+    if (!_atrCache || forcar) {
+      const { data, error } = await sb.from('carteira_dia')
+        .select('dia,pedidos,atraso_entrega,kg_atraso_entrega,vence_7d,meta_atraso').order('dia');
+      if (error) throw error;
+      _atrCache = data || [];
+    }
+    const D = _atrCache;
+    if (!D.length) { box.innerHTML = ''; return; }
+    const ult = D[D.length - 1], pen = D.length > 1 ? D[D.length - 2] : null;
+    const dif = pen ? (ult.atraso_entrega - pen.atraso_entrega) : null;
+    const mx = Math.max(1, ...D.map(x => Math.max(+x.atraso_entrega || 0, +x.vence_7d || 0, +x.meta_atraso || 0)));
+    const W = 320, H = 90, PX = 6;
+    const px = i => D.length < 2 ? W / 2 : PX + i * ((W - PX * 2) / (D.length - 1));
+    const py = v => H - 6 - ((+v || 0) / mx) * (H - 16);
+    const linha = (campo, cor, tracejado) => {
+      const pts = D.map((x, i) => px(i).toFixed(1) + ',' + py(x[campo]).toFixed(1)).join(' ');
+      return '<polyline points="' + pts + '" fill="none" stroke="' + cor + '" stroke-width="2.2" stroke-linejoin="round"'
+        + (tracejado ? ' stroke-dasharray="5 4"' : '') + '/>'
+        + (tracejado ? '' : D.map((x, i) => '<circle cx="' + px(i).toFixed(1) + '" cy="' + py(x[campo]).toFixed(1) + '" r="2.6" fill="' + cor + '"/>').join(''));
+    };
+    const temMeta = D.some(x => x.meta_atraso != null);
+    box.innerHTML = '<div class="card"><div class="titulo-sec">📉 Pedidos atrasados · dia a dia</div>'
+      + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px">'
+      + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Atraso na entrega</div>'
+      + '<b style="font-size:22px;color:var(--critico-s)">' + ult.atraso_entrega + '</b>'
+      + (dif !== null ? ' <span style="font-size:12px;font-weight:800;color:' + (dif > 0 ? 'var(--critico-s)' : dif < 0 ? '#1F7A46' : 'var(--fraco)') + '">'
+          + (dif > 0 ? '▲ +' + dif : dif < 0 ? '▼ ' + dif : '=') + '</span>' : '')
+      + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_entrega || 0) + ' de ' + ult.pedidos + ' pedidos</div></div>'
+      + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Vence em 7 dias</div>'
+      + '<b style="font-size:22px;color:#8A5A12">' + (ult.vence_7d || 0) + '</b>'
+      + '<div style="font-size:11px;color:var(--fraco)">vira atraso se não sair</div></div></div>'
+      + '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:520px;display:block">'
+      + linha('vence_7d', '#E8862B') + linha('atraso_entrega', '#C0392B')
+      + (temMeta ? linha('meta_atraso', '#1F7A46', true) : '')
+      + '</svg>'
+      + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--fraco);margin-top:2px">'
+      + '<span>' + fmtData(D[0].dia) + '</span><span>' + fmtData(ult.dia) + '</span></div>'
+      + '<p class="desc" style="font-size:11.5px;margin-top:6px">'
+      + '<span style="color:#C0392B;font-weight:800">━</span> entrega vencida · '
+      + '<span style="color:#E8862B;font-weight:800">━</span> vence em 7 dias'
+      + (temMeta ? ' · <span style="color:#1F7A46;font-weight:800">┄</span> meta' : '')
+      + '</p>'
+      + (D.length < 8 ? '<p class="desc" style="font-size:11px;color:#8A5A12">A série começa em ' + fmtData(D[0].dia)
+          + ', que é a foto mais antiga da carteira que sobrou. Cresce um ponto a cada importação do REST196.</p>' : '')
+      + (!temMeta ? '<p class="desc" style="font-size:11px">Sem meta definida — quando quiser, a linha tracejada entra sozinha, igual à da produção.</p>' : '')
+      + '</div>';
+  } catch (e) { box.innerHTML = ''; try { console.warn('atrasoDia:', e && e.message); } catch (_) { } }
+}
 function renderPainel() {
+  try { setTimeout(cardAtrasoDia, 0); } catch (_) { }
   if (!dadosPainel) return;
   aprovReg = [];
   _ppPend = [];
@@ -26020,6 +26086,35 @@ async function gravar(id, substituir = false) {
     /* ESTOQUE do REST196: vem deduplicado no parser (_estoque) porque no PDF ele
        se repete a cada cliente que pede o mesmo item. Gravado a parte, senao
        qualquer soma de estoque contaria o mesmo material varias vezes. */
+    /* ===== SÉRIE DIÁRIA DE ATRASO — 25/08/2026 (pedido do João) =====
+       Mesma lição do estoque de bobina: o REST196 é apagado a cada importação,
+       então sem uma tabela de resumo a série nunca nasce. Aqui grava 1 LINHA por
+       dia — não as 3.937 da carteira, que em um ano viraria 1,4 milhão e voltaria
+       a esbarrar no teto de 1.000 do PostgREST.
+       Vai em try/catch: se falhar, a importação segue. O resumo é derivado; a
+       carteira é o dado. */
+    if (r.rotina === '196' && Array.isArray(r.registros) && r.registros.length) {
+      try {
+        const R = r.registros, dia = String(R[0].dia_foto || hojeISO()).slice(0, 10);
+        const peds = {}, d7 = new Date(dia + 'T12:00:00'); d7.setDate(d7.getDate() + 7);
+        const lim7 = d7.toISOString().slice(0, 10);
+        let kgT = 0, kgA = 0;
+        R.forEach(x => {
+          const p = String(x.pedido || '').split('/')[0]; if (!p) return;
+          const e = x.entrega ? String(x.entrega).slice(0, 10) : '';
+          const kg = +x.peso_pendente || 0; kgT += kg;
+          const o = (peds[p] = peds[p] || { atr: false, v7: false });
+          if (e && e < dia) { o.atr = true; kgA += kg; }
+          else if (e && e < lim7) o.v7 = true;
+        });
+        const V = Object.values(peds);
+        await sb.from('carteira_dia').upsert({
+          dia: dia, pedidos: V.length, kg_total: Math.round(kgT),
+          atraso_entrega: V.filter(x => x.atr).length, kg_atraso_entrega: Math.round(kgA),
+          vence_7d: V.filter(x => x.v7 && !x.atr).length
+        }, { onConflict: 'dia' });
+      } catch (e) { try { console.warn('carteira_dia:', e && e.message); } catch (_) { } }
+    }
     if (r.rotina === '196' && Array.isArray(r.estoque) && r.estoque.length) {
       try {
         const est = r.estoque;
