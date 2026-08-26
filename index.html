@@ -1150,7 +1150,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.181.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.182.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3490,7 +3490,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.181.1';
+const APP_VER = '4.182.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34230,6 +34230,40 @@ const flxEhFabrica = s => FLX_FABRICA.includes(flxNome(s));
    está medindo isso. */
 let _motCache = null, _motSel = '';
 function motSel(m) { _motSel = (_motSel === m ? '' : m); fluxoAnalise(); }
+/* ===== 25/08/2026 (João: "permita clicar e ver quais pedidos") =====
+   O card dizia "214 pedidos passaram de 3 dias no COMERCIAL" e parava aí — o
+   número acusava, mas não dava para agir. Agora abre a lista, do mais demorado
+   para o menos, com cliente, quanto ficou naquele setor e quanto isso pesou no
+   total do pedido. Cada linha leva ao pedido.
+   Só os que passaram de 3 dias: são esses que a barra conta, e misturar os
+   rápidos faria a lista não bater com o número que foi clicado. */
+async function motPedidos(motivo) {
+  try {
+    abreDet('🧭 ' + motivo, '<p class="idet-desc"><span class="spin"></span> buscando…</p>');
+    const { data, error } = await sb.from('v_fluxo_motivo')
+      .select('documento,motivo,min_setor,total_etapas,pct')
+      .eq('motivo', motivo).order('min_setor', { ascending: false }).limit(300);
+    if (error) throw error;
+    const L = (data || []).filter(r => (+r.total_etapas || 0) >= 3 * 1440);
+    if (!L.length) { abreDet('🧭 ' + motivo, '<p class="vazio-painel">Nenhum pedido acima de 3 dias neste motivo.</p>'); return; }
+    const hm = m => { const a = Math.round(+m || 0), d = Math.floor(a / 1440), h = Math.floor((a % 1440) / 60);
+      return d ? d + 'd ' + h + 'h' : h + 'h'; };
+    const cli = {};
+    ((_cart196 && _cart196.pend) || []).forEach(p => { const k = String(p.pedido).split('/')[0]; if (!cli[k]) cli[k] = p.cliente; });
+    const linhas = L.slice(0, 200).map(r => '<tr onclick="detPedido(\'' + escapeHtml(r.documento) + '\')" style="cursor:pointer">'
+      + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(r.documento) + '</span> '
+      + escapeHtml(String(cli[r.documento] || '').slice(0, 26)) + ' ›'
+      + '<div style="font-size:10.5px;color:var(--fraco-2)">total do pedido ' + hm(r.total_etapas) + '</div></td>'
+      + '<td style="text-align:right"><b>' + hm(r.min_setor) + '</b>'
+      + '<div style="font-size:10px;color:var(--fraco)">' + (r.pct || 0) + '% do total</div></td></tr>').join('');
+    abreDet('🧭 ' + motivo + ' · ' + L.length + ' pedido(s)',
+      '<p class="idet-desc">Pedidos que passaram de <b>3 dias</b> e cujo maior tempo foi em <b>' + escapeHtml(motivo) + '</b>, do mais demorado para o menos.</p>'
+      + tabSimples(['Pedido · cliente', 'Tempo em ' + motivo], linhas)
+      + (L.length > 200 ? '<p class="desc" style="font-size:11px">Mostrando os 200 primeiros de ' + L.length + '.</p>' : ''));
+  } catch (e) {
+    abreDet('🧭 ' + motivo, '<p class="vazio-painel">Não consegui buscar: ' + escapeHtml((e && e.message) || String(e)) + '</p>');
+  }
+}
 function _cardMotivos() {
   const D = (_motCache || []).filter(x => x.pedidos >= 8);
   if (!D.length) return '';
@@ -34256,7 +34290,8 @@ function _cardMotivos() {
     + (sel ? '<div style="margin-top:8px;padding:8px 10px;background:var(--leve);border-radius:9px;font-size:11.5px">'
         + '<b>' + escapeHtml(sel.motivo) + '</b>: ' + sel.pedidos + ' pedido(s), ' + sel.lentos + ' passaram de 3 dias. '
         + 'Nesses, o setor sozinho respondeu por <b>' + sel.pct + '%</b> do tempo total do pedido. '
-        + '<span style="color:var(--azul-marca);cursor:pointer" onclick="motSel(\'' + escapeHtml(sel.motivo).replace(/'/g, "&#39;") + '\')">limpar filtro</span></div>' : '')
+        + '<span style="color:var(--azul-marca);cursor:pointer;font-weight:700" onclick="motPedidos(\'' + escapeHtml(sel.motivo).replace(/'/g, "&#39;") + '\')">▸ ver os ' + sel.lentos + ' pedidos</span>'
+        + ' · <span style="color:var(--fraco-2);cursor:pointer" onclick="motSel(\'' + escapeHtml(sel.motivo).replace(/'/g, "&#39;") + '\')">limpar filtro</span></div>' : '')
     + '<p class="desc" style="font-size:11px;margin-top:7px;color:#8A5A12">⚠️ <b>Financeiro não aparece aqui.</b> O RVEN304 só registra etapas comerciais e de fábrica — se o pedido trava por crédito ou cobrança, esse tempo não está sendo medido por nenhum número desta tela.</p>'
     + '</div>';
 }
@@ -34367,6 +34402,16 @@ function mapaPainel() {
 /* cidade escolhida dentro do estado: recorta só a lista de pedidos abaixo */
 let _mapaCid = '';
 function mapaCidade(c) { _mapaCid = (_mapaCid === c ? '' : c); mapaPainel(); }
+/* casa o texto digitado de volta no código do representante */
+function mapaRepTxt(txt) {
+  const t = _pesNorm(txt);
+  if (!t) { mapaRep(''); return; }
+  const D = (typeof _mapaDados === 'function') ? _mapaDados() : null;
+  const L = (D && D.reps) ? Object.entries(D.reps) : [];
+  const achou = L.find(([c, n]) => _pesNorm(String(n).replace(/^V[RD]\s*-\s*/, '')) === t)
+    || L.find(([c, n]) => _pesNorm(n).includes(t));
+  if (achou) mapaRep(achou[0]); else toast('Não achei esse representante.');
+}
 function mapaRep(v) { _mapaFiltroRep = v || ''; _mapaSel = ''; cmPintaMapa(); }
 function mapaSit(v) { _mapaFiltroSit = v || 'todos'; _mapaSel = ''; cmPintaMapa(); }
 /* ===== UM FILTRO PARA A ABA INTEIRA — 23/08/2026 (pedido do João) =====
@@ -34405,7 +34450,19 @@ function cmBarraFiltro() {
   return `<div class="card" style="padding:7px 10px">
     <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
       <span style="font-size:11px;font-weight:800;color:var(--fraco-2);letter-spacing:.5px">FILTRAR TUDO</span>
-      ${sel('cmRep', _mapaFiltroRep, [['', 'todos os representantes' + (reps.length ? ' (' + reps.length + ')' : '')]].concat(reps.map(([c, n]) => [c, String(n).replace(/^V[RD]\s*-\s*/, '')])), 'mapaRep')}
+      ${(() => {
+        /* 25/08/2026 (João: "permita pesquisar o representante no campo").
+           Eram dezenas num <select>: no iPhone abre uma roda que obriga a rolar
+           tudo. Virou campo de digitação com datalist — digita "moreira" e o
+           próprio teclado filtra. O valor guardado continua sendo o CÓDIGO; o
+           texto é só o que a pessoa vê, então o filtro não muda de comportamento. */
+        const atual = reps.find(([c]) => String(c) === String(_mapaFiltroRep));
+        const txt = atual ? String(atual[1]).replace(/^V[RD]\s*-\s*/, '') : '';
+        return `<input list="cmRepLista" id="cmRep" value="${escapeHtml(txt)}" placeholder="todos os representantes${reps.length ? ' (' + reps.length + ')' : ''}"
+            onchange="mapaRepTxt(this.value)" oninput="if(!this.value)mapaRepTxt('')"
+            style="flex:1;min-width:150px;font-size:12.5px;padding:5px 8px;border:1px solid var(--borda);border-radius:8px;background:#fff">
+          <datalist id="cmRepLista">${reps.map(([c, n]) => `<option value="${escapeHtml(String(n).replace(/^V[RD]\s*-\s*/, ''))}"></option>`).join('')}</datalist>`;
+      })()}
       ${sel('cmSit', _mapaFiltroSit, [['todos', 'toda a carteira'], ['reservados', 'reservado + a separar'], ['completa', 'só reserva completa'], ['parcial', 'só a separar'], ['sem', '⛔ sem reserva nenhuma']], 'mapaSit')}
       ${sel('cmPer', _fPer, [['', 'todo o período']]
         .concat(nVenc ? [['venc', '⚠️ entrega vencida (' + nVenc + ')']] : [])
