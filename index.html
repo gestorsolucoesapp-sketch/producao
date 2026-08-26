@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.210.0';
+const APP_VER = '4.211.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -16889,6 +16889,25 @@ function detMaquina(cod, dia) {
         `<div style="font-size:10px;color:#9A7B3E;margin-top:5px">o repasse segue a regra de tipo de perda (material ruim conta para o setor de origem). O % de perda acima é só o refugo próprio desta máquina.</div></div>`;
     }
   }
+  /* 26/08/2026: o relogio de perda podia marcar 0% e parecer que NAO HOUVE
+     apontamento nenhum, quando na verdade tudo tinha sido repassado para outro
+     setor. Deixo o relogio em zero (o % proprio esta certo) e marco embaixo
+     dele o que saiu e o que entrou, clicavel. */
+  let _repasseSelos = '';
+  {
+    const _s = [];
+    if (envKg > 0.05) {
+      const _pd = {};
+      perEnviada.forEach(r => { const k = setorPerda(r); _pd[k] = (_pd[k] || 0) + (+r.peso || 0); });
+      const _para = Object.entries(_pd).sort((a, b) => b[1] - a[1]).map(([se]) => escapeHtml(se)).join(', ');
+      _s.push(`<span style="display:block;font-size:10px;font-weight:800;color:#7A5A1E;margin-top:3px;cursor:pointer" onclick="event.stopPropagation();detRepasse('${cod}','env')">↘ enviou ${fmtKg(envKg)}${_para ? ' para ' + _para : ' para outro setor'} ›</span>`);
+    }
+    if (recKg > 0.05) {
+      _s.push(`<span style="display:block;font-size:10px;font-weight:800;color:#33506E;margin-top:3px;cursor:pointer" onclick="event.stopPropagation();detRepasse('${cod}','rec')">↗ recebeu ${fmtKg(recKg)} de outro setor ›</span>`);
+    }
+    if ((perKg < 0.05) && _s.length) _s.unshift('<span style="display:block;font-size:10px;font-weight:800;color:var(--fraco-2);margin-top:3px">não é falta de apontamento:</span>');
+    _repasseSelos = _s.join('');
+  }
   abreDet(cod + (dia ? ' · ' + fmtData(dia) : ''), `
     <p class="idet-desc">${escapeHtml(nome)}${_turFiltro ? ' · <b style="color:var(--azul-2)">Turno ' + _turFiltro + '</b>' : ''}</p>
     ${repasseAviso}
@@ -16900,7 +16919,7 @@ function detMaquina(cod, dia) {
       ${dia ? '' : `<div><b>${_fmtV(_mediaDia)}</b><span>média por dia${_diasEqv !== _diasSet.size ? ' equivalente' : ''}</span></div>`}
       ${_metaDia > 0 ? `<div><b style="color:${_pctMeta >= 100 ? 'var(--verde)' : 'var(--critico)'}">${_pctMeta == null ? '—' : Math.round(_pctMeta) + '%'}</b><span>da meta · ${_fmtV(_metaDia)}/dia${_turFiltro ? ' (turno ' + _turFiltro + ')' : ''}</span></div>` : ''}
       <div><b>${fmtNum(horas)} h</b><span>paradas</span></div>
-      <div><b>${perdaPct}%</b><span>perda (refugo) · ${fmtKg(perKg)}</span></div>
+      <div><b>${perdaPct}%</b><span>perda (refugo) · ${fmtKg(perKg)}</span>${_repasseSelos}</div>
       ${aprovLinha}
       ${(function(){
         try {
@@ -23605,12 +23624,18 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
      (MATERIAL RUIM SEM IMPRESSAO da 708 vira culpa da Termoformagem), a maquina
      de origem aparecia na tabela do setor culpado sem nenhuma pista. Guardamos
      o setor de origem para marcar a linha. */
-  const origem = {};
+  const origem = {}, matRec = {};
   rows.forEach(r => {
     const c = String(r.recurso_cod);
     ini(c); cel[c][blocoTurno(r.turno, r.dia)] += (valFn(r) || 0);
     nome[c] = r.recurso_nome || nome[c] || c;
     try { const so = setorDe(c); if (r._sp && r._sp !== so) origem[c] = so; } catch (_) { }
+    /* 26/08/2026: a linha nao dizia que parte daquele refugo e MATERIAL que
+       CHEGOU RUIM de outro setor. O 624 nao grava a origem, mas o TIPO ja
+       denuncia (material ruim / bobina / pigmento). Acumulo o peso para pintar
+       a seta na frente da maquina; quem quiser saber de QUEM veio toca na
+       celula e ve o rastreio pela OP (v4.210.0). */
+    try { if (typeof _perdaEhRecebida === 'function' && _perdaEhRecebida(r)) matRec[c] = (matRec[c] || 0) + (+r.peso || 0); } catch (_) { }
   });
   let linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; });
   if (!incluirCods) linhas = linhas.filter(l => l.tot > 0);
@@ -23630,8 +23655,18 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     const cli = clickCel ? clickCel(cod, BL[i]) : '';
     return `<td${cli ? ` onclick="${cli}" style="cursor:pointer"` : ''}><span class="cel ${cls}"${cli ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${fmtCel(v)}</span></td>`;
   };
+  /* 26/08/2026: os dois selos passaram para a FRENTE do código da máquina (o
+     João lia a linha da esquerda para a direita e só via a marca depois do
+     nome inteiro, quando já tinha formado a ideia errada).
+       ↩ = o refugo foi APONTADO em outro setor e a regra trouxe a culpa para cá
+       ↗ = a máquina é daqui, mas parte do refugo é MATERIAL que chegou ruim de
+           outro setor (tipo material ruim / bobina / pigmento)
+     São coisas diferentes e podem aparecer juntas na mesma linha. */
   const selo = c => origem[c]
-    ? `<span title="refugo apontado na ${escapeHtml(origem[c])} e atribuído a este setor pela regra de tipo de perda" style="display:inline-block;background:#EEF3FA;border:1px solid #BBCBE0;color:#33506E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-left:5px;white-space:nowrap">↩ ${escapeHtml(origem[c])}</span>`
+    ? `<span title="refugo apontado na ${escapeHtml(origem[c])} e atribuído a este setor pela regra de tipo de perda" style="display:inline-block;background:#EEF3FA;border:1px solid #BBCBE0;color:#33506E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-right:5px;white-space:nowrap">↩ ${escapeHtml(origem[c])}</span>`
+    : '';
+  const setaRec = c => (matRec[c] > 0.05)
+    ? `<span title="perda recebida de outro setor: ${fmtKg(matRec[c])} desta máquina são material que chegou ruim (material ruim / bobina / pigmento). Toque na célula do turno para ver de qual máquina veio, rastreado pela OP." style="display:inline-block;background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:800;margin-right:5px;white-space:nowrap">↗ ${fmtKg(matRec[c])}</span>`
     : '';
   /* 05/08/2026: a lupa ao lado do nome da maquina era DESENHO. As celulas de
      turno abriam o detalhe, mas o nome nao tinha onclick nenhum — quem tocasse
@@ -23648,12 +23683,15 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
   };
   const rows2 = linhas.map(l => {
     const cn = cliNome(l.cod);
-    return `<tr><td class="nome"${cn ? ` onclick="${cn}" style="cursor:pointer"` : ''}><span class="cod">${escapeHtml(l.cod)}</span> <span${cn ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${escapeHtml(l.nome)}</span>${bocaBadge(l.cod)}${selo(l.cod)}${cn ? ' 🔎' : ''}</td>${cH(l.m, 0, l.cod)}${cH(l.ta, 1, l.cod)}${cH(l.n, 2, l.cod)}${cH(l.tot, 3, l.cod)}</tr>`;
+    return `<tr><td class="nome"${cn ? ` onclick="${cn}" style="cursor:pointer"` : ''}>${selo(l.cod)}${setaRec(l.cod)}<span class="cod">${escapeHtml(l.cod)}</span> <span${cn ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${escapeHtml(l.nome)}</span>${bocaBadge(l.cod)}${cn ? ' 🔎' : ''}</td>${cH(l.m, 0, l.cod)}${cH(l.ta, 1, l.cod)}${cH(l.n, 2, l.cod)}${cH(l.tot, 3, l.cod)}</tr>`;
   }).join('');
   const nOrig = Object.keys(origem).length;
-  const notaOrig = nOrig
+  const nRec = Object.keys(matRec).filter(c => matRec[c] > 0.05).length;
+  const notaOrig = (nOrig
     ? `<p class="desc explica" style="font-size:10.5px;margin:6px 0 0">↩ ${nOrig} máquina(s) de outro setor: o refugo foi apontado lá, mas a regra de tipo de perda atribui a culpa a este setor. Só a parte reatribuída entra — o resto do refugo delas continua no setor de origem.</p>`
-    : '';
+    : '') + (nRec
+    ? `<p class="desc explica" style="font-size:10.5px;margin:4px 0 0">↗ ${nRec} máquina(s) com perda recebida de outro setor — o material já chegou ruim (material ruim, bobina, pigmento). O kg continua contando aqui; toque na célula do turno para ver de qual máquina veio, rastreado pela OP.</p>`
+    : '');
   return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>` + notaOrig;
 }
 // tabela de aproveitamento máquina × turno (produção termo ÷ consumo bobina)
