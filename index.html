@@ -1150,7 +1150,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.182.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.183.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3490,7 +3490,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.182.0';
+const APP_VER = '4.183.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34388,14 +34388,36 @@ function mapaPainel() {
         }).join('') + '</div>';
   }
   const base = _mapaCid ? (s.lista || []).filter(p => String(p.cid || '(sem cidade)') === _mapaCid) : (s.lista || []);
-  const L = base.slice().sort((a, b) => b.kg - a.kg).slice(0, 40);
+  /* ===== 25/08/2026 (João: "tem algum desses atrasado? permita ver") =====
+     A lista trazia cidade, representante e reserva, mas não a ENTREGA — e sem
+     ela não dá para saber se aquela carga é urgente ou tem folga. O dado já
+     vinha junto no `ent`, só nunca foi mostrado.
+     Agora a data aparece em toda linha, com etiqueta vermelha dos dias vencidos,
+     e o topo resume quantos estão atrasados. Os vencidos sobem para o começo, e
+     dentro deles do mais antigo para o mais novo: é a ordem em que a expedição
+     deveria resolver, não a do peso. */
+  const _hj = (_cart196 && _cart196.dia) || hojeISO();
+  const _venc = p => { const e = p.ent ? String(p.ent).slice(0, 10) : ''; if (!e) return 0;
+    const d = Math.round((new Date(_hj + 'T12:00:00') - new Date(e + 'T12:00:00')) / 864e5); return d > 0 ? d : 0; };
+  const L = base.slice().sort((a, b) => { const va = _venc(a), vb = _venc(b);
+    if (va !== vb) return vb - va; return b.kg - a.kg; }).slice(0, 40);
+  const _atr = base.filter(p => _venc(p) > 0);
+  h += _atr.length
+    ? '<div style="margin:2px 0 8px;padding:8px 11px;border-radius:10px;background:#FCF3F3;color:#C0392B;font-size:12.5px;font-weight:700">⚠️ '
+      + _atr.length + ' de ' + base.length + ' com entrega vencida · ' + kg(_atr.reduce((a2, p) => a2 + p.kg, 0)) + '</div>'
+    : (base.length ? '<div style="margin:2px 0 8px;padding:8px 11px;border-radius:10px;background:#F2F7F4;color:#1F7A46;font-size:12.5px;font-weight:700">✅ Nenhum pedido vencido aqui.</div>' : '');
   const tag = r => r === 'ok' ? '<span style="color:var(--ok-4,#1E6B3A);font-weight:800">✅ reservado</span>'
     : r === 'parcial' ? '<span style="color:#8A5A00;font-weight:800">⚠️ a separar</span>'
     : '<span style="color:var(--fraco-2)">sem reserva</span>';
-  h += tabSimples(['Pedido · cliente', 'kg'], L.map(p => '<tr onclick="detPedido(\'' + escapeHtml(p.ped) + '\')" style="cursor:pointer">'
+  h += tabSimples(['Pedido · cliente', 'kg'], L.map(p => { const v = _venc(p);
+    return '<tr onclick="detPedido(\'' + escapeHtml(p.ped) + '\')" style="cursor:pointer">'
     + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(p.ped) + '</span> ' + escapeHtml(String(p.cli || '').slice(0, 24)) + ' ›'
-    + '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(p.cid || '') + ' · ' + escapeHtml(String(p.rep || '').slice(0, 22)) + ' · ' + tag(p.res) + '</div></td>'
-    + '<td style="text-align:right"><b>' + kg(p.kg) + '</b></td></tr>').join(''));
+    + '<div style="font-size:10.5px;color:var(--fraco-2);display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:1px">'
+    + '<span>' + escapeHtml(p.cid || '') + '</span><span>·</span><span>' + escapeHtml(String(p.rep || '').replace(/^V[RD]\s*-\s*/, '').slice(0, 20)) + '</span>'
+    + (p.ent ? '<span>·</span><span>' + escapeHtml(fmtData(String(p.ent).slice(0, 10))) + '</span>' : '')
+    + (v ? '<span style="background:#FCF3F3;color:#C0392B;font-weight:800;padding:1px 7px;border-radius:7px">' + v + 'd vencido</span>' : '')
+    + '<span>' + tag(p.res) + '</span></div></td>'
+    + '<td style="text-align:right"><b>' + kg(p.kg) + '</b></td></tr>'; }).join(''));
   if (base.length > L.length) h += '<p class="idet-desc" style="font-size:11px;margin:6px 0 0">+ ' + (base.length - L.length) + ' pedido(s)</p>';
   abreDet('🗺️ ' + _mapaSel + (_mapaCid ? ' · ' + _mapaCid : ''), h);
 }
