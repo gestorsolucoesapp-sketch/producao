@@ -1244,7 +1244,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.200.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.201.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3606,7 +3606,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.200.0';
+const APP_VER = '4.201.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26352,9 +26352,36 @@ async function gravar(id, substituir = false) {
       const { error: eSub } = await sb.from('importacoes').delete().eq('hash', hash);
       if (eSub) throw new Error('Não consegui remover a importação anterior: ' + eSub.message);
     }
+    /* ===== 26/08/2026 (João: "use a data e hora que também tem no relatório,
+       para não ter que apagar na mão") =====
+       O cabeçalho do RPCP624 traz DATA: e HORA: da emissão — o acharPeriodo já
+       captura os dois. Com isso a substituição vira automática: ao gravar um
+       624, toda importação 624 anterior cujo período CRUZE com o novo sai
+       sozinha (o CASCADE leva as linhas de perdas junto). A emissão é a trava
+       de segurança do sentido: se o arquivo novo for MAIS VELHO que o que já
+       está no banco, a gravação é recusada — regravar uma foto antiga por cima
+       de uma nova é perda de dado disfarçada de importação. */
+    let _substituiu = null;
+    if (r.rotina === '624' && r.periodo && r.periodo.de && r.periodo.ate) {
+      const _emi = r.periodo.gerado ? (r.periodo.gerado + 'T' + (r.periodo.hora || '00:00:00')) : null;
+      const { data: _ants, error: eAnt } = await sb.from('importacoes')
+        .select('id,periodo_de,periodo_ate,emissao')
+        .eq('rotina', '624').lte('periodo_de', r.periodo.ate).gte('periodo_ate', r.periodo.de);
+      if (eAnt) throw new Error('Não consegui conferir importações 624 anteriores: ' + eAnt.message);
+      if (_ants && _ants.length) {
+        const _maisNova = _emi ? _ants.find(a => a.emissao && a.emissao > _emi) : null;
+        if (_maisNova) throw new Error('Este 624 foi emitido em ' + fmtData(r.periodo.gerado) +
+          (r.periodo.hora ? ' às ' + r.periodo.hora : '') +
+          ', mas o banco já tem uma importação MAIS RECENTE cobrindo o mesmo período. Emita o 624 de novo no ERP e importe o arquivo fresco.');
+        const { error: eA } = await sb.from('importacoes').delete().in('id', _ants.map(a => a.id));
+        if (eA) throw new Error('Não consegui remover a importação 624 anterior: ' + eA.message);
+        _substituiu = _ants.map(a => fmtData(a.periodo_de) + ' → ' + fmtData(a.periodo_ate)).join(' · ');
+      }
+      r._emissaoISO = _emi;
+    }
     // 1) registra a importação
     const { data: imp, error: e1 } = await sb.from('importacoes').insert({
-      hash, rotina: r.rotina, arquivo: nomeArquivo,
+      hash, rotina: r.rotina, arquivo: nomeArquivo, emissao: (r._emissaoISO || null),
       periodo_de: r.periodo.de, periodo_ate: r.periodo.ate, registros: r.resumo.linhas,
       // veredito da conferência contra o "Total Geral" do PDF (ver _conf)
       conf_ok: (r.resumo._conf ? r.resumo._conf.ok : null),
@@ -26499,7 +26526,15 @@ async function gravar(id, substituir = false) {
         .neq('id', imp.id);
     }
 
-    toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}`);
+    toast(`✅ ${fmt(linhas.length, 0)} registros gravados em ${mapa.tabela}` +
+      (typeof _substituiu === 'string' && _substituiu ? ` · ♻️ substituiu o 624 de ${_substituiu}` : ''));
+    /* emitido de madrugada = a noite ainda estava aberta; avisa para reimportar depois das 06h */
+    try {
+      if (r.rotina === '624' && r.periodo && r.periodo.hora && r.periodo.hora < '06:00' && r.periodo.gerado) {
+        toast('⚠️ Este 624 foi emitido às ' + r.periodo.hora.slice(0, 5) + ' — a noite de ' +
+          fmtData(addDiasISO(r.periodo.gerado, -1)) + ' ainda estava aberta. Reimporte depois das 06h para fechar o turno 5.');
+      }
+    } catch (_) { }
     if (previews[id]) previews[id].dupErro = false;
     descartar(id);
     // dado novo no banco invalida TUDO que está em memória: painel, Análise+,
