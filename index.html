@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.214.0';
+const APP_VER = '4.215.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19516,6 +19516,291 @@ try { larguraAplicar(localStorage.getItem('largApp')); } catch (_) { }
    sem isso vira caixa-preta e ninguém confere.
    Densidade padrão do PP = 0,905 g/cm³. Se rodar PS ou PET, troque no campo. */
 let _fSubAtual = 'caderno';
+/* ===== DIAGRAMA — CAIXAS LIGADAS DE VERDADE (26/08/2026, pedido do João) =====
+   O modo Fluxograma desenha UMA cadeia reta por linha de texto: escrever
+   "Pedido -> PCP" e "Pedido -> Artes" dava duas correntes soltas, não uma
+   bifurcação. Aqui os nomes iguais viram O MESMO nó, então o desenho fecha
+   num grafo só, com ramificação, junção e decisão.
+
+   Continua sendo TEXTO CRU no banco (a mesma coluna conteudo, o mesmo autosave):
+   o desenho é calculado na hora de mostrar. Nada de coordenadas salvas — editor
+   de arrastar caixinha no celular não se usa, e coordenada salva estraga a
+   leitura por IA depois.
+
+   Sintaxe:
+     Pedido -> PCP -> Produção      cadeia (nomes repetidos se juntam)
+     Crédito? -sim-> Produção       seta com rótulo; nome com "?" vira losango
+     # comentário                   linha ignorada
+   Início (sem ninguém apontando) fica verde; fim (não aponta ninguém) fica
+   escuro. Nada disso precisa ser declarado — sai da própria ligação. */
+const DG = { boxH: 38, boxH2: 52, gapX: 16, gapY: 58, padX: 13, charW: 6.9, minW: 76, maxW: 178, margem: 14 };
+function _dgChave(s) { return String(s).trim().replace(/\s+/g, ' ').toLowerCase(); }
+function _dgQuebra(txt, maxChars) {
+  const p = String(txt).split(' ');
+  if (String(txt).length <= maxChars) return [String(txt)];
+  const l1 = []; let n = 0;
+  while (p.length && (n + p[0].length + (l1.length ? 1 : 0)) <= maxChars) { n += p[0].length + (l1.length ? 1 : 0); l1.push(p.shift()); }
+  if (!l1.length) return [String(txt).slice(0, maxChars), String(txt).slice(maxChars, maxChars * 2)];
+  let l2 = p.join(' ');
+  if (l2.length > maxChars) l2 = l2.slice(0, maxChars - 1) + '…';
+  return l2 ? [l1.join(' '), l2] : [l1.join(' ')];
+}
+/* separa "A -sim-> B -> C". O split com grupo de captura devolve os rótulos nos
+   índices ímpares — por isso a alternativa rotulada vem primeiro na regex. */
+const DG_CONN = /\s*(?:-\s*([^>\n]*?)\s*-+>|-+>|=>|→)\s*/;
+function dgParse(texto) {
+  const nos = {}, ordem = [], arestas = [];
+  const vejo = (rot) => {
+    const t = String(rot).trim().replace(/\s+/g, ' ');
+    if (!t) return null;
+    const k = _dgChave(t);
+    if (!nos[k]) { nos[k] = { k: k, rot: t, dec: /\?\s*$/.test(t), ent: 0, sai: 0 }; ordem.push(k); }
+    return k;
+  };
+  String(texto || '').split('\n').forEach((linha0) => {
+    const linha = linha0.trim();
+    if (!linha || linha.charAt(0) === '#') return;
+    const p = linha.split(new RegExp(DG_CONN.source, 'g'));
+    if (p.length < 3) { vejo(linha); return; }         // sem seta: nó solto, mas aparece
+    let ant = null;
+    for (let i = 0; i < p.length; i += 2) {
+      const k = vejo(p[i]);
+      if (k && ant) {
+        const rot = (p[i - 1] || '').trim();
+        if (!arestas.some(e => e.a === ant && e.b === k && e.rot === rot)) {
+          arestas.push({ a: ant, b: k, rot: rot });
+          nos[ant].sai++; nos[k].ent++;
+        }
+      }
+      if (k) ant = k;
+    }
+  });
+  return { nos: nos, ordem: ordem, arestas: arestas };
+}
+/* ===== QUAL SETA É A "DE VOLTA" =====
+   1ª versão chamava de retorno toda aresta cujo destino tinha nível <= origem.
+   Num retrabalho real — "Produção -> Qualidade -> Reprovado? -sim-> Produção" —
+   isso saía INVERTIDO: o caminho principal virava tracejado vermelho e a volta
+   virava seta normal. O nível não sabe quem fecha o ciclo; quem sabe é a busca
+   em profundidade. Aresta que aponta para um nó ainda ABERTO na descida é a que
+   fecha o ciclo, e só ela. As demais ficam de fora do cálculo de níveis (senão
+   o ciclo empurra os níveis para sempre) e são desenhadas tracejadas.
+   A varredura começa pelos nós sem entrada; num ciclo fechado ninguém tem
+   entrada zero, então cai na ordem em que o João escreveu — que é justamente
+   começar pelo começo. */
+function dgBackEdges(g) {
+  const cor = {}, back = {}, adj = {};
+  g.arestas.forEach((e, i) => { (adj[e.a] = adj[e.a] || []).push(i); });
+  const visita = (k0) => {
+    const pilha = [{ k: k0, i: 0 }];
+    cor[k0] = 1;
+    while (pilha.length) {
+      const t = pilha[pilha.length - 1], lista = adj[t.k] || [];
+      if (t.i >= lista.length) { cor[t.k] = 2; pilha.pop(); continue; }
+      const ie = lista[t.i++], b = g.arestas[ie].b;
+      if (cor[b] === 1) back[ie] = true;
+      else if (!cor[b]) { cor[b] = 1; pilha.push({ k: b, i: 0 }); }
+    }
+  };
+  g.ordem.forEach(k => { if (!cor[k] && g.nos[k].ent === 0) visita(k); });
+  g.ordem.forEach(k => { if (!cor[k]) visita(k); });
+  return back;
+}
+/* Níveis por caminho mais longo. O teto de iterações é o que impede um ciclo
+   (A -> B -> A) de girar para sempre; a aresta que volta é desenhada tracejada.
+   Depois vem um ajuste que faltava na 1ª versão: um nó SEM entrada não é
+   necessariamente um começo. "Crédito aprovado? -sim-> Faturamento" não tem
+   ninguém apontando para o losango, e ele ia parar no topo do desenho, com a
+   seta atravessando a folha inteira. Agora todo nó-fonte desce para logo acima
+   do primeiro sucessor. */
+function dgNiveis(g, back) {
+  const nv = {};
+  g.ordem.forEach(k => { nv[k] = 0; });
+  for (let it = 0; it < g.ordem.length + 2; it++) {
+    let mudou = false;
+    g.arestas.forEach((e, i) => { if (back[i]) return; if (nv[e.b] < nv[e.a] + 1) { nv[e.b] = nv[e.a] + 1; mudou = true; } });
+    if (!mudou) break;
+  }
+  g.ordem.forEach(k => {
+    if (g.nos[k].ent > 0 || g.nos[k].sai === 0) return;
+    let min = null;
+    g.arestas.forEach((e, i) => { if (back[i]) return; if (e.a === k && (min === null || nv[e.b] < min)) min = nv[e.b]; });
+    if (min !== null && min - 1 > nv[k]) nv[k] = min - 1;
+  });
+  return nv;
+}
+/* ===== POR QUE TEM NÓ FANTASMA =====
+   Uma seta que pula níveis (Comercial → PCP, com Artes no meio) era desenhada
+   como uma curva direta e passava POR TRÁS das caixas do caminho. É o problema
+   clássico de desenho de grafo em camadas, e a solução clássica é esta: a seta
+   longa ganha um ponto invisível em CADA nível que atravessa, e esses pontos
+   entram na fila do nível como se fossem caixas — ocupando espaço e empurrando
+   as outras para o lado. A seta passa ENTRE as caixas, não por baixo.
+   Depois, o baricentro: duas passadas reordenando cada nível pela posição média
+   de quem chega nele. É o que desembaraça o cruzamento das linhas. */
+function dgLayout(g, nv, back) {
+  const fila = {};
+  const push = (l, o) => { (fila[l] = fila[l] || []).push(o); };
+  g.ordem.forEach(k => push(nv[k], { tipo: 'no', k: k, w: g.nos[k].w, h: g.nos[k].h }));
+  const cam = [];
+  g.arestas.forEach((e, i) => {
+    const l1 = nv[e.a], l2 = nv[e.b];
+    const pontos = [];
+    if (!back[i] && l2 - l1 > 1) {
+      for (let l = l1 + 1; l < l2; l++) {
+        const d = { tipo: 'ghost', id: 'g' + i + '_' + l, w: 20, h: 6 };
+        push(l, d); pontos.push(d);
+      }
+    }
+    cam.push({ e: e, pontos: pontos, volta: !!back[i] });
+  });
+  const niveis = Object.keys(fila).map(Number).sort((a, b) => a - b);
+  const idx = o => (o.tipo === 'no' ? 'n:' + o.k : o.id);
+  const pos = {};
+  const reordena = () => {
+    niveis.forEach(l => {
+      const bc = {};
+      fila[l].forEach((o, i) => {
+        const vizinhos = [];
+        if (o.tipo === 'no') {
+          g.arestas.forEach(e => { if (e.b === o.k && pos['n:' + e.a] != null) vizinhos.push(pos['n:' + e.a]); });
+        } else {
+          cam.forEach(c => {
+            const j = c.pontos.indexOf(o);
+            if (j < 0) return;
+            const ant = j === 0 ? 'n:' + c.e.a : idx(c.pontos[j - 1]);
+            if (pos[ant] != null) vizinhos.push(pos[ant]);
+          });
+        }
+        bc[idx(o)] = vizinhos.length ? vizinhos.reduce((a, b) => a + b, 0) / vizinhos.length : i;
+      });
+      fila[l].sort((a, b) => bc[idx(a)] - bc[idx(b)]);
+      fila[l].forEach((o, i) => { pos[idx(o)] = i; });
+    });
+  };
+  fila[niveis[0]] && fila[niveis[0]].forEach((o, i) => { pos[idx(o)] = i; });
+  reordena(); reordena();
+  let largMax = 0;
+  niveis.forEach(l => {
+    const soma = fila[l].reduce((a, o) => a + o.w, 0) + (fila[l].length - 1) * DG.gapX;
+    if (soma > largMax) largMax = soma;
+  });
+  const W = largMax + DG.margem * 2;
+  let y = DG.margem;
+  niveis.forEach(l => {
+    const soma = fila[l].reduce((a, o) => a + o.w, 0) + (fila[l].length - 1) * DG.gapX;
+    let x = (W - soma) / 2;
+    const hMax = Math.max.apply(null, fila[l].map(o => o.h));
+    fila[l].forEach(o => {
+      o.x = x; o.cx = x + o.w / 2; o.y = y + (hMax - o.h) / 2; o.cy = o.y + o.h / 2;
+      if (o.tipo === 'no') { const n = g.nos[o.k]; n.x = o.x; n.y = o.y; }
+      x += o.w + DG.gapX;
+    });
+    y += hMax + DG.gapY;
+  });
+  return { W: W, H: y - DG.gapY + DG.margem, cam: cam };
+}
+function dgSVG(texto) {
+  const g = dgParse(texto);
+  if (!g.ordem.length) return '';
+  const back = dgBackEdges(g);
+  const nv = dgNiveis(g, back);
+  g.ordem.forEach(k => {
+    const n = g.nos[k];
+    const maxChars = Math.floor((DG.maxW - DG.padX * 2) / DG.charW);
+    n.linhas = _dgQuebra(n.rot, maxChars);
+    const larg = Math.max.apply(null, n.linhas.map(x => x.length));
+    n.w = Math.min(DG.maxW, Math.max(DG.minW, Math.round(larg * DG.charW) + DG.padX * 2));
+    n.h = n.linhas.length > 1 ? DG.boxH2 : DG.boxH;
+    if (n.dec) { n.w = Math.round(n.w * 1.3); n.h = n.h + 16; }
+  });
+  const lay = dgLayout(g, nv, back);
+  /* ===== A SETA DE VOLTA PRECISA DE CORREDOR PRÓPRIO =====
+     Desenhada em linha reta, ela subia POR CIMA das caixas do caminho — no
+     retrabalho "Reprovado? -sim-> Produção" ficava colada na seta principal,
+     duas linhas no mesmo lugar. Agora cada volta sai pela lateral direita,
+     sobe por uma faixa reservada FORA do desenho e entra pela direita do
+     destino. Uma faixa por volta, para duas não se sobreporem. */
+  const voltas = lay.cam.filter(c => c.volta);
+  voltas.forEach((c, i) => { c.lane = i; });
+  const W = lay.W + (voltas.length ? voltas.length * 13 + 10 : 0), H = lay.H;
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const N = v => (Math.round(v * 10) / 10);
+  let arE = '', arR = '';
+  const selo = (mx, my, txt, cor) => {
+    const w = txt.length * 6.2 + 12;
+    return '<rect x="' + N(mx - w / 2) + '" y="' + N(my - 9) + '" width="' + N(w) + '" height="18" rx="9" fill="#fff" stroke="#C6D3E0"/>'
+      + '<text x="' + N(mx) + '" y="' + N(my + 4) + '" text-anchor="middle" font-size="10.5" font-weight="800" fill="' + cor + '">' + esc(txt) + '</text>';
+  };
+  lay.cam.forEach(c => {
+    const a = g.nos[c.e.a], b = g.nos[c.e.b];
+    if (c.volta) {
+      const lx = lay.W + 8 + c.lane * 13;
+      const ay = a.y + a.h / 2, by = b.y + b.h / 2, r = 7, sg = by < ay ? -1 : 1;
+      const d = 'M' + N(a.x + a.w) + ' ' + N(ay)
+        + ' L' + N(lx - r) + ' ' + N(ay) + ' Q' + N(lx) + ' ' + N(ay) + ' ' + N(lx) + ' ' + N(ay + sg * r)
+        + ' L' + N(lx) + ' ' + N(by - sg * r) + ' Q' + N(lx) + ' ' + N(by) + ' ' + N(lx - r) + ' ' + N(by)
+        + ' L' + N(b.x + b.w + 7) + ' ' + N(by);
+      arE += '<path d="' + d + '" fill="none" stroke="#D64545" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#dgSetaV)"/>';
+      if (c.e.rot) arR += selo(lx, (ay + by) / 2, c.e.rot, '#A33');
+      return;
+    }
+    const p = [];
+    p.push({ x: a.x + a.w / 2, y: a.y + a.h });
+    c.pontos.forEach(d => p.push({ x: d.cx, y: d.cy }));
+    p.push({ x: b.x + b.w / 2, y: b.y - 7 });
+    let d = 'M' + N(p[0].x) + ' ' + N(p[0].y);
+    for (let i = 1; i < p.length; i++) {
+      const q = p[i - 1], r2 = p[i], m = (q.y + r2.y) / 2;
+      d += ' C' + N(q.x) + ' ' + N(m) + ', ' + N(r2.x) + ' ' + N(m) + ', ' + N(r2.x) + ' ' + N(r2.y);
+    }
+    arE += '<path d="' + d + '" fill="none" stroke="#8395A6" stroke-width="1.6" marker-end="url(#dgSeta)"/>';
+    /* rótulo no PRIMEIRO trecho, logo abaixo da caixa de origem: no meio da seta
+       ele caía em cima de outra caixa. E numa camada por cima de tudo — na 1ª
+       versão a aresta era desenhada antes do nó e o "sim"/"não" ficava escondido
+       atrás do retângulo. */
+    if (c.e.rot) arR += selo((p[0].x + p[1].x) / 2, p[0].y + 15, c.e.rot, '#5C7186');
+  });
+  /* começo/fim contam só as ligações do caminho para frente. "Bobina" recebe a
+     seta do Moinho (retrabalho) e ficava cinza, como se fosse etapa do meio —
+     mas ela É o começo do processo; quem aponta para ela é a volta. */
+  const entF = {}, saiF = {};
+  g.ordem.forEach(k => { entF[k] = 0; saiF[k] = 0; });
+  g.arestas.forEach((e, i) => { if (back[i]) return; entF[e.b]++; saiF[e.a]++; });
+  let arN = '';
+  g.ordem.forEach(k => {
+    const n = g.nos[k];
+    const inicio = entF[k] === 0 && saiF[k] > 0, fim = saiF[k] === 0 && entF[k] > 0;
+    const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+    let forma, corTxt = '#0B2A4A';
+    if (n.dec) {
+      forma = '<polygon points="' + N(cx) + ',' + N(n.y) + ' ' + N(n.x + n.w) + ',' + N(cy) + ' ' + N(cx) + ',' + N(n.y + n.h) + ' ' + N(n.x) + ',' + N(cy)
+        + '" fill="#FFF6E9" stroke="#E8862B" stroke-width="1.6"/>';
+      corTxt = '#7A5A1E';
+    } else if (inicio) {
+      forma = '<rect x="' + N(n.x) + '" y="' + N(n.y) + '" width="' + N(n.w) + '" height="' + N(n.h) + '" rx="' + N(n.h / 2) + '" fill="#00964D"/>';
+      corTxt = '#fff';
+    } else if (fim) {
+      forma = '<rect x="' + N(n.x) + '" y="' + N(n.y) + '" width="' + N(n.w) + '" height="' + N(n.h) + '" rx="' + N(n.h / 2) + '" fill="#0B2A4A"/>';
+      corTxt = '#fff';
+    } else {
+      forma = '<rect x="' + N(n.x) + '" y="' + N(n.y) + '" width="' + N(n.w) + '" height="' + N(n.h) + '" rx="9" fill="#EEF3F8" stroke="#C6D3E0" stroke-width="1.4"/>';
+    }
+    const nl = n.linhas.length;
+    arN += forma + n.linhas.map((ln, i) => '<text x="' + N(cx) + '" y="' + N(cy + (nl === 1 ? 4.5 : (i === 0 ? -2 : 12)))
+      + '" text-anchor="middle" font-size="12.5" font-weight="700" fill="' + corTxt + '">' + esc(ln) + '</text>').join('');
+  });
+  /* largura em px de verdade + rolagem lateral no wrapper. Espremer com
+     max-width:100% deixaria o texto ilegível no celular assim que o desenho
+     abrisse em dois ou três caminhos paralelos. */
+  return '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding:2px 0">'
+    + '<svg viewBox="0 0 ' + Math.round(W) + ' ' + Math.round(H) + '" width="' + Math.round(W) + '" height="' + Math.round(H) + '" '
+    + 'style="display:block;margin:0 auto;font-family:inherit" xmlns="http://www.w3.org/2000/svg">'
+    + '<defs>'
+    + '<marker id="dgSeta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8395A6"/></marker>'
+    + '<marker id="dgSetaV" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D64545"/></marker>'
+    + '</defs>' + arE + arN + arR + '</svg></div>';
+}
 /* ===== RASCUNHOS: MAPA DE PROCESSO, FLUXOGRAMA, IDEIA LIVRE E RESUMO =====
    25/08/2026 (pedido do João). Quatro modos, UMA tabela: o que muda entre eles é
    como o texto é LIDO na tela, não o que é guardado. Assim o quinto modo nasce
@@ -19538,7 +19823,8 @@ const RAS_TIPOS = [
   ['processo', '🗺️ Mapa de processo', 'Um passo por linha. A tela numera na ordem em que você escreveu.'],
   ['fluxo', '🔀 Fluxograma', 'Escreva ligações: <b>Pedido -&gt; PCP -&gt; Artes</b>. Uma por linha.'],
   ['ideia', '💡 Ideia livre', 'Escreva do jeito que vier. Nada é interpretado aqui.'],
-  ['resumo', '📝 Resumo digital', 'Texto corrido. Guardado cru para ser analisado depois.']
+  ['resumo', '📝 Resumo digital', 'Texto corrido. Guardado cru para ser analisado depois.'],
+  ['diagrama', '🧩 Diagrama', 'Nomes iguais viram a MESMA caixa, então o desenho fecha num grafo só. <b>Pedido -&gt; PCP -&gt; Produção</b> · <b>Crédito? -sim-&gt; Faturamento</b> · nome com <b>?</b> vira losango · <b>#</b> comenta a linha.']
 ];
 let _rasTipo = 'processo', _rasLista = [], _rasAtual = null, _rasTimer = null, _rasSujo = false;
 async function rasRender(forcar) {
@@ -19641,6 +19927,10 @@ function rasVista() {
           + '<span style="background:var(--leve);border:1px solid var(--linha-2s);border-radius:9px;padding:5px 11px;font-size:12.5px;font-weight:700">' + escapeHtml(x) + '</span>').join('')
         + '</div>';
     }).join('');
+  } else if (tipo === 'diagrama') {
+    let svg = '';
+    try { svg = dgSVG(txt); } catch (err) { svg = ''; }
+    h += svg || '<p class="desc" style="font-size:11.5px">Escreva ao menos uma ligação, como <b>Pedido -&gt; PCP</b>.</p>';
   } else {
     h += '<p class="desc" style="font-size:11.5px">' + linhas.length + ' linha(s) · ' + txt.trim().split(/\s+/).length + ' palavra(s). Guardado como texto puro'
       + (tipo === 'resumo' ? ', pronto para ser analisado depois.' : '.') + '</p>';
