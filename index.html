@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.212.0';
+const APP_VER = '4.213.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -39591,21 +39591,45 @@ const _PM_ST = {
   aplicada: ['Aplicada', '#2C6B2F', '#E8F3E8'],
   cancelada: ['Cancelada', '#8A2A2A', '#FDECEC']
 };
+/* ===== FILTRO DE SETOR NO HISTÓRICO — 26/08/2026 (pedido do João) =====
+   A lista já nasce recortada por RLS para quem é supervisor de um setor só; o
+   dono vê tudo e precisava garimpar. O filtro usa `promocoes.setor` — a MESMA
+   coluna em que o RLS decide quem enxerga o quê — e não o setor do cadastro do
+   colaborador, senão a tela mostraria uma régua e o banco outra.
+   O desempenho continua sendo carregado para a lista INTEIRA (_promoRegs): se
+   a chave do cache seguisse o recorte, cada troca de setor jogaria fora as
+   consultas de produção já feitas e a tela piscaria de novo. */
+let _promoSetorSel = '';
+function promoSetSetor(v) { _promoSetorSel = String(v || ''); renderOrgPromo(); }
 function _promoHist() {
-  const regs = _promoRegs || [];
-  if (!regs.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
+  const todos = _promoRegs || [];
+  if (!todos.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
+  const _setDe = p => String(p.setor || '').trim() || '— sem setor';
+  const setores = [...new Set(todos.map(_setDe))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+  if (_promoSetorSel && setores.indexOf(_promoSetorSel) < 0) _promoSetorSel = '';   // setor sumiu da lista
+  const regs = _promoSetorSel ? todos.filter(p => _setDe(p) === _promoSetorSel) : todos;
+  const nPorSetor = {}; todos.forEach(p => { const s = _setDe(p); nPorSetor[s] = (nPorSetor[s] || 0) + 1; });
   // uma consulta para a lista toda; a tela abre na hora e as linhas se completam
-  if (!_promoPerfAno || _promoPerfSeq !== _perfChave(regs)) setTimeout(_promoPerfCarrega, 0);
+  if (!_promoPerfAno || _promoPerfSeq !== _perfChave(todos)) setTimeout(_promoPerfCarrega, 0);
   if (!_perfAnos) setTimeout(async () => { await _perfCarregaAnos(); if (_promoAba === 'hist') renderOrgPromo(); }, 0);
   const anos = _perfAnos || [_perfAnoSel()];
   let h = '<div class="card"><div class="titulo-sec" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-    + '<span>📜 Histórico · ' + regs.length + '</span>'
+    + '<span>📜 Histórico · ' + regs.length + (_promoSetorSel ? ' <span style="font-weight:600;opacity:.75">de ' + todos.length + '</span>' : '') + '</span>'
+    + (setores.length > 1
+      ? '<span class="desc" style="font-size:11px;font-weight:600">setor</span>'
+        + '<select onchange="promoSetSetor(this.value)" class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px'
+        + (_promoSetorSel ? ';background:#FDF6DC;border-color:#E3C766;font-weight:800' : '') + '">'
+        + '<option value=""' + (!_promoSetorSel ? ' selected' : '') + '>todos (' + todos.length + ')</option>'
+        + setores.map(s => '<option value="' + escapeHtml(s) + '"' + (s === _promoSetorSel ? ' selected' : '') + '>' + escapeHtml(s) + ' (' + nPorSetor[s] + ')</option>').join('')
+        + '</select>'
+      : '')
     + '<span class="desc" style="font-size:11px;font-weight:600">desempenho de</span>'
     + '<select onchange="promoPerfSetAno(this.value)" class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px">'
     + anos.map(a => '<option value="' + a + '"' + (a === _perfAnoSel() ? ' selected' : '') + '>' + a + '</option>').join('')
     + '</select>'
     + (anos.length < 2 ? '<span class="desc" style="font-size:11px;font-weight:600;color:#8A5A12">só ' + anos[0] + ' tem produção importada</span>' : '')
     + '</div>';
+  if (!regs.length) return h + '<p class="desc" style="margin:10px 0 0">Nenhuma promoção em <b>' + escapeHtml(_promoSetorSel) + '</b>. <span style="color:var(--azul-2);font-weight:700;cursor:pointer" onclick="promoSetSetor(\'\')">ver todos os setores</span></p></div>';
   h += regs.map(p => {
     const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
     const d = (+p.salario_para || 0) - (+p.salario_de || 0);
