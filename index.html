@@ -1205,7 +1205,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.190.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.191.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3553,7 +3553,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.190.0';
+const APP_VER = '4.191.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34704,6 +34704,73 @@ async function fluxoAnalise(forcar) {
       + '</div>';
   } catch (e) { box.innerHTML = ''; try { console.warn('fluxoAnalise:', e && e.message); } catch (_) { } }
 }
+/* ===== MAPA DO ESTADO COM AS CIDADES — 26/08/2026 (João: "ao selecionar o
+   estado, abre do lado o mapa dele com todas as cidades em círculo, verde/
+   laranja/vermelho pelo valor de venda") =====
+   Sem GeoJSON de propósito: os 5.571 municípios do IBGE (tabela geo_municipios,
+   carregada uma vez via extensão http do Postgres) viram pontinhos cinza — e
+   só a nuvem deles já desenha a silhueta do estado. Por cima entram as cidades
+   COM carteira, em círculo com área proporcional ao peso e cor pela força de
+   venda. Contorno oficial custaria ~1 MB por estado para dizer o mesmo.
+   A cor usa raiz quadrada, a mesma régua do mapa do Brasil: sem ela a capital
+   esmaga a escala e todo o resto vira vermelho. */
+let _geoCid = {};
+function _geoNorm(t) {
+  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+async function _geoCarrega(uf) {
+  if (_geoCid[uf]) return _geoCid[uf];
+  try {
+    const { data } = await sb.from('geo_municipios').select('nome_norm,lat,lon').eq('uf', uf).limit(1200);
+    _geoCid[uf] = data || [];
+  } catch (_) { _geoCid[uf] = []; }
+  return _geoCid[uf];
+}
+function _mapaUFSvg(uf, s, cids) {
+  if (!cids || !cids.length) return '<p class="idet-desc" style="font-size:11px">sem coordenadas para desenhar ' + uf + '.</p>';
+  const kg = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(v) + ' kg';
+  const porCid = {};
+  (s.lista || []).forEach(p => {
+    if (!p.cid) return;
+    const k = _geoNorm(p.cid); if (!k) return;
+    const o = porCid[k] = porCid[k] || { rot: p.cid, kg: 0, ped: 0 };
+    o.kg += p.kg; o.ped++;
+  });
+  let mnLa = 99, mxLa = -99, mnLo = 999, mxLo = -999;
+  cids.forEach(c => { if (c.lat < mnLa) mnLa = c.lat; if (c.lat > mxLa) mxLa = c.lat; if (c.lon < mnLo) mnLo = c.lon; if (c.lon > mxLo) mxLo = c.lon; });
+  const fLon = Math.cos((mnLa + mxLa) / 2 * Math.PI / 180);
+  const W = 360, PAD = 20;
+  const spanX = ((mxLo - mnLo) * fLon) || 1, spanY = (mxLa - mnLa) || 1;
+  const H = Math.max(190, Math.min(440, Math.round((W - PAD * 2) * spanY / spanX) + PAD * 2));
+  const X = lon => PAD + ((lon - mnLo) * fLon) / spanX * (W - PAD * 2);
+  const Y = lat => PAD + (mxLa - lat) / spanY * (H - PAD * 2);
+  /* pontinhos de TODOS os municípios: a nuvem é o próprio contorno do estado */
+  let fundo = '';
+  cids.forEach(c => { fundo += '<circle cx="' + X(c.lon).toFixed(1) + '" cy="' + Y(c.lat).toFixed(1) + '" r="1.5" fill="#C7D4E1" opacity=".55"/>'; });
+  const idx = {}; cids.forEach(c => { idx[c.nome_norm] = c; });
+  const usa = [], semPos = [];
+  Object.entries(porCid).forEach(([k, v]) => { const c = idx[k]; if (c) usa.push({ ...v, x: X(c.lon), y: Y(c.lat) }); else semPos.push(v); });
+  usa.sort((a, b) => b.kg - a.kg);
+  const max = usa.length ? usa[0].kg : 1;
+  const corDe = v => { const p = Math.sqrt(v / (max || 1)); return p >= .62 ? '#1E9E4F' : p >= .3 ? '#E8912D' : '#D64541'; };
+  let bolas = '', rotulos = '';
+  usa.forEach((v, i) => {
+    const r = (4.5 + 11 * Math.sqrt(v.kg / max)).toFixed(1);
+    const cor = corDe(v.kg), on = _mapaCid === v.rot;
+    const cid = escapeHtml(String(v.rot)).replace(/'/g, '&#39;');
+    bolas += '<circle cx="' + v.x.toFixed(1) + '" cy="' + v.y.toFixed(1) + '" r="' + r + '" fill="' + cor + '" fill-opacity=".82" ' +
+      'stroke="' + (on ? '#0B2A4A' : '#fff') + '" stroke-width="' + (on ? 2.5 : 1.2) + '" style="cursor:pointer" ' +
+      'onclick="event.stopPropagation();mapaCidade(\'' + cid + '\')"><title>' + cid + ' \u00b7 ' + kg(v.kg) + ' \u00b7 ' + v.ped + ' ped</title></circle>';
+    if (i < 6 || on) rotulos += '<text x="' + (v.x + (+r) + 3).toFixed(1) + '" y="' + (v.y + 3.5).toFixed(1) + '" font-size="9.5" font-weight="800" fill="#0B2A4A" stroke="#fff" stroke-width="2.6" paint-order="stroke" style="pointer-events:none">' + cid + '</text>';
+  });
+  let h = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:440px;display:block;margin:0 auto">' + fundo + bolas + rotulos + '</svg>';
+  h += '<p class="idet-desc" style="font-size:10.5px;margin:2px 0 0;text-align:center;color:var(--fraco-2)">' +
+    '<span style="color:#1E9E4F;font-weight:800">\u25CF</span> mais venda \u00b7 <span style="color:#E8912D;font-weight:800">\u25CF</span> m\u00e9dia \u00b7 ' +
+    '<span style="color:#D64541;font-weight:800">\u25CF</span> pouca \u00b7 tamanho = peso na carteira \u00b7 toque no c\u00edrculo para recortar a cidade' +
+    (semPos.length ? ' \u00b7 <span style="color:#8A5A00">' + semPos.length + ' cidade(s) sem posi\u00e7\u00e3o no mapa</span>' : '') + '</p>';
+  return h;
+}
 function mapaSel(uf) {
   _mapaSel = (_mapaSel === uf ? '' : uf); _mapaCid = '';
   cmPintaMapa();
@@ -34726,6 +34793,9 @@ function mapaPainel() {
   const mx = CID.length ? CID[0].kg : 1;
   let h = '<p class="idet-desc" style="margin:0 0 8px">' + s.ped + ' pedido(s) · <b>' + kg(s.kg) + '</b> · '
     + '✅ ' + s.ok + ' com reserva completa · ⚠️ ' + s.parcial + ' a separar</p>';
+  h += '<div id="mapaUFbox" style="margin:0 0 10px">'
+    + (_geoCid[_mapaSel] ? _mapaUFSvg(_mapaSel, s, _geoCid[_mapaSel])
+       : '<p class="desc" style="text-align:center"><span class="spin"></span> montando o mapa de ' + _mapaSel + '…</p>') + '</div>';
   if (CID.length) {
     h += '<div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">'
       + CID.length + ' cidade(s)' + (_mapaCid ? ' · <span style="color:var(--azul-marca);cursor:pointer" onclick="mapaCidade(\'' + escapeHtml(_mapaCid).replace(/'/g, '&#39;') + '\')">ver o estado todo</span>' : '') + '</div>'
@@ -34774,6 +34844,14 @@ function mapaPainel() {
     + '<td style="text-align:right"><b>' + kg(p.kg) + '</b></td></tr>'; }).join(''));
   if (base.length > L.length) h += '<p class="idet-desc" style="font-size:11px;margin:6px 0 0">+ ' + (base.length - L.length) + ' pedido(s)</p>';
   abreDet('🗺️ ' + _mapaSel + (_mapaCid ? ' · ' + _mapaCid : ''), h);
+  if (!_geoCid[_mapaSel]) {
+    const _ufAgora = _mapaSel;
+    _geoCarrega(_ufAgora).then(cds => {
+      if (_mapaSel !== _ufAgora) return;
+      const box = document.getElementById('mapaUFbox'); if (!box) return;
+      box.innerHTML = _mapaUFSvg(_ufAgora, s, cds);
+    });
+  }
 }
 /* cidade escolhida dentro do estado: recorta só a lista de pedidos abaixo */
 let _mapaCid = '';
