@@ -1166,7 +1166,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.187.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.188.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1258,6 +1258,10 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></svg>
             <span>Imprimir</span></a>
         </div>
+      </div>
+      <div style="display:flex;gap:6px;justify-content:flex-end;margin-bottom:6px">
+        <button class="btn btn-borda" id="ordBtn" onclick="ordModo()" style="width:auto;padding:5px 12px;font-size:12px">⇅ Organizar</button>
+        <button class="btn btn-borda" onclick="ordReset()" style="width:auto;padding:5px 12px;font-size:12px" title="Voltar à ordem original">↺</button>
       </div>
       <div id="cardAtrasoDia"></div>
       <div id="painelConteudo"><p class="desc" style="padding:20px;text-align:center">Carregando dados…</p></div>
@@ -3510,7 +3514,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.187.0';
+const APP_VER = '4.188.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23387,6 +23391,70 @@ const card = (titulo, sub, conteudo, key) => {
   const _info = _temInfo ? `<button class="info-graf" onclick="cardInfo(this)" title="Como este card é calculado" aria-label="Explicação">\u2139</button>` : '';
   return `<div class="grafico pbloco${_off ? ' oculto-graf' : ''}" data-k="c:${escapeHtml(_k)}"><h3>${titulo}${_info}${_olho}</h3>${_sl}${conteudo}</div>`;
 };
+/* ===== ORDEM DOS CARDS DO PAINEL — 26/08/2026 (pedido do João) =====
+   "Quero poder mudar esse card e ele virar padrão; estou mudando o de bobinas e
+   está voltando na mesma posição."
+
+   Estava voltando porque a ordem nunca foi dele: ela é a sequência em que o
+   código monta o HTML. Recolher um card já era lembrado (_grafOcultos), mas
+   mover não existia.
+
+   Agora existe, e a peça-chave já estava pronta: cada card carrega data-k com
+   um nome estável. Guardo só a LISTA DE CHAVES na ordem escolhida e, depois de
+   cada render, reordeno os nós. Card novo que o app ganhar amanhã não some por
+   não estar na lista — vai para o fim, que é o comportamento seguro: some é
+   pior que fora de lugar.
+
+   Botões ↑ ↓ em vez de arrastar: no celular, arrastar dentro de uma tela que
+   rola briga com o próprio scroll. */
+let _ordCards = (function () { try { return JSON.parse(localStorage.getItem('rp_ordemPainel') || '[]'); } catch (e) { return []; } })();
+let _ordModo = false;
+function _ordSalva() { try { localStorage.setItem('rp_ordemPainel', JSON.stringify(_ordCards)); } catch (e) { } }
+function ordAplica() {
+  try {
+    const host = document.getElementById('painelConteudo'); if (!host) return;
+    const nos = [...host.querySelectorAll(':scope > .pbloco[data-k]')];
+    if (nos.length < 2) return;
+    if (_ordCards.length) {
+      const pos = k => { const i = _ordCards.indexOf(k); return i < 0 ? 9999 : i; };
+      nos.slice().sort((a, b) => pos(a.dataset.k) - pos(b.dataset.k))
+        .forEach(n => host.appendChild(n));
+    }
+    /* botões só no modo organizar, e recriados a cada render */
+    host.querySelectorAll('.ord-bar').forEach(b => b.remove());
+    if (!_ordModo) return;
+    [...host.querySelectorAll(':scope > .pbloco[data-k]')].forEach(n => {
+      const bar = document.createElement('div');
+      bar.className = 'ord-bar';
+      bar.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;padding:4px 0 0';
+      bar.innerHTML = '<button class="btn btn-borda" style="width:auto;padding:3px 11px;font-size:12px" onclick="ordMove(this,-1)">↑</button>'
+        + '<button class="btn btn-borda" style="width:auto;padding:3px 11px;font-size:12px" onclick="ordMove(this,1)">↓</button>';
+      n.appendChild(bar);
+    });
+  } catch (e) { try { console.warn('ordAplica:', e && e.message); } catch (_) { } }
+}
+function ordMove(btn, dir) {
+  const n = btn.closest('.pbloco'), host = n && n.parentElement; if (!host) return;
+  const nos = [...host.querySelectorAll(':scope > .pbloco[data-k]')];
+  const i = nos.indexOf(n), j = i + dir;
+  if (i < 0 || j < 0 || j >= nos.length) return;
+  if (dir < 0) host.insertBefore(n, nos[j]); else host.insertBefore(nos[j], n);
+  _ordCards = [...host.querySelectorAll(':scope > .pbloco[data-k]')].map(x => x.dataset.k);
+  _ordSalva();
+  n.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+function ordModo() {
+  _ordModo = !_ordModo;
+  const b = document.getElementById('ordBtn');
+  if (b) { b.textContent = _ordModo ? '✓ Pronto' : '⇅ Organizar'; b.style.background = _ordModo ? 'var(--navy)' : ''; b.style.color = _ordModo ? '#fff' : ''; }
+  ordAplica();
+  if (_ordModo) toast('Use ↑ ↓ para mover. A ordem fica salva neste aparelho.');
+}
+function ordReset() {
+  if (!confirm('Voltar à ordem original dos cards?')) return;
+  _ordCards = []; _ordSalva(); toast('Ordem original restaurada.');
+  try { renderPainel(); } catch (_) { location.reload(); }
+}
 function cardInfo(btn) {
   const c = btn.closest('.grafico') || btn.closest('.card');
   if (!c) return;
@@ -24214,6 +24282,7 @@ async function cardAtrasoDia(forcar) {
 }
 function renderPainel() {
   try { setTimeout(cardAtrasoDia, 0); } catch (_) { }
+  try { setTimeout(ordAplica, 60); } catch (_) { }
   if (!dadosPainel) return;
   aprovReg = [];
   _ppPend = [];
@@ -24420,7 +24489,7 @@ function renderPainel() {
       /* 24/08/2026 (João) — bobinas do 109 logo abaixo da produção da Termo:
          é o gráfico de quanto ela CONSOME contra o que existe no depósito. */
       if (st === 'Termoformagem') {
-        html += cardBobinas109();
+        html += '<div class="pbloco" data-k="c:Bobinas · depósito 109">' + cardBobinas109() + '</div>';
         if (!_bobCache) setTimeout(_bobCarrega, 0);
       }
     });
@@ -39547,6 +39616,8 @@ function _bobSeloInv(r) {
     + bg + ';color:' + cor + '">contado ' + escapeHtml(fmtData(String(r.data).slice(0, 10)))
     + (r.dif_kg != null ? ' · ajustou ' + fmtKg(+r.dif_kg) : '') + '</div>';
 }
+/* 26/08/2026 — o card de bobinas era montado à mão e não tinha data-k, então
+   ficava de fora da reordenação. Recebe a chave como todos os outros. */
 function cardBobinas109() {
   const b = _bobCache;
   if (!b) return '<div id="bob109" class="card"><p class="desc" style="margin:0">carregando bobinas do depósito 109…</p></div>';
