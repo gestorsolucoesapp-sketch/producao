@@ -3614,7 +3614,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.221.0';
+const APP_VER = '4.222.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27277,7 +27277,7 @@ async function gravar(id, substituir = false) {
         /* PERÍODO — régua do mês. Troca automática só quando COBRE por inteiro;
            sobreposição parcial é recusada (evita perda em dobro). */
         const { data: _ants, error: eAnt } = await sb.from('importacoes')
-          .select('id,periodo_de,periodo_ate,emissao')
+          .select('id,periodo_de,periodo_ate,emissao,dia_unico')
           .eq('rotina', '624').lte('periodo_de', r.periodo.ate).gte('periodo_ate', r.periodo.de);
         if (eAnt) throw new Error('Não consegui conferir importações 624 anteriores: ' + eAnt.message);
         /* os dias conferidos a dedo saem da conta ANTES de qualquer limpeza —
@@ -27299,12 +27299,24 @@ async function gravar(id, substituir = false) {
           if (_maisNova) throw new Error('Este 624 foi emitido em ' + fmtData(r.periodo.gerado) +
             (r.periodo.hora ? ' às ' + r.periodo.hora : '') +
             ', mas o banco já tem uma importação MAIS RECENTE cobrindo o mesmo período. Emita o 624 de novo no ERP e importe o arquivo fresco.');
-          /* fatia primeiro (ver _apagaLinhasDeImportacoes), só depois o registro */
-          await _apagaLinhasDeImportacoes('perdas', _ants.map(a => a.id),
-            r.periodo.de, r.periodo.ate, r._diasFinos);
-          const { error: eA } = await sb.from('importacoes').delete().in('id', _ants.map(a => a.id));
-          if (eA) throw new Error('Não consegui remover a importação 624 anterior: ' + eA.message);
-          _substituiu = _ants.map(a => fmtData(a.periodo_de) + ' → ' + fmtData(a.periodo_ate)).join(' · ');
+          /* ===== NÃO DERRUBE O DONO DO DIA FINO — 27/08/2026 =====
+             Na v4.221.0 eu pulei as LINHAS do dia conferido na limpeza, mas
+             apaguei em seguida o REGISTRO da importação de dia único dona
+             delas — e o CASCADE levou as 303 linhas do dia 26 assim mesmo.
+             Depois o lote novo teve o dia 26 filtrado (por estar "preservado")
+             e o dia ficou ZERADO. A importação de dia único de um dia
+             preservado tem que sobreviver junto com as linhas dela. */
+          const _fsetA = new Set(r._diasFinos || []);
+          const _guardar = a => a.dia_unico && a.periodo_de === a.periodo_ate && _fsetA.has(a.periodo_de);
+          const _remover = _ants.filter(a => !_guardar(a));
+          if (_remover.length) {
+            /* fatia primeiro (ver _apagaLinhasDeImportacoes), só depois o registro */
+            await _apagaLinhasDeImportacoes('perdas', _remover.map(a => a.id),
+              r.periodo.de, r.periodo.ate, r._diasFinos);
+            const { error: eA } = await sb.from('importacoes').delete().in('id', _remover.map(a => a.id));
+            if (eA) throw new Error('Não consegui remover a importação 624 anterior: ' + eA.message);
+            _substituiu = _remover.map(a => fmtData(a.periodo_de) + ' → ' + fmtData(a.periodo_ate)).join(' · ');
+          }
         }
       }
       r._emissaoISO = _emi;
@@ -27466,11 +27478,18 @@ async function gravar(id, substituir = false) {
          de dia único preservo os registros de mês (o dia único é recorte, não
          substituição do panorama). */
       if (!(r.rotina === '624' && r._diaUnicoImport)) {
-        await sb.from('importacoes').delete()
+        let _delImp = sb.from('importacoes').delete()
           .eq('rotina', r.rotina)
           .gte('periodo_de', r.periodo.de)
           .lte('periodo_ate', r.periodo.ate)
           .neq('id', imp.id);
+        /* mesma proteção da limpeza acima: o registro de dia único de um dia
+           conferido fica, senão o CASCADE apaga as linhas que acabamos de
+           preservar e o dia zera. */
+        if (r.rotina === '624' && Array.isArray(r._diasFinos) && r._diasFinos.length) {
+          _delImp = _delImp.not('periodo_de', 'in', '(' + r._diasFinos.join(',') + ')');
+        }
+        await _delImp;
       }
     }
 
