@@ -959,8 +959,10 @@ body.org-min .org-maq.aberto .org-kpi{display:block}
 .oq th,.oq td{border-bottom:1px solid var(--linha-s);border-right:1px solid var(--linha-s);padding:0;background:#fff;font-size:12px;vertical-align:top}
 .oq th:last-child,.oq td:last-child{border-right:0}
 .oq thead th{position:sticky;top:0;z-index:3;color:#fff;font-weight:800;font-size:13px;padding:9px 10px;text-align:left}
-.oq tbody th{position:sticky;left:0;z-index:2;background:var(--tinta-s);color:#fff;padding:8px 9px;text-align:left;min-width:74px}
-.oq thead th:first-child{left:0;z-index:4;background:var(--tinta-s)}
+/* 27/08/2026 (João): a coluna da máquina era um bloco de azul quase preto e
+   pesava a tela inteira. Passa a usar o mesmo azul da faixa do turno Noite. */
+.oq tbody th{position:sticky;left:0;z-index:2;background:#3d7ab8;color:#fff;padding:8px 9px;text-align:left;min-width:74px}
+.oq thead th:first-child{left:0;z-index:4;background:#3d7ab8}
 .oq-cel{display:block;padding:7px 9px 8px 10px;border-left:4px solid transparent;min-height:100%}
 .oq-op{font-size:12.5px;font-weight:800;color:var(--tinta-s);cursor:pointer;display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
 .oq-aux{font-size:11px;color:var(--fraco-s);margin-top:3px;line-height:1.45}
@@ -3614,7 +3616,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.223.0';
+const APP_VER = '4.224.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41949,6 +41951,15 @@ async function carregarOrganograma() {
       sb.rpc('org_serie_maq', { p_ini: orgJanela.ini, p_fim: orgJanela.fim })
     ]);
     orgDados = { colab: c.data || [], aloc: a.data || [], celulas: ce.data || [], maqCel: mc.data || [], maquinas: mq.data || [], afast: af.data || [], sup: sup.data || [], kpis: kp.data || [], serie: (se && se.data) || [] };
+    /* 27/08/2026 (João: "marque as faltas e horas negativas no card"). A falta já
+       aparecia pelo orgIconAusencia; o banco de horas não estava em memória —
+       era lido só na ficha individual. Carrego o espelho inteiro de uma vez
+       (222 pessoas) e monto um índice matrícula → saldo em MINUTOS. */
+    try {
+      const bh = await sb.from('v_banco_horas_atual').select('matricula,saldo_atual');
+      orgDados.bh = {};
+      (bh.data || []).forEach(x => { orgDados.bh[String(x.matricula)] = Number(x.saldo_atual) || 0; });
+    } catch (_) { orgDados.bh = {}; }
     /* a correção manual entra ANTES de qualquer filtro por setor: guardo o valor
        original em setor_erp para poder mostrar os dois lado a lado. */
     /* ===== "EMBALAGEM" x "EMBALADEIRAS" — 24/08/2026 (João: "acerte o nome") =====
@@ -42580,6 +42591,18 @@ async function lpSetor(v) {
   renderOrgVista();
 }
 
+/* saldo negativo de banco de horas vira um selo vermelho discreto ao lado do
+   nome — mesmo lugar onde a falta/férias já aparece. Só o negativo é marcado:
+   saldo positivo é normal e encheria a tela de selo sem informação. */
+function orgSeloHoras(mat) {
+  try {
+    const min = (orgDados.bh || {})[String(mat)];
+    if (!(min < 0)) return '';
+    const h = Math.round(Math.abs(min) / 60);
+    if (h < 1) return '';
+    return '<span title="banco de horas negativo: -' + h + 'h" style="font-size:9px;font-weight:800;padding:1px 5px;border-radius:999px;background:#FBE3E3;color:#9B2C2C;margin-left:4px;white-space:nowrap">-' + h + 'h</span>';
+  } catch (_) { return ''; }
+}
 function orgQuadro(alocSetor, maqSetor) {
   const turnos = orgTurnosVis();
   const _edit = (typeof podeEditarEscala !== 'undefined') && podeEditarEscala;
@@ -42614,7 +42637,7 @@ function orgQuadro(alocSetor, maqSetor) {
     ops.forEach(o => {
       const nm = orgNomeDe(o);
       c += '<span class="oq-op" onclick="orgMenuPessoa(' + o.id + ')" style="' + (o.pendente ? 'color:var(--laranja-2)' : '') + '">' +
-        escapeHtml(nm) + orgIconAusencia(o.matricula) + '</span>';
+        escapeHtml(nm) + orgIconAusencia(o.matricula) + orgSeloHoras(o.matricula) + '</span>';
       if (o.sem_operador) c += ' <span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:999px;background:#475569;color:#fff;vertical-align:middle">SEM OPERADOR</span>';
       c += '<br>';
     });
@@ -42622,13 +42645,18 @@ function orgQuadro(alocSetor, maqSetor) {
     const auxTx = [];
     auxs.forEach(a => {
       if (a.sem_auxiliar) { auxTx.push('<i style="color:var(--fraco-2s)">sem auxiliar</i>'); return; }
-      auxTx.push('<span onclick="orgMenuPessoa(' + a.id + ')" style="cursor:pointer">' + escapeHtml(orgNomeDe(a)) + '</span>' + orgIconAusencia(a.matricula));
+      auxTx.push('<span onclick="orgMenuPessoa(' + a.id + ')" style="cursor:pointer">' + escapeHtml(orgNomeDe(a)) + '</span>' + orgIconAusencia(a.matricula) + orgSeloHoras(a.matricula));
       P.aloc.filter(x => x.aprendiz && x.funcao === 'auxiliar' && a.matricula && x.instrutor_matricula === a.matricula)
         .forEach(x => auxTx.push('<span onclick="orgMenuPessoa(' + x.id + ')" style="cursor:pointer;color:#6b21a8">\u{1F393} ' + escapeHtml(orgNomeDe(x)) + '</span>'));
     });
     if (auxTx.length) c += '<span class="oq-aux">aux \u00b7 ' + auxTx.join(' \u00b7 ') + '</span>';
     if (mt.chip || dupN) c += '<br>' + mt.chip +
       (dupN ? ' <span class="oq-meta" style="background:var(--crit-bg2);color:var(--critico-2s)">\u26A0 em ' + dupN + ' oper.</span>' : '');
+    /* 27/08/2026: sparkline do mês DESTA máquina NESTE turno (orgSpark já existe
+       desde a v4.190.0, era usado só no card antigo). O chip diz como está hoje;
+       a linha diz para onde vinha andando — juntos evitam o susto de ver 62% sem
+       saber se é queda ou se a máquina sempre andou ali. */
+    try { const sp = orgSpark(m, t); if (sp) c += '<div style="margin-top:4px">' + sp + '</div>'; } catch (_) { }
     return c + '</span></td>';
   };
 
