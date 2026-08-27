@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.217.0';
+const APP_VER = '4.218.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20018,6 +20018,50 @@ async function dgSalvaPos() {
 function dgRecoloca() {
   _dgPos = {}; rasVista(); dgSalvaPos();
 }
+/* ===== DESCREVER EM PORTUGUÊS E A IA MONTA (26/08/2026) =====
+   Chama a Edge Function `diagrama-ia`, que só traduz texto solto para a sintaxe
+   de setas — sem ferramenta, sem tocar no banco. O desenho continua sendo feito
+   AQUI, pelo dgSVG: a IA escreve o texto, não o SVG. Se ela alucinar uma etapa,
+   ela aparece escrita na tela, onde dá para apagar — bem melhor que um desenho
+   pronto que ninguém sabe de onde veio.
+   Guarda o texto anterior para o desfazer: substituir o que a pessoa escreveu
+   sem volta seria o pior jeito de errar. */
+let _dgAntes = null;
+function _dgBtIA(txt, travado) {
+  const b = document.getElementById('dgIaBtn'); if (!b) return;
+  b.textContent = txt; b.style.pointerEvents = travado ? 'none' : ''; b.style.opacity = travado ? '.55' : '';
+}
+async function dgIA() {
+  if (!_rasAtual) return;
+  const ta = document.getElementById('rasTxt'); if (!ta) return;
+  const txt = String(ta.value || '').trim();
+  if (!txt) { toast('Escreva antes o fluxo, do jeito que você contaria para alguém.'); return; }
+  _dgBtIA('\u2728 montando…', true);
+  try {
+    const r = await fetch(SB_URL + '/functions/v1/diagrama-ia', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_KEY },
+      body: JSON.stringify({ texto: txt })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!d || !d.linhas) throw new Error((d && d.error) || 'Não consegui montar agora.');
+    _dgAntes = ta.value;
+    ta.value = d.linhas;
+    _dgPos = {};                  /* texto novo: as posições antigas apontariam para caixas que não existem mais */
+    const bd = document.getElementById('dgDesfazBt'); if (bd) bd.style.display = '';
+    rasMuda(); rasVista(); dgSalvaPos();
+    toast('Montei ' + (d.n || '') + ' ligação(ões). Confira e ajuste o que estiver errado.');
+  } catch (e) {
+    toast((e && e.message) ? e.message : String(e));
+  } finally { _dgBtIA('\u2728 montar com IA', false); }
+}
+function dgDesfazIA() {
+  const ta = document.getElementById('rasTxt');
+  if (!ta || _dgAntes === null) return;
+  ta.value = _dgAntes; _dgAntes = null; _dgPos = {};
+  const bd = document.getElementById('dgDesfazBt'); if (bd) bd.style.display = 'none';
+  rasMuda(); rasVista(); dgSalvaPos();
+}
 async function rasRender(forcar) {
   const box = document.getElementById('ferrRascunho'); if (!box) return;
   try {
@@ -20069,10 +20113,16 @@ function rasAbre(id) {
   abreDet('✍️ ' + (RAS_TIPOS.find(x => x[0] === n.tipo) || [])[1],
     '<input id="rasTit" value="' + escapeHtml(n.titulo || '') + '" placeholder="título" oninput="rasMuda()" '
     + 'style="width:100%;font-size:16px;font-weight:700;padding:8px 10px;border:1px solid var(--linha);border-radius:10px;margin-bottom:7px">'
-    + '<textarea id="rasTxt" rows="12" oninput="rasMuda()" placeholder="escreva livremente…" '
+    + '<textarea id="rasTxt" rows="12" oninput="rasMuda()" placeholder="' + (n.tipo === 'diagrama' ? 'Conte o fluxo do seu jeito e toque em Montar com IA. Ex.: o pedido chega, vai pra digitação, o comercial confere, se o crédito não aprova volta…' : 'escreva livremente…') + '" '
     + 'style="width:100%;font-size:15px;line-height:1.5;padding:9px 11px;border:1px solid var(--linha);border-radius:10px;font-family:inherit">'
     + escapeHtml(n.conteudo || '') + '</textarea>'
-    + '<div id="rasEstado" class="desc" style="font-size:11px;margin:4px 0 8px">salvo</div>'
+    + '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:4px 0 8px">'
+    + '<span id="rasEstado" class="desc" style="font-size:11px">salvo</span>'
+    + ((n.tipo === 'diagrama' && souAdmin)
+      ? '<span id="dgIaBtn" onclick="dgIA()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:6px 13px">\u2728 montar com IA</span>'
+        + '<span id="dgDesfazBt" onclick="dgDesfazIA()" style="display:none;cursor:pointer;font-size:11px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:999px;padding:5px 11px">\u21a9 desfazer</span>'
+      : '')
+    + '</div>'
     + '<div id="rasVista"></div>');
   rasVista();
 }
