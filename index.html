@@ -2261,6 +2261,16 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        comercial manda vem recortado, sem a linha ROTINA, entao os dois desenhos
        do mesmo relatorio sao separados pelo que cada um tem de proprio: este
        pelo cabecalho de colunas, o outro pelo par Regiao + Vendedor. */
+    /* ===== 27/08/2026 (João: "importar num lugar só") =====
+       O RSMI005 e o RSMI010 sempre tiveram parser, mas só rodavam pela fila de
+       e-mail e pelo bloco de foto da Manutenção — que foi removido. No upload
+       manual eles caíam em "relatório não reconhecido". Passam a ser detectados
+       aqui, com os MESMOS testes já usados no outro caminho (ehRSMI005/010),
+       para não existir uma segunda régua dizendo o que é cada arquivo. */
+    try {
+      if (typeof ehRSMI010 === 'function' && ehRSMI010(linhas)) return 'RSMI010';
+      if (typeof ehRSMI005 === 'function' && ehRSMI005(linhas)) return 'RSMI005';
+    } catch (_) { }
     if (linhas.some(l => /^Proposta\s+Pedido\s+Emiss/.test(l.texto))) return 'PROP';
     /* 24/08/2026 — RVEN002 PELO PRÓPRIO CABEÇALHO.
        Até aqui ele só era reconhecido pelo DESENHO (par "Região:" + "Vendedor:"),
@@ -2860,7 +2870,9 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     /* as duas saem do RVEN002; o que muda é o parâmetro de emissão */
     'PROP': 'Propostas × Pedidos (demanda que ainda não é carteira)',
     'RVEN002': 'Documentos por Região × Sub-Região (mapa: pedido → UF e representante)',
-    'RVEN304': 'Histórico do Fluxo de Venda do Documento (tempo do pedido em cada etapa)'
+    'RVEN304': 'Histórico do Fluxo de Venda do Documento (tempo do pedido em cada etapa)',
+    'RSMI005': 'Ordens de manutenção detalhadas (problema, conclusão e tempo)',
+    'RSMI010': 'Ordens de manutenção simplificadas (situação por OS)'
   };
 
 
@@ -3574,7 +3586,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   async function parseDocumento(pdf) {
     const linhas = await extrairLinhas(pdf);
     const rotina = detectarRotina(linhas);
-    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264, RGER339, REST196, REST241 ou RVEN002 (região ou propostas × pedidos).');
+    if (!rotina || !NOMES[rotina]) throw new Error('Relatório não reconhecido. Esperado: RPCP621/622/624/054/643/646/264, RGER339, REST196, REST241, RVEN002 (região ou propostas × pedidos), RVEN304, RSMI005 ou RSMI010.');
     const periodo = acharPeriodo(linhas);
     let registros;
     switch (rotina) {
@@ -3591,6 +3603,8 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       case 'PROP': registros = parsePropostas(linhas, periodo); break;
       case 'RVEN002': registros = parseRVEN002(linhas, periodo); break;
       case 'RVEN304': registros = parseRVEN304(linhas); break;
+      case 'RSMI010': registros = parseRSMI010(linhas); break;
+      case 'RSMI005': registros = parseRSMI005(linhas); break;
     }
     /* PDF DE UM DIA SO, SEM CABECALHO. O RPCP624 gerado dia a dia sai sem o bloco
        "Período:" — entao acharPeriodo devolve vazio e nao da para saber o dia pelo
@@ -3648,7 +3662,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.253.0';
+const APP_VER = '4.254.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10519,14 +10533,15 @@ function renderDiagPausa() {
    era o NOME na tela, que fazia parecer relatório diferente.
    De quebra: 'RVEN002' caía no fim da escada de ternários da pré-visualização e
    era rotulado 'RPCPRVEN002'. */
-const ROT_SIGLA = { '241': 'REST241', '196': 'REST196', '339': 'RGER339', 'PROP': 'RVEN002', 'RVEN002': 'RVEN002' };
+const ROT_SIGLA = { '241': 'REST241', '196': 'REST196', '339': 'RGER339', 'PROP': 'RVEN002', 'RVEN002': 'RVEN002', 'RSMI005': 'RSMI005', 'RSMI010': 'RSMI010' };
 const rotSigla = r => ROT_SIGLA[r] || ('RPCP' + r);
 const ROT_NOME = {
   '621': 'Produção (resumo)', '622': 'Produção detalhada / itens', '624': 'Refugo',
   '054': 'Perda por cliente', '643': 'Paradas', '646': 'Consumo de componentes',
   '196': 'REST196 · carteira', '241': 'REST241 · estoque', '264': 'Fila por recurso',
   '339': 'Fila por data/pedido', 'RVEN002': 'RVEN002 · região e representante',
-  'PROP': 'RVEN002 · propostas × pedidos'
+  'PROP': 'RVEN002 · propostas × pedidos',
+  'RSMI005': 'RSMI005 · ordens detalhadas', 'RSMI010': 'RSMI010 · ordens simplificadas'
 };
 async function renderLimpaRotina() {
   const box = $('cardLimpaRot'); if (!box) return;
@@ -27749,6 +27764,24 @@ async function _apagaLinhasDeImportacoes(tabela, ids, de, ate, pularDias) {
   return dias;
 }
 async function gravar(id, substituir = false) {
+  /* as ordens de manutenção não vão para a tabela do relatório: viram OS pelo
+     mesmo salvarOrdens que a fila de e-mail usa, com upsert por número da OS —
+     assim os dois relatórios se completam e nada duplica. */
+  try {
+    const _r = previews[id];
+    if (_r && (_r.rotina === 'RSMI005' || _r.rotina === 'RSMI010')) {
+      const st = document.getElementById('imp_' + id + '_st') || null;
+      const lidas = (_r.registros || []).map(o => ({ ...o, setor: setorDe(o.recurso_cod), colaboradores: o.colaboradores || null }));
+      if (!lidas.length) { toast('Nenhuma OS reconhecida neste arquivo.'); return; }
+      await salvarOrdens(lidas, st);
+      /* recarrega a lista de OS que o app tem em memória, senão o mapa e a aba
+         Manutenção só mostrariam as ordens novas na próxima abertura */
+      try { const d = await buscarTodasOS(null, _osPiso90()); if (d) osLista = d; } catch (_) { }
+      try { if (typeof renderManut === 'function') renderManut(); } catch (_) { }
+      descartar(id);
+      return;
+    }
+  } catch (e) { toast('Não consegui gravar as ordens: ' + ((e && e.message) || e)); return; }
   const prev = previews[id];
   if (!prev) return false;
   const { resultado: r, hash, nomeArquivo } = prev;
