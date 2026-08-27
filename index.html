@@ -3621,7 +3621,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.240.0';
+const APP_VER = '4.241.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13017,23 +13017,27 @@ async function manutAnaliseIA() {
 }
 
 /* ===== MAPA DE CALOR DA MÁQUINA — 27/08/2026 (pedido do João) =====
-   Desenho VETORIAL PRÓPRIO, feito à mão. Não usei a imagem do fabricante que o
-   João mandou: além de ser material de terceiro, foto não serve aqui — o mapa
-   precisa de regiões nomeadas e clicáveis, e cada parte tem que virar um filtro.
-   O layout segue o caminho real do copo numa impressora offset seco de 8 cores:
-   alimentador → mandril (com a bateria de cores em volta) → blanket → cura UV →
-   verniz → descarga; elétrica, vácuo e transmissão embaixo, que é onde ficam.
-   As partes vivem em `maquina_parte` (uma linha por região, `chave` = id no
-   desenho), e a OS aponta para elas em `manutencao_os.parte_chave`. Assim o João
-   renomeia parte sem eu mexer no código. */
+   Desenho VETORIAL PRÓPRIO. A ilustração do catálogo Van Dam é do fabricante e
+   não foi copiada; o que aproveitei dela foi a ARQUITETURA da CM 608 M, que é
+   fato técnico — e ela corrigiu um erro meu: eu tinha desenhado a máquina em
+   linha reta, e ela é ROTATIVA. Agora é torre central, mandril no miolo e as
+   8 baterias de cor em volta, com o copo entrando pelo alimentador e saindo
+   para secagem → extração → empilhador → embaladeira → contador.
+   Foto também não serviria: mapa de calor precisa de região clicável.
+   As partes vivem em `maquina_parte` (chave = id da região) e a OS aponta para
+   elas em `manutencao_os.parte_chave` — o João renomeia sem eu mexer no código. */
 let _mqVista = 'os', _mqPartes = [], _mqCont = {}, _mqSel = '';
-const MQ_GEO = [
-  { k: 'alimentador', x: 18, y: 112, w: 92, h: 74 }, { k: 'mandril', x: 126, y: 96, w: 104, h: 104 },
-  { k: 'blanket', x: 246, y: 96, w: 86, h: 104 }, { k: 'chapa', x: 246, y: 30, w: 86, h: 52 },
-  { k: 'rolos', x: 348, y: 30, w: 78, h: 52 }, { k: 'tinteiro', x: 348, y: 96, w: 78, h: 104 },
-  { k: 'uv', x: 442, y: 96, w: 76, h: 60 }, { k: 'verniz', x: 442, y: 166, w: 76, h: 34 },
-  { k: 'descarga', x: 534, y: 112, w: 92, h: 74 }, { k: 'transmissao', x: 126, y: 216, w: 150, h: 44 },
-  { k: 'vacuo', x: 288, y: 216, w: 138, h: 44 }, { k: 'eletrica', x: 438, y: 216, w: 188, h: 44 }
+const MQ_CX = 300, MQ_CY = 196, MQ_RT = 104, MQ_RM = 46, MQ_RB = 146, MQ_NB = 8;
+const MQ_CAIXAS = [
+  { k: 'alimentador', n: 'Alimentador', x: 16, y: 150, w: 104, h: 64 },
+  { k: 'tratamento', n: 'Tratamento', x: 16, y: 238, w: 104, h: 52 },
+  { k: 'secagem', n: 'Secagem', x: 482, y: 92, w: 110, h: 56 },
+  { k: 'extracao', n: 'Extração', x: 482, y: 162, w: 110, h: 52 },
+  { k: 'empilhador', n: 'Empilhador', x: 482, y: 228, w: 110, h: 52 },
+  { k: 'embaladeira', n: 'Embaladeira', x: 482, y: 294, w: 110, h: 52 },
+  { k: 'contador', n: 'Contador', x: 482, y: 360, w: 110, h: 44 },
+  { k: 'pneumatica', n: 'Pneumática', x: 132, y: 368, w: 158, h: 44 },
+  { k: 'refrigeracao', n: 'Refrigeração', x: 302, y: 368, w: 158, h: 44 }
 ];
 function manutVer(v) {
   _mqVista = v;
@@ -13051,17 +13055,55 @@ function _mqCor(q, max) {
   if (r >= 0.20) return { f: '#EDC94A', s: '#B9992A', t: '#5A4700' };
   return { f: '#BFE3C6', s: '#7FBF90', t: '#1F5B33' };
 }
+function _mqDesenho(cont, nome) {
+  const todas = ['alimentador', 'tratamento', 'mandril', 'torre', 'baterias', 'secagem', 'extracao', 'empilhador', 'embaladeira', 'contador', 'pneumatica', 'refrigeracao'];
+  const max = Math.max(0, ...todas.map(k => cont[k] || 0));
+  const nm = k => (nome[k] || k);
+  const sel = k => (_mqSel === k);
+  let g = '<path d="M120 182 H' + (MQ_CX - MQ_RT - 16) + '" stroke="#C6D3E0" stroke-width="3" stroke-dasharray="6 5" fill="none"/>'
+    + '<path d="M' + (MQ_CX + MQ_RT + 16) + ' 130 H478" stroke="#C6D3E0" stroke-width="3" stroke-dasharray="6 5" fill="none"/>';
+  const cb = _mqCor(cont.baterias || 0, max);
+  for (let i = 0; i < MQ_NB; i++) {
+    const a = (-125 + i * 250 / (MQ_NB - 1)) * Math.PI / 180;
+    const bx = MQ_CX + Math.cos(a) * MQ_RB, by = MQ_CY + Math.sin(a) * MQ_RB;
+    g += '<g onclick="mqFiltra(\'baterias\')" style="cursor:pointer"><rect x="' + (bx - 21).toFixed(1) + '" y="' + (by - 15).toFixed(1)
+      + '" width="42" height="30" rx="7" fill="' + cb.f + '" stroke="' + (sel('baterias') ? '#16283A' : cb.s) + '" stroke-width="' + (sel('baterias') ? 3 : 1.6)
+      + '" transform="rotate(' + ((a * 180 / Math.PI) + 90).toFixed(1) + ' ' + bx.toFixed(1) + ' ' + by.toFixed(1) + ')"/></g>';
+  }
+  const ct = _mqCor(cont.torre || 0, max);
+  g += '<g onclick="mqFiltra(\'torre\')" style="cursor:pointer"><circle cx="' + MQ_CX + '" cy="' + MQ_CY + '" r="' + MQ_RT + '" fill="' + ct.f + '" stroke="' + (sel('torre') ? '#16283A' : ct.s) + '" stroke-width="' + (sel('torre') ? 3.4 : 2.2) + '"/>'
+    + '<text x="' + MQ_CX + '" y="' + (MQ_CY - MQ_RT + 26) + '" text-anchor="middle" font-size="11.5" font-weight="800" fill="' + ct.t + '">' + escapeHtml(nm('torre')) + '</text>'
+    + (cont.torre ? '<text x="' + MQ_CX + '" y="' + (MQ_CY - MQ_RT + 44) + '" text-anchor="middle" font-size="12.5" font-weight="800" fill="' + ct.t + '">' + cont.torre + '</text>' : '')
+    + '<title>' + escapeHtml(nm('torre')) + ' — ' + (cont.torre || 0) + ' ordem(ns)</title></g>';
+  const cm = _mqCor(cont.mandril || 0, max);
+  g += '<g onclick="mqFiltra(\'mandril\')" style="cursor:pointer"><circle cx="' + MQ_CX + '" cy="' + MQ_CY + '" r="' + MQ_RM + '" fill="' + cm.f + '" stroke="' + (sel('mandril') ? '#16283A' : cm.s) + '" stroke-width="' + (sel('mandril') ? 3.4 : 2) + '"/>'
+    + '<text x="' + MQ_CX + '" y="' + (MQ_CY + (cont.mandril ? -2 : 4)) + '" text-anchor="middle" font-size="11.5" font-weight="800" fill="' + cm.t + '">' + escapeHtml(nm('mandril')) + '</text>'
+    + (cont.mandril ? '<text x="' + MQ_CX + '" y="' + (MQ_CY + 15) + '" text-anchor="middle" font-size="12.5" font-weight="800" fill="' + cm.t + '">' + cont.mandril + '</text>' : '')
+    + '<title>' + escapeHtml(nm('mandril')) + ' — ' + (cont.mandril || 0) + ' ordem(ns)</title></g>';
+  /* rótulo das baterias no canto de cima, que é a única área livre do anel */
+  g += '<g onclick="mqFiltra(\'baterias\')" style="cursor:pointer"><rect x="14" y="20" width="126" height="26" rx="13" fill="' + cb.f + '" stroke="' + cb.s + '"/>'
+    + '<text x="77" y="37" text-anchor="middle" font-size="11" font-weight="800" fill="' + cb.t + '">' + escapeHtml(nm('baterias')) + (cont.baterias ? ' · ' + cont.baterias : '') + '</text></g>';
+  MQ_CAIXAS.forEach(p => {
+    const q = cont[p.k] || 0, c = _mqCor(q, max), cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+    g += '<g onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer">'
+      + '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="10" fill="' + c.f + '" stroke="' + (sel(p.k) ? '#16283A' : c.s) + '" stroke-width="' + (sel(p.k) ? 3.4 : 1.8) + '"/>'
+      + '<text x="' + cx + '" y="' + (cy - (q ? 5 : 0) + 4) + '" text-anchor="middle" font-size="11.5" font-weight="800" fill="' + c.t + '">' + escapeHtml(nm(p.k)) + '</text>'
+      + (q ? '<text x="' + cx + '" y="' + (cy + 16) + '" text-anchor="middle" font-size="12.5" font-weight="800" fill="' + c.t + '">' + q + '</text>' : '')
+      + '<title>' + escapeHtml(nm(p.k)) + ' — ' + q + ' ordem(ns)</title></g>';
+  });
+  return '<div style="overflow-x:auto"><svg viewBox="0 0 610 424" width="610" height="424" style="display:block;margin:0 auto;max-width:100%;height:auto">'
+    + '<rect x="4" y="4" width="602" height="416" rx="14" fill="#fff" stroke="#DEE6ED"/>' + g + '</svg></div>';
+}
 async function renderMqMapa() {
   const box = $('manutMapa'); if (!box) return;
   box.innerHTML = '<p class="desc">Carregando o mapa…</p>';
   try {
     if (!_mqPartes.length) {
-      const { data, error } = await sb.from('maquina_parte').select('chave,nome,descricao,ordem')
+      const { data, error } = await sb.from('maquina_parte').select('chave,nome,ordem')
         .eq('setor', 'Impressão').eq('ativo', true).order('ordem');
       if (error) throw error;
       _mqPartes = data || [];
     }
-    /* conta as OS do período que já estão classificadas numa parte */
     let L = (osLista || []).filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === 'Impressão');
     if (typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de && periodoSel.ate) {
       const de = String(periodoSel.de).slice(0, 10), ate = String(periodoSel.ate).slice(0, 10);
@@ -13070,25 +13112,11 @@ async function renderMqMapa() {
     _mqCont = {}; let semParte = 0;
     L.forEach(o => { const k = o.parte_chave; if (k) _mqCont[k] = (_mqCont[k] || 0) + 1; else semParte++; });
     const nome = {}; _mqPartes.forEach(p => { nome[p.chave] = p.nome; });
-    const max = Math.max(0, ...MQ_GEO.map(g => _mqCont[g.k] || 0));
-    let g = '<path d="M64 149 H172 M230 149 H289 M332 149 H385 M426 149 H480 M518 149 H580" stroke="#C6D3E0" stroke-width="3" stroke-dasharray="6 5" fill="none"/>';
-    MQ_GEO.forEach(p => {
-      const q = _mqCont[p.k] || 0, c = _mqCor(q, max), cx = p.x + p.w / 2, cy = p.y + p.h / 2;
-      const rot = nome[p.k] || p.k;
-      g += '<g onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer">'
-        + '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="10" fill="' + c.f + '" stroke="' + (_mqSel === p.k ? '#16283A' : c.s) + '" stroke-width="' + (_mqSel === p.k ? 3.4 : 1.8) + '"/>'
-        + '<text x="' + cx + '" y="' + (cy - (q ? 5 : 0)) + '" text-anchor="middle" font-size="11" font-weight="800" fill="' + c.t + '">' + escapeHtml(rot.split(' / ')[0].slice(0, 15)) + '</text>'
-        + (q ? '<text x="' + cx + '" y="' + (cy + 13) + '" text-anchor="middle" font-size="12.5" font-weight="800" fill="' + c.t + '">' + q + '</text>' : '')
-        + '<title>' + escapeHtml(rot) + ' — ' + q + ' ordem(ns)</title></g>';
-    });
-    const svg = '<div style="overflow-x:auto"><svg viewBox="0 0 644 276" width="644" height="276" style="display:block;margin:0 auto;max-width:100%;height:auto">'
-      + '<rect x="6" y="6" width="632" height="264" rx="14" fill="#fff" stroke="#DEE6ED"/>' + g + '</svg></div>';
-    const lista = _mqSel ? _mqListaOS(L, _mqSel, nome) : '';
     box.innerHTML = card('🌡️ Mapa da máquina · Impressão',
       'quanto mais quente, mais ordens naquela parte · toque numa parte para ver as ordens',
-      svg
-      + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> O mapa só pinta o que já foi classificado — abra a ordem e escolha a parte para ela entrar aqui.</div>' : '')
-      + lista);
+      _mqDesenho(_mqCont, nome)
+      + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> O mapa só pinta o que já foi classificado.</div>' : '')
+      + (_mqSel ? _mqListaOS(L, _mqSel, nome) : ''));
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="desc">Não consegui montar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
   }
