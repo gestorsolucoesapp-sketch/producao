@@ -3614,7 +3614,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.219.0';
+const APP_VER = '4.220.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27231,7 +27231,13 @@ async function gravar(id, substituir = false) {
        de uma nova é perda de dado disfarçada de importação. */
     let _substituiu = null, _sobrepDia = null;
     if (r.rotina === '624' && r.periodo && r.periodo.de && r.periodo.ate) {
-      const _emi = r.periodo.gerado ? (r.periodo.gerado + 'T' + (r.periodo.hora || '00:00:00')) : null;
+      /* ===== FUSO DA EMISSÃO — 27/08/2026 (João: "seu horário está errado") =====
+         A hora vem do cabeçalho do PDF e é horário de São Paulo. Sem o fuso na
+         string, o Postgres (que roda em UTC) gravava 07:27 como 07:27 UTC, ou
+         seja, 04:27 daqui — o relatório aparecia 3h mais cedo do que foi
+         emitido. -03:00 fixo porque o Brasil não tem mais horário de verão
+         desde 2019; se voltar, isto vira uma tabela de offset. */
+      const _emi = r.periodo.gerado ? (r.periodo.gerado + 'T' + (r.periodo.hora || '00:00:00') + '-03:00') : null;
       const _ehDiaUnico = r.periodo.de === r.periodo.ate;
       r._diaUnicoImport = _ehDiaUnico;
       if (_ehDiaUnico) {
@@ -27258,7 +27264,10 @@ async function gravar(id, substituir = false) {
           if (_parcial.length) throw new Error('Este 624 (' + fmtData(r.periodo.de) + ' → ' + fmtData(r.periodo.ate) +
             ') cruza com a importação de ' + fmtData(_parcial[0].periodo_de) + ' → ' + fmtData(_parcial[0].periodo_ate) +
             ' sem cobri-la por inteiro — gravaria perda em dobro nos dias em comum. Ou emita o 624 cobrindo todo esse período, ou apague a importação antiga no Histórico antes.');
-          const _maisNova = _emi ? _ants.find(a => a.emissao && a.emissao > _emi) : null;
+          /* compara como INSTANTE, não como texto: agora um lado tem "-03:00" e o
+             outro volta do banco em "+00:00", e a ordem alfabética mentiria. */
+          const _emiMs = _emi ? Date.parse(_emi) : NaN;
+          const _maisNova = isNaN(_emiMs) ? null : _ants.find(a => a.emissao && Date.parse(a.emissao) > _emiMs);
           if (_maisNova) throw new Error('Este 624 foi emitido em ' + fmtData(r.periodo.gerado) +
             (r.periodo.hora ? ' às ' + r.periodo.hora : '') +
             ', mas o banco já tem uma importação MAIS RECENTE cobrindo o mesmo período. Emita o 624 de novo no ERP e importe o arquivo fresco.');
