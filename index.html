@@ -3614,7 +3614,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.222.0';
+const APP_VER = '4.223.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -10327,7 +10327,10 @@ const _TESTE_BLOCO_ATUAL = 'final_23ago';   // carimbo do estado final
    localStorage e sem painel: os seis que passaram nos oito testes ficam ligados
    para sempre; os dois que travaram ficam fora até a conta deles ser reescrita.
    Configuração fixa e correta vale mais que oito chaves em estado desconhecido. */
-const _P643_LIGADOS = new Set(['kpi', 'setup', 'oee', 'meta', 'maquina', 'pareto']);
+/* 27/08/2026 (João: "o card de máquina parada o turno inteiro sumiu do painel").
+   Não era configuração dele: 'totais' e 'perdida' tinham ficado FORA desta lista,
+   e p643() testa só ela — o card era montado e descartado calado. Voltaram. */
+const _P643_LIGADOS = new Set(['kpi', 'setup', 'oee', 'meta', 'maquina', 'pareto', 'totais', 'perdida']);
 let _p643 = _P643_LIGADOS;
 try { localStorage.removeItem(P643_CH); } catch (_) { }
 function p643(k) { return _paradasLigado && _P643_LIGADOS.has(k); }
@@ -14161,6 +14164,61 @@ function _mptDetalhe(a) {
 /* máquinas que ficaram um TURNO INTEIRO paradas, por dia e turno.
    Parada longa é fatiada pelos turnos que cobre (mais preciso). Só conta turno
    COM expediente (algum recurso do setor produziu) — evita acusar fim de semana. */
+/* ===== SEMÁFORO DE MÁQUINAS — 27/08/2026 (pedido do João) =====
+   Uma bolinha por máquina, sem número nenhum: verde bateu a meta, amarelo perto,
+   vermelho longe, cinza não rodou. O número aparece só quando o dedo/mouse para
+   em cima. A ideia é varrer a fábrica inteira num relance — texto em 50 bolinhas
+   viraria uma parede e ninguém leria.
+   A meta vem de `metasData[cod][bloco]`, somando os três blocos do dia; máquina
+   sem meta cadastrada fica azul (não dá para julgar sem régua). O período segue
+   o filtro do painel, então em vários dias a meta é multiplicada pelos dias com
+   expediente daquela máquina — comparar produção de 5 dias com meta de 1 diria
+   que a fábrica inteira está vermelha. */
+function cardSemaforoMaq(D, val) {
+  const prod = {}, nomes = {}, diasMaq = {};
+  (D.producao || []).forEach(r => {
+    const c = String(r.recurso_cod);
+    prod[c] = (prod[c] || 0) + (val ? (val(r) || 0) : (+r.peso || 0));
+    nomes[c] = (D.nomeMaq && D.nomeMaq[c]) || r.recurso_nome || c;
+    (diasMaq[c] = diasMaq[c] || new Set()).add(String(r.dia).slice(0, 10));
+  });
+  const cods = Object.keys(prod);
+  if (!cods.length) return '';
+  const metaDe = c => {
+    const m = (typeof metasData === 'object' && metasData) ? metasData[c] : null;
+    if (!m) return null;
+    const somaDia = ['Manhã', 'Tarde', 'Noite'].reduce((a, b) => a + (+m[b] || 0), 0);
+    if (!(somaDia > 0)) return null;
+    return somaDia * Math.max(1, (diasMaq[c] ? diasMaq[c].size : 1));
+  };
+  const porSetor = {};
+  cods.forEach(c => { const s = setorDe(c); (porSetor[s] = porSetor[s] || []).push(c); });
+  const COR = { ok: '#00964D', quase: '#EDB730', ruim: '#D64545', semMeta: '#3A6FB0' };
+  let corpo = '', n = { ok: 0, quase: 0, ruim: 0, semMeta: 0 };
+  Object.keys(porSetor).sort((a, b) => a.localeCompare(b, 'pt-BR')).forEach(s => {
+    const lista = porSetor[s].sort((a, b) => (+a || 0) - (+b || 0));
+    corpo += '<div style="font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--fraco-2);margin:9px 0 5px">'
+      + escapeHtml(s) + '</div><div style="display:flex;flex-wrap:wrap;gap:7px">';
+    lista.forEach(c => {
+      const p = prod[c] || 0, mt = metaDe(c);
+      const pct = mt ? (p / mt) * 100 : null;
+      const cls = pct == null ? 'semMeta' : (pct >= 100 ? 'ok' : (pct >= 85 ? 'quase' : 'ruim'));
+      n[cls]++;
+      const tit = escapeHtml(c + ' · ' + (nomes[c] || '')) + ' — produziu ' + fmtKg(p)
+        + (mt ? ' de ' + fmtKg(mt) + ' (' + Math.round(pct) + '% da meta)' : ' · sem meta cadastrada');
+      corpo += '<span title="' + tit + '" onclick="detMaquina(\'' + escapeHtml(c) + '\')" '
+        + 'style="width:19px;height:19px;border-radius:50%;background:' + COR[cls]
+        + ';cursor:pointer;display:inline-block;box-shadow:0 1px 2px rgba(0,0,0,.18)"></span>';
+    });
+    corpo += '</div>';
+  });
+  const leg = (cor, txt, q) => '<span style="display:inline-flex;align-items:center;gap:4px;margin-right:11px;font-size:11px;color:var(--fraco)">'
+    + '<span style="width:10px;height:10px;border-radius:50%;background:' + cor + ';display:inline-block"></span>' + txt + ' ' + q + '</span>';
+  return card('🚦 Semáforo por máquina',
+    'passe o mouse (ou toque e segure) na bolinha para ver produção × meta · toque abre a máquina',
+    corpo + '<div style="margin-top:10px">' + leg(COR.ok, 'bateu', n.ok) + leg(COR.quase, 'perto', n.quase)
+      + leg(COR.ruim, 'abaixo', n.ruim) + leg(COR.semMeta, 'sem meta', n.semMeta) + '</div>');
+}
 function cardParadasTotais(D, filtroSetor) {
   if (!D || !D.paradas || !D.producao) return '';
   /* 13/08/2026: as faixas estavam CONTÍNUAS (Manhã 06:00–13:36, Tarde 13:36–20:51),
@@ -16335,6 +16393,14 @@ async function detDia(setor, dia) {
   const paradasHist = paradas.filter(p => p.temHist);
   const semHist = paradas.length - paradasHist.length;
   const perdaEstTot = paradasHist.reduce((a, p) => a + p.perda, 0);
+  /* 27/08/2026 (João: "perda do último dia não aparece, some o card"). Quando o
+     dia não tem refugo importado, o bloco de perdas sumia CALADO e levava junto
+     o que vinha depois — dava a impressão de tela quebrada, quando era falta de
+     dado. Agora o dia vazio se anuncia, e o resto da tela segue de pé. */
+  const _semPerda = !(perdaPct > 0) && !(D.perdas || []).some(p => String(p.dia).slice(0, 10) === dia);
+  const avisoSemPerda = _semPerda
+    ? `<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;line-height:1.5;margin:10px 0">⚠️ <b>Sem refugo apontado neste dia.</b> Não é zero de verdade: o 624 deste dia ainda não foi importado (ou veio vazio). Produção e paradas abaixo continuam valendo.</div>`
+    : '';
   const secaoParadas = paradasHist.length ? `
     <div style="height:12px"></div>
     <p class="idet-desc" style="color:#B3261E;font-weight:600">⚠️ Máquinas paradas · ${paradasHist.length} de ${codsSetor.length} · produção perdida estimada ≈ ${fmtKg(perdaEstTot)}${icoBtn('perdaEst')}${semHist ? `<span style="font-weight:500;color:var(--fraco)"> · ${semHist} omitida(s)</span>` : ''}</p>
@@ -16343,6 +16409,7 @@ async function detDia(setor, dia) {
 
   abreDet('Dia ' + fmtDataSem(dia), `
     <p class="idet-desc">${setor || 'Todos os setores'} · ${fmtKg(kg)} · ${txtCx(prod)} · perda ${perdaPct}%</p>
+    ${avisoSemPerda}
     ${divHtml}
     <div style="font-weight:800;color:var(--navy);font-size:13px;margin:12px 0 3px">Turnos · produção vs meta</div>
     <div style="font-size:11px;color:var(--fraco-2);margin-bottom:4px">toque num turno \u203a pra ver os itens (com OP) e máquinas dele</div>
@@ -25477,6 +25544,7 @@ function renderPainel() {
     });
 
     html += card('Produção por turno', 'Manhã (T1+T3) · Tarde (T2+T4) · Noite (T5) · todos os setores' + (metrica === 'peso' ? ' · linha preta = meta do turno · verde bateu, vermelho não' : ''), gTurnoPeso(D.producao, val, fmtBar, '', '', metrica === 'peso'));
+    try { html += cardSemaforoMaq(D, val); } catch (e) { console.warn('semaforo:', e && e.message); }
     try { if (p643('totais')) html += cardParadasTotais(D, setor || null); } catch (_) {}
 
     // produção por máquina — TODAS as máquinas de todos os setores
@@ -41485,6 +41553,11 @@ function orgExpande(el) {
   n.classList.toggle('aberto');
   el.textContent = n.classList.contains('aberto') ? '‹ fechar' : 'detalhes ›';
 }
+/* 27/08/2026: a escolha (Compacto/Detalhado, Coluna/Quadro) já ficava salva no
+   aparelho, mas a classe só era aplicada ao CLICAR — abrindo o app do zero o
+   organograma voltava detalhado, como se a preferência não tivesse pegado.
+   Agora vale desde o boot: o que você escolher é o padrão. */
+try { document.addEventListener('DOMContentLoaded', () => { document.body.classList.toggle('org-min', orgMin); }); } catch (_) { }
 function orgAtualizaBtnLayout() {
   document.body.classList.toggle('org-min', orgMin);
   const bm = $('orgMinBtn'); if (bm) bm.textContent = orgMin ? '📖 Detalhado' : '📋 Compacto';
