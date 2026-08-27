@@ -3616,7 +3616,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.226.0';
+const APP_VER = '4.227.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14093,19 +14093,77 @@ function _mptBocaMix(a) {
   const top = mix.slice(0, 3).map(x => x.boca + ' ' + Math.round(x.pct) + '%').join(' · ');
   return '🧩 boca ' + top + (mix.length > 3 ? ' +' + (mix.length - 3) : '');
 }
+let _mpeIdx = null, _mpeIdxTam = -1;
 function _mptPerdaEst(a) {
   const meta = (metasData && metasData[a.c] && metasData[a.c][a.b]) || 0;
   if (meta > 0) return meta;   // meta do turno ~ o que deixou de sair · sempre disponível
-  const D = dadosPainel || {};  // fallback: média histórica (só se o período trouxer dias anteriores)
-  const dias = {};
-  (D.producao || []).forEach(r => {
-    if (String(r.recurso_cod) !== String(a.c)) return;
-    if (blocoTurno(r.turno, r.dia) !== a.b) return;
-    dias[r.dia] = (dias[r.dia] || 0) + (+r.peso || 0);
-  });
+  /* fallback (máquina sem meta): média histórica. Também varria D.producao por
+     achado — indexo uma vez, mesma conta. */
+  const D = dadosPainel || {};
+  try {
+    if (_mpeIdx === null || _mpeIdxTam !== (D.producao || []).length) {
+      _mpeIdx = new Map();
+      (D.producao || []).forEach(r => {
+        let b2 = null; try { b2 = blocoTurno(r.turno, r.dia); } catch (_) { }
+        if (!b2) return;
+        const k = String(r.recurso_cod) + '|' + b2;
+        let m = _mpeIdx.get(k); if (!m) { m = {}; _mpeIdx.set(k, m); }
+        m[r.dia] = (m[r.dia] || 0) + (+r.peso || 0);
+      });
+      _mpeIdxTam = (D.producao || []).length;
+    }
+  } catch (_) { _mpeIdx = null; }
+  const dias = (_mpeIdx && _mpeIdx.get(String(a.c) + '|' + a.b)) || {};
   const vs = Object.values(dias).filter(v => v > 0);
   if (!vs.length) return 0;
   return vs.reduce((s, v) => s + v, 0) / vs.length;
+}
+/* ===== POR QUE ESTE CARD TRAVAVA O PAINEL — 27/08/2026 =====
+   _mptMotivoDom varria D.paradas INTEIRO para CADA linha achada, e dentro do
+   laço chamava tempoParadaPorTurno, que não é barata. No dia isso passava
+   despercebido; com o filtro em "ago/26" são 20.413 paradas × centenas de
+   achados = milhões de chamadas, tudo na thread da tela. Não era lentidão: era
+   a página inteira parada esperando este card.
+   Agora as paradas são varridas UMA vez e viram um índice
+   dia|máquina|bloco → motivo → horas. Cada linha vira uma consulta direta.
+   Mantive tempoParadaPorTurno e _diaDeParada na indexação de propósito: são as
+   mesmas regras de antes, então o motivo exibido continua idêntico — isto é
+   conserto de desempenho, não mudança de número. */
+let _mptIdx = null, _mptIdxTam = -1;
+function _mptIndexa(paradas) {
+  const idx = new Map();
+  const BL = ['Manhã', 'Tarde', 'Noite'];
+  for (const p of (paradas || [])) {
+    const c = String(p.recurso_cod);
+    let d = null;
+    try { d = _diaDeParada(p); } catch (_) { d = p.dia; }
+    let f = null;
+    try { f = tempoParadaPorTurno(p.inicio, _horasOrig(p), d); } catch (_) { }
+    if (!f) continue;
+    const mot = p.motivo_desc || '—';
+    /* o original aceitava a linha tanto pelo dia operacional quanto pelo dia
+       cru do registro; indexo nos dois, sem repetir quando são iguais. */
+    const dias = new Set([String(d || '').slice(0, 10), String(p.dia || '').slice(0, 10)]);
+    for (const dia of dias) {
+      if (!dia) continue;
+      for (const b of BL) {
+        const h = f[b] || 0;
+        if (h <= 0.0005) continue;
+        const k = dia + '|' + c + '|' + b;
+        let m = idx.get(k);
+        if (!m) { m = new Map(); idx.set(k, m); }
+        m.set(mot, (m.get(mot) || 0) + h);
+      }
+    }
+  }
+  return idx;
+}
+function _mptMotivoDomIdx(a) {
+  const m = _mptIdx && _mptIdx.get(a.dia + '|' + a.c + '|' + a.b);
+  if (!m || !m.size) return '';
+  let melhor = '', maior = -1;
+  m.forEach((h, mot) => { if (h > maior) { maior = h; melhor = mot; } });
+  return melhor;
 }
 function _mptMotivoDom(a) {
   const D = dadosPainel || {};
@@ -14264,6 +14322,13 @@ function cardParadasTotais(D, filtroSetor) {
       if (h > 0) { const k = dia + '|' + c + '|' + bl.b; parKey.set(k, (parKey.get(k) || 0) + h); }
     }
   }
+  /* uma passada só, aqui — antes de qualquer laço por achado */
+  try {
+    if (_mptIdx === null || _mptIdxTam !== (D.paradas || []).length) {
+      _mptIdx = _mptIndexa(D.paradas || []);
+      _mptIdxTam = (D.paradas || []).length;
+    }
+  } catch (e) { _mptIdx = null; console.warn('indice de motivos:', e && e.message); }
   // ---- casos: parada ≥90% da jornada, zero produção, com expediente ----
   const achados = [];
   for (const [k, horas] of parKey) {
@@ -14288,7 +14353,7 @@ function cardParadasTotais(D, filtroSetor) {
     const its = porDia[dia].sort((x, y) => ordB[x.b] - ordB[y.b] || (x.c < y.c ? -1 : 1));
     const lis = its.map(a => {
       const id = 'mpt_' + a.dia.replace(/-/g, '') + '_' + a.c + '_' + a.b.replace(/[^A-Za-z]/g, '');
-      const dom = _mptMotivoDom(a);
+      const dom = _mptIdx ? _mptMotivoDomIdx(a) : _mptMotivoDom(a);
       const semOP = /FALTA DE OP|SEM PROGRAMA/i.test(dom);
       const perda = semOP ? 0 : _mptPerdaEst(a);
       const opPill = !dom
