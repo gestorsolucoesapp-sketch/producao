@@ -3613,7 +3613,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.215.0';
+const APP_VER = '4.216.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -19533,7 +19533,7 @@ let _fSubAtual = 'caderno';
      # comentário                   linha ignorada
    Início (sem ninguém apontando) fica verde; fim (não aponta ninguém) fica
    escuro. Nada disso precisa ser declarado — sai da própria ligação. */
-const DG = { boxH: 38, boxH2: 52, gapX: 16, gapY: 58, padX: 13, charW: 6.9, minW: 76, maxW: 178, margem: 14 };
+const DG = { boxH: 38, boxH2: 52, gapX: 16, gapY: 58, gapAvH: 42, gapDiH: 22, padX: 13, charW: 6.9, minW: 76, maxW: 178, margem: 14 };
 function _dgChave(s) { return String(s).trim().replace(/\s+/g, ' ').toLowerCase(); }
 function _dgQuebra(txt, maxChars) {
   const p = String(txt).split(' ');
@@ -19547,14 +19547,25 @@ function _dgQuebra(txt, maxChars) {
 }
 /* separa "A -sim-> B -> C". O split com grupo de captura devolve os rótulos nos
    índices ímpares — por isso a alternativa rotulada vem primeiro na regex. */
-const DG_CONN = /\s*(?:-\s*([^>\n]*?)\s*-+>|-+>|=>|→)\s*/;
+/* O rótulo só vale com ESPAÇO antes do hífen. Sem isso, "Compra de
+   matéria-prima -> Liberado" era lido como seta rotulada "prima": o hífen de
+   uma palavra composta virava sintaxe. Em português isso quebraria toda hora
+   (matéria-prima, pré-forma, meio-turno). Com o \s exigido, "A -sim-> B"
+   continua funcionando e a palavra composta fica em paz. */
+const DG_CONN = /(?:\s+-\s*([^>\n]*?)\s*-+>|\s*(?:-+>|=>|→))\s*/;
 function dgParse(texto) {
   const nos = {}, ordem = [], arestas = [];
-  const vejo = (rot) => {
-    const t = String(rot).trim().replace(/\s+/g, ' ');
+  const vejo = (rot0) => {
+    /* "!" na frente marca etapa crítica (refugo, retrabalho, parada). Fica
+       vermelha. O "!" não entra no nome nem na chave — "!Refugo" e "Refugo"
+       são a MESMA caixa, senão marcar em uma linha só criaria caixa duplicada. */
+    let t = String(rot0).trim().replace(/\s+/g, ' ');
+    const crit = /^!/.test(t);
+    if (crit) t = t.replace(/^!\s*/, '');
     if (!t) return null;
     const k = _dgChave(t);
-    if (!nos[k]) { nos[k] = { k: k, rot: t, dec: /\?\s*$/.test(t), ent: 0, sai: 0 }; ordem.push(k); }
+    if (!nos[k]) { nos[k] = { k: k, rot: t, dec: /\?\s*$/.test(t), crit: false, ent: 0, sai: 0 }; ordem.push(k); }
+    if (crit) nos[k].crit = true;
     return k;
   };
   String(texto || '').split('\n').forEach((linha0) => {
@@ -19638,7 +19649,11 @@ function dgNiveis(g, back) {
    as outras para o lado. A seta passa ENTRE as caixas, não por baixo.
    Depois, o baricentro: duas passadas reordenando cada nível pela posição média
    de quem chega nele. É o que desembaraça o cruzamento das linhas. */
-function dgLayout(g, nv, back) {
+function dgLayout(g, nv, back, hor) {
+  /* Um só posicionador para as duas orientações. "av" é o eixo em que o processo
+     AVANÇA (y quando em pé, x quando deitado) e "di" é o eixo em que as caixas
+     do mesmo nível se DISTRIBUEM. Escrever assim evita manter dois layouts que
+     divergem — foi o que me fez trocar tudo por medida genérica em vez de x/y. */
   const fila = {};
   const push = (l, o) => { (fila[l] = fila[l] || []).push(o); };
   g.ordem.forEach(k => push(nv[k], { tipo: 'no', k: k, w: g.nos[k].w, h: g.nos[k].h }));
@@ -19648,7 +19663,7 @@ function dgLayout(g, nv, back) {
     const pontos = [];
     if (!back[i] && l2 - l1 > 1) {
       for (let l = l1 + 1; l < l2; l++) {
-        const d = { tipo: 'ghost', id: 'g' + i + '_' + l, w: 20, h: 6 };
+        const d = { tipo: 'ghost', id: 'g' + i + '_' + l, w: hor ? 6 : 20, h: hor ? 20 : 6 };
         push(l, d); pontos.push(d);
       }
     }
@@ -19656,51 +19671,92 @@ function dgLayout(g, nv, back) {
   });
   const niveis = Object.keys(fila).map(Number).sort((a, b) => a - b);
   const idx = o => (o.tipo === 'no' ? 'n:' + o.k : o.id);
+  const gDi = hor ? DG.gapDiH : DG.gapX, gAv = hor ? DG.gapAvH : DG.gapY;
+  const dimDi = o => (hor ? o.h : o.w);      // tamanho no eixo de distribuição
+  const dimAv = o => (hor ? o.w : o.h);      // tamanho no eixo de avanço
   const pos = {};
   const reordena = () => {
     niveis.forEach(l => {
       const bc = {};
       fila[l].forEach((o, i) => {
-        const vizinhos = [];
+        const viz = [];
         if (o.tipo === 'no') {
-          g.arestas.forEach(e => { if (e.b === o.k && pos['n:' + e.a] != null) vizinhos.push(pos['n:' + e.a]); });
+          g.arestas.forEach((e, ie) => { if (back[ie]) return; if (e.b === o.k && pos['n:' + e.a] != null) viz.push(pos['n:' + e.a]); });
         } else {
           cam.forEach(c => {
             const j = c.pontos.indexOf(o);
             if (j < 0) return;
             const ant = j === 0 ? 'n:' + c.e.a : idx(c.pontos[j - 1]);
-            if (pos[ant] != null) vizinhos.push(pos[ant]);
+            if (pos[ant] != null) viz.push(pos[ant]);
           });
         }
-        bc[idx(o)] = vizinhos.length ? vizinhos.reduce((a, b) => a + b, 0) / vizinhos.length : i;
+        bc[idx(o)] = viz.length ? viz.reduce((a, b) => a + b, 0) / viz.length : i;
       });
       fila[l].sort((a, b) => bc[idx(a)] - bc[idx(b)]);
       fila[l].forEach((o, i) => { pos[idx(o)] = i; });
     });
   };
-  fila[niveis[0]] && fila[niveis[0]].forEach((o, i) => { pos[idx(o)] = i; });
+  if (fila[niveis[0]]) fila[niveis[0]].forEach((o, i) => { pos[idx(o)] = i; });
   reordena(); reordena();
-  let largMax = 0;
+  let diMax = 0;
   niveis.forEach(l => {
-    const soma = fila[l].reduce((a, o) => a + o.w, 0) + (fila[l].length - 1) * DG.gapX;
-    if (soma > largMax) largMax = soma;
+    const soma = fila[l].reduce((a, o) => a + dimDi(o), 0) + (fila[l].length - 1) * gDi;
+    if (soma > diMax) diMax = soma;
   });
-  const W = largMax + DG.margem * 2;
-  let y = DG.margem;
+  const DI = diMax + DG.margem * 2;
+  let av = DG.margem;
   niveis.forEach(l => {
-    const soma = fila[l].reduce((a, o) => a + o.w, 0) + (fila[l].length - 1) * DG.gapX;
-    let x = (W - soma) / 2;
-    const hMax = Math.max.apply(null, fila[l].map(o => o.h));
+    const soma = fila[l].reduce((a, o) => a + dimDi(o), 0) + (fila[l].length - 1) * gDi;
+    let di = (DI - soma) / 2;
+    const avMax = Math.max.apply(null, fila[l].map(dimAv));
     fila[l].forEach(o => {
-      o.x = x; o.cx = x + o.w / 2; o.y = y + (hMax - o.h) / 2; o.cy = o.y + o.h / 2;
+      const a0 = av + (avMax - dimAv(o)) / 2;
+      o.x = hor ? a0 : di; o.y = hor ? di : a0;
+      o.cx = o.x + o.w / 2; o.cy = o.y + o.h / 2;
       if (o.tipo === 'no') { const n = g.nos[o.k]; n.x = o.x; n.y = o.y; }
-      x += o.w + DG.gapX;
+      di += dimDi(o) + gDi;
     });
-    y += hMax + DG.gapY;
+    av += avMax + gAv;
   });
-  return { W: W, H: y - DG.gapY + DG.margem, cam: cam };
+  const AV = av - DG.gapY + DG.margem;
+  return { W: hor ? AV : DI, H: hor ? DI : AV, cam: cam, hor: hor };
 }
-function dgSVG(texto) {
+/* Setas em ângulo reto, como fluxograma de manual — a curva Bézier ficava com
+   cara de mapa mental, não de processo. Cotovelo no meio do vão, canto
+   arredondado pequeno; quando origem e destino estão alinhados, vira reta. */
+function _dgOrto(p, hor) {
+  const N2 = v => (Math.round(v * 10) / 10);
+  let d = 'M' + N2(p[0].x) + ' ' + N2(p[0].y);
+  for (let i = 1; i < p.length; i++) {
+    const q = p[i - 1], t = p[i];
+    const dPar = hor ? (t.x - q.x) : (t.y - q.y);      // no eixo de avanço
+    const dPer = hor ? (t.y - q.y) : (t.x - q.x);      // no eixo de distribuição
+    if (Math.abs(dPer) < 0.8) { d += ' L' + N2(t.x) + ' ' + N2(t.y); continue; }
+    const r = Math.min(9, Math.abs(dPar) / 2 - 0.5, Math.abs(dPer) / 2);
+    const sA = dPar >= 0 ? 1 : -1, sP = dPer >= 0 ? 1 : -1;
+    const m = (hor ? (q.x + t.x) : (q.y + t.y)) / 2;
+    if (r <= 1) {
+      d += hor ? ' L' + N2(m) + ' ' + N2(q.y) + ' L' + N2(m) + ' ' + N2(t.y) + ' L' + N2(t.x) + ' ' + N2(t.y)
+               : ' L' + N2(q.x) + ' ' + N2(m) + ' L' + N2(t.x) + ' ' + N2(m) + ' L' + N2(t.x) + ' ' + N2(t.y);
+      continue;
+    }
+    if (hor) {
+      d += ' L' + N2(m - sA * r) + ' ' + N2(q.y)
+        + ' Q' + N2(m) + ' ' + N2(q.y) + ' ' + N2(m) + ' ' + N2(q.y + sP * r)
+        + ' L' + N2(m) + ' ' + N2(t.y - sP * r)
+        + ' Q' + N2(m) + ' ' + N2(t.y) + ' ' + N2(m + sA * r) + ' ' + N2(t.y)
+        + ' L' + N2(t.x) + ' ' + N2(t.y);
+    } else {
+      d += ' L' + N2(q.x) + ' ' + N2(m - sA * r)
+        + ' Q' + N2(q.x) + ' ' + N2(m) + ' ' + N2(q.x + sP * r) + ' ' + N2(m)
+        + ' L' + N2(t.x - sP * r) + ' ' + N2(m)
+        + ' Q' + N2(t.x) + ' ' + N2(m) + ' ' + N2(t.x) + ' ' + N2(m + sA * r)
+        + ' L' + N2(t.x) + ' ' + N2(t.y);
+    }
+  }
+  return d;
+}
+function dgSVG(texto, hor) {
   const g = dgParse(texto);
   if (!g.ordem.length) return '';
   const back = dgBackEdges(g);
@@ -19714,56 +19770,70 @@ function dgSVG(texto) {
     n.h = n.linhas.length > 1 ? DG.boxH2 : DG.boxH;
     if (n.dec) { n.w = Math.round(n.w * 1.3); n.h = n.h + 16; }
   });
-  const lay = dgLayout(g, nv, back);
-  /* ===== A SETA DE VOLTA PRECISA DE CORREDOR PRÓPRIO =====
-     Desenhada em linha reta, ela subia POR CIMA das caixas do caminho — no
-     retrabalho "Reprovado? -sim-> Produção" ficava colada na seta principal,
-     duas linhas no mesmo lugar. Agora cada volta sai pela lateral direita,
-     sobe por uma faixa reservada FORA do desenho e entra pela direita do
-     destino. Uma faixa por volta, para duas não se sobreporem. */
+  const lay = dgLayout(g, nv, back, hor);
   const voltas = lay.cam.filter(c => c.volta);
   voltas.forEach((c, i) => { c.lane = i; });
-  const W = lay.W + (voltas.length ? voltas.length * 13 + 10 : 0), H = lay.H;
-  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const faixa = voltas.length ? voltas.length * 13 + 10 : 0;
+  const W = lay.W + (hor ? 0 : faixa), H = lay.H + (hor ? faixa : 0);
+  const esc = s2 => String(s2).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const N = v => (Math.round(v * 10) / 10);
-  let arE = '', arR = '';
   const selo = (mx, my, txt, cor) => {
     const w = txt.length * 6.2 + 12;
     return '<rect x="' + N(mx - w / 2) + '" y="' + N(my - 9) + '" width="' + N(w) + '" height="18" rx="9" fill="#fff" stroke="#C6D3E0"/>'
       + '<text x="' + N(mx) + '" y="' + N(my + 4) + '" text-anchor="middle" font-size="10.5" font-weight="800" fill="' + cor + '">' + esc(txt) + '</text>';
   };
+  let arE = '', arR = '';
+  /* dois rótulos saindo do MESMO losango ("aprovado"/"reprovado") ficam quase no
+     mesmo ponto e as pastilhas se encostavam. Escalono um degrau a cada rótulo
+     seguinte da mesma origem. */
+  const _nrot = {};
   lay.cam.forEach(c => {
     const a = g.nos[c.e.a], b = g.nos[c.e.b];
     if (c.volta) {
-      const lx = lay.W + 8 + c.lane * 13;
-      const ay = a.y + a.h / 2, by = b.y + b.h / 2, r = 7, sg = by < ay ? -1 : 1;
-      const d = 'M' + N(a.x + a.w) + ' ' + N(ay)
-        + ' L' + N(lx - r) + ' ' + N(ay) + ' Q' + N(lx) + ' ' + N(ay) + ' ' + N(lx) + ' ' + N(ay + sg * r)
-        + ' L' + N(lx) + ' ' + N(by - sg * r) + ' Q' + N(lx) + ' ' + N(by) + ' ' + N(lx - r) + ' ' + N(by)
-        + ' L' + N(b.x + b.w + 7) + ' ' + N(by);
+      /* a volta sai pela lateral, corre por uma faixa reservada FORA do desenho
+         e entra pela mesma lateral do destino — nunca por cima das caixas. */
+      const lz = (hor ? lay.H : lay.W) + 8 + c.lane * 13;
+      const r = 7;
+      let d;
+      if (hor) {
+        const ax = a.x + a.w / 2, bx = b.x + b.w / 2, sg = bx < ax ? -1 : 1;
+        d = 'M' + N(ax) + ' ' + N(a.y + a.h) + ' L' + N(ax) + ' ' + N(lz - r)
+          + ' Q' + N(ax) + ' ' + N(lz) + ' ' + N(ax + sg * r) + ' ' + N(lz)
+          + ' L' + N(bx - sg * r) + ' ' + N(lz) + ' Q' + N(bx) + ' ' + N(lz) + ' ' + N(bx) + ' ' + N(lz - r)
+          + ' L' + N(bx) + ' ' + N(b.y + b.h + 7);
+      } else {
+        const ay = a.y + a.h / 2, by = b.y + b.h / 2, sg = by < ay ? -1 : 1;
+        d = 'M' + N(a.x + a.w) + ' ' + N(ay) + ' L' + N(lz - r) + ' ' + N(ay)
+          + ' Q' + N(lz) + ' ' + N(ay) + ' ' + N(lz) + ' ' + N(ay + sg * r)
+          + ' L' + N(lz) + ' ' + N(by - sg * r) + ' Q' + N(lz) + ' ' + N(by) + ' ' + N(lz - r) + ' ' + N(by)
+          + ' L' + N(b.x + b.w + 7) + ' ' + N(by);
+      }
       arE += '<path d="' + d + '" fill="none" stroke="#D64545" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#dgSetaV)"/>';
-      if (c.e.rot) arR += selo(lx, (ay + by) / 2, c.e.rot, '#A33');
+      if (c.e.rot) arR += hor
+        ? selo((a.x + a.w / 2 + b.x + b.w / 2) / 2, lz - 11, c.e.rot, '#A33')
+        : selo(lz, (a.y + a.h / 2 + b.y + b.h / 2) / 2, c.e.rot, '#A33');
       return;
     }
     const p = [];
-    p.push({ x: a.x + a.w / 2, y: a.y + a.h });
-    c.pontos.forEach(d => p.push({ x: d.cx, y: d.cy }));
-    p.push({ x: b.x + b.w / 2, y: b.y - 7 });
-    let d = 'M' + N(p[0].x) + ' ' + N(p[0].y);
-    for (let i = 1; i < p.length; i++) {
-      const q = p[i - 1], r2 = p[i], m = (q.y + r2.y) / 2;
-      d += ' C' + N(q.x) + ' ' + N(m) + ', ' + N(r2.x) + ' ' + N(m) + ', ' + N(r2.x) + ' ' + N(r2.y);
+    p.push(hor ? { x: a.x + a.w, y: a.y + a.h / 2 } : { x: a.x + a.w / 2, y: a.y + a.h });
+    c.pontos.forEach(d2 => p.push({ x: d2.cx, y: d2.cy }));
+    p.push(hor ? { x: b.x - 7, y: b.y + b.h / 2 } : { x: b.x + b.w / 2, y: b.y - 7 });
+    arE += '<path d="' + _dgOrto(p, hor) + '" fill="none" stroke="#8395A6" stroke-width="1.6" marker-end="url(#dgSeta)"/>';
+    /* rótulo no primeiro trecho, colado na origem: no meio da seta ele caía em
+       cima de outra caixa. E numa camada por cima de tudo — na 1ª versão a
+       aresta era desenhada antes do nó e o "sim"/"não" ficava escondido. */
+    /* rótulo no COTOVELO, não no ponto de saída: um losango com "aprovado" e
+       "reprovado" jogava os dois selos no mesmo pixel e um sumia atrás do
+       outro. No cotovelo cada um já puxou para o lado do seu destino. */
+    if (c.e.rot) {
+      const i = (_nrot[c.e.a] = (_nrot[c.e.a] || 0) + 1) - 1, deg = (i % 2) * 18;
+      arR += hor ? selo((p[0].x + p[1].x) / 2 + deg, (p[0].y + p[1].y) / 2 - 12, c.e.rot, '#5C7186')
+                 : selo((p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2 + deg, c.e.rot, '#5C7186');
     }
-    arE += '<path d="' + d + '" fill="none" stroke="#8395A6" stroke-width="1.6" marker-end="url(#dgSeta)"/>';
-    /* rótulo no PRIMEIRO trecho, logo abaixo da caixa de origem: no meio da seta
-       ele caía em cima de outra caixa. E numa camada por cima de tudo — na 1ª
-       versão a aresta era desenhada antes do nó e o "sim"/"não" ficava escondido
-       atrás do retângulo. */
-    if (c.e.rot) arR += selo((p[0].x + p[1].x) / 2, p[0].y + 15, c.e.rot, '#5C7186');
   });
   /* começo/fim contam só as ligações do caminho para frente. "Bobina" recebe a
      seta do Moinho (retrabalho) e ficava cinza, como se fosse etapa do meio —
-     mas ela É o começo do processo; quem aponta para ela é a volta. */
+     mas ela É o começo; quem aponta para ela é a volta. */
   const entF = {}, saiF = {};
   g.ordem.forEach(k => { entF[k] = 0; saiF[k] = 0; });
   g.arestas.forEach((e, i) => { if (back[i]) return; entF[e.b]++; saiF[e.a]++; });
@@ -19775,8 +19845,11 @@ function dgSVG(texto) {
     let forma, corTxt = '#0B2A4A';
     if (n.dec) {
       forma = '<polygon points="' + N(cx) + ',' + N(n.y) + ' ' + N(n.x + n.w) + ',' + N(cy) + ' ' + N(cx) + ',' + N(n.y + n.h) + ' ' + N(n.x) + ',' + N(cy)
-        + '" fill="#FFF6E9" stroke="#E8862B" stroke-width="1.6"/>';
-      corTxt = '#7A5A1E';
+        + '" fill="' + (n.crit ? '#FBE3E3' : '#FFF6E9') + '" stroke="' + (n.crit ? '#D64545' : '#E8862B') + '" stroke-width="1.7"/>';
+      corTxt = n.crit ? '#9B2C2C' : '#7A5A1E';
+    } else if (n.crit) {
+      forma = '<rect x="' + N(n.x) + '" y="' + N(n.y) + '" width="' + N(n.w) + '" height="' + N(n.h) + '" rx="9" fill="#FBE3E3" stroke="#D64545" stroke-width="1.7"/>';
+      corTxt = '#9B2C2C';
     } else if (inicio) {
       forma = '<rect x="' + N(n.x) + '" y="' + N(n.y) + '" width="' + N(n.w) + '" height="' + N(n.h) + '" rx="' + N(n.h / 2) + '" fill="#00964D"/>';
       corTxt = '#fff';
@@ -19790,9 +19863,8 @@ function dgSVG(texto) {
     arN += forma + n.linhas.map((ln, i) => '<text x="' + N(cx) + '" y="' + N(cy + (nl === 1 ? 4.5 : (i === 0 ? -2 : 12)))
       + '" text-anchor="middle" font-size="12.5" font-weight="700" fill="' + corTxt + '">' + esc(ln) + '</text>').join('');
   });
-  /* largura em px de verdade + rolagem lateral no wrapper. Espremer com
-     max-width:100% deixaria o texto ilegível no celular assim que o desenho
-     abrisse em dois ou três caminhos paralelos. */
+  /* largura em px de verdade + rolagem lateral. Espremer com max-width:100%
+     deixaria o texto ilegível assim que o desenho abrisse em dois caminhos. */
   return '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding:2px 0">'
     + '<svg viewBox="0 0 ' + Math.round(W) + ' ' + Math.round(H) + '" width="' + Math.round(W) + '" height="' + Math.round(H) + '" '
     + 'style="display:block;margin:0 auto;font-family:inherit" xmlns="http://www.w3.org/2000/svg">'
@@ -19824,9 +19896,13 @@ const RAS_TIPOS = [
   ['fluxo', '🔀 Fluxograma', 'Escreva ligações: <b>Pedido -&gt; PCP -&gt; Artes</b>. Uma por linha.'],
   ['ideia', '💡 Ideia livre', 'Escreva do jeito que vier. Nada é interpretado aqui.'],
   ['resumo', '📝 Resumo digital', 'Texto corrido. Guardado cru para ser analisado depois.'],
-  ['diagrama', '🧩 Diagrama', 'Nomes iguais viram a MESMA caixa, então o desenho fecha num grafo só. <b>Pedido -&gt; PCP -&gt; Produção</b> · <b>Crédito? -sim-&gt; Faturamento</b> · nome com <b>?</b> vira losango · <b>#</b> comenta a linha.']
+  ['diagrama', '🧩 Diagrama', 'Nomes iguais viram a MESMA caixa, então o desenho fecha num grafo só. <b>Pedido -&gt; PCP -&gt; Produção</b> · <b>Inspeção? -aprovado-&gt; Impressão</b> · nome com <b>?</b> vira losango · <b>!</b> na frente pinta de vermelho (refugo, parada) · <b>#</b> comenta a linha.']
 ];
 let _rasTipo = 'processo', _rasLista = [], _rasAtual = null, _rasTimer = null, _rasSujo = false;
+/* em pé é o padrão porque o celular rola para baixo naturalmente; deitado é o
+   formato de fluxograma de apresentação e rola para o lado. */
+let _dgHor = false;
+function dgOrienta() { _dgHor = !_dgHor; rasVista(); }
 async function rasRender(forcar) {
   const box = document.getElementById('ferrRascunho'); if (!box) return;
   try {
@@ -19929,8 +20005,11 @@ function rasVista() {
     }).join('');
   } else if (tipo === 'diagrama') {
     let svg = '';
-    try { svg = dgSVG(txt); } catch (err) { svg = ''; }
-    h += svg || '<p class="desc" style="font-size:11.5px">Escreva ao menos uma ligação, como <b>Pedido -&gt; PCP</b>.</p>';
+    try { svg = dgSVG(txt, _dgHor); } catch (err) { svg = ''; }
+    h += '<div style="display:flex;gap:6px;justify-content:flex-end;margin:-22px 0 4px">'
+      + '<span onclick="dgOrienta()" style="cursor:pointer;font-size:11px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:999px;padding:4px 11px">'
+      + (_dgHor ? '\u2194 deitado' : '\u2195 em p\u00e9') + '</span></div>'
+      + (svg || '<p class="desc" style="font-size:11.5px">Escreva ao menos uma liga\u00e7\u00e3o, como <b>Pedido -&gt; PCP</b>.</p>');
   } else {
     h += '<p class="desc" style="font-size:11.5px">' + linhas.length + ' linha(s) · ' + txt.trim().split(/\s+/).length + ' palavra(s). Guardado como texto puro'
       + (tipo === 'resumo' ? ', pronto para ser analisado depois.' : '.') + '</p>';
