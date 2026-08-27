@@ -3614,7 +3614,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.220.0';
+const APP_VER = '4.221.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -27071,6 +27071,28 @@ function descartarTodos() {
 
 function descartar(id) { delete previews[id]; $(id)?.remove(); atualizarBarraLote(); }
 
+/* ===== APAGAR EM FATIAS, NÃO DE UMA VEZ — 27/08/2026 =====
+   Remover a importação antiga do 624 disparava CASCADE em 5.404 linhas num
+   único comando e batia no "statement timeout" do banco: o mês inteiro não
+   entrava, e a mensagem que aparecia era só "canceling statement".
+   Agora apago as linhas daquelas importações DIA A DIA (cada dia tem ~300
+   linhas, some em milissegundos) e só então removo o registro — que aí já não
+   tem filho nenhum e sai instantâneo. Um dia a mais no mês custa um request a
+   mais, e não um timeout. */
+async function _apagaLinhasDeImportacoes(tabela, ids, de, ate, pularDias) {
+  if (!ids || !ids.length) return 0;
+  const pular = new Set(pularDias || []);
+  let dias = 0;
+  for (let d = new Date(de + 'T12:00:00Z'), fim = new Date(ate + 'T12:00:00Z');
+       d <= fim; d = new Date(d.getTime() + 86400000)) {
+    const dia = d.toISOString().slice(0, 10);
+    if (pular.has(dia)) continue;
+    const { error } = await sb.from(tabela).delete().eq('dia', dia).in('importacao_id', ids);
+    if (error) throw new Error('Não consegui limpar ' + tabela + ' do dia ' + fmtData(dia) + ': ' + error.message);
+    dias++;
+  }
+  return dias;
+}
 async function gravar(id, substituir = false) {
   const prev = previews[id];
   if (!prev) return false;
@@ -27258,6 +27280,12 @@ async function gravar(id, substituir = false) {
           .select('id,periodo_de,periodo_ate,emissao')
           .eq('rotina', '624').lte('periodo_de', r.periodo.ate).gte('periodo_ate', r.periodo.de);
         if (eAnt) throw new Error('Não consegui conferir importações 624 anteriores: ' + eAnt.message);
+        /* os dias conferidos a dedo saem da conta ANTES de qualquer limpeza —
+           antes eles só eram consultados depois do delete, e o CASCADE já os
+           teria levado junto. */
+        const { data: _fin0 } = await sb.from('perdas').select('dia')
+          .eq('dia_unico', true).gte('dia', r.periodo.de).lte('dia', r.periodo.ate);
+        r._diasFinos = [...new Set((_fin0 || []).map(x => x.dia))];
         if (_ants && _ants.length) {
           const _cobre = a => r.periodo.de <= a.periodo_de && r.periodo.ate >= a.periodo_ate;
           const _parcial = _ants.filter(a => !_cobre(a));
@@ -27271,16 +27299,13 @@ async function gravar(id, substituir = false) {
           if (_maisNova) throw new Error('Este 624 foi emitido em ' + fmtData(r.periodo.gerado) +
             (r.periodo.hora ? ' às ' + r.periodo.hora : '') +
             ', mas o banco já tem uma importação MAIS RECENTE cobrindo o mesmo período. Emita o 624 de novo no ERP e importe o arquivo fresco.');
+          /* fatia primeiro (ver _apagaLinhasDeImportacoes), só depois o registro */
+          await _apagaLinhasDeImportacoes('perdas', _ants.map(a => a.id),
+            r.periodo.de, r.periodo.ate, r._diasFinos);
           const { error: eA } = await sb.from('importacoes').delete().in('id', _ants.map(a => a.id));
           if (eA) throw new Error('Não consegui remover a importação 624 anterior: ' + eA.message);
           _substituiu = _ants.map(a => fmtData(a.periodo_de) + ' → ' + fmtData(a.periodo_ate)).join(' · ');
         }
-        /* um período NÃO desfaz os dias já conferidos a dedo: preservo as linhas
-           dia_unico=true que caem dentro do intervalo, e removo essas datas do
-           lote novo mais abaixo, para o dia fino não ser sobrescrito pelo mês. */
-        const { data: _fin } = await sb.from('perdas').select('dia')
-          .eq('dia_unico', true).gte('dia', r.periodo.de).lte('dia', r.periodo.ate);
-        r._diasFinos = [...new Set((_fin || []).map(x => x.dia))];
       }
       r._emissaoISO = _emi;
     }
