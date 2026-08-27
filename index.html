@@ -3616,7 +3616,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.237.0';
+const APP_VER = '4.238.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -30531,9 +30531,30 @@ function _fluxoVeredito(num, data, prod) {
       txt += '<div class="desc" style="font-size:11.5px">Encerrado em <b>' + fmtDataSem(fim) + '</b> · '
         + (d > 0 ? '<b style="color:var(--critico-s)">' + d + ' dia(s) depois</b>' : '<b style="color:#1F7A46">dentro</b>') + ' da entrega prometida.</div>';
     }
-    if (!txt) return '';
+    /* ===== 27/08/2026 (João: "sumiu essa análise") =====
+       Quando o pedido não tem trilha do RVEN304, o bloco inteiro sumia calado e
+       parecia bug — foi o que aconteceu com o 225935. Agora ele se explica.
+       E todo pedido passa a mostrar QUANDO a trilha foi vista pela última vez
+       num 304: como o relatório só traz pedido com movimento na janela pedida,
+       uma trilha pode ficar congelada sem ninguém perceber. O carimbo denuncia. */
+    let carimbo = '';
+    try {
+      const vs = data.map(r => r.visto_em).filter(Boolean).sort();
+      if (vs.length) {
+        const ultimo = vs[vs.length - 1];
+        const dias = Math.floor((Date.now() - new Date(ultimo).getTime()) / 864e5);
+        const velho = dias >= 3;
+        carimbo = '<div class="desc" style="font-size:10.5px;margin-top:6px' + (velho ? ';color:#8A5A12;font-weight:700' : '') + '">'
+          + (velho ? '⚠️ ' : '') + 'trilha vista pela última vez em ' + fmtDataSem(String(ultimo).slice(0, 10))
+          + (dias > 0 ? ' · há ' + dias + ' dia(s)' : ' · hoje')
+          + (velho ? ' — reimporte o RVEN304 para saber se ela andou.' : '') + '</div>';
+      }
+    } catch (_) { }
+    if (!txt && !carimbo) return '';
     return '<div style="margin-top:11px;padding:9px 11px;border-left:3px solid var(--navy);background:var(--leve-s);border-radius:10px">'
-      + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">Análise do prazo</div>' + txt + '</div>';
+      + '<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--fraco);text-transform:uppercase;margin-bottom:5px">Análise do prazo</div>'
+      + (txt || '<div class="desc" style="font-size:12px">Sem conclusão de prazo: falta a entrega prometida na carteira ou as medianas das etapas.</div>')
+      + carimbo + '</div>';
   } catch (e) { try { console.warn('veredito:', e && e.message); } catch (_) { } return ''; }
 }
 /* ===== OBSERVAÇÃO POR SETOR NO FLUXO — 26/08/2026 (pedido do João) =====
@@ -30620,7 +30641,7 @@ async function _fluxoCarrega(num) {
   const n = String(num).split('/')[0];
   try {
     const { data, error } = await sb.from('fluxo_pedido')
-      .select('seq,linha,setor,data_inclusao,tempo_min,total_min,usuario_inclusao')
+      .select('seq,linha,setor,data_inclusao,tempo_min,total_min,usuario_inclusao,visto_em')
       .eq('documento', n).order('seq');
     if (error) throw error;
     /* ===== 26/08/2026 (João: "quero pôr Obs nos setores do fluxo — um balãozinho
