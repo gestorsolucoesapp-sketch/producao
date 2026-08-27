@@ -1892,7 +1892,12 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
             <select id="manutParada" onchange="renderManut()"><option value="">Todas</option><option value="1">🛑 Só máquinas paradas</option></select>
           </div>
         </div>
+        <div style="display:flex;gap:8px;margin:2px 0 10px;flex-wrap:wrap">
+          <button class="btn org-vbtn ativa" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-mv="os" onclick="manutVer('os')">📋 Ordens</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-mv="mapa" onclick="manutVer('mapa')">🌡️ Mapa da máquina</button>
+        </div>
         <div id="manutConteudo"><p class="desc">Carregando…</p></div>
+        <div id="manutMapa" class="oculto"></div>
     </section>
 
     <section id="abaOEE" class="oculto">
@@ -3616,7 +3621,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.239.0';
+const APP_VER = '4.240.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13011,6 +13016,93 @@ async function manutAnaliseIA() {
   }
 }
 
+/* ===== MAPA DE CALOR DA MÁQUINA — 27/08/2026 (pedido do João) =====
+   Desenho VETORIAL PRÓPRIO, feito à mão. Não usei a imagem do fabricante que o
+   João mandou: além de ser material de terceiro, foto não serve aqui — o mapa
+   precisa de regiões nomeadas e clicáveis, e cada parte tem que virar um filtro.
+   O layout segue o caminho real do copo numa impressora offset seco de 8 cores:
+   alimentador → mandril (com a bateria de cores em volta) → blanket → cura UV →
+   verniz → descarga; elétrica, vácuo e transmissão embaixo, que é onde ficam.
+   As partes vivem em `maquina_parte` (uma linha por região, `chave` = id no
+   desenho), e a OS aponta para elas em `manutencao_os.parte_chave`. Assim o João
+   renomeia parte sem eu mexer no código. */
+let _mqVista = 'os', _mqPartes = [], _mqCont = {}, _mqSel = '';
+const MQ_GEO = [
+  { k: 'alimentador', x: 18, y: 112, w: 92, h: 74 }, { k: 'mandril', x: 126, y: 96, w: 104, h: 104 },
+  { k: 'blanket', x: 246, y: 96, w: 86, h: 104 }, { k: 'chapa', x: 246, y: 30, w: 86, h: 52 },
+  { k: 'rolos', x: 348, y: 30, w: 78, h: 52 }, { k: 'tinteiro', x: 348, y: 96, w: 78, h: 104 },
+  { k: 'uv', x: 442, y: 96, w: 76, h: 60 }, { k: 'verniz', x: 442, y: 166, w: 76, h: 34 },
+  { k: 'descarga', x: 534, y: 112, w: 92, h: 74 }, { k: 'transmissao', x: 126, y: 216, w: 150, h: 44 },
+  { k: 'vacuo', x: 288, y: 216, w: 138, h: 44 }, { k: 'eletrica', x: 438, y: 216, w: 188, h: 44 }
+];
+function manutVer(v) {
+  _mqVista = v;
+  document.querySelectorAll('[data-mv]').forEach(b => b.classList.toggle('ativa', b.getAttribute('data-mv') === v));
+  const c = $('manutConteudo'), m = $('manutMapa');
+  if (c) c.classList.toggle('oculto', v !== 'os');
+  if (m) m.classList.toggle('oculto', v !== 'mapa');
+  if (v === 'mapa') renderMqMapa();
+}
+function _mqCor(q, max) {
+  if (!max || !q) return { f: '#EEF3F8', s: '#C6D3E0', t: '#5C7186' };
+  const r = q / max;
+  if (r >= 0.75) return { f: '#D64545', s: '#A32C2C', t: '#fff' };
+  if (r >= 0.45) return { f: '#E8862B', s: '#B9651A', t: '#fff' };
+  if (r >= 0.20) return { f: '#EDC94A', s: '#B9992A', t: '#5A4700' };
+  return { f: '#BFE3C6', s: '#7FBF90', t: '#1F5B33' };
+}
+async function renderMqMapa() {
+  const box = $('manutMapa'); if (!box) return;
+  box.innerHTML = '<p class="desc">Carregando o mapa…</p>';
+  try {
+    if (!_mqPartes.length) {
+      const { data, error } = await sb.from('maquina_parte').select('chave,nome,descricao,ordem')
+        .eq('setor', 'Impressão').eq('ativo', true).order('ordem');
+      if (error) throw error;
+      _mqPartes = data || [];
+    }
+    /* conta as OS do período que já estão classificadas numa parte */
+    let L = (osLista || []).filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === 'Impressão');
+    if (typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de && periodoSel.ate) {
+      const de = String(periodoSel.de).slice(0, 10), ate = String(periodoSel.ate).slice(0, 10);
+      L = L.filter(o => { const d = String(o.data_abertura || '').slice(0, 10); return d && d >= de && d <= ate; });
+    }
+    _mqCont = {}; let semParte = 0;
+    L.forEach(o => { const k = o.parte_chave; if (k) _mqCont[k] = (_mqCont[k] || 0) + 1; else semParte++; });
+    const nome = {}; _mqPartes.forEach(p => { nome[p.chave] = p.nome; });
+    const max = Math.max(0, ...MQ_GEO.map(g => _mqCont[g.k] || 0));
+    let g = '<path d="M64 149 H172 M230 149 H289 M332 149 H385 M426 149 H480 M518 149 H580" stroke="#C6D3E0" stroke-width="3" stroke-dasharray="6 5" fill="none"/>';
+    MQ_GEO.forEach(p => {
+      const q = _mqCont[p.k] || 0, c = _mqCor(q, max), cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+      const rot = nome[p.k] || p.k;
+      g += '<g onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer">'
+        + '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="10" fill="' + c.f + '" stroke="' + (_mqSel === p.k ? '#16283A' : c.s) + '" stroke-width="' + (_mqSel === p.k ? 3.4 : 1.8) + '"/>'
+        + '<text x="' + cx + '" y="' + (cy - (q ? 5 : 0)) + '" text-anchor="middle" font-size="11" font-weight="800" fill="' + c.t + '">' + escapeHtml(rot.split(' / ')[0].slice(0, 15)) + '</text>'
+        + (q ? '<text x="' + cx + '" y="' + (cy + 13) + '" text-anchor="middle" font-size="12.5" font-weight="800" fill="' + c.t + '">' + q + '</text>' : '')
+        + '<title>' + escapeHtml(rot) + ' — ' + q + ' ordem(ns)</title></g>';
+    });
+    const svg = '<div style="overflow-x:auto"><svg viewBox="0 0 644 276" width="644" height="276" style="display:block;margin:0 auto;max-width:100%;height:auto">'
+      + '<rect x="6" y="6" width="632" height="264" rx="14" fill="#fff" stroke="#DEE6ED"/>' + g + '</svg></div>';
+    const lista = _mqSel ? _mqListaOS(L, _mqSel, nome) : '';
+    box.innerHTML = card('🌡️ Mapa da máquina · Impressão',
+      'quanto mais quente, mais ordens naquela parte · toque numa parte para ver as ordens',
+      svg
+      + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> O mapa só pinta o que já foi classificado — abra a ordem e escolha a parte para ela entrar aqui.</div>' : '')
+      + lista);
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p class="desc">Não consegui montar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+  }
+}
+function _mqListaOS(L, k, nome) {
+  const os = L.filter(o => o.parte_chave === k).sort((a, b) => String(b.data_abertura).localeCompare(String(a.data_abertura))).slice(0, 40);
+  if (!os.length) return '<p class="desc" style="margin-top:10px">Nenhuma ordem em <b>' + escapeHtml(nome[k] || k) + '</b> no período.</p>';
+  return '<div style="margin-top:12px"><div style="font-weight:800;font-size:12.5px;margin-bottom:6px">' + escapeHtml(nome[k] || k) + ' · ' + os.length + ' ordem(ns)</div>'
+    + os.map(o => '<div onclick="verOS(\'' + o.id + '\')" style="cursor:pointer;border-bottom:1px solid var(--linha);padding:7px 2px;font-size:12px">'
+      + '<b>' + escapeHtml(o.os_num || '—') + '</b> · ' + escapeHtml(String(o.recurso_cod || '')) + ' · ' + fmtData(String(o.data_abertura).slice(0, 10))
+      + '<div class="desc" style="font-size:11px">' + escapeHtml(String(o.detalhes || o.motivo || '').slice(0, 110)) + '</div></div>').join('')
+    + '</div>';
+}
+function mqFiltra(k) { _mqSel = (_mqSel === k ? '' : k); renderMqMapa(); }
 function renderManut() {
   const box = $('manutConteudo');
   const st = $('manutSetor').value, sit = ($('manutStatus') && $('manutStatus').value) || '';
