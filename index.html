@@ -1787,6 +1787,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <select id="orgPeriodo" onchange="mudarPeriodoOrg()" aria-label="Período da análise" style="display:none"></select>
           <select id="orgTurno" onchange="orgTrocaTurno()" aria-label="Turno" class="sel-pad"><option value="">Todos os turnos</option><option value="Manhã">Manhã</option><option value="Tarde">Tarde</option><option value="Noite">Noite</option></select>
           <button class="btn org-vbtn ativa" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="org" onclick="orgVer('org')">Organograma</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="quadro" onclick="orgVer('quadro')" title="Quem opera cada m&aacute;quina, no formato da tabela de produ&ccedil;&atilde;o">🗂️ Quadro</button>
           <button class="btn org-vbtn so-rh" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="faltas" onclick="orgVer('faltas')">Faltas</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="horas" onclick="orgVer('horas')">⏱️ Banco de Horas</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:8px 14px;font-size:14px" data-v="analise" onclick="orgVer('analise')">An&aacute;lise</button>
@@ -3613,7 +3614,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.218.0';
+const APP_VER = '4.219.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41924,6 +41925,7 @@ function renderOrgVista() {
   const ab = $('orgApresBtn'); if (ab) ab.style.display = (orgVista === 'org' || orgVista === 'rel') ? '' : 'none';
   try { if (typeof _abaAtual !== 'undefined' && _abaAtual === 'organograma') sincSetorGlobal(); } catch (_) { }
   if (orgVista === 'org') return renderOrg();
+  if (orgVista === 'quadro') return renderOrgQuadro();
   if (orgVista === 'faltas') return renderOrgFaltas();
   if (orgVista === 'horas') return renderOrgHoras();
   if (orgVista === 'analise') return renderOrgAnalise();
@@ -42963,6 +42965,109 @@ function orgSeloOutroSetor(mat) {
   const st = orgSetorDe(mat);
   if (!st || st === orgSetorSel) return '';
   return '<span title="pertence a ' + escapeHtml(st) + '" style="font-size:9px;font-weight:700;letter-spacing:.3px;color:var(--fraco-2s);background:var(--leve-2s);border:1px solid var(--linha-s);border-radius:6px;padding:1px 5px;margin-left:4px;vertical-align:middle">' + escapeHtml(st) + '</span>';
+}
+/* ===== QUADRO DE TURNOS — 26/08/2026 (pedido do João) =====
+   Mesma leitura da tabela "Produção por máquina e turno", só que no lugar do
+   peso vem quem está na máquina. NÃO substitui o organograma: é outra vista,
+   botão próprio. (O botão "Compacto" que já existia é outra coisa — ele encolhe
+   os cards da árvore; por isso este virou "Quadro" e não roubou o nome.)
+
+   O AGRUPAMENTO é o miolo. Duas máquinas só entram na mesma linha se tiverem o
+   MESMO operador nos TRÊS turnos. Agrupar pelo operador de um turno só daria
+   linhas diferentes em cada coluna e a tabela não fecharia: de manhã o Rafael
+   Soares cobre 1504/1511/1703 E 2001/2002/2003 juntos, mas à noite isso vira
+   dois postos (Diego e Matheus). Com a regra dos três turnos, os dois postos
+   ficam separados e a manhã simplesmente repete o nome dele nas duas linhas —
+   que é a verdade: uma pessoa cobrindo dois postos. */
+const _QT = ['Manhã', 'Tarde', 'Noite'];
+function _qCurto(n) {
+  const p = String(n || '').trim().split(/\s+/).filter(Boolean);
+  if (!p.length) return '—';
+  return p.length === 1 ? p[0] : (p[0] + ' ' + p[1].charAt(0).toUpperCase() + '.');
+}
+function _qNome(a) {
+  if (!a) return null;
+  if (a.pendente) return a.apelido_origem || '?';
+  return orgNome(a.matricula) || a.apelido_origem || '?';
+}
+function renderOrgQuadro() {
+  const wrap = $('orgWrap'); if (!wrap) return;
+  const aloc = (orgDados.aloc || []).filter(a =>
+    !a.vigencia_fim && a.maquina_codigo && orgEhSetor(a.setor) &&
+    !orgMaqOcultas.has(String(a.maquina_codigo)) && _QT.indexOf(a.turno) >= 0);
+  if (!aloc.length) {
+    wrap.innerHTML = '<div class="card"><p class="vazio-painel">Nenhuma alocação neste setor.</p></div>';
+    return;
+  }
+  const M = {};
+  aloc.forEach(a => {
+    const m = String(a.maquina_codigo);
+    const cel = ((M[m] = M[m] || {})[a.turno] = M[m][a.turno] || { op: null, aux: [] });
+    if (a.funcao === 'operador' && !a.aprendiz) { if (!cel.op) cel.op = a; }
+    else cel.aux.push(a);
+  });
+  const chaveOp = (m, t) => {
+    const c = M[m] && M[m][t];
+    return (c && c.op) ? String(c.op.matricula || ('?' + (c.op.apelido_origem || ''))) : '-';
+  };
+  const grupos = {};
+  Object.keys(M).forEach(m => {
+    const st = (typeof setorDe === 'function') ? setorDe(m) : '';
+    const k = st + '\u00a6' + _QT.map(t => chaveOp(m, t)).join('\u00a6');
+    (grupos[k] = grupos[k] || { setor: st, maqs: [] }).maqs.push(m);
+  });
+  const lista = Object.keys(grupos).map(k => grupos[k]);
+  lista.forEach(g => g.maqs.sort((a, b) => (+a || 0) - (+b || 0)));
+  lista.sort((a, b) => (a.setor || '').localeCompare(b.setor || '', 'pt-BR') || ((+a.maqs[0] || 0) - (+b.maqs[0] || 0)));
+
+  const cel = (g, t) => {
+    /* operador é o mesmo em todo o grupo (é o que define o grupo); os auxiliares
+       variam de máquina para máquina, então junto todos e tiro repetido. */
+    let op = null; const aux = []; const vistos = {};
+    g.maqs.forEach(m => {
+      const c = M[m] && M[m][t]; if (!c) return;
+      if (!op && c.op) op = c.op;
+      c.aux.forEach(x => {
+        const nm = _qNome(x); if (!nm) return;
+        const kk = String(x.matricula || nm);
+        if (!vistos[kk]) { vistos[kk] = 1; aux.push(nm); }
+      });
+    });
+    const tint = ORG_TINT[t] || { bg: 'var(--leve-s)', br: 'var(--linha-2s)' };
+    if (!op && !aux.length) return '<td style="text-align:center;color:var(--fraco-2);font-size:11px">—</td>';
+    const nomeOp = op ? _qNome(op) : null;
+    return '<td style="padding:5px 6px;vertical-align:top">'
+      + '<div style="background:' + tint.bg + ';border:1px solid ' + tint.br + '33;border-left:3px solid ' + tint.br + ';border-radius:8px;padding:5px 7px">'
+      + (nomeOp
+        ? '<div title="' + escapeHtml(nomeOp) + '" style="font-size:11.5px;font-weight:800;color:var(--navy);line-height:1.25">' + escapeHtml(_qCurto(nomeOp)) + (op.pendente ? ' <span style="color:var(--laranja-2)">?</span>' : '') + '</div>'
+        : '<div style="font-size:11px;font-weight:800;color:var(--critico)">sem operador</div>')
+      + (aux.length
+        ? '<div title="' + escapeHtml(aux.join(' · ')) + '" style="font-size:10px;color:var(--fraco);line-height:1.35;margin-top:2px">' + aux.map(x => escapeHtml(_qCurto(x))).join('<br>') + '</div>'
+        : '<div style="font-size:10px;color:var(--fraco-2);margin-top:2px">sem auxiliar</div>')
+      + '</div></td>';
+  };
+
+  let linhas = '', setorAnt = null;
+  lista.forEach(g => {
+    if (g.setor !== setorAnt) {
+      setorAnt = g.setor;
+      if (orgTodosSetores()) linhas += '<tr><td colspan="4" style="padding:9px 6px 3px;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--fraco-2)">' + escapeHtml(g.setor || 'Outros') + '</td></tr>';
+    }
+    const nomes = g.maqs.map(m => '<div style="font-size:10.5px;color:var(--fraco);line-height:1.3">'
+      + '<span class="cod">' + escapeHtml(m) + '</span> ' + escapeHtml(String((D.nomeMaq && D.nomeMaq[m]) || '').slice(0, 22)) + '</div>').join('');
+    linhas += '<tr><td style="padding:6px;vertical-align:top;min-width:132px">' + nomes
+      + (g.maqs.length > 1 ? '<div style="font-size:9.5px;font-weight:800;color:var(--azul-2);margin-top:2px">' + g.maqs.length + ' máquinas · 1 posto</div>' : '')
+      + '</td>' + _QT.map(t => cel(g, t)).join('') + '</tr>';
+  });
+
+  const nPostos = lista.length, nMaq = Object.keys(M).length;
+  wrap.innerHTML = '<div class="card"><div class="titulo-sec">🗂️ Quadro de turnos · ' + orgSetorLabel() + '</div>'
+    + '<p class="desc" style="margin-bottom:8px">' + nMaq + ' máquina(s) em ' + nPostos + ' posto(s). Máquinas com o <b>mesmo operador nos três turnos</b> viram uma linha só. Em cima o operador, embaixo os auxiliares. Toque e segure o nome para ver por extenso.</p>'
+    + '<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%"><thead><tr>'
+    + '<th style="text-align:left">Máquina</th><th>Manhã</th><th>Tarde</th><th>Noite</th>'
+    + '</tr></thead><tbody>' + linhas + '</tbody></table></div>'
+    + '<p class="desc explica" style="font-size:10.5px;margin:8px 0 0">Sai do mesmo cadastro do Organograma — mudou lá, muda aqui. Nome com <span style="color:var(--laranja-2);font-weight:800">?</span> é vínculo pendente.</p>'
+    + '</div>';
 }
 function orgNomeDe(a) {
   return a.pendente ? (a.apelido_origem || '?') : (orgPrimeiro(orgNome(a.matricula)) || '?');
