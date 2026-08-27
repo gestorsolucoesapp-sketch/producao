@@ -3640,7 +3640,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.250.0';
+const APP_VER = '4.251.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13103,11 +13103,15 @@ function _mqCor(q, max) {
    sobrepondo os círculos na figura antes de publicar. */
 const MQ_IMG = 'maq-impressao.png';
 function _mqDesenho(cont, nome) {
+  /* a posição do marcador vem do banco quando o João já arrastou; o valor do
+     código é só o ponto de partida de cada parte nova */
+  const px = {}; (_mqPartes || []).forEach(p => { if (p.pos_x != null) px[p.chave] = { x: +p.pos_x, y: +p.pos_y }; });
+  MQ_PINOS.forEach(p => { const v = px[p.k]; if (v) { p.x = v.x; p.y = v.y; } });
   const max = Math.max(0, ...MQ_PINOS.map(p => cont[p.k] || 0));
   let g = '<image href="' + MQ_IMG + '" x="0" y="0" width="1200" height="600" preserveAspectRatio="xMidYMid meet"/>';
   MQ_PINOS.forEach(p => {
     const q = cont[p.k] || 0, c = _mqCor(q, max), on = (_mqSel === p.k);
-    g += '<g onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer">'
+    g += '<g class="mqpin" data-k="' + p.k + '"' + (_mqEdit ? ' style="cursor:grab;touch-action:none"' : ' onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer"') + '>'
       + '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + (on ? 24 : 21) + '" fill="' + c.f + '" stroke="' + (on ? '#16283A' : c.s) + '" stroke-width="' + (on ? 4.5 : 3) + '" opacity=".96"/>'
       + '<text x="' + p.x + '" y="' + (p.y + 6) + '" text-anchor="middle" font-size="17" font-weight="800" fill="' + c.t + '">' + p.n + '</text>'
       + '<title>' + escapeHtml(nome[p.k] || p.k) + ' — ' + q + ' ordem(ns)</title></g>';
@@ -13132,7 +13136,7 @@ async function renderMqMapa() {
   box.innerHTML = '<p class="desc">Carregando o mapa…</p>';
   try {
     if (!_mqPartes.length) {
-      const { data, error } = await sb.from('maquina_parte').select('chave,nome,ordem')
+      const { data, error } = await sb.from('maquina_parte').select('chave,nome,ordem,pos_x,pos_y')
         .eq('setor', 'Impressão').eq('ativo', true).order('ordem');
       if (error) throw error;
       _mqPartes = data || [];
@@ -13149,7 +13153,16 @@ async function renderMqMapa() {
       'toque no número (no desenho ou na lista) para ver as ordens daquela parte',
       _mqDesenho(_mqCont, nome)
       + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> Escreva a parte entre parênteses no fim da conclusão — ex.: <b>(EXTRAÇÃO)</b> — e ela entra no mapa sozinha ao salvar.</div>' : '')
-      + (_mqSel ? _mqListaOS(L, _mqSel, nome) : ''));
+      + (_mqSel ? _mqListaOS(L, _mqSel, nome) : '')
+      + (_ehAdmCards()
+        ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+          + '<span onclick="mqEditar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:6px 13px;'
+          + (_mqEdit ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">'
+          + (_mqEdit ? '✅ concluir edição' : '✏️ editar mapa') + '</span>'
+          + (_mqEdit ? '<span class="desc" style="font-size:11px">arraste o número para reposicionar · toque sem arrastar para renomear</span>' : '')
+          + '</div>'
+        : ''));
+    if (_mqEdit) { try { mqLigaDrag(); } catch (_) { } }
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="desc">Não consegui montar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
   }
@@ -13164,6 +13177,78 @@ function _mqListaOS(L, k, nome) {
     + '</div>';
 }
 function mqFiltra(k) { _mqSel = (_mqSel === k ? '' : k); renderMqMapa(); }
+/* ===== EDITAR O MAPA — 27/08/2026 (pedido do João) =====
+   Dois pedidos no mesmo lugar: dizer o que é cada número e mover os marcadores.
+   No modo edição o pino vira arrastável e um toque nele abre o nome para
+   renomear; fora do modo, o toque continua filtrando as ordens — senão editar e
+   consultar brigariam pelo mesmo gesto.
+   Posição e nome ficam em `maquina_parte`, não no código: o João muda sem
+   depender de deploy, e o mapa de outro setor amanhã já nasce editável. */
+let _mqEdit = false, _mqArr = null;
+function mqEditar() {
+  if (!_ehAdmCards()) { try { toast('Só o administrador edita o mapa.'); } catch (_) { } return; }
+  _mqEdit = !_mqEdit; _mqSel = ''; renderMqMapa();
+  try { toast(_mqEdit ? '✏️ Modo edição: arraste os números e toque para renomear' : '✅ Edição encerrada'); } catch (_) { }
+}
+function _mqPt(svg, e) {
+  const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+  const m = svg.getScreenCTM();
+  return m ? p.matrixTransform(m.inverse()) : { x: e.clientX, y: e.clientY };
+}
+function mqLigaDrag() {
+  if (!_mqEdit) return;
+  const box = $('manutMapa'); if (!box) return;
+  const svg = box.querySelector('svg'); if (!svg) return;
+  svg.querySelectorAll('g.mqpin').forEach(gn => {
+    gn.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      const c = gn.querySelector('circle'); if (!c) return;
+      const pt = _mqPt(svg, e);
+      _mqArr = { gn: gn, k: gn.getAttribute('data-k'), x0: +c.getAttribute('cx'), y0: +c.getAttribute('cy'), ox: pt.x, oy: pt.y, moveu: false };
+      try { gn.setPointerCapture(e.pointerId); } catch (_) { }
+      gn.style.opacity = '.8';
+    });
+    gn.addEventListener('pointermove', e => {
+      if (!_mqArr || _mqArr.gn !== gn) return;
+      const pt = _mqPt(svg, e), tx = pt.x - _mqArr.ox, ty = pt.y - _mqArr.oy;
+      if (Math.abs(tx) > 2 || Math.abs(ty) > 2) _mqArr.moveu = true;
+      gn.setAttribute('transform', 'translate(' + tx.toFixed(1) + ',' + ty.toFixed(1) + ')');
+      _mqArr.tx = tx; _mqArr.ty = ty;
+    });
+    const solta = () => {
+      if (!_mqArr || _mqArr.gn !== gn) return;
+      gn.style.opacity = ''; const a = _mqArr; _mqArr = null;
+      if (!a.moveu) { mqRenomear(a.k); return; }        /* toque sem arrastar = renomear */
+      mqSalvaPos(a.k, Math.round(a.x0 + (a.tx || 0)), Math.round(a.y0 + (a.ty || 0)));
+    };
+    gn.addEventListener('pointerup', solta);
+    gn.addEventListener('pointercancel', solta);
+  });
+}
+async function mqSalvaPos(k, x, y) {
+  try {
+    const { error } = await sb.from('maquina_parte').update({ pos_x: x, pos_y: y })
+      .eq('setor', 'Impressão').eq('chave', k);
+    if (error) throw error;
+    const p = (_mqPartes || []).find(z => z.chave === k); if (p) { p.pos_x = x; p.pos_y = y; }
+    renderMqMapa();
+  } catch (e) { toast('Não consegui salvar a posição: ' + ((e && e.message) || e)); }
+}
+async function mqRenomear(k) {
+  const p = (_mqPartes || []).find(z => z.chave === k); if (!p) return;
+  let novo = null;
+  try { novo = prompt('Nome desta parte da máquina:', p.nome); } catch (_) { }
+  if (novo === null) return;
+  novo = String(novo).trim();
+  if (!novo) { toast('O nome não pode ficar vazio.'); return; }
+  try {
+    const { error } = await sb.from('maquina_parte').update({ nome: novo })
+      .eq('setor', 'Impressão').eq('chave', k);
+    if (error) throw error;
+    p.nome = novo; renderMqMapa();
+    toast('Agora é "' + novo + '". As ordens continuam ligadas a esta parte.');
+  } catch (e) { toast('Não consegui renomear: ' + ((e && e.message) || e)); }
+}
 function renderManut() {
   const box = $('manutConteudo');
   const st = $('manutSetor').value, sit = ($('manutStatus') && $('manutStatus').value) || '';
