@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v4.254.0';
+const CACHE = 'producao-rioplastic-v4.255.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
