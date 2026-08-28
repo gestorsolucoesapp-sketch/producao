@@ -1661,6 +1661,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn" onclick="cfMove(-1)" style="width:auto;padding:8px 11px;font-size:13px">‹</button>
           <button class="btn" onclick="cfMove(1)" style="width:auto;padding:8px 11px;font-size:13px">›</button>
         </div>
+        <div id="cfAprov"></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
           <select id="cfSetor" onchange="cfRender()" style="display:none;font-size:16px;padding:8px;border:1px solid var(--borda);border-radius:10px">
             <option value="">Todos os setores</option>
@@ -3662,7 +3663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.262.0';
+const APP_VER = '4.263.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -39309,9 +39310,64 @@ function cfRenderAbsurdas() {
     (lista.length > 40 ? '<p class="desc" style="margin-top:6px">mostrando as 40 maiores de ' + lista.length + '</p>' : '');
 }
 
+/* ===== APROVEITAMENTO DE BOBINA E PARADAS INTERROMPIDAS — 27/08/2026 =====
+   João: "o aproveitamento da termo está 61,7 e a meta é 47,5, suponho que está
+   errado". Está mesmo: pelos dados crus do período o número é 45,5%. O painel
+   aplica dia operacional ao consumo e refiltra o período, e é aí que a conta
+   se afasta — este card mostra o valor DIRETO, sem esse ajuste, para dar com o
+   que comparar.
+   Junto vai a contaminação que ele apontou: parada com motivo INTERROMPIDA. São
+   poucas ordens carregando um bloco enorme de horas, e elas entram nas médias
+   como se fossem parada normal. */
+async function cfAprovBobina() {
+  const box = $('cfAprov'); if (!box) return;
+  const de = ($('cfIni') || {}).value, ate = ($('cfFim') || {}).value;
+  if (!de || !ate) { box.innerHTML = ''; return; }
+  const TF = (SETOR_MAQ['Termoformagem'] || []).map(String);
+  try {
+    const [pr, co, pa] = await Promise.all([
+      _leTudoFlx(() => sb.from('producao_resumo').select('peso,recurso_cod').gte('dia', de).lte('dia', ate).in('recurso_cod', TF).order('id')),
+      _leTudoFlx(() => sb.from('consumo').select('peso,recurso_cod,componente_desc').gte('dia', de).lte('dia', ate).in('recurso_cod', TF).order('id')),
+      _leTudoFlx(() => sb.from('paradas').select('tempo_horas,motivo_desc,recurso_cod').gte('dia', de).lte('dia', ate).order('id'))
+    ]);
+    const prod = (pr || []).reduce((a, r) => a + (+r.peso || 0), 0);
+    const bob = (co || []).filter(c => /BOBINA/i.test(c.componente_desc || ''));
+    const cons = bob.reduce((a, c) => a + (+c.peso || 0), 0);
+    const ap = cons > 0 ? prod / cons * 100 : null;
+    const consMeta = prod > 0 ? prod / (META_APROV / 100) : 0;
+    const excesso = cons - consMeta;
+    const hTot = (pa || []).reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+    const inter = (pa || []).filter(p => /INTERROMPID/i.test(p.motivo_desc || ''));
+    const hInt = inter.reduce((a, p) => a + (+p.tempo_horas || 0), 0);
+    const pctInt = hTot > 0 ? hInt / hTot * 100 : 0;
+    const n1 = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+    const ok = ap != null && ap >= META_APROV;
+    box.innerHTML = card('🧾 Aproveitamento de bobina · conferência',
+      'calculado direto do 621 e do 646, sem ajuste de dia operacional — serve para conferir o número do painel',
+      '<div class="idet-grid">'
+      + '<div><b style="color:' + (ok ? 'var(--verde)' : 'var(--critico)') + '">' + (ap == null ? '—' : n1(ap) + '%') + '</b><span>aproveitamento · meta ' + n1(META_APROV) + '%</span></div>'
+      + '<div><b>' + fmtKg(prod) + '</b><span>produção Termoformagem</span></div>'
+      + '<div><b>' + fmtKg(cons) + '</b><span>bobina consumida</span></div>'
+      + '<div><b style="color:' + (excesso > 0 ? 'var(--critico)' : 'var(--verde)') + '">' + (excesso > 0 ? '+' : '−') + fmtKg(Math.abs(excesso)) + '</b><span>vs. o que a meta exigiria</span></div>'
+      + '</div>'
+      + '<p class="desc" style="margin-top:8px">Se este número não bater com o cartão do Painel, a diferença vem do ajuste de dia operacional que o Painel aplica ao consumo (desloca a linha pela hora e refiltra o período). Aqui é o dado cru do intervalo escolhido.</p>'
+      + '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--linha)">'
+      + '<div style="font-weight:800;font-size:12.5px;margin-bottom:5px">⚠️ Paradas INTERROMPIDAS no período</div>'
+      + '<div class="idet-grid">'
+      + '<div><b>' + inter.length + '</b><span>parada(s) interrompida(s)</span></div>'
+      + '<div><b style="color:var(--critico)">' + n1(hInt) + ' h</b><span>de ' + n1(hTot) + ' h totais</span></div>'
+      + '<div><b style="color:' + (pctInt >= 15 ? 'var(--critico)' : 'var(--fraco)') + '">' + n1(pctInt) + '%</b><span>do tempo parado</span></div>'
+      + '</div>'
+      + '<p class="desc" style="margin-top:6px">Parada interrompida é a que ficou aberta e foi fechada depois — o tempo registrado não é tempo real de máquina parada. Elas entram nas médias, no OEE e no Pareto como parada comum, então poucas ordens conseguem dominar o resultado do mês.</p>'
+      + '</div>', 'conf-aprov');
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p class="desc">Não consegui montar a conferência de bobina: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+  }
+}
 function cfRender() {
   cfSetores();
   try { cfRenderAbsurdas(); } catch (_) { }
+  try { cfAprovBobina(); } catch (_) { }
   const setorSel = ($('cfSetor') && $('cfSetor').value) || '';
   const metSel = ($('cfMetrica') && $('cfMetrica').value) || '';
   const D = (_cfDados || []).filter(r =>
