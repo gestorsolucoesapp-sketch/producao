@@ -3686,7 +3686,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.276.0';
+const APP_VER = '4.277.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20523,24 +20523,32 @@ function tintaTelaCompra(box) {
   box.innerHTML = '<p class="desc">Monte o pedido e envie ao departamento de compras. <b>Isto não altera o estoque</b> — a tinta só entra quando a nota for lançada na aba Entrada.</p>'
     + _tintaBarraMarcas()
     + '<div style="display:flex;gap:6px;margin:8px 0">'
-    + '<input id="tintaCompraCod" type="search" placeholder="digite o código ou o nome da tinta…" '
+    + '<input id="tintaCompraCod" type="search" placeholder="digite o nome ou o código da tinta…" autocomplete="off" '
+    + 'oninput="tintaCompraSugerir(this.value)" '
     + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();tintaCompraAdd(this.value)}" '
     + 'style="flex:1;padding:11px;border:2px solid var(--azul-2);border-radius:10px;font-size:15px">'
     + '<span onclick="tintaCompraAdd(($(\'tintaCompraCod\')||{}).value)" style="cursor:pointer;display:flex;align-items:center;padding:0 16px;background:var(--navy);color:#fff;border-radius:10px;font-weight:800;font-size:13px">+</span>'
     + '</div>'
+    /* a lista de sugestões vive num container PRÓPRIO e é a única coisa
+       redesenhada enquanto se digita — assim o <input> não é recriado e o
+       cursor não salta, que foi o problema da busca da aba Acesso. */
+    + '<div id="tintaSug"></div>'
     + (sug.length ? '<div style="margin:8px 0"><span class="desc" style="font-size:11.5px">abaixo do mínimo · toque para incluir:</span><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'
       + sug.map(x => '<span onclick="tintaCompraAdd(\'' + x.cod_barras + '\')" style="cursor:pointer;font-size:11.5px;background:#FBE9E9;border:1px solid #E0B4B4;border-radius:999px;padding:5px 11px">'
         + _bolinha(x.nome) + escapeHtml(x.nome) + ' <b>(' + _tNum(x.saldo) + ')</b></span>').join('') + '</div></div>' : '')
     + (itens.length ? '<div style="margin-top:12px"><div class="titulo-sec">Pedido · ' + itens.length + ' item(ns) · ' + _tNum(totLatas) + ' lata(s)</div>'
       + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
-      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th><th></th></tr></thead><tbody>'
+      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>'
       + itens.map(x => '<tr style="border-top:1px solid var(--linha)">'
         + '<td style="text-align:left;font-family:monospace">' + escapeHtml(x.p.cod_barras || '') + '</td>'
         + '<td style="text-align:left">' + _bolinha(x.p.nome) + escapeHtml(x.p.nome) + '</td>'
         + '<td style="text-align:left;font-size:11.5px">' + escapeHtml(x.p.fornecedor || '') + '</td>'
         + '<td style="text-align:center"><input type="number" min="1" value="' + x.q + '" onchange="tintaCompraQtd(\'' + x.p.id + '\',this.value)" style="width:62px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:center;font-size:13px"></td>'
+        + '<td style="text-align:right">' + (x.p.preco ? _tBRL(x.q * x.p.preco) : '—') + '</td>'
         + '<td style="text-align:center"><span onclick="tintaCompraRem(\'' + x.p.id + '\')" style="cursor:pointer;color:var(--critico);font-weight:800">✕</span></td></tr>').join('')
       + '</tbody></table></div>'
+      + '<p class="desc" style="text-align:right;margin:6px 0 0;font-size:13px">estimativa: <b style="font-size:15px;color:var(--navy)">' + _tBRL(itens.reduce((a, x) => a + x.q * (+x.p.preco || 0), 0)) + '</b> <span style="font-size:11px">· pelo último preço pago</span></p>'
+      + '<p class="desc" style="font-size:11px;margin:2px 0 0">O valor é só para você conferir — <b>o e-mail sai sem valor</b>, quem negocia preço é o departamento de compras.</p>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
       + '<span onclick="tintaCompraEmail()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:9px 16px">✉️ Enviar por e-mail</span>'
       + '<span onclick="tintaCompraCopiar()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:9px 16px">📋 Copiar</span>'
@@ -20549,9 +20557,28 @@ function tintaTelaCompra(box) {
       + '</div></div>'
       : '<p class="vazio-painel">Nenhum item no pedido. Digite um código acima.</p>');
 }
+/* 28/08/2026 (João: "deixa eu digitar o nome, sugira e põe o código automático").
+   Só o container das sugestões é reescrito — o campo continua vivo e o cursor
+   fica onde estava. Buscar por nome, código do ERP ou provisório. */
+function tintaCompraSugerir(txt) {
+  const cx = $('tintaSug'); if (!cx) return;
+  const t = String(txt || '').trim().toLowerCase();
+  if (t.length < 2) { cx.innerHTML = ''; return; }
+  const L = _tintaFiltra(_tintaSaldo.filter(x => x.ativo))
+    .filter(x => (x.nome + ' ' + (x.cod_barras || '') + ' ' + (x.cod_erp || '')).toLowerCase().includes(t))
+    .slice(0, 8);
+  if (!L.length) { cx.innerHTML = '<p class="desc" style="margin:4px 0">Nada encontrado para "' + escapeHtml(txt) + '".</p>'; return; }
+  cx.innerHTML = '<div style="border:1px solid var(--linha-2s);border-radius:10px;overflow:hidden;margin-bottom:8px">'
+    + L.map(x => '<div onclick="tintaCompraAdd(\'' + x.id + '\')" style="cursor:pointer;padding:9px 11px;border-bottom:1px solid var(--linha);display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      + '<span>' + _bolinha(x.nome) + '<b style="font-size:13px">' + escapeHtml(x.nome) + '</b>'
+      + '<span class="desc" style="font-size:11px;display:block;margin-left:19px">' + escapeHtml(x.cod_barras || '') + ' · ' + escapeHtml(x.fornecedor || '') + '</span></span>'
+      + '<span class="desc" style="font-size:11.5px;white-space:nowrap">saldo ' + _tNum(x.saldo) + '</span></div>').join('')
+    + '</div>';
+}
 function tintaCompraAdd(cod) {
   const c = String(cod || '').trim().toLowerCase(); if (!c) return;
-  const p = _tintaSaldo.find(x => String(x.cod_barras || '').toLowerCase() === c
+  const p = _tintaSaldo.find(x => x.id === cod)                       // veio da sugestão
+    || _tintaSaldo.find(x => String(x.cod_barras || '').toLowerCase() === c
       || String(x.cod_erp || '').toLowerCase() === c)
     || _tintaSaldo.filter(x => x.nome.toLowerCase().includes(c))[0];
   if (!p) { toast('Não achei: ' + cod); return; }
