@@ -1649,6 +1649,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="saida" onclick="tintaVer('saida')">📤 Saída</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="entrada" onclick="tintaVer('entrada')">📥 Entrada</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="resumo" onclick="tintaVer('resumo')">📊 Resumo</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="compra" onclick="tintaVer('compra')">🛒 Compra</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="etiquetas" onclick="tintaVer('etiquetas')">🏷️ Etiquetas</button>
         </div>
         <div id="tintaConteudo"><p class="desc">Carregando…</p></div>
@@ -3685,7 +3686,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.275.0';
+const APP_VER = '4.276.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20319,6 +20320,27 @@ const _bolinha = n => '<span style="display:inline-block;width:13px;height:13px;
   + _corDe(n) + ';border:1px solid rgba(0,0,0,.25);vertical-align:-2px;margin-right:6px"></span>';
 
 let _tintaVista = 'estoque', _tintaSaldo = [], _tintaMov = [], _tintaBusca = '', _tintaCarregando = false;
+/* 28/08/2026 (João: "deixe filtrar as marcas") — special color e sulflex são os
+   dois fornecedores, e quase toda cor existe nos dois. Separar por marca é o que
+   permite conferir prateleira por prateleira. */
+let _tintaMarca = '';
+function tintaMarca(m) { _tintaMarca = (_tintaMarca === m ? '' : m); tintaRender(); }
+function _tintaMarcas() {
+  const s = new Set((_tintaSaldo || []).map(x => (x.fornecedor || '').trim()).filter(Boolean));
+  return [...s].sort();
+}
+function _tintaBarraMarcas() {
+  const ms = _tintaMarcas(); if (ms.length < 2) return '';
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">'
+    + ms.map(m => '<span onclick="tintaMarca(\'' + m.replace(/'/g, "\\'") + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 12px;'
+      + (_tintaMarca === m ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)') + '">' + escapeHtml(m) + '</span>').join('')
+    + (_tintaMarca ? '<span onclick="tintaMarca(\'\')" style="cursor:pointer;font-size:11.5px;padding:5px 10px;color:var(--fraco-2)">✕ todas</span>' : '')
+    + '</div>';
+}
+const _tintaFiltra = L => _tintaMarca ? L.filter(x => (x.fornecedor || '').trim() === _tintaMarca) : L;
+/* rascunho do pedido: fica na memória enquanto monta e só vai ao banco quando
+   o João salva. Nada aqui toca o estoque. */
+let _tintaCarrinho = {};
 
 async function tintaAbrir() { _tintaVista = 'estoque'; _tintaBusca = ''; await tintaCarregar(); }
 function tintaVer(v) {
@@ -20354,6 +20376,7 @@ function tintaRender() {
   if (_tintaVista === 'saida')   return tintaTelaSaida(box);
   if (_tintaVista === 'entrada') return tintaTelaEntrada(box);
   if (_tintaVista === 'etiquetas') return tintaTelaEtiquetas(box);
+  if (_tintaVista === 'compra') return tintaTelaCompra(box);
   return tintaTelaResumo(box);
 }
 
@@ -20365,7 +20388,7 @@ function tintaTelaEstoque(box) {
   const baixo = L.filter(x => x.abaixo_minimo && x.ativo);
   const semPreco = L.filter(x => x.saldo > 0 && x.preco_atencao);
   const f = _tintaBusca.trim().toLowerCase();
-  const vis = (f ? L.filter(x => (x.nome + ' ' + (x.cod_erp || '') + ' ' + (x.fornecedor || '')).toLowerCase().includes(f)) : L)
+  const vis = _tintaFiltra(f ? L.filter(x => (x.nome + ' ' + (x.cod_erp || '') + ' ' + (x.fornecedor || '')).toLowerCase().includes(f)) : L)
     .filter(x => x.saldo > 0 || f);
   box.innerHTML = '<div class="idet-grid">'
     + '<div><b>' + _tNum(latas) + '</b><span>latas em estoque</span></div>'
@@ -20374,6 +20397,7 @@ function tintaTelaEstoque(box) {
     + '<div><b>' + L.filter(x => x.saldo > 0).length + '</b><span>cores com saldo</span></div>'
     + '</div>'
     + (semPreco.length ? '<p class="desc" style="margin-top:8px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:6px">⚠️ <b>' + semPreco.length + ' item(ns) com preço não atualizado</b> — o valor acima está subestimado. Veja o aviso na linha de cada um.</p>' : '')
+    + _tintaBarraMarcas()
     + '<input id="tintaBusca" type="search" placeholder="🔎 buscar cor, código ou fornecedor…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
     + '<th style="text-align:left">Cor</th><th>Saldo</th><th>Mín.</th><th style="text-align:right">Preço</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
@@ -20398,7 +20422,7 @@ function tintaTelaEstoque(box) {
    câmera do iPhone exige biblioteca externa — fica para depois, se o João quiser. */
 function tintaTelaSaida(box) {
   const f = _tintaBusca.trim().toLowerCase();
-  const L = _tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_erp || '')).toLowerCase().includes(f)));
+  const L = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_erp || '')).toLowerCase().includes(f))));
   const hoje = new Date().toISOString().slice(0, 10);
   const saidasHoje = _tintaMov.filter(m => m.tipo === 'saida' && String(m.quando).slice(0, 10) === hoje);
   box.innerHTML = '<p class="desc">Bipe o código ou toque na cor. Cada leitura dá baixa de <b>1 lata</b>.</p>'
@@ -20453,7 +20477,7 @@ async function tintaSaidaUma(id) {
 /* ---------- ENTRADA ---------- */
 function tintaTelaEntrada(box) {
   const f = _tintaBusca.trim().toLowerCase();
-  const L = _tintaSaldo.filter(x => x.ativo && (!f || x.nome.toLowerCase().includes(f)));
+  const L = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && (!f || x.nome.toLowerCase().includes(f))));
   box.innerHTML = '<p class="desc">Entrada manual por enquanto. O importador de nota fiscal entra depois — ele vai ler a nota e lançar tudo de uma vez.</p>'
     + '<input type="search" placeholder="🔎 buscar a cor que chegou…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:8px 0;padding:10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:7px">'
@@ -20482,6 +20506,98 @@ async function tintaEntrarQtd(id) {
   } catch (e) { toast('Não consegui lançar: ' + ((e && e.message) || e)); }
 }
 
+/* ---------- COMPRA ----------
+   Simulação de pedido: o João digita o código, confere a tinta e põe a
+   quantidade. Sai por e-mail para o departamento com CÓDIGO, MARCA e QUANTIDADE
+   — sem valor, porque quem negocia preço é o departamento de compras.
+   NÃO mexe no estoque: a lata só entra quando a nota chegar e for lançada na
+   Entrada. Por isso o pedido vive em tabela própria e nunca vira movimento. */
+function tintaTelaCompra(box) {
+  const itens = Object.keys(_tintaCarrinho).map(id => {
+    const p = _tintaSaldo.find(x => x.id === id);
+    return p ? { p: p, q: _tintaCarrinho[id] } : null;
+  }).filter(Boolean).sort((a, b) => a.p.nome.localeCompare(b.p.nome));
+  const totLatas = itens.reduce((a, x) => a + x.q, 0);
+  const sug = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && x.abaixo_minimo && !_tintaCarrinho[x.id]))
+    .sort((a, b) => a.saldo - b.saldo).slice(0, 12);
+  box.innerHTML = '<p class="desc">Monte o pedido e envie ao departamento de compras. <b>Isto não altera o estoque</b> — a tinta só entra quando a nota for lançada na aba Entrada.</p>'
+    + _tintaBarraMarcas()
+    + '<div style="display:flex;gap:6px;margin:8px 0">'
+    + '<input id="tintaCompraCod" type="search" placeholder="digite o código ou o nome da tinta…" '
+    + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();tintaCompraAdd(this.value)}" '
+    + 'style="flex:1;padding:11px;border:2px solid var(--azul-2);border-radius:10px;font-size:15px">'
+    + '<span onclick="tintaCompraAdd(($(\'tintaCompraCod\')||{}).value)" style="cursor:pointer;display:flex;align-items:center;padding:0 16px;background:var(--navy);color:#fff;border-radius:10px;font-weight:800;font-size:13px">+</span>'
+    + '</div>'
+    + (sug.length ? '<div style="margin:8px 0"><span class="desc" style="font-size:11.5px">abaixo do mínimo · toque para incluir:</span><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'
+      + sug.map(x => '<span onclick="tintaCompraAdd(\'' + x.cod_barras + '\')" style="cursor:pointer;font-size:11.5px;background:#FBE9E9;border:1px solid #E0B4B4;border-radius:999px;padding:5px 11px">'
+        + _bolinha(x.nome) + escapeHtml(x.nome) + ' <b>(' + _tNum(x.saldo) + ')</b></span>').join('') + '</div></div>' : '')
+    + (itens.length ? '<div style="margin-top:12px"><div class="titulo-sec">Pedido · ' + itens.length + ' item(ns) · ' + _tNum(totLatas) + ' lata(s)</div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th><th></th></tr></thead><tbody>'
+      + itens.map(x => '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="text-align:left;font-family:monospace">' + escapeHtml(x.p.cod_barras || '') + '</td>'
+        + '<td style="text-align:left">' + _bolinha(x.p.nome) + escapeHtml(x.p.nome) + '</td>'
+        + '<td style="text-align:left;font-size:11.5px">' + escapeHtml(x.p.fornecedor || '') + '</td>'
+        + '<td style="text-align:center"><input type="number" min="1" value="' + x.q + '" onchange="tintaCompraQtd(\'' + x.p.id + '\',this.value)" style="width:62px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:center;font-size:13px"></td>'
+        + '<td style="text-align:center"><span onclick="tintaCompraRem(\'' + x.p.id + '\')" style="cursor:pointer;color:var(--critico);font-weight:800">✕</span></td></tr>').join('')
+      + '</tbody></table></div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+      + '<span onclick="tintaCompraEmail()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:9px 16px">✉️ Enviar por e-mail</span>'
+      + '<span onclick="tintaCompraCopiar()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:9px 16px">📋 Copiar</span>'
+      + '<span onclick="tintaCompraImprimir()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:9px 16px">🖨️ Imprimir</span>'
+      + '<span onclick="tintaCompraLimpar()" style="cursor:pointer;font-size:12.5px;color:var(--critico);padding:9px 12px">limpar</span>'
+      + '</div></div>'
+      : '<p class="vazio-painel">Nenhum item no pedido. Digite um código acima.</p>');
+}
+function tintaCompraAdd(cod) {
+  const c = String(cod || '').trim().toLowerCase(); if (!c) return;
+  const p = _tintaSaldo.find(x => String(x.cod_barras || '').toLowerCase() === c
+      || String(x.cod_erp || '').toLowerCase() === c)
+    || _tintaSaldo.filter(x => x.nome.toLowerCase().includes(c))[0];
+  if (!p) { toast('Não achei: ' + cod); return; }
+  _tintaCarrinho[p.id] = (_tintaCarrinho[p.id] || 0) + 1;
+  tintaRender();
+  setTimeout(() => { const el = $('tintaCompraCod'); if (el) { el.value = ''; el.focus(); } }, 50);
+}
+function tintaCompraQtd(id, v) {
+  const q = parseFloat(String(v).replace(',', '.'));
+  if (q > 0) _tintaCarrinho[id] = q; else delete _tintaCarrinho[id];
+  tintaRender();
+}
+function tintaCompraRem(id) { delete _tintaCarrinho[id]; tintaRender(); }
+function tintaCompraLimpar() { if (confirm('Limpar o pedido?')) { _tintaCarrinho = {}; tintaRender(); } }
+function _tintaCompraTexto() {
+  const itens = Object.keys(_tintaCarrinho).map(id => {
+    const p = _tintaSaldo.find(x => x.id === id); return p ? { p: p, q: _tintaCarrinho[id] } : null;
+  }).filter(Boolean).sort((a, b) => (a.p.fornecedor || '').localeCompare(b.p.fornecedor || '') || a.p.nome.localeCompare(b.p.nome));
+  let t = 'PEDIDO DE COMPRA · CASA DE TINTAS\n' + new Date().toLocaleDateString('pt-BR') + '\n\n';
+  let marca = null;
+  itens.forEach(x => {
+    if (x.p.fornecedor !== marca) { marca = x.p.fornecedor; t += '\n— ' + (marca || 'sem marca').toUpperCase() + ' —\n'; }
+    t += (x.p.cod_barras || '').padEnd(10) + ' ' + x.p.nome + '  ···  ' + x.q + ' lata(s)\n';
+  });
+  t += '\nTotal: ' + itens.length + ' item(ns), ' + itens.reduce((a, x) => a + x.q, 0) + ' lata(s).\n';
+  return t;
+}
+function tintaCompraEmail() {
+  const t = _tintaCompraTexto();
+  const assunto = 'Pedido de compra · Casa de Tintas · ' + new Date().toLocaleDateString('pt-BR');
+  window.location.href = 'mailto:?subject=' + encodeURIComponent(assunto) + '&body=' + encodeURIComponent(t);
+}
+async function tintaCompraCopiar() {
+  const t = _tintaCompraTexto();
+  try { await navigator.clipboard.writeText(t); toast('Pedido copiado.'); }
+  catch (_) { try { prompt('Copie o pedido:', t); } catch (__) { toast('Não consegui copiar.'); } }
+}
+function tintaCompraImprimir() {
+  const w = window.open('', '_blank'); if (!w) { toast('O navegador bloqueou a janela.'); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Pedido de compra</title>'
+    + '<style>@page{margin:12mm}body{font-family:monospace;font-size:11pt;white-space:pre-wrap}</style></head><body>'
+    + escapeHtml(_tintaCompraTexto()) + '</body></html>');
+  w.document.close();
+  setTimeout(() => { try { w.print(); } catch (_) { } }, 400);
+}
+
 /* ---------- ETIQUETAS ----------
    Uma etiqueta por COR, não por lata: a mesma etiqueta serve para todas as latas
    daquela cor, e é isso que o código de barras representa. Imprime, cola e usa.
@@ -20489,7 +20605,7 @@ async function tintaEntrarQtd(id) {
    assim o resto do app não vai junto para o papel. */
 function tintaTelaEtiquetas(box) {
   const f = _tintaBusca.trim().toLowerCase();
-  const L = _tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_barras || '')).toLowerCase().includes(f)));
+  const L = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_barras || '')).toLowerCase().includes(f))));
   /* 28/08/2026 (João: "use o código interno como referência") — a etiqueta usa o
      CÓDIGO DO ERP, o mesmo que está na nota, no PPCP024 e no REST060. Assim a
      lata na prateleira fala a mesma língua do sistema.
@@ -20499,6 +20615,7 @@ function tintaTelaEtiquetas(box) {
   const semErp = _tintaSaldo.filter(x => x.ativo && String(x.cod_barras || '').startsWith('TN'));
   box.innerHTML = '<p class="desc">Uma etiqueta por cor — a mesma vale para todas as latas daquela cor. O código é o <b>código interno do ERP</b>.</p>'
     + (semErp.length ? '<p class="desc" style="background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:6px;margin:8px 0">⚠️ <b>' + semErp.length + ' cor(es) sem código no ERP</b> — receberam um código provisório (TN…). Funciona para bipar, mas não casa com a nota fiscal.</p>' : '')
+    + _tintaBarraMarcas()
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">'
     + '<span onclick="tintaImprimirEtiquetas()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:8px 15px">🖨️ Imprimir todas</span>'
     + '<span onclick="tintaImprimirEtiquetas(true)" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:8px 15px">🖨️ Só as que têm saldo</span>'
