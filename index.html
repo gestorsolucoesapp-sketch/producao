@@ -1323,6 +1323,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     <button class="aba oculto" id="abaBtnAnRec" data-aba="anrec" onclick="trocarAba('anrec')">Análise de Recurso</button>
     <button class="aba oculto" id="abaBtnComl" data-aba="comercial" onclick="trocarAba('comercial')">Comercial / Logística</button>
     <button class="aba oculto" id="abaBtnRH" data-aba="rh" onclick="trocarAba('rh')">Diagnóstico RH</button>
+    <button class="aba oculto" id="abaBtnTintas" data-aba="tintas" onclick="trocarAba('tintas')">Casa de Tintas</button>
     <!-- 28/08/2026 (João: "põe nas abas o atalho, como se fizesse parte do app").
          Os atalhos para outros sistemas entram aqui, no fim da fila de abas, com
          a mesma aparência das outras — quem usa não precisa saber que aquilo
@@ -1638,6 +1639,18 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn btn-borda" style="width:auto;padding:8px 14px;font-size:13px" onclick="carregarEstoque(true)">🔄 Atualizar</button>
         </div>
         <div id="estoqueBox"></div>
+      </div>
+    </section>
+    <section id="abaTintas" class="oculto">
+      <div class="card">
+        <div class="titulo-sec">🎨 Casa de Tintas · Estoque</div>
+        <div style="display:flex;gap:8px;margin:8px 0 10px;flex-wrap:wrap" id="tintaSubAbas">
+          <button class="btn org-vbtn ativa" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="estoque" onclick="tintaVer('estoque')">📦 Estoque</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="saida" onclick="tintaVer('saida')">📤 Saída</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="entrada" onclick="tintaVer('entrada')">📥 Entrada</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="resumo" onclick="tintaVer('resumo')">📊 Resumo</button>
+        </div>
+        <div id="tintaConteudo"><p class="desc">Carregando…</p></div>
       </div>
     </section>
     <section id="abaConf" class="oculto">
@@ -3671,7 +3684,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.271.0';
+const APP_VER = '4.272.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4558,7 +4571,10 @@ const ABAS = [
      checkbox nenhum para ela: liberar alguém só dava na unha, por SQL. */
   { id: 'comercial', nome: 'Comercial / Logística' },
   { id: 'conf', nome: 'Conferência' },
-  { id: 'organograma', nome: 'Gestão de Pessoas' }
+  { id: 'organograma', nome: 'Gestão de Pessoas' },
+  /* 28/08/2026: Casa de Tintas. Nasce SEM ninguém liberado — o João marca quem
+     entra no cartão da pessoa, em Config./Acesso. */
+  { id: 'tintas', nome: 'Casa de Tintas' }
 ];
 const SETORES_PADRAO = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Manutenção', 'KIT', 'Qualidade', 'PCP / Programação', 'Almoxarifado', 'Administrativo', 'Outro'];
 let setoresLista = null;   // categorias (setores) — editáveis pelo admin
@@ -10710,6 +10726,7 @@ function _trocarAbaReal(qual) {
   $('abaOrganograma').classList.toggle('oculto', qual !== 'organograma');
   $('abaRH').classList.toggle('oculto', qual !== 'rh');
   $('abaConf').classList.toggle('oculto', qual !== 'conf');
+  { const _t = $('abaTintas'); if (_t) { _t.classList.toggle('oculto', qual !== 'tintas'); if (qual === 'tintas') { try { tintaAbrir(); } catch (_) { } } } }
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} try { arOrigem(window._arOrigem, true); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
             const a2 = $('anrecImpIco'); if (a2 && !a2.innerHTML) a2.innerHTML = ico('anrecimp'); } catch (_) {} } } }
@@ -20217,6 +20234,215 @@ async function appsRemover(i) {
   if (!confirm('Remover o atalho "' + (a.nome || '') + '"?')) return;
   _linkApps.splice(i, 1);
   if (await appsSalvar()) toast('Atalho removido.');
+}
+/* ===================== CASA DE TINTAS — 28/08/2026 =====================
+   Substitui a planilha ControledeEstoque.xlsm, que o João mantinha desde 2021.
+   O que veio de onde, para não se perder depois:
+     · cadastro das 124 cores  -> aba "Estoque geral" da planilha
+     · saldo de abertura (1.475 latas) -> coluna N da mesma aba, lançado como
+       um movimento "Saldo inicial" em 28/08/2026
+     · código, nome e PREÇO    -> REST060 (Entradas por Centro de Custo 20207),
+       2.643 entradas de 2017 a 2026, conferidas contra o Total Geral
+   O valor do estoque usa o ÚLTIMO preço pago, não o da planilha: a planilha
+   estava 37% acima da realidade (R$ 484 mil contra R$ 303 mil).
+   Quem não tem preço recente carrega aviso na própria linha — número sem data
+   não se audita. */
+let _tintaVista = 'estoque', _tintaSaldo = [], _tintaMov = [], _tintaBusca = '', _tintaCarregando = false;
+
+async function tintaAbrir() { _tintaVista = 'estoque'; _tintaBusca = ''; await tintaCarregar(); }
+function tintaVer(v) {
+  _tintaVista = v; _tintaBusca = '';
+  document.querySelectorAll('#tintaSubAbas [data-tv]').forEach(b =>
+    b.classList.toggle('ativa', b.getAttribute('data-tv') === v));
+  tintaRender();
+}
+async function tintaCarregar() {
+  if (_tintaCarregando) return;
+  _tintaCarregando = true;
+  const box = $('tintaConteudo');
+  if (box) box.innerHTML = '<p class="desc">Carregando…</p>';
+  try {
+    const [s, m] = await Promise.all([
+      _leTudoFlx(() => sb.from('v_tinta_saldo').select('*').order('nome')),
+      _leTudoFlx(() => sb.from('tinta_movimento').select('*').order('quando', { ascending: false }))
+    ]);
+    _tintaSaldo = s || []; _tintaMov = m || [];
+  } catch (e) {
+    if (box) box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+    _tintaCarregando = false; return;
+  }
+  _tintaCarregando = false;
+  tintaRender();
+}
+const _tBRL = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const _tNum = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+
+function tintaRender() {
+  const box = $('tintaConteudo'); if (!box) return;
+  if (_tintaVista === 'estoque') return tintaTelaEstoque(box);
+  if (_tintaVista === 'saida')   return tintaTelaSaida(box);
+  if (_tintaVista === 'entrada') return tintaTelaEntrada(box);
+  return tintaTelaResumo(box);
+}
+
+/* ---------- ESTOQUE ---------- */
+function tintaTelaEstoque(box) {
+  const L = _tintaSaldo;
+  const tot = L.reduce((a, x) => a + (+x.valor || 0), 0);
+  const latas = L.reduce((a, x) => a + (+x.saldo || 0), 0);
+  const baixo = L.filter(x => x.abaixo_minimo && x.ativo);
+  const semPreco = L.filter(x => x.saldo > 0 && x.preco_atencao);
+  const f = _tintaBusca.trim().toLowerCase();
+  const vis = (f ? L.filter(x => (x.nome + ' ' + (x.cod_erp || '') + ' ' + (x.fornecedor || '')).toLowerCase().includes(f)) : L)
+    .filter(x => x.saldo > 0 || f);
+  box.innerHTML = '<div class="idet-grid">'
+    + '<div><b>' + _tNum(latas) + '</b><span>latas em estoque</span></div>'
+    + '<div><b>' + _tBRL(tot) + '</b><span>valor do estoque</span></div>'
+    + '<div><b style="color:' + (baixo.length ? 'var(--critico)' : 'var(--verde)') + '">' + baixo.length + '</b><span>abaixo do mínimo</span></div>'
+    + '<div><b>' + L.filter(x => x.saldo > 0).length + '</b><span>cores com saldo</span></div>'
+    + '</div>'
+    + (semPreco.length ? '<p class="desc" style="margin-top:8px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:6px">⚠️ <b>' + semPreco.length + ' item(ns) com preço não atualizado</b> — o valor acima está subestimado. Veja o aviso na linha de cada um.</p>' : '')
+    + '<input id="tintaBusca" type="search" placeholder="🔎 buscar cor, código ou fornecedor…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+    + '<th style="text-align:left">Cor</th><th>Saldo</th><th>Mín.</th><th style="text-align:right">Preço</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
+    + vis.map(x => {
+      const bx = x.abaixo_minimo && x.ativo;
+      return '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="text-align:left"><b>' + escapeHtml(x.nome) + '</b>'
+        + '<div class="desc" style="font-size:10.5px">' + escapeHtml(x.fornecedor || '') + (x.cod_erp ? ' · ' + x.cod_erp : '')
+        + (x.preco_aviso ? '<br><span style="color:var(--laranja-4,#9E5514);font-weight:700">⚠️ ' + escapeHtml(x.preco_aviso) + '</span>' : '') + '</div></td>'
+        + '<td style="text-align:center;font-weight:800;color:' + (bx ? 'var(--critico)' : 'inherit') + '">' + _tNum(x.saldo) + '</td>'
+        + '<td style="text-align:center;color:var(--fraco-2)">' + _tNum(x.estoque_min) + '</td>'
+        + '<td style="text-align:right">' + (x.preco ? _tBRL(x.preco) : '—') + '</td>'
+        + '<td style="text-align:right;font-weight:700">' + (x.valor ? _tBRL(x.valor) : '—') + '</td></tr>';
+    }).join('')
+    + '</tbody></table></div>'
+    + (!vis.length ? '<p class="vazio-painel">Nada encontrado.</p>' : '');
+}
+
+/* ---------- SAÍDA ----------
+   O código de barras é POR COR, então cada leitura baixa UMA lata. O campo
+   aceita leitor físico (que digita e dá Enter) e digitação manual. Leitura pela
+   câmera do iPhone exige biblioteca externa — fica para depois, se o João quiser. */
+function tintaTelaSaida(box) {
+  const f = _tintaBusca.trim().toLowerCase();
+  const L = _tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_erp || '')).toLowerCase().includes(f)));
+  const hoje = new Date().toISOString().slice(0, 10);
+  const saidasHoje = _tintaMov.filter(m => m.tipo === 'saida' && String(m.quando).slice(0, 10) === hoje);
+  box.innerHTML = '<p class="desc">Bipe o código ou toque na cor. Cada leitura dá baixa de <b>1 lata</b>.</p>'
+    + '<input id="tintaBip" type="search" placeholder="📷 bipe o código de barras ou digite a cor…" value="' + escapeHtml(_tintaBusca) + '"'
+    + ' oninput="_tintaBusca=this.value;tintaRender()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();tintaBipar(this.value)}"'
+    + ' style="width:100%;margin:8px 0;padding:11px;border:2px solid var(--azul-2);border-radius:10px;font-size:15px">'
+    + (saidasHoje.length ? '<p class="desc">Hoje: <b>' + saidasHoje.length + '</b> baixa(s) · ' + _tNum(saidasHoje.reduce((a, m) => a + (+m.quantidade || 0), 0)) + ' lata(s)</p>' : '')
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;margin-top:8px">'
+    + L.slice(0, 60).map(x =>
+      '<div onclick="tintaSaidaUma(\'' + x.id + '\')" style="cursor:pointer;border:1px solid var(--linha-2s);border-radius:10px;padding:9px;background:' + (x.saldo > 0 ? 'var(--leve-2)' : '#FBE9E9') + '">'
+      + '<b style="font-size:12.5px;display:block">' + escapeHtml(x.nome) + '</b>'
+      + '<span class="desc" style="font-size:11px">saldo ' + _tNum(x.saldo) + (x.abaixo_minimo ? ' · <b style="color:var(--critico)">abaixo do mín.</b>' : '') + '</span></div>').join('')
+    + '</div>'
+    + (L.length > 60 ? '<p class="desc">mostrando 60 de ' + L.length + ' — use a busca</p>' : '')
+    + '<div style="margin-top:14px"><div class="titulo-sec">Últimas baixas</div>'
+    + (_tintaMov.filter(m => m.tipo === 'saida').slice(0, 12).map(m => {
+      const p = _tintaSaldo.find(s => s.id === m.produto_id);
+      return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--linha);font-size:12.5px">'
+        + '<span>' + escapeHtml(p ? p.nome : '?') + '</span>'
+        + '<span class="desc">' + _tNum(m.quantidade) + ' lata · ' + fmtDataHora(m.quando) + '</span></div>';
+    }).join('') || '<p class="desc">Nenhuma saída ainda.</p>') + '</div>';
+}
+async function tintaBipar(cod) {
+  const c = String(cod || '').trim().toLowerCase(); if (!c) return;
+  const p = _tintaSaldo.find(x => String(x.codigo).toLowerCase() === c || String(x.cod_erp || '').toLowerCase() === c)
+    || _tintaSaldo.filter(x => x.nome.toLowerCase().includes(c))[0];
+  if (!p) { toast('Não achei essa cor: ' + cod); return; }
+  await tintaSaidaUma(p.id);
+  _tintaBusca = ''; tintaRender();
+  setTimeout(() => { const el = $('tintaBip'); if (el) el.focus(); }, 60);
+}
+async function tintaSaidaUma(id) {
+  const p = _tintaSaldo.find(x => x.id === id); if (!p) return;
+  /* deixa dar saldo negativo de propósito: a lata saiu de verdade e travar aqui
+     só faria o operador desistir de apontar. O negativo vira alerta no Resumo. */
+  try {
+    const { error } = await sb.from('tinta_movimento').insert({
+      produto_id: id, tipo: 'saida', quantidade: 1, unidade: p.unidade || 'LATA',
+      quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (error) throw error;
+    p.saldo = (+p.saldo || 0) - 1;
+    p.valor = p.saldo * (+p.preco || 0);
+    p.abaixo_minimo = p.saldo < (+p.estoque_min || 0);
+    _tintaMov.unshift({ produto_id: id, tipo: 'saida', quantidade: 1, quando: new Date().toISOString() });
+    toast('−1 ' + p.nome + ' · saldo ' + _tNum(p.saldo) + (p.abaixo_minimo ? ' ⚠️ abaixo do mínimo' : ''));
+    tintaRender();
+  } catch (e) { toast('Não consegui dar baixa: ' + ((e && e.message) || e)); }
+}
+
+/* ---------- ENTRADA ---------- */
+function tintaTelaEntrada(box) {
+  const f = _tintaBusca.trim().toLowerCase();
+  const L = _tintaSaldo.filter(x => x.ativo && (!f || x.nome.toLowerCase().includes(f)));
+  box.innerHTML = '<p class="desc">Entrada manual por enquanto. O importador de nota fiscal entra depois — ele vai ler a nota e lançar tudo de uma vez.</p>'
+    + '<input type="search" placeholder="🔎 buscar a cor que chegou…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:8px 0;padding:10px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:7px">'
+    + L.slice(0, 40).map(x =>
+      '<div onclick="tintaEntrarQtd(\'' + x.id + '\')" style="cursor:pointer;border:1px solid var(--linha-2s);border-radius:10px;padding:9px;background:var(--leve-2)">'
+      + '<b style="font-size:12.5px;display:block">' + escapeHtml(x.nome) + '</b>'
+      + '<span class="desc" style="font-size:11px">saldo ' + _tNum(x.saldo) + ' · + entrada</span></div>').join('')
+    + '</div>';
+}
+async function tintaEntrarQtd(id) {
+  const p = _tintaSaldo.find(x => x.id === id); if (!p) return;
+  let q = null; try { q = prompt('Quantas latas de "' + p.nome + '" entraram?', '1'); } catch (_) { }
+  if (q === null) return;
+  q = parseFloat(String(q).replace(',', '.'));
+  if (!(q > 0)) { toast('Quantidade inválida.'); return; }
+  let nf = null; try { nf = prompt('Número da nota fiscal (opcional):', ''); } catch (_) { }
+  try {
+    const { error } = await sb.from('tinta_movimento').insert({
+      produto_id: id, tipo: 'entrada', quantidade: q, unidade: p.unidade || 'LATA',
+      motivo: nf ? ('NF ' + String(nf).trim()) : 'Entrada manual',
+      quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (error) throw error;
+    toast('+' + q + ' ' + p.nome);
+    await tintaCarregar();
+  } catch (e) { toast('Não consegui lançar: ' + ((e && e.message) || e)); }
+}
+
+/* ---------- RESUMO ---------- */
+function tintaTelaResumo(box) {
+  const por = {};
+  _tintaMov.forEach(m => {
+    const d = String(m.quando).slice(0, 10);
+    if (!d) return;
+    const k = d.slice(0, 7);
+    if (!por[k]) por[k] = { ent: 0, sai: 0, vsai: 0 };
+    const p = _tintaSaldo.find(s => s.id === m.produto_id);
+    const q = +m.quantidade || 0;
+    if (m.tipo === 'saida') { por[k].sai += q; por[k].vsai += q * (+(p && p.preco) || 0); }
+    else if (m.tipo === 'entrada' && m.motivo !== 'Saldo inicial') por[k].ent += q;
+  });
+  const meses = Object.keys(por).sort().reverse().slice(0, 12);
+  const neg = _tintaSaldo.filter(x => x.saldo < 0);
+  const baixo = _tintaSaldo.filter(x => x.abaixo_minimo && x.ativo && x.saldo >= 0);
+  box.innerHTML = (neg.length ? '<p class="desc" style="background:#FBE9E9;border-left:3px solid var(--critico);padding:7px 10px;border-radius:6px"><b>' + neg.length + ' cor(es) com saldo negativo</b> — saiu mais do que tinha registrado. Corrija no balanço.</p>' : '')
+    + (baixo.length ? '<div style="margin:10px 0"><div class="titulo-sec">Abaixo do mínimo · comprar</div>'
+      + baixo.sort((a, b) => a.saldo - b.saldo).map(x =>
+        '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--linha);font-size:13px">'
+        + '<span><b>' + escapeHtml(x.nome) + '</b></span>'
+        + '<span><b style="color:var(--critico)">' + _tNum(x.saldo) + '</b> <span class="desc">de mín. ' + _tNum(x.estoque_min) + '</span></span></div>').join('') + '</div>' : '')
+    + '<div class="titulo-sec" style="margin-top:12px">Movimento por mês</div>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+    + '<th style="text-align:left">Mês</th><th>Entradas</th><th>Saídas</th><th style="text-align:right">Valor consumido</th></tr></thead><tbody>'
+    + meses.map(k => {
+      const v = por[k], [a, m] = k.split('-');
+      return '<tr style="border-top:1px solid var(--linha)"><td style="text-align:left">' + m + '/' + a + '</td>'
+        + '<td style="text-align:center">' + _tNum(v.ent) + '</td>'
+        + '<td style="text-align:center;font-weight:700">' + _tNum(v.sai) + '</td>'
+        + '<td style="text-align:right">' + _tBRL(v.vsai) + '</td></tr>';
+    }).join('')
+    + '</tbody></table></div>'
+    + (!meses.length ? '<p class="vazio-painel">Ainda não há movimento para resumir.</p>' : '');
 }
 function renderLarguraCard() {
   const box = $('cardLargura'); if (!box) return;
