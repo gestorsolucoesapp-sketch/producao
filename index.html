@@ -1272,6 +1272,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <button id="btnTema" onclick="abrirAparencia()" title="Aparência: modo compacto" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px" aria-label="Aparência">🌗</button>
         <button id="btnAtualizar" onclick="atualizarAppTudo()" title="Recarregar o app inteiro com os dados mais novos" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:6px">🔄</button>
         <button id="btnDicas" onclick="togDicas()" title="Esconder as dicas e deixar só os dados" aria-label="Dicas" style="background:transparent;border:0;font-size:18px;cursor:pointer;padding:4px">💬</button>
+        <span id="atalhoApps" class="oculto" style="display:inline-flex;gap:2px;align-items:center"></span>
         <button id="btnSair" onclick="sair()">Sair</button>
       </div>
     </div>
@@ -1518,6 +1519,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       <div class="card oculto" id="cardDiagPausa"></div>
       <div class="card" id="cardAbasObra"></div>
       <div class="card" id="cardLargura"></div>
+      <div class="card" id="cardApps"></div>
       <div class="card" id="cardTurnosRegua">
         <div class="titulo-sec">Régua de turnos em uso</div>
         <p class="desc" style="margin-bottom:10px">Gerada a partir do próprio cálculo (<b>blocoPorHora</b> e <b>horasBlocoDe</b>), varrendo minuto a minuto um dia real de cada tipo. Não é uma tabela digitada à mão: se um número mudar aqui, é porque a regra mudou de verdade.</p>
@@ -3663,7 +3665,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.268.0';
+const APP_VER = '4.269.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20123,7 +20125,73 @@ function larguraDefinir(v) {
   try { localStorage.setItem('largApp', v); } catch (_) { }
   larguraAplicar(v);
   try { renderLarguraCard(); } catch (_) { }
+  try { carregarLinkApps(); } catch (_) { }
   toast('Largura: ' + ((LARG_OPC.find(o => o[0] === v) || [, v])[1]));
+}
+/* ===== OUTROS APPS DA FÁBRICA — 28/08/2026 (pedido do João) =====
+   Ele vai fazer o app de estoque de tintas em repositório separado, com o MESMO
+   Supabase. Os links ficam no banco (app_config.link_apps), não no código: cada
+   app novo entra sem deploy, e some da tela de quem não deve ver.
+   Sobre login: mesmo Supabase = mesmo cadastro e mesma senha, mas a SESSÃO é
+   por origem. Se o app novo ficar noutro domínio (outra conta GitHub), a pessoa
+   digita a senha uma vez lá; se ficar no mesmo domínio, entra direto. */
+let _linkApps = [];
+async function carregarLinkApps() {
+  try {
+    const { data } = await sb.from('app_config').select('valor').eq('chave', 'link_apps').maybeSingle();
+    _linkApps = data && data.valor ? (typeof data.valor === 'string' ? JSON.parse(data.valor) : data.valor) : [];
+    if (!Array.isArray(_linkApps)) _linkApps = [];
+  } catch (_) { _linkApps = []; }
+  try { renderAppsCard(); } catch (_) { }
+  try { renderAtalhoApps(); } catch (_) { }
+}
+/* o atalho aparece no topo, ao lado do sino — é de onde a pessoa sai para o
+   outro app sem procurar em configuração */
+function renderAtalhoApps() {
+  const alvo = $('atalhoApps'); if (!alvo) return;
+  const vis = (_linkApps || []).filter(a => a && a.url && a.ativo !== false);
+  alvo.innerHTML = vis.map(a =>
+    '<a href="' + escapeHtml(a.url) + '" target="_blank" rel="noopener" title="' + escapeHtml(a.nome || 'app') + '"'
+    + ' style="text-decoration:none;font-size:17px;line-height:1;padding:2px 4px">' + (a.icone || '🔗') + '</a>').join('');
+  alvo.classList.toggle('oculto', !vis.length);
+}
+function renderAppsCard() {
+  const box = $('cardApps'); if (!box) return;
+  if (!souAdmin && !(_linkApps || []).length) { box.classList.add('oculto'); return; }
+  box.classList.remove('oculto');
+  const lista = (_linkApps || []).map((a, i) =>
+    '<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--linha)">'
+    + '<span style="font-size:18px">' + (a.icone || '🔗') + '</span>'
+    + '<div style="flex:1;min-width:0"><b style="font-size:13px">' + escapeHtml(a.nome || '(sem nome)') + '</b>'
+    + '<div class="desc" style="font-size:11px;word-break:break-all">' + escapeHtml(a.url || '') + '</div></div>'
+    + '<a href="' + escapeHtml(a.url || '#') + '" target="_blank" rel="noopener" style="font-size:12px;font-weight:800;color:var(--azul-2);text-decoration:none">abrir ›</a>'
+    + (souAdmin ? '<span onclick="appsRemover(' + i + ')" style="cursor:pointer;color:var(--critico);font-weight:800;padding:0 4px">✕</span>' : '')
+    + '</div>').join('');
+  box.innerHTML = '<div class="titulo-sec">🔗 Outros apps da fábrica</div>'
+    + '<p class="desc" style="margin-bottom:6px">Atalhos para os outros sistemas. Aparecem também no topo, ao lado do sino.</p>'
+    + (lista || '<p class="desc">Nenhum app cadastrado ainda.</p>')
+    + (souAdmin ? '<div style="margin-top:10px"><span onclick="appsAdicionar()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--verde);color:#fff;border-radius:999px;padding:7px 14px">+ adicionar app</span></div>' : '');
+}
+async function appsSalvar() {
+  const { error } = await sb.from('app_config').upsert({ chave: 'link_apps', valor: JSON.stringify(_linkApps) }, { onConflict: 'chave' });
+  if (error) { toast('Não consegui salvar: ' + error.message); return false; }
+  renderAppsCard(); renderAtalhoApps(); return true;
+}
+async function appsAdicionar() {
+  if (!souAdmin) return;
+  const nome = prompt('Nome do app (ex.: Estoque de Tintas):', ''); if (nome === null) return;
+  const url = prompt('Endereço completo (começando com https://):', 'https://'); if (url === null) return;
+  if (!/^https?:\/\/.+/i.test(String(url).trim())) { toast('O endereço precisa começar com https://'); return; }
+  const icone = prompt('Um emoji para o atalho (opcional):', '🎨');
+  _linkApps.push({ nome: String(nome).trim() || 'App', url: String(url).trim(), icone: (icone || '🔗').trim().slice(0, 4), ativo: true });
+  if (await appsSalvar()) toast('Atalho criado.');
+}
+async function appsRemover(i) {
+  if (!souAdmin) return;
+  const a = _linkApps[i]; if (!a) return;
+  if (!confirm('Remover o atalho "' + (a.nome || '') + '"?')) return;
+  _linkApps.splice(i, 1);
+  if (await appsSalvar()) toast('Atalho removido.');
 }
 function renderLarguraCard() {
   const box = $('cardLargura'); if (!box) return;
