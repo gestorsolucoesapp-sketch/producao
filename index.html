@@ -3663,7 +3663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.266.0';
+const APP_VER = '4.267.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26784,6 +26784,85 @@ async function verHistCiencia(userId, nome) {
   }
 }
 
+/* o cartão da pessoa virou função para o redesenho do filtro usar EXATAMENTE
+   o mesmo HTML — duas versões do mesmo cartão divergiriam com o tempo. */
+function _usrCartao(u) {
+  const meuId = (typeof perfil !== 'undefined' && perfil) ? perfil.id : null;
+    const admin = u.papel === 'admin';
+    const eu = u.id === meuId;
+    const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
+    const pendente = u.aprovado !== true;
+    const tagStatus = !u.ativo ? '<span class="tag tag-block">BLOQUEADO</span>'
+      : pendente ? '<span class="tag tag-block" style="background:var(--laranja)">AGUARDANDO LIBERAÇÃO</span>'
+      : '<span class="tag tag-ok">ATIVO</span>';
+    const acoes = [];
+    if (!eu && pendente) {
+      acoes.push(`<button class="btn-verde" style="background:var(--verde);color:#fff" onclick="usrAprovar('${u.id}')">✅ Liberar acesso</button>`);
+    }
+    if (!eu) {
+      acoes.push(u.ativo
+        ? `<button class="bloquear" onclick="usrBloquear('${u.id}',false)">Bloquear</button>`
+        : `<button onclick="usrBloquear('${u.id}',true)">Desbloquear</button>`);
+      acoes.push(admin
+        ? `<button onclick="usrPapel('${u.id}','operador')">Tornar operador</button>`
+        : `<button onclick="usrPapel('${u.id}','admin')">Tornar admin</button>`);
+    }
+    // liberação para editar a escala do Organograma (mover/remover/criar máquina)
+    const podeEsc = admin || u.pode_editar_escala === true;
+    acoes.push('<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--txt-2);' +
+      (admin ? 'opacity:.55' : 'cursor:pointer') + '">' +
+      '<input type="checkbox" ' + (podeEsc ? 'checked' : '') + (admin ? ' disabled' : '') +
+      ' onchange="usrPodeEscala(\'' + u.id + '\',this.checked)" style="width:16px;height:16px">' +
+      'editar escala' + (admin ? ' (admin sempre pode)' : '') + '</label>');
+
+    const abasU = Array.isArray(u.abas) && u.abas.length ? u.abas : ['painel'];
+    const herdadas = (u.setor && Array.isArray(telasSetor[u.setor])) ? telasSetor[u.setor] : [];
+    const exc = !!u.abas_excecao;
+    /* TELAS EM OBRA — liberação nominal, pessoa por pessoa.
+       Aba em construção some para todos menos para o dono, e nem admin escapa.
+       Esta linha aparece para TODO MUNDO, inclusive admin, porque é o único
+       caminho de mostrar a aba a alguém sem tirá-la da obra e abrir para os 43. */
+    const emObraIds = (Array.isArray(_abasOcultas) ? _abasOcultas : []).filter(x => ABAS.some(a => a.id === x));
+    const linhaObra = emObraIds.length
+      ? `<div class="usr-telas"><span class="tl-tit">🚧 Em obra:</span>${emObraIds.map(x => {
+          const nm = (ABAS.find(a => a.id === x) || {}).nome || x;
+          return `<label><input type="checkbox" ${abasU.includes(x) ? 'checked' : ''} onchange="usrAbaObra('${u.id}','${x}',this.checked)"> ${escapeHtml(nm)}</label>`;
+        }).join('')}</div>`
+      : '';
+    const telas = linhaObra + (admin
+      ? '<div class="usr-telas desc">Admin vê todas as telas prontas</div>'
+      : `<div class="usr-telas"><span class="tl-tit">Exceção:</span><label><input type="checkbox" ${exc ? 'checked' : ''} onchange="usrExcecao('${u.id}',this.checked)"> Telas próprias (ignora o padrão do setor)</label></div>` +
+        (exc
+          ? `<div class="usr-telas"><span class="tl-tit">Telas liberadas:</span>${ABAS.map(a =>
+              `<label><input type="checkbox" ${abasU.includes(a.id) ? 'checked' : ''} onchange="usrAbas('${u.id}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>`
+          : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`));
+    const setorSel = `<div class="usr-telas"><span class="tl-tit">Setor:</span><select onchange="usrSetor('${u.id}', this.value)" style="padding:4px 8px;border:1px solid var(--borda);border-radius:10px;font-size:13px"><option value="">— definir —</option>${(setoresLista || []).map(s => `<option ${s === u.setor ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select></div>`;
+    const metasTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Metas:</span><label><input type="checkbox" ${u.metas_edit ? 'checked' : ''} onchange="usrMetasEdit('${u.id}',this.checked)"> Pode editar metas</label></div>`;
+    acoes.push(`<button onclick="verHistCiencia('${u.id}','${escapeHtml(u.nome || '').replace(/'/g, "&#39;")}')">📌 Histórico de tarefas fixas</button>`);
+    if (souAdmin && u.papel !== 'admin') acoes.push(`<button onclick="togVeRH('${u.id}', ${u.ve_rh ? 'false' : 'true'})">${u.ve_rh ? '🔓 Tirar acesso de RH' : '🔒 Dar acesso de RH (faltas)'}</button>`);
+    if (souAdmin && u.papel !== 'admin') acoes.push(`<button onclick="togLider('${u.id}', ${u.eh_lider ? 'false' : 'true'})">${u.eh_lider ? '👤 Tirar de líder' : '👤 Marcar como líder (lança faltas/feedback)'}</button>`);
+    const presTog = `<div class="usr-telas"><span class="tl-tit">Presença:</span><label><input type="checkbox" ${u.ver_presenca ? 'checked' : ''} onchange="usrVerPresenca('${u.id}',this.checked)"> Pode ver quem está online</label></div>`;
+    return `<div class="usr" data-uid="${u.id}">
+      <div class="usr-topo">
+        <div>
+          <div class="usr-nome">${escapeHtml(u.nome)}${eu ? ' <span class="desc">(você)</span>' : ''}</div>
+          <div class="usr-mail">${escapeHtml(u.email)}</div>
+          <div class="usr-mail">🏭 ${u.setor ? escapeHtml(u.setor) : '<span style="color:var(--critico)">sem setor</span>'}</div>
+          ${_faltaMarcaLider(u) ? '<div style="margin-top:4px;background:#FFF6E6;border-left:3px solid #B36B00;border-radius:0 8px 8px 0;padding:4px 8px;font-size:11.5px;color:#7a4a00;font-weight:700">⚠ tem cargo de liderança no setor, mas <b>não está marcado como líder</b> — não vê nem lança falta</div>' : ''}
+        </div>
+        <div style="text-align:right">${tagPapel}<br>${tagStatus}</div>
+      </div>
+      <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])}${acessouHoje(ultimo[u.id]) ? ' <span style="display:inline-block;background:var(--laranja-4);color:#fff;font-weight:800;font-size:10px;padding:2px 7px;border-radius:6px;vertical-align:middle;letter-spacing:.4px">HOJE</span>' : ''} · ${cont[u.id] || 0} acesso(s) · 🤖 IA: ${iaCont[u.id] || 0} uso(s)</div>
+      ${telas}
+      ${setorSel}
+      ${metasTog}
+      ${presTog}
+      ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
+      ${eu ? '' : `<div style="margin-top:8px;border-top:1px dashed var(--borda);padding-top:8px">
+        <button onclick="usrExcluir('${u.id}')" style="background:transparent;border:1px solid var(--critico);color:var(--critico);font-size:12px;font-weight:700;padding:6px 12px;border-radius:9px;cursor:pointer">🗑️ Excluir cadastro</button>
+        <span class="desc" style="margin-left:8px;font-size:11px">remove o acesso de vez</span></div>`}
+    </div>`;
+}
 async function carregarUsuarios() {
   /* 20/08/2026 (João: "abro a liberação de usuários e trava tudo") — esta tela
      fazia DEZESSEIS idas ao servidor UMA DEPOIS DA OUTRA antes de desenhar
@@ -26889,6 +26968,13 @@ async function carregarUsuarios() {
     </div>`;
   /* a busca filtra só a LISTA; o bloco de cadastros novos e os gráficos ficam,
      senão some o aviso de quem entrou sem setor bem quando você está procurando. */
+  /* ===== 28/08/2026 (João: "o campo continua piscando e saindo") =====
+     O guardião de foco da v4.265 não dava conta AQUI porque o problema é outro:
+     `usrFiltrar` chamava `carregarUsuarios()` a cada tecla — e essa função faz
+     DEZESSEIS consultas ao servidor e escreve "Carregando…" por cima da lista.
+     Digitar "jur" disparava 48 consultas e três telas de carregamento.
+     Guardo o que a última carga trouxe e passo a redesenhar só com isso. */
+  try { _usrCache = { perfis: perfis, args: arguments }; } catch (_) { }
   const _f = _usrFiltro.trim().toLowerCase();
   const perfisVis = !_f ? perfis : perfis.filter(u =>
     [u.nome, u.email, u.setor, u.papel].some(v => String(v || '').toLowerCase().includes(_f)));
@@ -26904,82 +26990,9 @@ async function carregarUsuarios() {
       <p class="desc" style="margin:6px 0 0">Depois de marcar, cada um precisa sair e entrar de novo no app.</p>
     </div>`;
   const conta = _f ? `<p class="desc" style="margin:-6px 0 10px">${perfisVis.length} de ${perfis.length} cadastro(s)</p>` : '';
-  box.innerHTML = novosHtml + _avisoLider + chartHtml + chartIA + barra + conta + vazio + perfisVis.map(u => {
-    const admin = u.papel === 'admin';
-    const eu = u.id === meuId;
-    const tagPapel = admin ? '<span class="tag tag-admin">ADMIN</span>' : '<span class="tag tag-op">OPERADOR</span>';
-    const pendente = u.aprovado !== true;
-    const tagStatus = !u.ativo ? '<span class="tag tag-block">BLOQUEADO</span>'
-      : pendente ? '<span class="tag tag-block" style="background:var(--laranja)">AGUARDANDO LIBERAÇÃO</span>'
-      : '<span class="tag tag-ok">ATIVO</span>';
-    const acoes = [];
-    if (!eu && pendente) {
-      acoes.push(`<button class="btn-verde" style="background:var(--verde);color:#fff" onclick="usrAprovar('${u.id}')">✅ Liberar acesso</button>`);
-    }
-    if (!eu) {
-      acoes.push(u.ativo
-        ? `<button class="bloquear" onclick="usrBloquear('${u.id}',false)">Bloquear</button>`
-        : `<button onclick="usrBloquear('${u.id}',true)">Desbloquear</button>`);
-      acoes.push(admin
-        ? `<button onclick="usrPapel('${u.id}','operador')">Tornar operador</button>`
-        : `<button onclick="usrPapel('${u.id}','admin')">Tornar admin</button>`);
-    }
-    // liberação para editar a escala do Organograma (mover/remover/criar máquina)
-    const podeEsc = admin || u.pode_editar_escala === true;
-    acoes.push('<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--txt-2);' +
-      (admin ? 'opacity:.55' : 'cursor:pointer') + '">' +
-      '<input type="checkbox" ' + (podeEsc ? 'checked' : '') + (admin ? ' disabled' : '') +
-      ' onchange="usrPodeEscala(\'' + u.id + '\',this.checked)" style="width:16px;height:16px">' +
-      'editar escala' + (admin ? ' (admin sempre pode)' : '') + '</label>');
-
-    const abasU = Array.isArray(u.abas) && u.abas.length ? u.abas : ['painel'];
-    const herdadas = (u.setor && Array.isArray(telasSetor[u.setor])) ? telasSetor[u.setor] : [];
-    const exc = !!u.abas_excecao;
-    /* TELAS EM OBRA — liberação nominal, pessoa por pessoa.
-       Aba em construção some para todos menos para o dono, e nem admin escapa.
-       Esta linha aparece para TODO MUNDO, inclusive admin, porque é o único
-       caminho de mostrar a aba a alguém sem tirá-la da obra e abrir para os 43. */
-    const emObraIds = (Array.isArray(_abasOcultas) ? _abasOcultas : []).filter(x => ABAS.some(a => a.id === x));
-    const linhaObra = emObraIds.length
-      ? `<div class="usr-telas"><span class="tl-tit">🚧 Em obra:</span>${emObraIds.map(x => {
-          const nm = (ABAS.find(a => a.id === x) || {}).nome || x;
-          return `<label><input type="checkbox" ${abasU.includes(x) ? 'checked' : ''} onchange="usrAbaObra('${u.id}','${x}',this.checked)"> ${escapeHtml(nm)}</label>`;
-        }).join('')}</div>`
-      : '';
-    const telas = linhaObra + (admin
-      ? '<div class="usr-telas desc">Admin vê todas as telas prontas</div>'
-      : `<div class="usr-telas"><span class="tl-tit">Exceção:</span><label><input type="checkbox" ${exc ? 'checked' : ''} onchange="usrExcecao('${u.id}',this.checked)"> Telas próprias (ignora o padrão do setor)</label></div>` +
-        (exc
-          ? `<div class="usr-telas"><span class="tl-tit">Telas liberadas:</span>${ABAS.map(a =>
-              `<label><input type="checkbox" ${abasU.includes(a.id) ? 'checked' : ''} onchange="usrAbas('${u.id}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>`
-          : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`));
-    const setorSel = `<div class="usr-telas"><span class="tl-tit">Setor:</span><select onchange="usrSetor('${u.id}', this.value)" style="padding:4px 8px;border:1px solid var(--borda);border-radius:10px;font-size:13px"><option value="">— definir —</option>${(setoresLista || []).map(s => `<option ${s === u.setor ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select></div>`;
-    const metasTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Metas:</span><label><input type="checkbox" ${u.metas_edit ? 'checked' : ''} onchange="usrMetasEdit('${u.id}',this.checked)"> Pode editar metas</label></div>`;
-    acoes.push(`<button onclick="verHistCiencia('${u.id}','${escapeHtml(u.nome || '').replace(/'/g, "&#39;")}')">📌 Histórico de tarefas fixas</button>`);
-    if (souAdmin && u.papel !== 'admin') acoes.push(`<button onclick="togVeRH('${u.id}', ${u.ve_rh ? 'false' : 'true'})">${u.ve_rh ? '🔓 Tirar acesso de RH' : '🔒 Dar acesso de RH (faltas)'}</button>`);
-    if (souAdmin && u.papel !== 'admin') acoes.push(`<button onclick="togLider('${u.id}', ${u.eh_lider ? 'false' : 'true'})">${u.eh_lider ? '👤 Tirar de líder' : '👤 Marcar como líder (lança faltas/feedback)'}</button>`);
-    const presTog = `<div class="usr-telas"><span class="tl-tit">Presença:</span><label><input type="checkbox" ${u.ver_presenca ? 'checked' : ''} onchange="usrVerPresenca('${u.id}',this.checked)"> Pode ver quem está online</label></div>`;
-    return `<div class="usr" data-uid="${u.id}">
-      <div class="usr-topo">
-        <div>
-          <div class="usr-nome">${escapeHtml(u.nome)}${eu ? ' <span class="desc">(você)</span>' : ''}</div>
-          <div class="usr-mail">${escapeHtml(u.email)}</div>
-          <div class="usr-mail">🏭 ${u.setor ? escapeHtml(u.setor) : '<span style="color:var(--critico)">sem setor</span>'}</div>
-          ${_faltaMarcaLider(u) ? '<div style="margin-top:4px;background:#FFF6E6;border-left:3px solid #B36B00;border-radius:0 8px 8px 0;padding:4px 8px;font-size:11.5px;color:#7a4a00;font-weight:700">⚠ tem cargo de liderança no setor, mas <b>não está marcado como líder</b> — não vê nem lança falta</div>' : ''}
-        </div>
-        <div style="text-align:right">${tagPapel}<br>${tagStatus}</div>
-      </div>
-      <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])}${acessouHoje(ultimo[u.id]) ? ' <span style="display:inline-block;background:var(--laranja-4);color:#fff;font-weight:800;font-size:10px;padding:2px 7px;border-radius:6px;vertical-align:middle;letter-spacing:.4px">HOJE</span>' : ''} · ${cont[u.id] || 0} acesso(s) · 🤖 IA: ${iaCont[u.id] || 0} uso(s)</div>
-      ${telas}
-      ${setorSel}
-      ${metasTog}
-      ${presTog}
-      ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
-      ${eu ? '' : `<div style="margin-top:8px;border-top:1px dashed var(--borda);padding-top:8px">
-        <button onclick="usrExcluir('${u.id}')" style="background:transparent;border:1px solid var(--critico);color:var(--critico);font-size:12px;font-weight:700;padding:6px 12px;border-radius:9px;cursor:pointer">🗑️ Excluir cadastro</button>
-        <span class="desc" style="margin-left:8px;font-size:11px">remove o acesso de vez</span></div>`}
-    </div>`;
-  }).join('');
+  box.innerHTML = novosHtml + _avisoLider + chartHtml + chartIA + barra
+    + '<p class="desc" style="margin:-6px 0 10px" data-usr-cont>' + (_f ? (perfisVis.length + ' de ' + perfis.length + ' cadastro(s)') : '') + '</p>'
+    + '<div data-usr-lista>' + (vazio + perfisVis.map(u => _usrCartao(u)).join('')) + '</div>';
   _usrRestaurarLugar();
 }
 
@@ -27063,13 +27076,36 @@ async function usrExcluir(id) {
 }
 
 let _usrFiltro = '';
+let _usrCache = null, _usrTimer = null;
+/* Filtrar é trabalho de TELA, não de banco. A lista já está na memória desde a
+   carga; digitar só muda quem aparece. Sem ida ao servidor não há "Carregando…",
+   não há destruição do input e o foco nem chega a se perder — em vez de devolver
+   o cursor depois, o certo é não tirá-lo.
+   O desenho ainda reescreve o bloco, então mantenho um respiro de 120 ms: com
+   digitação rápida, redesenha uma vez ao fim em vez de uma por tecla. */
 function usrFiltrar(v) {
   _usrFiltro = String(v || '');
-  const foco = document.activeElement && document.activeElement.id === 'usrBusca';
-  carregarUsuarios().then(() => {
-    if (!foco) return;
-    const el = $('usrBusca'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  });
+  if (_usrTimer) clearTimeout(_usrTimer);
+  _usrTimer = setTimeout(() => {
+    _usrTimer = null;
+    if (_usrCache && _usrCache.perfis) { try { usrRedesenha(); return; } catch (_) { } }
+    carregarUsuarios();          // primeira vez, ou se o cache não existir
+  }, 120);
+}
+/* redesenha a lista com o que já está em memória; o input NÃO é recriado */
+function usrRedesenha() {
+  const box = $('listaUsuarios'); if (!box || !_usrCache) throw new Error('sem cache');
+  const perfis = _usrCache.perfis || [];
+  const _f = _usrFiltro.trim().toLowerCase();
+  const vis = !_f ? perfis : perfis.filter(u =>
+    [u.nome, u.email, u.setor, u.papel].some(x => String(x || '').toLowerCase().includes(_f)));
+  const alvo = box.querySelector('[data-usr-lista]');
+  if (!alvo) throw new Error('sem alvo');
+  alvo.innerHTML = (!vis.length && _f)
+    ? '<p class="vazio-painel">Ninguém encontrado para “' + escapeHtml(_usrFiltro) + '”.</p>'
+    : vis.map(u => _usrCartao(u)).join('');
+  const cnt = box.querySelector('[data-usr-cont]');
+  if (cnt) cnt.textContent = vis.length + ' de ' + perfis.length + ' cadastro(s)';
 }
 
 /* RELATÓRIO DE CADASTROS — abre em janela própria para imprimir ou salvar em PDF.
