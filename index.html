@@ -3663,7 +3663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.264.0';
+const APP_VER = '4.265.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -25078,6 +25078,73 @@ function cardDesligado(k, titulo) {
     + '<span onclick="cardOffToggle(\'' + k + '\')" style="cursor:pointer;font-size:11px;font-weight:800;color:var(--azul-2);margin-left:10px">religar</span>'
     + '</div>';
 }
+/* ===== O CAMPO DE BUSCA PERDIA O FOCO A CADA TECLA — 28/08/2026 =====
+   João: "quando digito para procurar, sai e pisca a tela e tenho que clicar
+   de novo". Não é lentidão nem o teclado do iPhone: quase todo filtro do app
+   chama um render que reescreve o innerHTML do bloco inteiro. O <input> que
+   estava sendo digitado é DESTRUÍDO e recriado — e o foco morre com ele.
+   São 30 campos assim. Corrigir um a um seria trocar 30 renders por versões
+   que preservam o nó, e cada um quebraria de um jeito diferente.
+   Esta é a correção única: enquanto alguém digita num campo, um observador
+   vigia o DOM. Se aquele nó exato sair do documento e reaparecer outro com o
+   mesmo id (a assinatura de um re-render), devolvemos o foco e o cursor na
+   mesma posição. Se o nó continua vivo, nada acontece — e se a pessoa clicou
+   em OUTRO campo de propósito, também não mexemos, porque aí o foco já é dele.
+   Só liga enquanto há um campo de texto em foco, então não fica um observador
+   varrendo a árvore o tempo todo. */
+(function () {
+  const ehTexto = el => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+    && !/^(checkbox|radio|button|submit|file|range|color)$/i.test(el.type || '');
+  let alvo = null, obs = null;
+
+  function marca(el) {
+    if (!ehTexto(el) || !el.id) return;
+    alvo = { id: el.id, no: el, s: el.selectionStart, e: el.selectionEnd };
+    liga();
+  }
+  function atualiza() {
+    if (!alvo) return;
+    const el = document.getElementById(alvo.id);
+    if (el && el === document.activeElement) { alvo.no = el; alvo.s = el.selectionStart; alvo.e = el.selectionEnd; }
+  }
+  function devolve() {
+    if (!alvo) return;
+    /* só age quando o nó ORIGINAL saiu do documento: é isso que distingue
+       "o render me destruiu" de "a pessoa clicou em outro lugar". */
+    if (document.contains(alvo.no)) return;
+    const novo = document.getElementById(alvo.id);
+    if (!novo || novo === alvo.no) return;
+    const ativo = document.activeElement;
+    if (ehTexto(ativo) && ativo !== novo) { alvo = null; return; }   // já foi para outro campo
+    try {
+      novo.focus({ preventScroll: true });
+      if (novo.setSelectionRange && alvo.s != null) {
+        const n = (novo.value || '').length;
+        novo.setSelectionRange(Math.min(alvo.s, n), Math.min(alvo.e == null ? alvo.s : alvo.e, n));
+      }
+    } catch (_) { }
+    alvo.no = novo;
+  }
+  function liga() {
+    if (obs) return;
+    try {
+      obs = new MutationObserver(() => { try { devolve(); } catch (_) { } });
+      obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) { obs = null; }
+  }
+  function desliga() {
+    if (obs) { try { obs.disconnect(); } catch (_) { } obs = null; }
+    alvo = null;
+  }
+  document.addEventListener('focusin', e => marca(e.target));
+  document.addEventListener('input', atualiza, true);
+  document.addEventListener('keyup', atualiza, true);
+  document.addEventListener('click', e => {
+    /* clique fora de campo de texto encerra a vigilância: a pessoa saiu por
+       vontade própria e não queremos puxar o foco de volta. */
+    if (!ehTexto(e.target)) setTimeout(() => { if (!ehTexto(document.activeElement)) desliga(); }, 60);
+  }, true);
+})();
 const card = (titulo, sub, conteudo, key) => {
   const _pp = _periodoPill();
   const _sl = (_pp || sub) ? `<div class="sub">${_pp}${sub || ''}</div>` : '';
