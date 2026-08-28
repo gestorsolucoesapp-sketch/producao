@@ -3663,7 +3663,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.263.0';
+const APP_VER = '4.264.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -34229,16 +34229,44 @@ function fsSequencia(m) {
   const hoje = hojeISO();
   let h = '<div style="background:var(--leve);padding:6px 10px">'
     + '<div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase;margin-bottom:4px">Sequência da fila · ' + escapeHtml(m.cod) + '</div>';
-  L.forEach((r, i) => {
+  /* ===== 28/08/2026 (João: "por que a fila está diferente do ERP?") =====
+     Não estava: o PPCP024 lista só o que AINDA NÃO começou, e o app lista tudo,
+     inclusive o que já está rodando. Por isso a fila do app abria com duas OPs
+     que no ERP não apareciam — as duas já tinham início no passado.
+     Agora quem já começou fica num bloco próprio, "rodando agora", separado do
+     "aguardando na fila". A informação de que a máquina está com aquela OP não
+     se perde, e a lista de espera passa a ler igual à do ERP.
+     O corte NÃO é o início previsto — testei e daria errado: a 263917 tem início
+     27/08 19:33, já passado, e mesmo assim o ERP a mantém na fila. O que separa
+     é APONTAMENTO REAL de produção: a 263309 tem 14 apontamentos e a 262918 tem
+     4; as demais têm zero. Máquina só sai da fila quando começa a produzir de
+     verdade, não quando o relógio passa da hora prevista. */
+  const _opsProd = (function () {
+    const s = new Set();
+    try { (dadosPainel && dadosPainel.producao || []).forEach(p => { if (p.op) s.add(String(p.op)); }); } catch (_) { }
+    try { (dadosPainel && dadosPainel.prod622 || []).forEach(p => { if (p.op) s.add(String(p.op)); }); } catch (_) { }
+    return s;
+  })();
+  const _jaComecou = r => r.op && _opsProd.has(String(r.op));
+  const _rodando = L.filter(_jaComecou), _aguarda = L.filter(r => !_jaComecou(r));
+  const _ordenado = _rodando.concat(_aguarda);
+  if (_rodando.length) {
+    h += '<div style="font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#1F7A46;margin:6px 0 2px">▶ rodando agora · ' + _rodando.length + '</div>';
+  }
+  _ordenado.forEach((r, i) => {
+    if (_rodando.length && i === _rodando.length) {
+      h += '<div style="font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--fraco-2);margin:10px 0 2px;padding-top:7px;border-top:1px solid var(--linha-2s)">aguardando na fila · ' + _aguarda.length + ' <span style="font-weight:600;text-transform:none;letter-spacing:0">(é aqui que a fila do ERP começa)</span></div>';
+    }
+    const rodando = _jaComecou(r);
     const venc = r.entrega && String(r.entrega).slice(0, 10) < hoje;
     const ini = r.inicio ? new Date(r.inicio) : null;
     const iniTxt = ini ? (String(ini.getDate()).padStart(2, '0') + '/' + String(ini.getMonth() + 1).padStart(2, '0') + ' ' +
       String(ini.getHours()).padStart(2, '0') + ':' + String(ini.getMinutes()).padStart(2, '0')) : '';
     h += '<div onclick="event.stopPropagation();detOP(\'' + escapeHtml(String(r.op || '')) + '\')" style="cursor:pointer;display:flex;gap:7px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:12px">'
-      + '<b style="width:20px;color:' + (i === 0 ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2s)') + '">' + (r.ordem || i + 1) + '</b>'
+      + '<b style="width:20px;color:' + (rodando ? 'var(--verde-4,#2e7d32)' : 'var(--fraco-2s)') + '">' + (r.ordem || i + 1) + '</b>'
       + '<div style="flex:1;min-width:0">'
       + '<b>OP ' + escapeHtml(String(r.op || '—')) + '</b>'
-      + (i === 0 ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800">EM 1º</span>' : '')
+      + (rodando ? ' <span style="background:#E8F5EC;color:#1F7A46;border-radius:5px;padding:0 5px;font-size:9.5px;font-weight:800" title="já iniciou — no ERP ela sai da fila e vai para OPs em Produção">▶ JÁ INICIADA</span>' : '')
       + _seloReprog(r.op)
       + '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(String(r.item_desc || r.item_cod || ''))
       + (iniTxt ? ' · início ' + iniTxt : '') + '</div></div>'
