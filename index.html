@@ -3701,7 +3701,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.304.0';
+const APP_VER = '4.305.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22598,6 +22598,108 @@ async function _carregaCoord(ufs) {
     (data || []).forEach(m => { _geoCoord[m.uf + '|' + m.nome_norm] = { lat: +m.lat, lon: +m.lon }; });
   } catch (_) { }
 }
+/* 29/08/2026 (Joao: "tem como mostrar o mapa e a rota em linha reta no mapa,
+   pontos 1, 2, 3 e tal"). Desenha a carga sobre o contorno do estado: a
+   fabrica como ponto de partida e cada cidade numerada NA ORDEM em que o
+   agrupador as encadeou (vizinho mais proximo). O traco tracejado e
+   proposital — e linha RETA entre coordenadas do IBGE, nao estrada. O km
+   embaixo tambem e em linha reta e sempre sai menor que a rodovia; serve para
+   comparar cargas entre si, nao para calcular frete.
+   Reusa geo_uf/geo_municipios que ja estavam carregados para o mapa do
+   Comercial — sem busca nova por carga. */
+function _cargaMapa(c) {
+  var vis = {}, pts = [];
+  (c.itens || []).forEach(function (p) {
+    if (!p.cidade) return;
+    var k = (p.uf || '') + '|' + _geoNorm(p.cidade);
+    if (vis[k]) { vis[k].kg += p.kg; vis[k].ped++; return; }
+    var co = _coordDe(p); if (!co) return;
+    vis[k] = { rot: p.cidade, lat: co.lat, lon: co.lon, kg: p.kg, ped: 1 };
+    pts.push(vis[k]);
+  });
+  if (!pts.length) return '';
+  var mnLa = _FAB.lat, mxLa = _FAB.lat, mnLo = _FAB.lon, mxLo = _FAB.lon;
+  pts.forEach(function (p) {
+    if (p.lat < mnLa) mnLa = p.lat; if (p.lat > mxLa) mxLa = p.lat;
+    if (p.lon < mnLo) mnLo = p.lon; if (p.lon > mxLo) mxLo = p.lon;
+  });
+  var cLa = (mnLa + mxLa) / 2, cLo = (mnLo + mxLo) / 2;
+  /* carga de uma cidade so nao pode dar zoom infinito */
+  /* piso de 1,6 grau (~180 km): sem ele, carga de cidades vizinhas dava zoom
+     tanto que o mapa virava um retangulo vazio com dois pontos e nenhuma
+     referencia de onde aquilo fica no estado */
+  var dLa = Math.max(mxLa - mnLa, 1.6) * 1.3, dLo = Math.max(mxLo - mnLo, 1.6) * 1.3;
+  mnLa = cLa - dLa / 2; mxLa = cLa + dLa / 2; mnLo = cLo - dLo / 2; mxLo = cLo + dLo / 2;
+  var fLon = Math.cos(cLa * Math.PI / 180);
+  var W = 340, PAD = 16;
+  var spanX = (mxLo - mnLo) * fLon, spanY = (mxLa - mnLa);
+  var H = Math.max(130, Math.min(300, Math.round((W - 2 * PAD) * spanY / spanX) + 2 * PAD));
+  /* corrige o enquadramento em vez de esticar o desenho: sem isso o estado
+     saia achatado quando a altura batia no teto */
+  var need = (H - 2 * PAD) / (W - 2 * PAD);
+  if (spanY / spanX > need) { var nx = spanY / need, add = (nx - spanX) / fLon; mnLo -= add / 2; mxLo += add / 2; spanX = nx; }
+  else { var ny = need * spanX, ad2 = ny - spanY; mnLa -= ad2 / 2; mxLa += ad2 / 2; spanY = ny; }
+  var X = function (lo) { return PAD + ((lo - mnLo) * fLon) / spanX * (W - 2 * PAD); };
+  var Y = function (la) { return PAD + (mxLa - la) / spanY * (H - 2 * PAD); };
+  var fundo = '', aneis = _geoUF[c.uf];
+  if (aneis) {
+    var d = '';
+    aneis.forEach(function (pl) {
+      pl.forEach(function (an) {
+        an.forEach(function (q, i) { d += (i ? 'L' : 'M') + X(+q[0]).toFixed(1) + ' ' + Y(+q[1]).toFixed(1); });
+        d += 'Z';
+      });
+    });
+    fundo += '<path d="' + d + '" fill="#F4F8FC" stroke="#8FA9C2" stroke-width="1.2" stroke-linejoin="round"/>';
+  }
+  (_geoCid[c.uf] || []).forEach(function (m) {
+    var x = X(+m.lon), y = Y(+m.lat);
+    if (x < -8 || x > W + 8 || y < -8 || y > H + 8) return;
+    fundo += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="1.3" fill="#C7D4E1" opacity=".5"/>';
+  });
+  var seq = [{ lat: _FAB.lat, lon: _FAB.lon }].concat(pts), linha = '', km = 0;
+  seq.forEach(function (p, i) {
+    linha += (i ? 'L' : 'M') + X(p.lon).toFixed(1) + ' ' + Y(p.lat).toFixed(1);
+    if (i) km += _hav(seq[i - 1], p);
+  });
+  var svg = '<path d="' + linha + '" fill="none" stroke="#0B2A4A" stroke-width="1.6" stroke-dasharray="5 4" opacity=".8"/>';
+  svg += '<circle cx="' + X(_FAB.lon).toFixed(1) + '" cy="' + Y(_FAB.lat).toFixed(1) + '" r="7" fill="#fff" stroke="#1F7A46" stroke-width="2.2"/>'
+    + '<text x="' + X(_FAB.lon).toFixed(1) + '" y="' + (Y(_FAB.lat) + 3.2).toFixed(1) + '" font-size="8" font-weight="800" fill="#1F7A46" text-anchor="middle">F</text>'
+    + '<title>fábrica · São José do Rio Pardo</title>';
+  /* os rotulos saem ANTES dos circulos: o halo branco do texto estava passando
+     por cima do numero do ponto vizinho (visto no teste, carga 4). */
+  var postos = [], rots = '';
+  pts.forEach(function (p, i) {
+    var x = X(p.lon), y = Y(p.lat);
+    var txt = String(p.rot), w = txt.length * 5.4, xT = x + 12, yT = y + 3.4, ok = true;
+    var cabe = function (xx) {
+      if (xx < 2 || xx + w > W - 2) return false;
+      for (var b = 0; b < postos.length; b++) {
+        var o = postos[b];
+        if (Math.abs(yT - o.y) < 10 && xx < o.x + o.w && xx + w > o.x) return false;
+      }
+      return true;
+    };
+    if (!cabe(xT)) { xT = x - 12 - w; ok = cabe(xT); }
+    if (ok) {
+      postos.push({ x: xT, y: yT, w: w });
+      rots += '<text x="' + xT.toFixed(1) + '" y="' + yT.toFixed(1) + '" font-size="9" font-weight="800" fill="#0B2A4A" stroke="#fff" stroke-width="2.4" paint-order="stroke" style="pointer-events:none">' + escapeHtml(txt) + '</text>';
+    }
+  });
+  svg += rots;
+  pts.forEach(function (p, i) {
+    var x = X(p.lon), y = Y(p.lat);
+    svg += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="9" fill="#0B2A4A" stroke="#fff" stroke-width="1.6">'
+      + '<title>' + escapeHtml(String(p.rot)) + ' \u00b7 ' + p.ped + ' ped \u00b7 ' + fmtKg(p.kg) + '</title></circle>'
+      + '<text x="' + x.toFixed(1) + '" y="' + (y + 3.4).toFixed(1) + '" font-size="10" font-weight="800" fill="#fff" text-anchor="middle" style="pointer-events:none">' + (i + 1) + '</text>';
+  });
+  return '<div style="margin:6px 0 5px">'
+    + '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="display:block;background:#FBFDFF;border:1px solid var(--linha-2s);border-radius:9px">'
+    + fundo + svg + '</svg>'
+    + '<div class="desc" style="font-size:10px;margin-top:3px">'
+    + '<b style="color:#1F7A46">F</b> fábrica \u2192 ' + pts.length + ' parada(s) \u00b7 \u2248<b>' + Math.round(km) + ' km</b> em linha reta '
+    + '(estrada dá mais). A ordem é sugestão de proximidade, não roteirização.</div></div>';
+}
 async function atrRoteiro() {
   /* 29/08/2026: a capacidade agora vem do CADASTRO de frota (Comercial >
      Cubagem). Os valores fixos abaixo continuam so como rede: se ninguem
@@ -22666,6 +22768,8 @@ async function atrRoteiro() {
         }
     });
   });
+  /* contorno e pontinhos das UFs envolvidas, para o mapinha de cada carga */
+  await Promise.all(Object.keys(porUF).filter(function (u) { return u !== '(sem UF)'; }).map(function (u) { return _geoCarrega(u); }));
   let cx = document.getElementById('atrMapaFlut');
   if (!cx) {
     cx = document.createElement('div'); cx.id = 'atrMapaFlut';
@@ -22711,6 +22815,7 @@ async function atrRoteiro() {
         + '<div class="desc" style="font-size:11px;margin:2px 0 5px">'
           + c.itens.map(function (p) { return escapeHtml(String(p.cidade || '?')); }).filter(function (v, i, ar) { return ar.indexOf(v) === i; }).join(' \u2192 ')
           + (c.span > 1 ? ' <span style="opacity:.75">(\u2248' + Math.round(c.span) + ' km de ponta a ponta)</span>' : '') + '</div>'
+        + _cargaMapa(c)
         + c.itens.map(p => '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">'
           + '<span><b>' + escapeHtml(p.ped) + '</b> <span class="desc">' + escapeHtml(String(p.cli || '').slice(0, 22)) + '</span></span>'
           + '<span class="desc">' + escapeHtml(String(p.cidade || '')) + ' · ' + fmtKg(p.kg) + '</span></div>').join('')
