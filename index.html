@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.310.0';
+const APP_VER = '4.311.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22918,26 +22918,50 @@ async function atrRoteiro() {
        entrega e vizinho-mais-proximo A PARTIR DA FABRICA — e e ela que numera
        o mapa. Reordeno depois que a carga fecha, para nao mexer em quem viaja
        com quem. */
-    let atual = null;
-    ps.forEach(p => {
-      /* 29/08/2026 (Joao): "a tonelagem nao e assim — 20 cxs pesam ~120 kg".
-         Conferi: a caixa media pesa 5,49 kg, o palete de 20 da ~110 kg e a
-         carreta cheia (26 paletes) leva 2.853 kg. O teto de 25 t que eu
-         tinha posto NUNCA seria atingido — lota de espaco com 11% do peso.
-         Quem fecha a carga e o palete; o peso fica so como rede. */
-      const estouraPal = atual && (atual.pal + (p.pal || 0)) > V.pal;
-      const estouraKg = atual && V.t && (atual.kg + p.kg) > V.t * 1000;
-      if (!atual || estouraPal || estouraKg) { atual = { uf: uf, kg: 0, pal: 0, itens: [] }; cargas.push(atual); }
-      atual.kg += p.kg; atual.pal += (p.pal || 0); atual.itens.push(p);
-      atual.itens = _ordemDaFabrica(atual.itens);
-      /* maior distancia entre duas cidades da carga: expoe carga esticada */
-      atual.span = 0;
-      for (var q = 0; q < atual.itens.length; q++)
-        for (var w = q + 1; w < atual.itens.length; w++) {
-          var dd = _km(atual.itens[q], atual.itens[w]);
-          if (dd < 9999 && dd > atual.span) atual.span = dd;
+    /* ===== 29/08/2026 (Joao: "MELHORES AS ROTAS, OLHE AS 19, 17... 21, ALGUMA
+       COM 1/2 CARGA E INDO PRO MESMO LUGAR, ANDRADAS") =====
+       O empacotamento era FILA CEGA: enchia na ordem geografica e FECHAVA a
+       carga no primeiro pedido que nao coubesse — mesmo que o proximo coubesse
+       folgado. Andradas tem 12 pedidos e 116 paletes; a fila cega fazia 6
+       cargas (25, 24, 23, 8, 23, 13) e mandava duas viagens meio vazias para a
+       MESMA cidade.
+       Agora a carga fica ABERTA e vai puxando o que CABE e esta perto: entre os
+       candidatos, o mais proximo primeiro (mesma cidade da 0 km) e, empatando,
+       o MAIOR que couber — que e o que fecha o caminhao. Andradas passa a 5
+       cargas (26, 24, 24, 26, 16) com o mesmo material.
+       O peso segue como rede, nao como limite: a caixa media pesa 5,49 kg,
+       entao a carreta lota de ESPACO com cerca de 11% do peso maximo. */
+    const RAIO_CARGA = 120;   // km em linha reta a partir da ultima parada
+    const fila = ps.slice();
+    while (fila.length) {
+      const c = { uf: uf, kg: 0, pal: 0, itens: [] };
+      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); };
+      poe(fila.shift());
+      for (;;) {
+        const ref = c.itens[c.itens.length - 1];
+        let esc = -1, dEsc = Infinity, palEsc = -1;
+        for (let i = 0; i < fila.length; i++) {
+          const p = fila[i];
+          if (c.pal + (p.pal || 0) > V.pal) continue;
+          if (V.t && (c.kg + p.kg) > V.t * 1000) continue;
+          let d = _km(ref, p);
+          if (d >= 9999) d = RAIO_CARGA;        // sem coordenada: entra por ultimo, mas entra
+          if (d > RAIO_CARGA) continue;
+          if (d < dEsc - 0.5 || (Math.abs(d - dEsc) <= 0.5 && (p.pal || 0) > palEsc)) { dEsc = d; esc = i; palEsc = (p.pal || 0); }
         }
-    });
+        if (esc < 0) break;
+        poe(fila.splice(esc, 1)[0]);
+      }
+      c.itens = _ordemDaFabrica(c.itens);
+      /* maior distancia entre duas cidades da carga: expoe carga esticada */
+      c.span = 0;
+      for (var q = 0; q < c.itens.length; q++)
+        for (var w = q + 1; w < c.itens.length; w++) {
+          var dd = _km(c.itens[q], c.itens[w]);
+          if (dd < 9999 && dd > c.span) c.span = dd;
+        }
+      cargas.push(c);
+    }
   });
   /* contorno e pontinhos das UFs envolvidas, para o mapinha de cada carga */
   await Promise.all(Object.keys(porUF).filter(function (u) { return u !== '(sem UF)'; }).map(function (u) { return _geoCarrega(u); }));
@@ -22961,7 +22985,7 @@ async function atrRoteiro() {
       + '">' + escapeHtml(_VEICULOS[k].nome) + ' <b>' + _VEICULOS[k].pal + '</b></span>').join('')
     + '</div>'
     + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">'
-    + 'Junta os pedidos que ficam <b>perto um do outro</b>, pela distância em linha reta entre as cidades. '
+    + 'Junta os pedidos que ficam <b>perto um do outro</b> (até 120 km da última parada), enchendo cada carga com <b>o maior pedido que ainda couber</b> — por isso a mesma cidade não sai em duas viagens meio vazias sem necessidade. '
     + '<b>Não calcula rota</b>: não conhece estrada, serra nem pedágio, e a ordem de entrega é do motorista. '
     + 'Quem fecha a carga é o <b>palete</b>, não o peso: a caixa média tem <b>5,5 kg</b>, então ' + escapeHtml(V.nome).toLowerCase() + ' cheia leva cerca de <b>' + fmtKg(V.pal * 20 * 5.49) + '</b>. '
     + 'Palete = 20 caixas, arredondado por item. Não substitui a conferência do transporte.</p>'
