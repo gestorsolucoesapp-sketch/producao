@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.323.0';
+const APP_VER = '4.324.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22408,6 +22408,20 @@ function ppRender(alvo, dados) {
    começa pelo que ainda não foi explicado. */
 let _atrTipo = '', _atrJust = {}, _atrSetor = '', _atrLista = [];
 function atrFiltraSetor(s) { _atrSetor = (_atrSetor === s ? '' : s); const t = _atrTipo; _atrTipo = ''; atrDetalhe(t); }
+/* o estoque do REST196 nao tem dono: e saldo livre do item. Quando mais de um
+   pedido quer o mesmo item, quem decide e a data de entrega — e isso precisa
+   estar na tela, senao "79 de 80 cx em estoque" parece caixa carimbada com o
+   nome do cliente. */
+function _tituloFila(x) {
+  if (!x || !x.nPedItem || x.nPedItem < 2) return 'estoque do item no REST196';
+  return 'estoque livre do item — ninguem carimba caixa por pedido. Sao ' + x.nPedItem
+    + ' pedidos querendo o mesmo item e o app entrega na ordem de entrega; este e o ' + x.filaItem + 'o da fila.';
+}
+function _seloFila(x) {
+  if (!x || !x.nPedItem || x.nPedItem < 2) return '';
+  return ' <span style="font-size:10px;font-weight:800;color:var(--fraco);background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:0 5px" title="'
+    + _tituloFila(x) + '">' + x.filaItem + '\u00ba de ' + x.nPedItem + ' no item</span>';
+}
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
   if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
@@ -22508,12 +22522,25 @@ async function atrDetalhe(tipo) {
           cx: _ehCx(x.un) ? (+x.qtd_pendente || 0) : 0 });
       });
       linhas.sort((a, b) => a.ent.localeCompare(b.ent) || a.ped.localeCompare(b.ped));
+      /* 29/08/2026 (Joao: "mas essas 79 de 80 sao desse pedido?"). Nao sao, e
+         essa e a resposta honesta: o REST196 traz o SALDO LIVRE do item, sem
+         carimbo de pedido. Quem decide de quem e o material e a fila por data
+         de entrega — e o 226634 e o mais antigo dos 6 pedidos da FRUTAP com o
+         mesmo item. Entao a tela passa a dizer o lugar na fila do item, em vez
+         de deixar parecer que a caixa esta com o nome do cliente nela. */
+      const pedsDoItem = {};
+      linhas.forEach(l => { (pedsDoItem[l.item] = pedsDoItem[l.item] || new Set()).add(l.ped); });
+      const posto = {};
       const cob = {};
       linhas.forEach(l => {
         const disp = restante[l.item] || 0;
         const usa = Math.min(l.kg, disp);
         restante[l.item] = disp - usa;
-        const o = cob[l.ped] = cob[l.ped] || { kg: 0, cob: 0, cx: 0, cxCob: 0 };
+        const o = cob[l.ped] = cob[l.ped] || { kg: 0, cob: 0, cx: 0, cxCob: 0, fila: 0, nPed: 0 };
+        const rk = (posto[l.item + '|' + l.ped] || (posto[l.item + '|' + l.ped] =
+          (posto['#' + l.item] = (posto['#' + l.item] || 0) + 1)));
+        const np = (pedsDoItem[l.item] || new Set()).size;
+        if (np > o.nPed || (np === o.nPed && rk > o.fila)) { o.nPed = np; o.fila = rk; }
         o.kg += l.kg; o.cob += usa;
         /* a caixa coberta sai da PROPORCAO da propria linha: o REST196 nao diz
            quantas caixas do estoque cobrem o pedido, so o peso */
@@ -22524,6 +22551,7 @@ async function atrDetalhe(tipo) {
         if (!c || !c.kg) { x.parcial = false; x.semReserva = false; x.pctCob = null; return; }
         x.pctCob = c.cob / c.kg * 100;
         x.kgCob = c.cob; x.cxCob = c.cxCob; x.cxTot = c.cx;
+        x.filaItem = c.fila; x.nPedItem = c.nPed;
         x.parcial = c.cob > 0 && c.cob < c.kg * 0.999;
         x.semReserva = c.cob <= 0;
       });
@@ -22656,10 +22684,12 @@ async function atrDetalhe(tipo) {
                  pronto"). Ele esta certo: percentual ao lado de uma OP na fila
                  le como avanco de producao. Agora o numero e o que ja existe no
                  deposito, em caixa: "79 de 80 cx em estoque". */
-              ? '<b style="color:#1F7A46">\u2713 ' + (x.cxTot ? fmt(x.cxTot, 0) + ' cx' : fmtKg(x.kg)) + ' em estoque</b> \u00b7 '
-              : '<b style="color:#8A5A12">' + (x.cxTot
+              ? '<b style="color:#1F7A46" title="' + _tituloFila(x) + '">\u2713 ' + (x.cxTot ? fmt(x.cxTot, 0) + ' cx' : fmtKg(x.kg)) + ' em estoque</b>'
+                + _seloFila(x) + ' \u00b7 '
+              : '<b style="color:#8A5A12" title="' + _tituloFila(x) + '">' + (x.cxTot
                   ? fmt(Math.floor(x.cxCob || 0), 0) + ' de ' + fmt(x.cxTot, 0) + ' cx'
-                  : fmtKg(x.kgCob || 0) + ' de ' + fmtKg(x.kg)) + ' em estoque</b> \u00b7 ')
+                  : fmtKg(x.kgCob || 0) + ' de ' + fmtKg(x.kg)) + ' em estoque</b>'
+                + _seloFila(x) + ' \u00b7 ')
             : '')
           + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' \u00b7 '
             : (!x.cheio && x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
