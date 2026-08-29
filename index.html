@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.324.0';
+const APP_VER = '4.325.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22442,7 +22442,7 @@ async function atrDetalhe(tipo) {
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente,un,qtd_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
-      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio').eq('dia_foto', df).order('id')) : Promise.resolve([]),
+      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio,pedido,quantidade').eq('dia_foto', df).order('id')) : Promise.resolve([]),
       /* 29/08/2026 (Joao: "tem como por a regiao, estado e cidade e abrir no
          mapa da aba comercial?"). A pedidos_regiao casa pelo NUMERO do pedido,
          entao bate 93 de 93 — bem melhor que casar por nome de cliente, que
@@ -22453,11 +22453,19 @@ async function atrDetalhe(tipo) {
     /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
        maquina ela esta programada. Fica a de menor posicao na fila — e a que
        roda primeiro, entao e a que responde "quando sai". */
-    const opDoItem = {};
+    const opDoItem = {}, opDoPed = {};
     (rf || []).forEach(f => {
       if (!f.item_cod) return;
       const at = opDoItem[f.item_cod];
       if (!at || (+f.ordem || 999) < (+at.ordem || 999)) opDoItem[f.item_cod] = f;
+      /* 29/08/2026 (Joao: "se nao for desse, entao informe que e de outro, pq
+         ta confuso: a OP que esta la e de 80 cx"). O RPCP339 TEM o numero do
+         pedido na OP — eu e que nao estava lendo. A OP 263305 que aparecia na
+         linha do 226634 e do pedido 227548, o segundo da fila do mesmo item.
+         Agora a OP do PROPRIO pedido vem primeiro; quando nao existe, a do item
+         ainda aparece, mas dizendo de quem e. */
+      const pd = String(f.pedido || '').split('/')[0];
+      if (pd) (opDoPed[pd] = opDoPed[pd] || []).push(f);
     });
     const geo = {};
     (rg || []).forEach(g => { if (g.pedido && !geo[g.pedido]) geo[g.pedido] = g; });
@@ -22476,7 +22484,13 @@ async function atrDetalhe(tipo) {
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       const fo = opDoItem[x.item_cod];
-      if (fo && fo.op && !o.ops.some(z => z.op === fo.op)) o.ops.push(fo);
+      const proprias = (opDoPed[p] || []).filter(f => String(f.item_cod) === String(x.item_cod));
+      if (proprias.length) {
+        proprias.sort((a, b) => (+a.ordem || 999) - (+b.ordem || 999));
+        proprias.forEach(f => { if (!o.ops.some(z => z.op === f.op)) o.ops.push(f); });
+      } else if (fo && fo.op && !o.ops.some(z => z.op === fo.op)) {
+        o.ops.push(Object.assign({}, fo, { _outro: String(fo.pedido || '').split('/')[0] || '?' }));
+      }
       if (e < o.ent) o.ent = e;
       o.kg += kg;
       if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
@@ -22704,6 +22718,8 @@ async function atrDetalhe(tipo) {
               + x.ops.slice(0, 4).map(o =>
                 '<span style="font-size:10.5px;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:7px;padding:2px 7px">'
                 + 'OP <b>' + escapeHtml(String(o.op)) + '</b>'
+                + (o._outro ? ' <span style="color:#8A5A12;font-weight:800">\u00b7 do pedido ' + escapeHtml(o._outro) + '</span>' : '')
+                + (o.quantidade ? ' <span style="opacity:.75">\u00b7 ' + fmt(+o.quantidade || 0, 0) + ' cx</span>' : '')
                 + (o.recurso_nome || o.recurso_cod ? ' · ' + escapeHtml(String(o.recurso_nome || o.recurso_cod)) : '')
                 + (o.ordem ? ' · <b>' + o.ordem + 'º</b> na fila' : '')
                 + '</span>').join('')
