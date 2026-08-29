@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.282.0';
+const APP_VER = '4.283.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -26733,7 +26733,7 @@ async function cardAtrasoDia(forcar) {
   try {
     if (!_atrCache || forcar) {
       const { data, error } = await sb.from('carteira_dia')
-        .select('dia,pedidos,atraso_entrega,kg_atraso_entrega,vence_7d,meta_atraso').order('dia');
+        .select('dia,pedidos,atraso_entrega,kg_atraso_entrega,vence_7d,meta_atraso,atraso_producao,kg_atraso_producao').order('dia');
       if (error) throw error;
       _atrCache = data || [];
     }
@@ -26741,7 +26741,9 @@ async function cardAtrasoDia(forcar) {
     if (!D.length) { box.innerHTML = ''; return; }
     const ult = D[D.length - 1], pen = D.length > 1 ? D[D.length - 2] : null;
     const dif = pen ? (ult.atraso_entrega - pen.atraso_entrega) : null;
-    const mx = Math.max(1, ...D.map(x => Math.max(+x.atraso_entrega || 0, +x.vence_7d || 0, +x.meta_atraso || 0)));
+    const difP = (pen && ult.atraso_producao != null && pen.atraso_producao != null)
+      ? (ult.atraso_producao - pen.atraso_producao) : null;
+    const mx = Math.max(1, ...D.map(x => Math.max(+x.atraso_entrega || 0, +x.vence_7d || 0, +x.meta_atraso || 0, +x.atraso_producao || 0)));
     const W = 320, H = 90, PX = 6;
     const px = i => D.length < 2 ? W / 2 : PX + i * ((W - PX * 2) / (D.length - 1));
     const py = v => H - 6 - ((+v || 0) / mx) * (H - 16);
@@ -26761,9 +26763,21 @@ async function cardAtrasoDia(forcar) {
       + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_entrega || 0) + ' de ' + ult.pedidos + ' pedidos</div></div>'
       + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Vence em 7 dias</div>'
       + '<b style="font-size:22px;color:#8A5A12">' + (ult.vence_7d || 0) + '</b>'
-      + '<div style="font-size:11px;color:var(--fraco)">vira atraso se não sair</div></div></div>'
+      + '<div style="font-size:11px;color:var(--fraco)">vira atraso se não sair</div></div>'
+      /* 29/08/2026 (João: "põe também atrasos na produção") — o prazo da fábrica
+         vence 7 dias antes da entrega. Este número conta os pedidos que passaram
+         desse prazo E ainda não têm material pronto: é o atraso que é da
+         produção, não do comercial nem da expedição. */
+      + (ult.atraso_producao != null
+        ? '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Produção atrasada</div>'
+          + '<b style="font-size:22px;color:#6A1B9A">' + (ult.atraso_producao || 0) + '</b>'
+          + (difP !== null ? ' <span style="font-size:12px;font-weight:800;color:' + (difP > 0 ? 'var(--critico-s)' : difP < 0 ? '#1F7A46' : 'var(--fraco)') + '">'
+              + (difP > 0 ? '▲ +' + difP : difP < 0 ? '▼ ' + difP : '=') + '</span>' : '')
+          + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_producao || 0) + ' · prazo do pedido −7 dias</div></div>'
+        : '')
+      + '</div>'
       + '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:520px;display:block">'
-      + linha('vence_7d', '#E8862B') + linha('atraso_entrega', '#C0392B')
+      + linha('vence_7d', '#E8862B') + linha('atraso_entrega', '#C0392B') + linha('atraso_producao', '#6A1B9A')
       + (temMeta ? linha('meta_atraso', '#1F7A46', true) : '')
       + '</svg>'
       + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--fraco);margin-top:2px">'
@@ -26771,6 +26785,7 @@ async function cardAtrasoDia(forcar) {
       + '<p class="desc" style="font-size:11.5px;margin-top:6px">'
       + '<span style="color:#C0392B;font-weight:800">━</span> entrega vencida · '
       + '<span style="color:#E8862B;font-weight:800">━</span> vence em 7 dias'
+      + ' · <span style="color:#6A1B9A;font-weight:800">━</span> produção atrasada'
       + (temMeta ? ' · <span style="color:#1F7A46;font-weight:800">┄</span> meta' : '')
       + '</p>'
       + (D.length < 8 ? '<p class="desc" style="font-size:11px;color:#8A5A12">A série começa em ' + fmtData(D[0].dia)
@@ -28997,20 +29012,49 @@ async function gravar(id, substituir = false) {
         const R = r.registros, dia = String(R[0].dia_foto || hojeISO()).slice(0, 10);
         const peds = {}, d7 = new Date(dia + 'T12:00:00'); d7.setDate(d7.getDate() + 7);
         const lim7 = d7.toISOString().slice(0, 10);
-        let kgT = 0, kgA = 0;
+        let kgT = 0, kgA = 0, kgP = 0;
+        /* o que já está pronto: saldo por item na mesma foto, vindo do bloco de
+           estoque do próprio REST196 */
+        const estoq = {};
+        try {
+          ((r.registrosEstoque || r.estoque || [])).forEach(e => {
+            const c = String(e.item_cod || ''); if (!c) return;
+            estoq[c] = (estoq[c] || 0) + (+e.peso || 0);
+          });
+        } catch (_) { }
+        const temEstoque = Object.keys(estoq).length > 0;
         R.forEach(x => {
           const p = String(x.pedido || '').split('/')[0]; if (!p) return;
           const e = x.entrega ? String(x.entrega).slice(0, 10) : '';
           const kg = +x.peso_pendente || 0; kgT += kg;
-          const o = (peds[p] = peds[p] || { atr: false, v7: false });
+          const o = (peds[p] = peds[p] || { atr: false, v7: false, prodAtr: false, kgP: 0 });
           if (e && e < dia) { o.atr = true; kgA += kg; }
           else if (e && e < lim7) o.v7 = true;
+          /* prazo de produção: entrega menos 7 dias */
+          if (e) {
+            const dp = new Date(e + 'T12:00:00'); dp.setDate(dp.getDate() - 7);
+            const prazoProd = dp.toISOString().slice(0, 10);
+            if (prazoProd < dia && (!temEstoque || (estoq[String(x.item_cod || '')] || 0) < kg)) {
+              o.prodAtr = true; o.kgP += kg;
+            }
+          }
         });
+        Object.values(peds).forEach(o => { if (o.prodAtr) kgP += o.kgP; });
         const V = Object.values(peds);
         await sb.from('carteira_dia').upsert({
           dia: dia, pedidos: V.length, kg_total: Math.round(kgT),
           atraso_entrega: V.filter(x => x.atr).length, kg_atraso_entrega: Math.round(kgA),
-          vence_7d: V.filter(x => x.v7 && !x.atr).length
+          vence_7d: V.filter(x => x.v7 && !x.atr).length,
+          /* 29/08/2026 (João): atraso de PRODUÇÃO é outra coisa. O prazo da
+             fábrica vence 7 dias antes da entrega prometida — é o tempo de
+             carregar e levar. Se esse prazo passou e o material ainda não está
+             pronto, a produção atrasou, mesmo que a entrega ao cliente ainda
+             não tenha vencido.
+             Separar os dois separa a responsabilidade: 93 pedidos com entrega
+             vencida, mas só 18 por falta de produção — os outros já estão
+             prontos e param em outro lugar. */
+          atraso_producao: V.filter(x => x.prodAtr).length,
+          kg_atraso_producao: Math.round(kgP)
         }, { onConflict: 'dia' });
       } catch (e) { try { console.warn('carteira_dia:', e && e.message); } catch (_) { } }
     }
