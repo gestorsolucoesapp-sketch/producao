@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.311.0';
+const APP_VER = '4.312.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22458,7 +22458,7 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false, cxItem: {} });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false, cxItem: {}, kgSemCx: {} });
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       const fo = opDoItem[x.item_cod];
@@ -22473,6 +22473,14 @@ async function atrDetalhe(tipo) {
          mesmo app divergiriam na primeira mudanca.
          So conta o que e medido em CX: MIL, UN e PC nao sao caixa. */
       if (_ehCx(x.un)) o.cxItem[String(x.item_cod)] = (o.cxItem[String(x.item_cod)] || 0) + (+x.qtd_pendente || 0);
+      /* 29/08/2026 (Joao: "de atencao a esse roteiro de carga, nao esta legal").
+         O print mostrava a Carga 14 com 2,8 t e "0 de 26 paletes · falta 26":
+         os dois pedidos da MINALBA sao vendidos em MIL, nao em CX, e a conta de
+         palete so olhava caixa. Sao 47 pedidos em MIL e 184 sem unidade na
+         carteira — 78 t que entravam no caminhao como se ocupassem ZERO espaco,
+         e por isso o empacotador enfiava tudo numa carga so e a barra dizia 0%.
+         Agora esses viram palete ESTIMADO pelo peso, marcado com ≈. */
+      else o.kgSemCx[String(x.item_cod)] = (o.kgSemCx[String(x.item_cod)] || 0) + kg;
       if (e < d) o.atr = true; else if (e < s7) o.v7 = true;
       /* 29/08/2026 (Joao: "os atrasados na entrega ja estao prontos e nao vao
          ter OP mesmo"). Ele tem razao e o rotulo vermelho estava mentindo:
@@ -22519,8 +22527,25 @@ async function atrDetalhe(tipo) {
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
     else if (tipo === 'parcial') L = L.filter(x => x.atr && x.parcial);
     else L = L.filter(x => x.prod);
+    /* quantos kg cabem num palete, medido no PROPRIO relatorio de hoje (nao
+       chutado): soma o peso das linhas em CX e divide pelos paletes que elas
+       dao. Deu 117 kg/palete na carteira de 29/08 — coerente com a caixa media
+       de 5,5 kg x 20 caixas. Se um dia o mix mudar, a regua muda junto. */
+    const _kgPal = (() => {
+      const porItem = {}; let kg = 0;
+      (rp || []).forEach(x => {
+        if (!_ehCx(x.un)) return;
+        porItem[String(x.item_cod)] = (porItem[String(x.item_cod)] || 0) + (+x.qtd_pendente || 0);
+        kg += (+x.peso_pendente || 0);
+      });
+      const pal = Object.values(porItem).reduce((s, cx) => s + _paletes(cx), 0);
+      return pal > 0 ? kg / pal : 117;
+    })();
     L.forEach(x => {
-      x.pal = Object.values(x.cxItem || {}).reduce((s, cx) => s + _paletes(cx), 0);
+      const palCx = Object.values(x.cxItem || {}).reduce((s, cx) => s + _paletes(cx), 0);
+      const palEst = Object.values(x.kgSemCx || {}).reduce((s, kg) => s + Math.ceil(kg / _kgPal), 0);
+      x.pal = palCx + palEst;
+      x.palEst = palEst > 0;
       x.cx  = Object.values(x.cxItem || {}).reduce((s, cx) => s + cx, 0);
     });
     L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
@@ -22575,7 +22600,7 @@ async function atrDetalhe(tipo) {
           + (x.uf ? ' <span onclick="atrVerNoMapa(&quot;' + escapeHtml(x.uf) + '&quot;)" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
             + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
           + '</span>'
-          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + (x.pal ? ' \u00b7 <b>' + x.pal + '</b> pal' : '') + '</span></div>'
+          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + (x.pal ? ' \u00b7 <b>' + (x.palEst ? '\u2248' : '') + x.pal + '</b> pal' : '') + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
           /* 29/08/2026 (Joao: "no vermelho, se tiver 100% reservado marque").
@@ -22935,7 +22960,7 @@ async function atrRoteiro() {
     const fila = ps.slice();
     while (fila.length) {
       const c = { uf: uf, kg: 0, pal: 0, itens: [] };
-      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); };
+      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); if (p.palEst) c.palEst = true; };
       poe(fila.shift());
       for (;;) {
         const ref = c.itens[c.itens.length - 1];
@@ -22988,14 +23013,14 @@ async function atrRoteiro() {
     + 'Junta os pedidos que ficam <b>perto um do outro</b> (até 120 km da última parada), enchendo cada carga com <b>o maior pedido que ainda couber</b> — por isso a mesma cidade não sai em duas viagens meio vazias sem necessidade. '
     + '<b>Não calcula rota</b>: não conhece estrada, serra nem pedágio, e a ordem de entrega é do motorista. '
     + 'Quem fecha a carga é o <b>palete</b>, não o peso: a caixa média tem <b>5,5 kg</b>, então ' + escapeHtml(V.nome).toLowerCase() + ' cheia leva cerca de <b>' + fmtKg(V.pal * 20 * 5.49) + '</b>. '
-    + 'Palete = 20 caixas, arredondado por item. Não substitui a conferência do transporte.</p>'
+    + 'Palete = 20 caixas, arredondado por item; pedido vendido em <b>MIL</b> ou sem unidade n\u00e3o traz caixa, e a\u00ed o palete \u00e9 <b>estimado pelo peso</b> e aparece com \u2248.  Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
       return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
         + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
         + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
-        + '<span style="font-size:12.5px;text-align:right"><b>' + c.pal + '</b> <span class="desc">de ' + V.pal + ' paletes</span>'
+        + '<span style="font-size:12.5px;text-align:right"><b>' + (c.palEst ? '\u2248' : '') + c.pal + '</b> <span class="desc">de ' + V.pal + ' paletes</span>'
           /* 29/08/2026 (Joao: "marca quanto falta para completar o caminhao,
              so tem a barra"). A barra dizia a proporcao mas nao o numero que
              resolve: quantos paletes ainda cabem. E com isso o pessoal decide
