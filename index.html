@@ -3686,7 +3686,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.280.0';
+const APP_VER = '4.281.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22206,15 +22206,42 @@ function ppRender(alvo, dados) {
     + `<text x="${W - padR + 5}" y="${(padT + 4).toFixed(1)}" font-size="9" font-weight="800" fill="#B8860B">g/pç</text>`
     + `</svg></div>`;
 
-  // leitura pronta: compara o dia mais pesado com o mais leve
-  const a = D[iMaxG], b = D[iMinG];
+  /* ===== 29/08/2026 — QUAL PAR COMPARAR =====
+     Antes eu pegava o dia mais pesado contra o mais leve. Isso escolhia pares
+     que não provam nada: em 27/08 × 17/08 a peça era mais leve E saíram menos
+     peças, ou seja, os dois fatores puxaram a tonelada para baixo juntos. Isso
+     é um dia ruim, não a troca peça × peso.
+     O par que ensina é o de TONELAGEM PARECIDA e CONTAGEM DE PEÇAS DIFERENTE:
+     07/08 e 27/08 fecharam 16,2 t os dois, mas o dia 07 entregou 21% mais
+     peças. Quem olha só a balança não vê diferença entre os dois dias — e é
+     exatamente esse o ponto.
+     Só caio no par extremo antigo se nenhum par de tonelagem semelhante existir
+     no período. */
+  const _val = D.filter(x => x.g && x.mi && x.kg);
+  let a = null, b = null, motivo = '';
+  let melhor = 0;
+  for (let i = 0; i < _val.length; i++) {
+    for (let j = 0; j < _val.length; j++) {
+      if (i === j) continue;
+      const x = _val[i], y = _val[j];
+      const difT = Math.abs(x.kg - y.kg) / Math.max(x.kg, y.kg);   // tonelagem parecida?
+      if (difT > 0.05) continue;                                    // até 5% de diferença
+      const relPc = x.mi / (y.mi || 1);                             // e peças bem diferentes?
+      if (relPc <= 1.08) continue;
+      if (relPc > melhor) { melhor = relPc; a = y; b = x; motivo = 'mesmaT'; }
+    }
+  }
+  if (!a) { a = D[iMaxG]; b = D[iMinG]; motivo = 'extremo'; }
   if (a && b && a !== b && a.g && b.g) {
-    /* a frase tem que valer nos DOIS sentidos. Antes dizia sempre "saíram N×
-       mais peças" e, quando o dia leve produzia menos, saía "0,3× mais peças". */
     const rel = b.mi / (a.mi || 1);
     const maisLeve = Math.round((1 - b.g / a.g) * 100);
     let veredito;
-    if (rel >= 1.05) {
+    if (motivo === 'mesmaT') {
+      /* o caso que interessa: mesma tonelada, peças diferentes */
+      veredito = '<b>mesma tonelagem</b>, mas o dia ' + fmtDataSem(b.dia).split(',')[0]
+        + ' entregou <b>' + Math.round((rel - 1) * 100) + '% mais peças</b>, com peça <b>' + maisLeve + '% mais leve</b>'
+        + ' — quem olha só a balança não vê diferença entre os dois dias.';
+    } else if (rel >= 1.05) {
       veredito = 'peça <b>' + maisLeve + '% mais leve</b> e <b>' + rel.toFixed(1).replace('.', ',') + '× mais peças</b>'
         + (b.kg < a.kg ? ' — a queda em tonelada foi <b>mix</b>, não desempenho.' : '.');
     } else if (rel <= 0.95) {
@@ -22225,8 +22252,8 @@ function ppRender(alvo, dados) {
         + ' — a diferença em tonelada é mix puro.';
     }
     h += '<div style="margin-top:10px;padding:9px 11px;background:var(--leve);border-radius:10px;font-size:12.5px;line-height:1.55">'
-      + '<b>' + fmtDataSem(a.dia) + '</b> · peça de ' + a.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(a.mi)) + ' mi · ' + fmtKg(a.kg) + '<br>'
-      + '<b>' + fmtDataSem(b.dia) + '</b> · peça de ' + b.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(b.mi)) + ' mi · ' + fmtKg(b.kg) + '<br>'
+      + '<b>' + fmtDataSem(a.dia) + '</b> · peça de ' + a.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(a.mi)) + ' mi · <b>' + fmtKg(a.kg) + '</b><br>'
+      + '<b>' + fmtDataSem(b.dia) + '</b> · peça de ' + b.g.toFixed(1).replace('.', ',') + ' g · ' + fmtNum(Math.round(b.mi)) + ' mi · <b>' + fmtKg(b.kg) + '</b><br>'
       + '<span style="color:var(--fraco)">' + veredito + '</span></div>';
   }
   if (D.some(x => x.cob != null && x.cob < 90)) {
