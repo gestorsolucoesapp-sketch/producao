@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.315.0';
+const APP_VER = '4.316.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22925,7 +22925,15 @@ async function atrRoteiro() {
       if (!_VEICULOS[_veic]) _veic = Object.keys(_VEICULOS)[0];
     }
   }
-  const V = _VEICULOS[_veic] || _VEICULOS[Object.keys(_VEICULOS)[0]];
+  /* 29/08/2026 (Joao: "quando sugerir outro caminhao JA FACA, tire as opcoes
+     de caminhao, deixe tudo numa pagina so; quando nao couber, informe").
+     As pilulas obrigavam a escolher a frota inteira de uma vez e depois liam a
+     carga contra o caminhao errado — a Van/VUC com 2 paletes aparecia como
+     "8% de uma carreta". Agora o app EMPACOTA pelo maior veiculo do cadastro e,
+     carga por carga, JA ATRIBUI o menor que comporta aquilo: a leitura vira
+     "Van/VUC · 2 de 4 · cheio". Sem escolha manual. */
+  const _frota = Object.keys(_VEICULOS).map(k => _VEICULOS[k]).sort((a, b) => b.pal - a.pal);
+  const V = _frota[0] || { nome: 'Carreta', pal: 26, t: 25 };
   const _rotRec = { entrega: 'entrega vencida', vence: 'vence em 7 dias', producao: 'produ\u00e7\u00e3o atrasada', parcial: 'reserva parcial' }[_atrTipo] || '';
   const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
   if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
@@ -23013,9 +23021,9 @@ async function atrRoteiro() {
       /* 29/08/2026: sobra pequena nao precisa de carreta. Procura no cadastro de
          frota o MENOR veiculo que comporta a carga — 3 paletes cabem numa van,
          e mandar carreta para isso e o que fazia a barra dizer 12%. */
-      c.veic = Object.keys(_VEICULOS).map(k => _VEICULOS[k])
-        .filter(v => c.pal <= v.pal && (!v.t || c.kg <= v.t * 1000))
-        .sort((a, b) => a.pal - b.pal)[0] || null;
+      c.veic = _frota.slice().reverse()
+        .filter(v => c.pal <= v.pal && (!v.t || c.kg <= v.t * 1000))[0] || null;
+      if (!c.veic) { c.veic = V; c.naoCabe = true; }   // so acontece com palete estimado
       /* maior distancia entre duas cidades da carga: expoe carga esticada */
       c.span = 0;
       for (var q = 0; q < c.itens.length; q++)
@@ -23043,40 +23051,47 @@ async function atrRoteiro() {
     + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
     + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) <b>100% reservados</b>'
     + (_rotRec ? ' de <b>' + _rotRec + '</b>' : '') + ' \u00b7 ' + totP + ' palete(s) \u00b7 ' + fmtKg(totT) + '</p>'
-    + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:2px 0 8px">'
-    + Object.keys(_VEICULOS).map(k => '<span onclick="atrVeiculo(\'' + k + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 12px;'
-      + (_veic === k ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)')
-      + '">' + escapeHtml(_VEICULOS[k].nome) + ' <b>' + _VEICULOS[k].pal + '</b></span>').join('')
-    + '</div>'
+    /* resumo da frota que este agrupamento pede — e o que a logistica contrata,
+       ja pronto, sem ninguem escolher nada */
+    + (function () {
+      const q = {};
+      cargas.forEach(c => { const n = c.veic ? c.veic.nome : '?'; q[n] = (q[n] || 0) + 1; });
+      return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:2px 0 8px">'
+        + Object.keys(q).map(n => '<span style="font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 12px;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)">'
+          + '<b>' + q[n] + '\u00d7</b> ' + escapeHtml(n) + '</span>').join('')
+        + '</div>';
+    })()
     + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">'
     + 'Junta os pedidos que ficam <b>perto um do outro</b> (até 120 km da última parada), enchendo cada carga com <b>o maior pedido que ainda couber</b> — por isso a mesma cidade não sai em duas viagens meio vazias sem necessidade. '
     + '<b>Não calcula rota</b>: não conhece estrada, serra nem pedágio, e a ordem de entrega é do motorista. '
     + 'Quem fecha a carga é o <b>palete</b>, não o peso: a caixa média tem <b>5,5 kg</b>, então ' + escapeHtml(V.nome).toLowerCase() + ' cheia leva cerca de <b>' + fmtKg(V.pal * 20 * 5.49) + '</b>. '
+    + 'O veículo de cada carga é <b>escolhido pelo app</b>: o menor do cadastro de frota que comporta aquilo. '
     + 'Palete = 20 caixas: item com palete cheio vai sozinho e as <b>sobras de itens diferentes se juntam num palete misto</b>, como a expedi\u00e7\u00e3o monta; pedido vendido em <b>MIL</b> ou sem unidade n\u00e3o traz caixa, e a\u00ed o palete \u00e9 <b>estimado pelo peso</b> e aparece com \u2248.  Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
       return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
         + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
-        + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
-        + '<span style="font-size:12.5px;text-align:right"><b>' + (c.palEst ? '\u2248' : '') + c.pal + '</b> <span class="desc">de ' + V.pal + ' paletes</span>'
+        + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf)
+          + '<div style="font-size:11px;color:var(--navy);font-weight:800;margin-top:1px">\uD83D\uDE9A ' + escapeHtml(c.veic.nome) + '</div></b>'
+        + '<span style="font-size:12.5px;text-align:right"><b>' + (c.palEst ? '\u2248' : '') + c.pal + '</b> <span class="desc">de ' + c.veic.pal + ' paletes</span>'
           /* 29/08/2026 (Joao: "marca quanto falta para completar o caminhao,
              so tem a barra"). A barra dizia a proporcao mas nao o numero que
              resolve: quantos paletes ainda cabem. E com isso o pessoal decide
              se espera mais pedido ou manda assim. */
-          + (c.pal < V.pal
-            ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">falta ' + (V.pal - c.pal) + ' palete(s)</div>'
-            : c.noLimite
-              ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">no limite · confira na doca</div>'
-              : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ carga cheia</div>')
+          + (c.naoCabe
+            ? '<div style="font-size:11px;color:#9B2C2C;font-weight:800">não cabe nem no maior · avaliar na doca</div>'
+            : c.pal < c.veic.pal
+              ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">cabe mais ' + (c.veic.pal - c.pal) + ' palete(s)</div>'
+              : c.noLimite
+                ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">no limite · confira na doca</div>'
+                : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ veículo cheio</div>')
           + (c.mistos ? '<div style="font-size:10px;color:var(--fraco)">' + c.mistos + ' palete(s) misto(s)</div>' : '')
-          + (c.veic && c.veic.pal < V.pal
-            ? '<div style="font-size:10.5px;color:var(--navy);font-weight:800;margin-top:2px">\uD83D\uDE9A cabe num ' + escapeHtml(c.veic.nome) + ' (' + c.veic.pal + ' pal)</div>'
-            : '')
+
           + '</span></div>'
         + '<div style="display:flex;align-items:center;gap:7px;margin:4px 0 5px">'
-        + '<div style="flex:1;height:8px;background:var(--leve-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / V.pal * 100)) + '%;background:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
-        + '<b style="font-size:11.5px;color:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#9E5514' : '#9B2C2C') + '">' + Math.round(c.pal / V.pal * 100) + '%</b></div>'
+        + '<div style="flex:1;height:8px;background:var(--leve-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / c.veic.pal * 100)) + '%;background:' + (c.pal >= c.veic.pal * .9 ? '#1F7A46' : c.pal >= c.veic.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
+        + '<b style="font-size:11.5px;color:' + (c.pal >= c.veic.pal * .9 ? '#1F7A46' : c.pal >= c.veic.pal * .6 ? '#9E5514' : '#9B2C2C') + '">' + Math.round(c.pal / c.veic.pal * 100) + '%</b></div>'
         + '<div class="desc" style="font-size:11px;margin:2px 0 5px">'
           + '<b>S\u00c3O JOS\u00c9 DO RIO PARDO</b> \u2192 '
           + c.itens.map(function (p) { return escapeHtml(String(p.cidade || '?')); }).filter(function (v, i, ar) { return ar.indexOf(v) === i; }).join(' \u2192 ')
@@ -23096,7 +23111,8 @@ async function atrRoteiroCopiar() {
   let t = 'AGRUPAMENTO POR REGIAO · ' + new Date().toLocaleDateString('pt-BR') + '\n';
   t += '(agrupamento por proximidade, nao e roteirizacao · 100% reservados · ' + (_VEICULOS[_veic] || _VEICULOS.sider).nome + ' · ate ' + (_VEICULOS[_veic] || _VEICULOS.sider).pal + ' paletes)\n';
   cargas.forEach((c, i) => {
-    t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + c.pal + '/' + V.pal + ' paletes' + (c.pal < V.pal ? ' (falta ' + (V.pal - c.pal) + ')' : ' CHEIA') + ' · ' + (c.kg / 1000).toFixed(1) + ' t\n';
+    const _v = c.veic || { nome: '?', pal: 0 };
+    t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + _v.nome + ' · ' + c.pal + '/' + _v.pal + ' paletes' + (c.pal < _v.pal ? ' (cabe mais ' + (_v.pal - c.pal) + ')' : ' CHEIO') + ' · ' + (c.kg / 1000).toFixed(1) + ' t\n';
     c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + (p.pal || 0) + ' pal  ' + (p.pal || 0) + ' pal  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
   });
   try { await navigator.clipboard.writeText(t); toast('Roteiro copiado.'); }
