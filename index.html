@@ -617,6 +617,14 @@ body.rolando .skel{animation-play-state:paused!important}
 .card.sec-recolhida > .sec-cab{margin-bottom:0}
 .card.sec-recolhida{opacity:.78;padding-bottom:10px}
 .card.sec-recolhida > .titulo-sec{margin-bottom:0}
+/* 29/08/2026 (Joao: "um jeito de marcar em construcao para o pessoal saber que
+   esta sendo validado"). Faixa fica visivel ATE com o card recolhido: o aviso
+   nao pode sumir junto com o conteudo que ele esta avisando sobre. */
+.card.em-obra{border:1px dashed #E8871F;background:linear-gradient(0deg,rgba(232,135,31,.035),rgba(232,135,31,.035))}
+.obra-faixa{font-size:11px;line-height:1.35;background:#FFF6E6;border-left:3px solid #E8871F;color:#8A5A12;border-radius:0 7px 7px 0;padding:6px 9px;margin:0 0 8px}
+.card.sec-recolhida > .obra-faixa{display:block!important;margin-bottom:0;margin-top:6px}
+.obra-quem{display:block;font-size:9.5px;opacity:.75;font-weight:700;margin-top:1px}
+.obra-btn{position:absolute;right:34px;top:50%;transform:translateY(-50%);background:none;border:0;font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
 .per-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#54626F;background:#EDF0F3;border:1px solid #DBE1E7;border-radius:999px;padding:2px 9px;margin:0 6px 0 0;vertical-align:middle;letter-spacing:.2px}
 .grafico svg{width:100%;height:auto;display:block;overflow:visible}
 .svg-fit{overflow:visible;width:100%}
@@ -3701,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.305.0';
+const APP_VER = '4.306.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4548,7 +4556,21 @@ function renderAbasOcultas() {
     '<div style="display:flex;gap:5px;flex-wrap:wrap">' + abas.map(a => {
       const on = (_abasOcultas || []).includes(a.id);
       return `<span onclick="toggleAbaOculta('${a.id}')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 11px;${on ? 'background:#E8871F;color:#fff' : 'background:var(--leve-2);color:var(--navy)'}">${on ? '🚧 ' : ''}${escapeHtml(a.nome)}</span>`;
-    }).join('') + '</div>';
+    }).join('') + '</div>'
+    /* 29/08/2026: o de cima ESCONDE a aba inteira; o de baixo so AVISA que
+       aquela secao esta sendo conferida, sem tirar nada de ninguem. */
+    + '<div class="titulo-sec" style="margin-top:14px">🚧 Seções em validação</div>'
+    + '<p class="desc" style="margin-bottom:9px">A seção continua visível para todos, com uma faixa avisando que o número ainda está sendo conferido e o que você está validando. Ligue o modo abaixo e toque no 🚧 que aparece no título de cada card.</p>'
+    + '<span onclick="obraModo()" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;'
+    + (_obraModo ? 'background:#E8871F;color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">'
+    + (_obraModo ? '🚧 marcando — tocar para sair' : '🚧 marcar seções') + '</span>'
+    + (Object.keys(_obra || {}).length
+      ? '<div style="margin-top:9px;display:flex;flex-direction:column;gap:4px">'
+        + Object.keys(_obra).map(k => '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;border-top:1px solid var(--linha);padding-top:4px">'
+          + '<span><b>' + escapeHtml(k) + '</b><span class="desc"> · ' + escapeHtml(String((_obra[k].nota || '')).slice(0, 60)) + '</span></span>'
+          + '<span onclick="obraLimpar(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')" style="cursor:pointer;color:var(--fraco-2);white-space:nowrap">✕ tirar</span></div>').join('')
+        + '</div>'
+      : '<p class="desc" style="margin-top:7px;font-size:11px">Nenhuma seção marcada.</p>');
 }
 let souRH = false;      // Diagnóstico RH: só os e-mails da RLS (mesma dupla de UIDs da policy)
 let vejoFolha = false;  // salário na ficha: admin, dev ou ve_folha (espelha a policy rem_folha)
@@ -5347,13 +5369,18 @@ function prepararSecoesRecolhiveis() {
       const k = (t.textContent || '').trim().slice(0, 48);
       if (!k) return;
       t.dataset.rec = '1';
+      /* guarda a chave ANTES de pendurar botao: depois disso o textContent leva
+         junto o ❯ e o 🚧 e a chave mudaria a cada passada */
+      t.dataset.secK = k;
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'olho-sec'; b.innerHTML = '\u276F';
       b.title = 'Abrir ou recolher'; b.setAttribute('aria-label', 'Abrir ou recolher');
       b.addEventListener('click', e => { e.stopPropagation(); togSecao(k, b); });
       t.appendChild(b);
       if (_secOcultas.has(k)) card.classList.add('sec-recolhida');
+      try { _obraSelo(t); } catch (_) { }
     };
+    if (_obra === null && !_obraLendo) { _obraLendo = true; obraCarrega().then(() => { try { _obraAplicaTudo(); } catch (_) { } }); }
     /* card fixo que teve o miolo trocado por innerHTML mantém o carimbo mas
        perde o botão — reabilita só esses, com um seletor barato. */
     document.querySelectorAll('.card[data-sec-chk] > .titulo-sec:not([data-rec])').forEach(t => { delete t.closest('.card').dataset.secChk; });
@@ -5384,6 +5411,97 @@ function observarSecoesRecolhiveis() {
        observar o body fazia este callback acordar a cada toast, modal e faixa. */
     window._obsSec.observe(document.querySelector('main') || document.body, { childList: true, subtree: true });
   } catch (_) {}
+}
+/* ===== EM VALIDACAO POR SECAO — 29/08/2026 =====
+   (Joao: "consegue fazer um jeito de eu marcar em construcao para o pessoal
+   saber que esta sendo validado?"). Ja existia o 🚧 por ABA INTEIRA, que
+   ESCONDE a tela dos outros. Aqui e o contrario e mais fino: a secao continua
+   visivel, so avisa que o numero ainda esta sendo conferido — que e o caso da
+   maioria das coisas em validacao, onde esconder atrapalha mais do que ajuda.
+   A chave e o TITULO do card (48 chars), a MESMA que o recolher ja usa: assim
+   funciona nos 219 cards sem precisar dar id a cada um. Se o titulo mudar, a
+   marca se perde — e aceitavel: titulo novo, card novo.
+   Grava na tabela em_obra (leitura para todo mundo logado, escrita so admin/dev). */
+let _obra = null, _obraLendo = false, _obraModo = false;
+async function obraCarrega(forcar) {
+  if (_obra && !forcar) return _obra;
+  const m = {};
+  try {
+    const { data } = await sb.from('em_obra').select('chave,nota,autor_nome,atualizado_em');
+    (data || []).forEach(r => { m[r.chave] = r; });
+  } catch (_) { }
+  _obra = m;
+  return _obra;
+}
+function _obraPodeMarcar() { try { return !!(souAdmin || souDevReal); } catch (_) { return false; } }
+function _obraSelo(t) {
+  const card = t.closest && t.closest('.card'); if (!card) return;
+  const k = t.dataset.secK || ''; if (!k) return;
+  const r = (_obra || {})[k];
+  /* carimbo de estado: sem ele a funcao reescreveria o DOM a cada passada do
+     observador, que por sua vez dispararia outra passada (o ciclo que ja
+     travou o app na v3.869) */
+  const alvo = (r ? 'on|' + (r.nota || '') : 'off') + (_obraModo ? '|m' : '');
+  if (t.dataset.obra === alvo) return;
+  t.dataset.obra = alvo;
+  let f = card.querySelector(':scope > .obra-faixa');
+  if (r) {
+    if (!f) { f = document.createElement('div'); f.className = 'obra-faixa'; t.insertAdjacentElement('afterend', f); }
+    f.innerHTML = '🚧 <b>Em valida\u00e7\u00e3o</b>' + (r.nota ? ' \u2014 ' + escapeHtml(String(r.nota)) : '')
+      + (r.autor_nome ? '<span class="obra-quem">' + escapeHtml(String(r.autor_nome))
+        + (r.atualizado_em ? ' \u00b7 ' + fmtData(String(r.atualizado_em).slice(0, 10)) : '') + '</span>' : '');
+    card.classList.add('em-obra');
+  } else { if (f) f.remove(); card.classList.remove('em-obra'); }
+  let b = t.querySelector(':scope > .obra-btn');
+  if (_obraModo && _obraPodeMarcar()) {
+    if (!b) {
+      b = document.createElement('button');
+      b.type = 'button'; b.className = 'obra-btn'; b.textContent = '🚧';
+      b.title = 'marcar ou tirar "em valida\u00e7\u00e3o"';
+      b.addEventListener('click', e => { e.stopPropagation(); obraEditar(k); });
+      t.appendChild(b);
+    }
+    b.style.opacity = r ? '1' : '.4';
+  } else if (b) b.remove();
+}
+function _obraAplicaTudo() {
+  try { document.querySelectorAll('.card [data-sec-k]').forEach(t => { t.dataset.obra = ''; _obraSelo(t); }); } catch (_) { }
+}
+async function obraEditar(k) {
+  if (!_obraPodeMarcar()) return;
+  const r = (_obra || {})[k] || {};
+  const v = prompt('🚧 ' + k + '\n\nO que est\u00e1 sendo validado aqui? (vazio tira a marca)', r.nota || '');
+  if (v === null) return;
+  try {
+    if (!String(v).trim()) {
+      const { error } = await sb.from('em_obra').delete().eq('chave', k); if (error) throw error;
+      delete _obra[k]; toast('\u2713 marca retirada');
+    } else {
+      const linha = {
+        chave: k, nota: String(v).trim().slice(0, 180),
+        aba: (typeof _abaAtual !== 'undefined' ? _abaAtual : null),
+        autor_id: (perfil && perfil.id) || null,
+        autor_nome: (perfil && perfil.nome) || null,
+        atualizado_em: new Date().toISOString()
+      };
+      const { error } = await sb.from('em_obra').upsert(linha, { onConflict: 'chave' }); if (error) throw error;
+      _obra[k] = linha; toast('🚧 marcado \u2014 a equipe v\u00ea o aviso');
+    }
+  } catch (e) { toast('\u274c ' + (e.message || e)); return; }
+  _obraAplicaTudo();
+  try { renderAbasOcultas(); } catch (_) { }
+}
+function obraModo() {
+  if (!_obraPodeMarcar()) return;
+  _obraModo = !_obraModo;
+  _obraAplicaTudo();
+  toast(_obraModo ? '🚧 toque no 🚧 do t\u00edtulo da se\u00e7\u00e3o' : 'modo marca\u00e7\u00e3o desligado');
+  try { renderAbasOcultas(); } catch (_) { }
+}
+async function obraLimpar(k) {
+  if (!_obraPodeMarcar()) return;
+  try { await sb.from('em_obra').delete().eq('chave', k); delete _obra[k]; } catch (_) { }
+  _obraAplicaTudo(); renderAbasOcultas();
 }
 async function togGrafico(k) {
   if (!_grafOcultos) _grafOcultos = new Set();
