@@ -3686,7 +3686,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.277.0';
+const APP_VER = '4.278.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -38532,7 +38532,22 @@ function amTexto() {
   const topPerda = soma(E.perd, 'tipo_perda_desc', 'peso').slice(0, 3);
   const topPar = soma(E.par, 'motivo_desc', 'tempo_horas').slice(0, 3);
   const rRef = (kgProd + kgPerd) > 0 ? (kgPerd / (kgProd + kgPerd) * 100) : 0;
-  const L = ['*ANÁLISE+ · ' + String(E.rotulo || '').toUpperCase() + '*', ''];
+  /* 28/08/2026 (João: "tem que enviar primeiro uma informação assim junto") —
+     o cabeçalho do card do Painel abre a mensagem: período, produção, máquinas,
+     horas paradas e perda. Quem recebe no WhatsApp entende o recorte antes de
+     ler o detalhe; sem isso a mensagem começa por um número sem contexto. */
+  const nMaq = new Set((E.prod || []).map(r => r.recurso_cod).filter(Boolean)).size;
+  const pctPerda = (kgProd + kgPerd) > 0 ? (kgPerd / (kgProd + kgPerd) * 100) : 0;
+  const _dt = d => { try { return new Date(d + 'T12:00').toLocaleDateString('pt-BR'); } catch (_) { return d; } };
+  const per = (E.de && E.ate)
+    ? (E.de === E.ate ? _dt(E.de) : _dt(E.de) + ' → ' + _dt(E.ate))
+    : String(E.rotulo || '');
+  const L = ['*ANÁLISE+ · ' + String(E.rotulo || '').toUpperCase() + '*'];
+  L.push('📅 ' + per);
+  L.push('');
+  L.push('*' + t(kgProd) + '* produção · *' + nMaq + '* máquina(s)');
+  L.push('*' + hPar.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' h* paradas · *' + pctPerda.toFixed(1) + '%* de perda');
+  L.push('');
   L.push('*Produção* ' + t(kgProd));
   L.push('*Refugo* ' + t(kgPerd) + ' (' + rRef.toFixed(1) + '%)');
   L.push('*Paradas* ' + hPar.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' h');
@@ -38728,7 +38743,27 @@ async function csImagem() {
     }, 'image/jpeg', 0.93);
     return;
   }
-  _mtAbrirGaleria(imgs.map(i => ({ cod: i.cod, url: i.cv.toDataURL('image/jpeg', 0.93) })), 'semanal');
+  /* 28/08/2026 (João: "no computador a Termoformagem pede para salvar em PDF,
+     os outros setores vão normal"). Não era o setor: a Termoformagem tem mais
+     máquinas e gera VÁRIAS imagens, e o caminho de várias ia direto para a
+     galeria — que no computador oferece salvar PDF. Setor com uma máquina caía
+     no ramo de imagem única e compartilhava normal.
+     Agora várias imagens também tentam a folha de compartilhamento primeiro; a
+     galeria fica como plano B de quem não tem esse recurso. */
+  (async () => {
+    try {
+      const fs = [];
+      for (const im of imgs) {
+        const blob = await new Promise(r => im.cv.toBlob(r, 'image/jpeg', 0.93));
+        if (blob) fs.push(new File([blob], 'semanal-' + im.cod + '.jpg', { type: 'image/jpeg' }));
+      }
+      if (fs.length && navigator.canShare && navigator.canShare({ files: fs }) && navigator.share) {
+        try { await navigator.share({ files: fs, title: 'Comparativo semanal' }); return; }
+        catch (e) { if (e && e.name === 'AbortError') return; }
+      }
+    } catch (_) { }
+    _mtAbrirGaleria(imgs.map(i => ({ cod: i.cod, url: i.cv.toDataURL('image/jpeg', 0.93) })), 'semanal');
+  })();
 }
 
 /* ===== PREVISÃO DO MÊS POR MÁQUINA — 22/08/2026 (pedido do João) =====
