@@ -3686,7 +3686,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.279.0';
+const APP_VER = '4.280.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20450,9 +20450,11 @@ function tintaTelaSaida(box) {
     + '<div style="margin-top:14px"><div class="titulo-sec">Últimas baixas</div>'
     + (_tintaMov.filter(m => m.tipo === 'saida').slice(0, 12).map(m => {
       const p = _tintaSaldo.find(s => s.id === m.produto_id);
-      return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--linha);font-size:12.5px">'
-        + '<span>' + escapeHtml(p ? p.nome : '?') + '</span>'
-        + '<span class="desc">' + _tNum(m.quantidade) + ' lata · ' + fmtDataHora(m.quando) + '</span></div>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--linha);font-size:12.5px">'
+        + '<span>' + _bolinha(p ? p.nome : '') + escapeHtml(p ? p.nome : '?') + '</span>'
+        + '<span style="white-space:nowrap"><span class="desc">' + _tNum(m.quantidade) + ' lata · ' + fmtDataHora(m.quando) + '</span>'
+        + (m.id ? '<span onclick="tintaDesfazer(\'' + m.id + '\')" title="desfazer esta baixa" style="cursor:pointer;margin-left:9px;font-size:11px;font-weight:800;color:var(--critico);border:1px solid #E0B4B4;background:#FBE9E9;border-radius:999px;padding:3px 9px">↩ desfazer</span>' : '')
+        + '</span></div>';
     }).join('') || '<p class="desc">Nenhuma saída ainda.</p>') + '</div>';
 }
 async function tintaBipar(cod) {
@@ -20470,18 +20472,47 @@ async function tintaSaidaUma(id) {
   /* deixa dar saldo negativo de propósito: a lata saiu de verdade e travar aqui
      só faria o operador desistir de apontar. O negativo vira alerta no Resumo. */
   try {
-    const { error } = await sb.from('tinta_movimento').insert({
+    /* devolve a linha gravada: sem o id, o desfazer não teria o que apagar */
+    const { data, error } = await sb.from('tinta_movimento').insert({
       produto_id: id, tipo: 'saida', quantidade: 1, unidade: p.unidade || 'LATA',
       quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
-    });
+    }).select().single();
     if (error) throw error;
     p.saldo = (+p.saldo || 0) - 1;
     p.valor = p.saldo * (+p.preco || 0);
     p.abaixo_minimo = p.saldo < (+p.estoque_min || 0);
-    _tintaMov.unshift({ produto_id: id, tipo: 'saida', quantidade: 1, quando: new Date().toISOString() });
+    _tintaMov.unshift(data || { produto_id: id, tipo: 'saida', quantidade: 1, quando: new Date().toISOString() });
     toast('−1 ' + p.nome + ' · saldo ' + _tNum(p.saldo) + (p.abaixo_minimo ? ' ⚠️ abaixo do mínimo' : ''));
     tintaRender();
   } catch (e) { toast('Não consegui dar baixa: ' + ((e && e.message) || e)); }
+}
+
+/* 29/08/2026 (João: "permita desfazer a operação de baixa").
+   Bipar é rápido e errar é fácil — dois toques na mesma lata, ou a cor ao lado.
+   Desfazer APAGA o movimento em vez de lançar uma entrada de correção: uma
+   entrada falsa sujaria o relatório de compras, que passaria a mostrar tinta
+   entrando sem nota. O que não aconteceu não deve virar histórico.
+   Vale para entrada e ajuste também, menos para o Saldo inicial: aquele é a
+   migração da planilha e apagá-lo zeraria o estoque inteiro sem aviso. */
+async function tintaDesfazer(movId) {
+  const m = _tintaMov.find(x => x.id === movId); if (!m) return;
+  const p = _tintaSaldo.find(x => x.id === m.produto_id);
+  if (m.motivo === 'Saldo inicial') { toast('O saldo inicial não pode ser desfeito por aqui.'); return; }
+  const qual = m.tipo === 'saida' ? 'baixa' : (m.tipo === 'entrada' ? 'entrada' : 'ajuste');
+  if (!confirm('Desfazer esta ' + qual + '?\n\n' + (p ? p.nome : '') + ' · ' + _tNum(m.quantidade) + ' lata(s)\n' + fmtDataHora(m.quando))) return;
+  try {
+    const { error } = await sb.from('tinta_movimento').delete().eq('id', movId);
+    if (error) throw error;
+    _tintaMov = _tintaMov.filter(x => x.id !== movId);
+    if (p) {
+      const sinal = m.tipo === 'saida' ? 1 : -1;
+      p.saldo = (+p.saldo || 0) + sinal * (+m.quantidade || 0);
+      p.valor = p.saldo * (+p.preco || 0);
+      p.abaixo_minimo = p.saldo < (+p.estoque_min || 0);
+    }
+    toast('Desfeito' + (p ? ' · ' + p.nome + ' voltou para ' + _tNum(p.saldo) : '') + '.');
+    tintaRender();
+  } catch (e) { toast('Não consegui desfazer: ' + ((e && e.message) || e)); }
 }
 
 /* ---------- ENTRADA ---------- */
