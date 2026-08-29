@@ -2024,6 +2024,14 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
          fabrica. Regra logistica combinada com o Joao: a producao tem de fechar
          5 dias ANTES da entrega. -->
     <section id="abaComercial" class="oculto">
+      <!-- 29/08/2026 (João): sub-abas em Comercial/Logística. A cubagem é
+           cadastro, não análise — fica separada do mapa e da carteira. -->
+      <div style="display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap" id="comlSub">
+        <button class="btn org-vbtn ativa" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-cv="mapa" onclick="comlVer('mapa')">🗺️ Carteira e mapa</button>
+        <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-cv="cubagem" onclick="comlVer('cubagem')">📦 Cubagem e frota</button>
+      </div>
+      <div id="comlCubagem" class="oculto"></div>
+      <div id="comlMapaBloco">
       <!-- 24/08/2026 (João: "deixe mais compacta essa parte e o mapa maior").
            Título, carimbo e busca cabiam em uma linha só e ocupavam três. O
            carimbo virou texto miúdo ao lado do título — ele é conferência, não
@@ -2042,6 +2050,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <div id="cmBuscaRes"></div>
       </div>
       <div id="cmLista"></div>
+      </div>
     </section>
 
     <section id="abaAnRec" class="oculto">
@@ -3692,7 +3701,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.297.0';
+const APP_VER = '4.298.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22292,7 +22301,7 @@ async function atrDetalhe(tipo) {
        que nao esta programado em lugar algum. */
     const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
     const df = dfila && dfila[0] ? dfila[0].dia_foto : null;
-    const [rp, re, rj, rf, rg] = await Promise.all([
+    const [rp, re, rj, rf, _lg, rg] = await Promise.all([
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente,un,qtd_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
@@ -22301,7 +22310,8 @@ async function atrDetalhe(tipo) {
          mapa da aba comercial?"). A pedidos_regiao casa pelo NUMERO do pedido,
          entao bate 93 de 93 — bem melhor que casar por nome de cliente, que
          vem sujo ("... Transportador: 0 - NAO INFORMADO Cond. Pagto.: 30 DD"). */
-      _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
+      (!_logCarregado ? logCarrega() : Promise.resolve()),
+            _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
     ]);
     /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
        maquina ela esta programada. Fica a de menor posicao na fila — e a que
@@ -22549,7 +22559,22 @@ const _VEICULOS = {
 let _veic = 'sider';
 function atrVeiculo(v) { _veic = v; atrRoteiro(); }
 function atrRoteiro() {
-  const V = _VEICULOS[_veic] || _VEICULOS.sider;
+  /* 29/08/2026: a capacidade agora vem do CADASTRO de frota (Comercial >
+     Cubagem). Os valores fixos abaixo continuam so como rede: se ninguem
+     cadastrou nada ainda, o roteiro nao pode parar de funcionar. */
+  if (_logVeic && _logVeic.length) {
+    const vv = {};
+    _logVeic.filter(x => x.ativo !== false).forEach(x => {
+      vv[String(x.nome).toLowerCase().replace(/[^a-z]/g, '').slice(0, 8)] =
+        { nome: x.nome, pal: (+x.paletes || 26) * (x.empilha ? 2 : 1), t: (+x.peso_max_kg || 25000) / 1000 };
+    });
+    if (Object.keys(vv).length) {
+      Object.keys(_VEICULOS).forEach(k => delete _VEICULOS[k]);
+      Object.assign(_VEICULOS, vv);
+      if (!_VEICULOS[_veic]) _veic = Object.keys(_VEICULOS)[0];
+    }
+  }
+  const V = _VEICULOS[_veic] || _VEICULOS[Object.keys(_VEICULOS)[0]];
   const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
   if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
   const porUF = {};
@@ -22616,6 +22641,100 @@ async function atrRoteiroCopiar() {
   });
   try { await navigator.clipboard.writeText(t); toast('Roteiro copiado.'); }
   catch (_) { try { prompt('Copie o roteiro:', t); } catch (__) { } }
+}
+/* ===================== CUBAGEM E FROTA — 29/08/2026 =====================
+   O Joao pediu e disse que nao domina a parte de logistica, entao vale o porque
+   de cada campo:
+     · PALETES  — quantos PBR cabem no piso. E o numero que fecha a carga de
+       embalagem, porque o caminhao lota de espaco antes de lotar de peso.
+     · PESO MAX — carga util. Vira teto secundario; so morde em carga pesada.
+     · VOLUME   — util quando o produto nao paletiza (granel, big bag).
+     · EMPILHA  — palete sobre palete quase dobra a capacidade. E a informacao
+       que mais muda a conta, e a que mais falta nos cadastros.
+   Estes numeros saiam do CODIGO (eu tinha chutado 26 paletes e 25 t). Agora sao
+   cadastro: quem conhece o transporte corrige sem depender de deploy. */
+let _logVeic = [], _logCarregado = false;
+function comlVer(v) {
+  document.querySelectorAll('#comlSub [data-cv]').forEach(b => b.classList.toggle('ativa', b.getAttribute('data-cv') === v));
+  const cub = $('comlCubagem'), mapa = $('comlMapaBloco');
+  if (cub) cub.classList.toggle('oculto', v !== 'cubagem');
+  if (mapa) mapa.classList.toggle('oculto', v === 'cubagem');
+  if (v === 'cubagem') logRender();
+}
+async function logCarrega() {
+  try {
+    const { data } = await sb.from('log_veiculo').select('*').order('ordem');
+    _logVeic = data || []; _logCarregado = true;
+  } catch (_) { _logVeic = []; }
+}
+async function logRender() {
+  const box = $('comlCubagem'); if (!box) return;
+  if (!_logCarregado) { box.innerHTML = '<div class="card"><p class="desc">Carregando…</p></div>'; await logCarrega(); }
+  const adm = souAdmin;
+  box.innerHTML = '<div class="card">'
+    + '<div class="titulo-sec">🚚 Frota · capacidade por veículo</div>'
+    + '<p class="desc" style="margin-bottom:8px">É daqui que a <b>sugestão de roteiro</b> tira a capacidade. Enquanto estiver vazio ou errado, a sugestão sai errada junto.</p>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+    + '<th style="text-align:left">Veículo</th><th>Paletes</th><th>Peso máx.</th><th>Volume</th><th>Empilha</th>' + (adm ? '<th></th>' : '') + '</tr></thead><tbody>'
+    + (_logVeic.length ? _logVeic.map(v =>
+      '<tr style="border-top:1px solid var(--linha)">'
+      + '<td style="text-align:left"><b>' + escapeHtml(v.nome) + '</b>'
+      + (v.comp_m ? '<div class="desc" style="font-size:10.5px">' + v.comp_m + ' × ' + (v.larg_m || '?') + ' × ' + (v.alt_m || '?') + ' m</div>' : '') + '</td>'
+      + '<td style="text-align:center;font-weight:800">' + (v.paletes || '—') + '</td>'
+      + '<td style="text-align:center">' + (v.peso_max_kg ? fmtKg(v.peso_max_kg) : '—') + '</td>'
+      + '<td style="text-align:center">' + (v.volume_m3 ? v.volume_m3 + ' m³' : '—') + '</td>'
+      + '<td style="text-align:center">' + (v.empilha ? '✓' : '—') + '</td>'
+      + (adm ? '<td style="text-align:center"><span onclick="logEditar(\'' + v.id + '\')" style="cursor:pointer">✏️</span></td>' : '')
+      + '</tr>').join('') : '<tr><td colspan="6"><p class="desc">Nenhum veículo cadastrado.</p></td></tr>')
+    + '</tbody></table></div>'
+    + (adm ? '<div style="margin-top:10px"><span onclick="logNovo()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--verde);color:#fff;border-radius:999px;padding:7px 14px">+ veículo</span></div>' : '')
+    + '</div>'
+    + '<div class="card">'
+    + '<div class="titulo-sec">📦 O que ainda falta para a cubagem ficar exata</div>'
+    + '<p class="desc">Hoje o app calcula palete por uma média — <b>20 caixas por palete</b>, igual para todo item. Serve para uma estimativa, mas erra bastante entre um pote de 1.500 ml e uma tampa.</p>'
+    + '<div style="margin-top:8px">'
+    + [['Caixas por palete, por item', 'O número real de cada produto. É o que mais melhora a conta, e o mais fácil de levantar: o pessoal do expedição já sabe de cabeça.'],
+       ['Altura do palete montado', 'Define se dá para empilhar dois no caminhão. Palete de 1,10 m empilha; de 1,80 m não.'],
+       ['Empilhamento permitido', 'Quais itens aguentam peso em cima. Muda a capacidade do caminhão em até 30%.'],
+       ['Volume da caixa (m³)', 'Só necessário para carga que não paletiza. Se tudo vai em palete, o palete já resolve.']
+      ].map(([t, d], i) =>
+      '<div style="padding:7px 0;border-top:1px solid var(--linha)">'
+      + '<b style="font-size:12.5px">' + (i + 1) + '. ' + t + '</b>'
+      + '<div class="desc" style="font-size:11.5px">' + d + '</div></div>').join('')
+    + '</div>'
+    + '<p class="desc" style="margin-top:9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:0 7px 7px 0;font-size:11.5px">'
+    + 'Sugiro começar pelos <b>itens que mais aparecem na carteira</b> — uns 20 produtos devem cobrir a maior parte dos pedidos. Me diga quando tiver a lista de caixas por palete que eu monto a tela para cadastrar.</p>'
+    + '</div>';
+}
+async function logNovo() {
+  const nome = prompt('Nome do veículo (ex.: Carreta sider):', ''); if (nome === null || !nome.trim()) return;
+  const pal = parseInt(prompt('Quantos paletes PBR cabem no piso?', '26'), 10);
+  const kg = parseFloat(String(prompt('Peso máximo (kg):', '25000')).replace(',', '.'));
+  try {
+    const { error } = await sb.from('log_veiculo').insert({
+      nome: nome.trim(), paletes: pal || null, peso_max_kg: kg || null,
+      ordem: (_logVeic.length + 1)
+    });
+    if (error) throw error;
+    _logCarregado = false; await logRender(); toast('Veículo cadastrado.');
+  } catch (e) { toast('Não consegui salvar: ' + ((e && e.message) || e)); }
+}
+async function logEditar(id) {
+  const v = _logVeic.find(x => x.id === id); if (!v) return;
+  const pal = prompt('Paletes que cabem em "' + v.nome + '":', v.paletes || '');
+  if (pal === null) return;
+  const kg = prompt('Peso máximo (kg):', v.peso_max_kg || '');
+  if (kg === null) return;
+  const emp = confirm('Este veículo aceita palete sobre palete?\n\nOK = sim, Cancelar = não');
+  try {
+    const { error } = await sb.from('log_veiculo').update({
+      paletes: parseInt(pal, 10) || null,
+      peso_max_kg: parseFloat(String(kg).replace(',', '.')) || null,
+      empilha: emp
+    }).eq('id', id);
+    if (error) throw error;
+    _logCarregado = false; await logRender(); toast('Atualizado.');
+  } catch (e) { toast('Não consegui salvar: ' + ((e && e.message) || e)); }
 }
 function atrFecharMapa() { const c = document.getElementById('atrMapaFlut'); if (c) c.remove(); }
 async function atrJustificar(ped, tipo) {
