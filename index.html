@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.291.0';
+const APP_VER = '4.292.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22346,7 +22346,36 @@ async function atrDetalhe(tipo) {
     let L = Object.values(P);
     if (tipo === 'entrega') L = L.filter(x => x.atr);
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
+    else if (tipo === 'parcial') L = L.filter(x => x.atr && x.parcial);
     else L = L.filter(x => x.prod);
+    /* aloca o estoque item a item, do pedido que vence antes para o que vence
+       depois: o mesmo item atende varios pedidos e nao pode ser contado duas
+       vezes. Sem isso, dois pedidos apareceriam 'prontos' com a mesma sobra. */
+    (function () {
+      const restante = Object.assign({}, est);
+      const linhas = [];
+      (rp || []).forEach(x => {
+        const p = String(x.pedido || '').split('/')[0];
+        if (!p || !x.entrega || !(+x.peso_pendente > 0)) return;
+        linhas.push({ ped: p, ent: String(x.entrega).slice(0, 10), item: x.item_cod, kg: +x.peso_pendente });
+      });
+      linhas.sort((a, b) => a.ent.localeCompare(b.ent) || a.ped.localeCompare(b.ped));
+      const cob = {};
+      linhas.forEach(l => {
+        const disp = restante[l.item] || 0;
+        const usa = Math.min(l.kg, disp);
+        restante[l.item] = disp - usa;
+        const o = cob[l.ped] = cob[l.ped] || { kg: 0, cob: 0 };
+        o.kg += l.kg; o.cob += usa;
+      });
+      L.forEach(x => {
+        const c = cob[x.ped];
+        if (!c || !c.kg) { x.parcial = false; x.semReserva = false; x.pctCob = null; return; }
+        x.pctCob = c.cob / c.kg * 100;
+        x.parcial = c.cob > 0 && c.cob < c.kg * 0.999;
+        x.semReserva = c.cob <= 0;
+      });
+    })();
     L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
     L.forEach(x => {
       const ks = Object.keys(x.setores);
@@ -22362,8 +22391,8 @@ async function atrDetalhe(tipo) {
     if (alvo) L = L.filter(x => (x.setor || _semOp(x)) === alvo);
     L.sort((a, b) => a.ent.localeCompare(b.ent));
     _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
-    const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[tipo];
-    const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A' }[tipo];
+    const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada', parcial: 'Atrasado com reserva parcial' }[tipo];
+    const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A', parcial: '#1F7A46' }[tipo];
     cx.innerHTML = '<div style="margin-top:10px;border-top:2px solid ' + cor + ';padding-top:9px">'
       + '<div style="display:flex;justify-content:space-between;align-items:center">'
       + '<b style="font-size:13px;color:' + cor + '">' + rot + ' · ' + L.length + ' pedido(s)</b>'
@@ -26962,7 +26991,7 @@ async function cardAtrasoDia(forcar) {
   try {
     if (!_atrCache || forcar) {
       const { data, error } = await sb.from('carteira_dia')
-        .select('dia,pedidos,atraso_entrega,kg_atraso_entrega,vence_7d,meta_atraso,atraso_producao,kg_atraso_producao').order('dia');
+        .select('dia,pedidos,atraso_entrega,kg_atraso_entrega,vence_7d,meta_atraso,atraso_producao,kg_atraso_producao,atr_reserva_total,atr_reserva_parcial,atr_sem_reserva').order('dia');
       if (error) throw error;
       _atrCache = data || [];
     }
@@ -27008,9 +27037,20 @@ async function cardAtrasoDia(forcar) {
               + (difP > 0 ? '▲ +' + difP : difP < 0 ? '▼ ' + difP : '=') + ' vs ontem</span>' : '')
           + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_producao || 0) + ' · prazo do pedido −7 dias</div></div>'
         : '')
+      /* 29/08/2026 (Joao: "esses atrasados estao 100% reservados?"). Quase
+         todos: 91 de 93. O estoque e alocado por ordem de entrega, porque o
+         mesmo item atende varios pedidos — sem isso a conta diria que dois
+         pedidos estao cobertos pela mesma sobra de material.
+         A linha verde e a PARCIAL: tem parte do material e nao sai inteiro.
+         E o que trava a expedicao. */
+      + (ult.atr_reserva_parcial != null
+        ? '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Reserva parcial</div>'
+          + '<b onclick="atrDetalhe(\'parcial\')" style="font-size:22px;color:#1F7A46;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">' + (ult.atr_reserva_parcial || 0) + '</b>'
+          + '<div style="font-size:11px;color:var(--fraco)">' + (ult.atr_reserva_total || 0) + ' inteiros \u00b7 ' + (ult.atr_sem_reserva || 0) + ' sem nada</div></div>'
+        : '')
       + '</div>'
       + '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:520px;display:block">'
-      + linha('vence_7d', '#E8862B') + linha('atraso_entrega', '#C0392B') + linha('atraso_producao', '#6A1B9A')
+      + linha('vence_7d', '#E8862B') + linha('atraso_entrega', '#C0392B') + linha('atraso_producao', '#6A1B9A') + linha('atr_reserva_parcial', '#1F7A46')
       + (temMeta ? linha('meta_atraso', '#1F7A46', true) : '')
       + '</svg>'
       + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--fraco);margin-top:2px">'
@@ -27021,6 +27061,7 @@ async function cardAtrasoDia(forcar) {
       + '<span style="color:#C0392B;font-weight:800">━</span> entrega vencida · '
       + '<span style="color:#E8862B;font-weight:800">━</span> vence em 7 dias'
       + ' · <span style="color:#6A1B9A;font-weight:800">━</span> produção atrasada'
+      + ' · <span style="color:#1F7A46;font-weight:800">━</span> reserva parcial'
       + (temMeta ? ' · <span style="color:#1F7A46;font-weight:800">┄</span> meta' : '')
       + '</p>'
       + (D.length < 8 ? '<p class="desc" style="font-size:11px;color:#8A5A12">A série começa em ' + fmtData(D[0].dia)
