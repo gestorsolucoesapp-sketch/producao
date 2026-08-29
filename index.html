@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.283.0';
+const APP_VER = '4.284.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22268,6 +22268,101 @@ function ppRender(alvo, dados) {
   box.innerHTML = h;
 }
 
+/* ===== DETALHE DO ATRASO, PEDIDO A PEDIDO — 29/08/2026 (pedido do João) =====
+   Tocar no número abre a lista de quem está atrasado, e cada linha aceita uma
+   justificativa. A justificativa fica por PEDIDO, não por dia: o motivo não muda
+   a cada foto da carteira, e amarrar ao dia obrigaria a redigitar toda manhã.
+   Quem já tem motivo aparece com o balãozinho preenchido — assim a reunião
+   começa pelo que ainda não foi explicado. */
+let _atrTipo = '', _atrJust = {};
+async function atrDetalhe(tipo) {
+  const cx = $('atrDet'); if (!cx) return;
+  if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
+  _atrTipo = tipo;
+  cx.innerHTML = '<p class="desc" style="padding:8px 0">Carregando…</p>';
+  try {
+    const dia = (await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
+    const d = dia && dia[0] ? dia[0].dia_foto : null;
+    if (!d) { cx.innerHTML = '<p class="desc">Sem foto da carteira.</p>'; return; }
+    const [rp, re, rj] = await Promise.all([
+      _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente').eq('dia_foto', d).order('id')),
+      _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
+      _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido'))
+    ]);
+    const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
+    _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
+    const lim7 = new Date(d + 'T12:00:00'); lim7.setDate(lim7.getDate() + 7);
+    const s7 = lim7.toISOString().slice(0, 10);
+    const P = {};
+    (rp || []).forEach(x => {
+      const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
+      const e = String(x.entrega).slice(0, 10);
+      const kg = +x.peso_pendente || 0;
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [] });
+      if (e < o.ent) o.ent = e;
+      o.kg += kg;
+      if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
+      if (e < d) o.atr = true; else if (e < s7) o.v7 = true;
+      const dp = new Date(e + 'T12:00:00'); dp.setDate(dp.getDate() - 7);
+      if (dp.toISOString().slice(0, 10) < d && (est[x.item_cod] || 0) < kg) { o.prod = true; o.kgP += kg; }
+    });
+    let L = Object.values(P);
+    if (tipo === 'entrega') L = L.filter(x => x.atr);
+    else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
+    else L = L.filter(x => x.prod);
+    L.sort((a, b) => a.ent.localeCompare(b.ent));
+    const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[tipo];
+    const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A' }[tipo];
+    cx.innerHTML = '<div style="margin-top:10px;border-top:2px solid ' + cor + ';padding-top:9px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center">'
+      + '<b style="font-size:13px;color:' + cor + '">' + rot + ' · ' + L.length + ' pedido(s)</b>'
+      + '<span onclick="atrDetalhe(\'' + tipo + '\')" style="cursor:pointer;font-size:11.5px;color:var(--fraco-2)">✕ fechar</span></div>'
+      + '<p class="desc" style="font-size:11px;margin:3px 0 7px">Toque em 💬 para justificar. A justificativa fica no pedido e vale para todos.</p>'
+      + L.slice(0, 60).map(x => {
+        const j = _atrJust[x.ped];
+        const dias = Math.round((new Date(d) - new Date(x.ent)) / 86400000);
+        return '<div style="padding:7px 0;border-top:1px solid var(--linha)">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+          + '<span><b style="font-size:13px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span></span>'
+          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
+          + '<span class="desc" style="font-size:10.5px">entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
+          + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
+          + (j ? '<div style="margin-top:4px;background:var(--leve-2);border-left:3px solid ' + cor + ';border-radius:0 8px 8px 0;padding:6px 9px;font-size:12px">'
+              + escapeHtml(j.motivo) + '<div class="desc" style="font-size:10px;margin-top:2px">' + escapeHtml(j.quem_nome || '') + ' · ' + fmtDataHora(j.atualizado) + '</div></div>' : '')
+          + '</div>';
+      }).join('')
+      + (L.length > 60 ? '<p class="desc">mostrando 60 de ' + L.length + '</p>' : '')
+      + '</div>';
+  } catch (e) {
+    cx.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+  }
+}
+async function atrJustificar(ped, tipo) {
+  const j = _atrJust[ped];
+  let m = null;
+  try { m = prompt('Por que o pedido ' + ped + ' está atrasado?', (j && j.motivo) || ''); } catch (_) { }
+  if (m === null) return;
+  m = String(m).trim();
+  try {
+    if (!m) {
+      await sb.from('carteira_justificativa').delete().eq('pedido', ped);
+      delete _atrJust[ped];
+      toast('Justificativa removida.');
+    } else {
+      const { error } = await sb.from('carteira_justificativa').upsert({
+        pedido: ped, motivo: m, tipo: tipo,
+        quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null,
+        atualizado: new Date().toISOString()
+      }, { onConflict: 'pedido' });
+      if (error) throw error;
+      _atrJust[ped] = { pedido: ped, motivo: m, quem_nome: (perfil || {}).nome, atualizado: new Date().toISOString() };
+      toast('Justificado.');
+    }
+    const t = _atrTipo; _atrTipo = ''; atrDetalhe(t);
+  } catch (e) { toast('Não consegui salvar: ' + ((e && e.message) || e)); }
+}
+
 /* 20/08/2026: as opções de setor da Análise de Tendência saem do SETOR_MAQ, a
    mesma fonte que o resto do app usa para decidir a que setor uma máquina
    pertence. Antes era uma lista fixa no HTML, que envelheceu: Injeção e
@@ -26757,12 +26852,12 @@ async function cardAtrasoDia(forcar) {
     box.innerHTML = '<div class="card"><div class="titulo-sec">📉 Pedidos atrasados · dia a dia</div>'
       + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px">'
       + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Atraso na entrega</div>'
-      + '<b style="font-size:22px;color:var(--critico-s)">' + ult.atraso_entrega + '</b>'
+      + '<b onclick="atrDetalhe(\'entrega\')" style="font-size:22px;color:var(--critico-s);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">' + ult.atraso_entrega + '</b>'
       + (dif !== null ? ' <span style="font-size:12px;font-weight:800;color:' + (dif > 0 ? 'var(--critico-s)' : dif < 0 ? '#1F7A46' : 'var(--fraco)') + '">'
           + (dif > 0 ? '▲ +' + dif : dif < 0 ? '▼ ' + dif : '=') + '</span>' : '')
       + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_entrega || 0) + ' de ' + ult.pedidos + ' pedidos</div></div>'
       + '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Vence em 7 dias</div>'
-      + '<b style="font-size:22px;color:#8A5A12">' + (ult.vence_7d || 0) + '</b>'
+      + '<b onclick="atrDetalhe(\'vence\')" style="font-size:22px;color:#8A5A12;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">' + (ult.vence_7d || 0) + '</b>'
       + '<div style="font-size:11px;color:var(--fraco)">vira atraso se não sair</div></div>'
       /* 29/08/2026 (João: "põe também atrasos na produção") — o prazo da fábrica
          vence 7 dias antes da entrega. Este número conta os pedidos que passaram
@@ -26770,7 +26865,7 @@ async function cardAtrasoDia(forcar) {
          produção, não do comercial nem da expedição. */
       + (ult.atraso_producao != null
         ? '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Produção atrasada</div>'
-          + '<b style="font-size:22px;color:#6A1B9A">' + (ult.atraso_producao || 0) + '</b>'
+          + '<b onclick="atrDetalhe(\'producao\')" style="font-size:22px;color:#6A1B9A;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">' + (ult.atraso_producao || 0) + '</b>'
           + (difP !== null ? ' <span style="font-size:12px;font-weight:800;color:' + (difP > 0 ? 'var(--critico-s)' : difP < 0 ? '#1F7A46' : 'var(--fraco)') + '">'
               + (difP > 0 ? '▲ +' + difP : difP < 0 ? '▼ ' + difP : '=') + '</span>' : '')
           + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(+ult.kg_atraso_producao || 0) + ' · prazo do pedido −7 dias</div></div>'
@@ -26782,6 +26877,7 @@ async function cardAtrasoDia(forcar) {
       + '</svg>'
       + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--fraco);margin-top:2px">'
       + '<span>' + fmtData(D[0].dia) + '</span><span>' + fmtData(ult.dia) + '</span></div>'
+      + '<div id="atrDet"></div>'
       + '<p class="desc" style="font-size:11.5px;margin-top:6px">'
       + '<span style="color:#C0392B;font-weight:800">━</span> entrega vencida · '
       + '<span style="color:#E8862B;font-weight:800">━</span> vence em 7 dias'
