@@ -22293,7 +22293,7 @@ async function atrDetalhe(tipo) {
     const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
     const df = dfila && dfila[0] ? dfila[0].dia_foto : null;
     const [rp, re, rj, rf, rg] = await Promise.all([
-      _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente').eq('dia_foto', d).order('id')),
+      _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente,un,qtd_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
       df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio').eq('dia_foto', df).order('id')) : Promise.resolve([]),
@@ -22325,7 +22325,7 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false, cxItem: {} });
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       const fo = opDoItem[x.item_cod];
@@ -22333,6 +22333,13 @@ async function atrDetalhe(tipo) {
       if (e < o.ent) o.ent = e;
       o.kg += kg;
       if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
+      /* 29/08/2026 (Joao: "considere paletes PBR 120x120, ~20 cxs por palete").
+         O app JA tinha essa regra (_paletesPorItem): 20 caixas por palete, com
+         arredondamento POR ITEM e para cima, porque o normal e um item por
+         palete. Reuso em vez de criar outra conta — duas reguas de palete no
+         mesmo app divergiriam na primeira mudanca.
+         So conta o que e medido em CX: MIL, UN e PC nao sao caixa. */
+      if (_ehCx(x.un)) o.cxItem[String(x.item_cod)] = (o.cxItem[String(x.item_cod)] || 0) + (+x.qtd_pendente || 0);
       if (e < d) o.atr = true; else if (e < s7) o.v7 = true;
       /* 29/08/2026 (Joao: "os atrasados na entrega ja estao prontos e nao vao
          ter OP mesmo"). Ele tem razao e o rotulo vermelho estava mentindo:
@@ -22379,6 +22386,10 @@ async function atrDetalhe(tipo) {
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
     else if (tipo === 'parcial') L = L.filter(x => x.atr && x.parcial);
     else L = L.filter(x => x.prod);
+    L.forEach(x => {
+      x.pal = Object.values(x.cxItem || {}).reduce((s, cx) => s + _paletes(cx), 0);
+      x.cx  = Object.values(x.cxItem || {}).reduce((s, cx) => s + cx, 0);
+    });
     L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
     L.forEach(x => {
       const ks = Object.keys(x.setores);
@@ -22419,7 +22430,7 @@ async function atrDetalhe(tipo) {
           + (x.uf ? ' <span onclick="atrVerNoMapa(&quot;' + escapeHtml(x.uf) + '&quot;)" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
             + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
           + '</span>'
-          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
+          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + (x.pal ? ' \u00b7 <b>' + x.pal + '</b> pal' : '') + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
           /* 29/08/2026 (Joao: "no vermelho, se tiver 100% reservado marque").
@@ -22574,10 +22585,10 @@ function atrRoteiro() {
 async function atrRoteiroCopiar() {
   const cargas = window._atrCargas || [];
   let t = 'SUGESTAO DE ROTEIRO · ' + new Date().toLocaleDateString('pt-BR') + '\n';
-  t += '(pedidos 100% reservados, agrupados por estado, ate ' + _CARGA_T + ' t)\n';
+  t += '(pedidos 100% reservados, ate ' + _PAL_CARRETA + ' paletes por carga)\n';
   cargas.forEach((c, i) => {
-    t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + (c.kg / 1000).toFixed(1) + ' t\n';
-    c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
+    t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + c.pal + ' paletes · ' + (c.kg / 1000).toFixed(1) + ' t\n';
+    c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + (p.pal || 0) + ' pal  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
   });
   try { await navigator.clipboard.writeText(t); toast('Roteiro copiado.'); }
   catch (_) { try { prompt('Copie o roteiro:', t); } catch (__) { } }
