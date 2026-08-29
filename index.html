@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.285.0';
+const APP_VER = '4.286.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22296,10 +22296,19 @@ async function atrDetalhe(tipo) {
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
-      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome').eq('dia_foto', df).order('id')) : Promise.resolve([])
+      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio').eq('dia_foto', df).order('id')) : Promise.resolve([])
     ]);
+    /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
+       maquina ela esta programada. Fica a de menor posicao na fila — e a que
+       roda primeiro, entao e a que responde "quando sai". */
+    const opDoItem = {};
+    (rf || []).forEach(f => {
+      if (!f.item_cod) return;
+      const at = opDoItem[f.item_cod];
+      if (!at || (+f.ordem || 999) < (+at.ordem || 999)) opDoItem[f.item_cod] = f;
+    });
     const setorDoItem = {};
-    (rf || []).forEach(f => { if (f.item_cod && !setorDoItem[f.item_cod]) setorDoItem[f.item_cod] = f.setor; });
+    Object.keys(opDoItem).forEach(k => { setorDoItem[k] = opDoItem[k].setor; });
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
     _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
     const lim7 = new Date(d + 'T12:00:00'); lim7.setDate(lim7.getDate() + 7);
@@ -22309,9 +22318,11 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {} });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [] });
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
+      const fo = opDoItem[x.item_cod];
+      if (fo && fo.op && !o.ops.some(z => z.op === fo.op)) o.ops.push(fo);
       if (e < o.ent) o.ent = e;
       o.kg += kg;
       if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
@@ -22361,6 +22372,20 @@ async function atrDetalhe(tipo) {
           + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' · ' : '<b style="color:#9B2C2C">sem OP na fila</b> · ')
           + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
+          /* 29/08/2026 (Joao: "mostre OP e maquina programada"). Sem isso a
+             lista diz que o pedido esta atrasado mas nao diz onde ir cobrar.
+             A posicao na fila e o que responde "esta perto de rodar?". */
+          + (x.ops.length
+            ? '<div style="margin-top:3px;display:flex;gap:5px;flex-wrap:wrap">'
+              + x.ops.slice(0, 4).map(o =>
+                '<span style="font-size:10.5px;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:7px;padding:2px 7px">'
+                + 'OP <b>' + escapeHtml(String(o.op)) + '</b>'
+                + (o.recurso_nome || o.recurso_cod ? ' · ' + escapeHtml(String(o.recurso_nome || o.recurso_cod)) : '')
+                + (o.ordem ? ' · <b>' + o.ordem + 'º</b> na fila' : '')
+                + '</span>').join('')
+              + (x.ops.length > 4 ? '<span style="font-size:10.5px;color:var(--fraco-2)">+' + (x.ops.length - 4) + '</span>' : '')
+              + '</div>'
+            : '')
           + (j ? '<div style="margin-top:4px;background:var(--leve-2);border-left:3px solid ' + cor + ';border-radius:0 8px 8px 0;padding:6px 9px;font-size:12px">'
               + escapeHtml(j.motivo) + '<div class="desc" style="font-size:10px;margin-top:2px">' + escapeHtml(j.quem_nome || '') + ' · ' + fmtDataHora(j.atualizado) + '</div></div>' : '')
           + '</div>';
