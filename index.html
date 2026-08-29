@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.296.0';
+const APP_VER = '4.297.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22534,11 +22534,22 @@ async function atrVerNoMapa(uf) {
    E sugestao de AGRUPAMENTO, nao roteirizacao: nao calcula distancia entre
    cidades nem ordem de entrega dentro do estado. */
 /* 29/08/2026: a carga fecha por PALETE, nao por peso. Embalagem plastica e leve
-   e volumosa — o caminhao lota de volume muito antes de bater 25 t. Palete PBR
-   120x120, carreta bau: 26 paletes. O peso vira teto secundario, para o caso
-   raro de carga pesada. */
-const _CARGA_T = 25, _PAL_CARRETA = 26;
+   e volumosa — o caminhao lota de volume muito antes de bater 25 t.
+   29/08 (Joao: "sider e padrao? faca essa opcao tambem"): e sim, e em embalagem
+   e ate mais comum, porque carrega pela lateral. Em PALETE a capacidade e
+   praticamente a mesma do bau — o que muda e a facilidade de carga, nao o
+   espaco. Por isso as duas carretas dao 26; o truck entra para carga menor,
+   que hoje e a maioria (SP tem 32 pedidos somando 27 t).
+   O peso continua como teto secundario, para o caso raro de carga pesada. */
+const _VEICULOS = {
+  sider: { nome: 'Carreta sider', pal: 26, t: 25 },
+  bau:   { nome: 'Carreta baú',   pal: 26, t: 25 },
+  truck: { nome: 'Truck',         pal: 14, t: 12 }
+};
+let _veic = 'sider';
+function atrVeiculo(v) { _veic = v; atrRoteiro(); }
 function atrRoteiro() {
+  const V = _VEICULOS[_veic] || _VEICULOS.sider;
   const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
   if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
   const porUF = {};
@@ -22551,8 +22562,8 @@ function atrRoteiro() {
       String(a.cidade || '').localeCompare(String(b.cidade || '')) || a.ent.localeCompare(b.ent));
     let atual = null;
     ps.forEach(p => {
-      const estouraPal = atual && (atual.pal + (p.pal || 0)) > _PAL_CARRETA;
-      const estouraKg = atual && (atual.kg + p.kg) > _CARGA_T * 1000;
+      const estouraPal = atual && (atual.pal + (p.pal || 0)) > V.pal;
+      const estouraKg = atual && (atual.kg + p.kg) > V.t * 1000;
       if (!atual || estouraPal || estouraKg) { atual = { uf: uf, kg: 0, pal: 0, itens: [] }; cargas.push(atual); }
       atual.kg += p.kg; atual.pal += (p.pal || 0); atual.itens.push(p);
     });
@@ -22571,15 +22582,20 @@ function atrRoteiro() {
     + '<b style="font-size:15px">🚚 Sugestão de roteiro · ' + cargas.length + ' carga(s)</b>'
     + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
     + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) <b>100% reservados</b> · ' + totP + ' palete(s) · ' + fmtKg(totT) + '</p>'
-    + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">Palete = <b>20 caixas</b>, arredondado por item. Carreta: <b>' + _PAL_CARRETA + ' paletes PBR</b>. Item em MIL, UN ou PC não entra na conta. Não substitui a conferência do transporte.</p>'
+    + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:2px 0 8px">'
+    + Object.keys(_VEICULOS).map(k => '<span onclick="atrVeiculo(\'' + k + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 12px;'
+      + (_veic === k ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)')
+      + '">' + escapeHtml(_VEICULOS[k].nome) + ' <b>' + _VEICULOS[k].pal + '</b></span>').join('')
+    + '</div>'
+    + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">Palete = <b>20 caixas</b>, arredondado por item. Veículo: <b>' + escapeHtml(V.nome) + ' · ' + V.pal + ' paletes PBR</b>. Item em MIL, UN ou PC não entra na conta. Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
       return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
         + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
         + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
-        + '<span style="font-size:12.5px"><b>' + c.pal + ' pal</b> <span class="desc">de ' + _PAL_CARRETA + ' · ' + fmtKg(c.kg) + '</span></span></div>'
-        + '<div style="height:6px;background:var(--leve-2);border-radius:4px;overflow:hidden;margin:3px 0 5px"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / _PAL_CARRETA * 100)) + '%;background:' + (c.pal >= _PAL_CARRETA * .9 ? '#1F7A46' : c.pal >= _PAL_CARRETA * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
+        + '<span style="font-size:12.5px"><b>' + c.pal + ' pal</b> <span class="desc">de ' + V.pal + ' · ' + fmtKg(c.kg) + '</span></span></div>'
+        + '<div style="height:6px;background:var(--leve-2);border-radius:4px;overflow:hidden;margin:3px 0 5px"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / V.pal * 100)) + '%;background:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
         + '<div class="desc" style="font-size:11px;margin:2px 0 5px">' + Object.keys(cids).sort().map(k => escapeHtml(k)).join(' → ') + '</div>'
         + c.itens.map(p => '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">'
           + '<span><b>' + escapeHtml(p.ped) + '</b> <span class="desc">' + escapeHtml(String(p.cli || '').slice(0, 22)) + '</span></span>'
@@ -22593,7 +22609,7 @@ function atrRoteiro() {
 async function atrRoteiroCopiar() {
   const cargas = window._atrCargas || [];
   let t = 'SUGESTAO DE ROTEIRO · ' + new Date().toLocaleDateString('pt-BR') + '\n';
-  t += '(pedidos 100% reservados, ate ' + _PAL_CARRETA + ' paletes por carga)\n';
+  t += '(100% reservados · ' + (_VEICULOS[_veic] || _VEICULOS.sider).nome + ' · ate ' + (_VEICULOS[_veic] || _VEICULOS.sider).pal + ' paletes)\n';
   cargas.forEach((c, i) => {
     t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + c.pal + ' paletes · ' + (c.kg / 1000).toFixed(1) + ' t\n';
     c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + (p.pal || 0) + ' pal  ' + (p.pal || 0) + ' pal  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
