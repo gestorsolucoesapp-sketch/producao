@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.322.0';
+const APP_VER = '4.323.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22504,7 +22504,8 @@ async function atrDetalhe(tipo) {
       (rp || []).forEach(x => {
         const p = String(x.pedido || '').split('/')[0];
         if (!p || !x.entrega || !(+x.peso_pendente > 0)) return;
-        linhas.push({ ped: p, ent: String(x.entrega).slice(0, 10), item: x.item_cod, kg: +x.peso_pendente });
+        linhas.push({ ped: p, ent: String(x.entrega).slice(0, 10), item: x.item_cod, kg: +x.peso_pendente,
+          cx: _ehCx(x.un) ? (+x.qtd_pendente || 0) : 0 });
       });
       linhas.sort((a, b) => a.ent.localeCompare(b.ent) || a.ped.localeCompare(b.ped));
       const cob = {};
@@ -22512,13 +22513,17 @@ async function atrDetalhe(tipo) {
         const disp = restante[l.item] || 0;
         const usa = Math.min(l.kg, disp);
         restante[l.item] = disp - usa;
-        const o = cob[l.ped] = cob[l.ped] || { kg: 0, cob: 0 };
+        const o = cob[l.ped] = cob[l.ped] || { kg: 0, cob: 0, cx: 0, cxCob: 0 };
         o.kg += l.kg; o.cob += usa;
+        /* a caixa coberta sai da PROPORCAO da propria linha: o REST196 nao diz
+           quantas caixas do estoque cobrem o pedido, so o peso */
+        o.cx += l.cx; o.cxCob += (l.kg > 0 ? l.cx * (usa / l.kg) : 0);
       });
       L.forEach(x => {
         const c = cob[x.ped];
         if (!c || !c.kg) { x.parcial = false; x.semReserva = false; x.pctCob = null; return; }
         x.pctCob = c.cob / c.kg * 100;
+        x.kgCob = c.cob; x.cxCob = c.cxCob; x.cxTot = c.cx;
         x.parcial = c.cob > 0 && c.cob < c.kg * 0.999;
         x.semReserva = c.cob <= 0;
       });
@@ -22646,8 +22651,15 @@ async function atrDetalhe(tipo) {
                  reservado — dizer "99% reservado" era prometer separacao que nao
                  aconteceu. Agora a lista fala em ESTOQUE, e reserva fica com o
                  card de reserva. */
-              ? '<b style="color:#1F7A46">✓ 100% em estoque</b> \u00b7 '
-              : '<b style="color:#8A5A12">' + Math.round(x.pctCob) + '% em estoque</b> \u00b7 ')
+              /* 29/08/2026 (Joao: "fala que tem quantidade X no estoque, nao que
+                 esta 99% em estoque, senao da a entender que a OP ja tem 99%
+                 pronto"). Ele esta certo: percentual ao lado de uma OP na fila
+                 le como avanco de producao. Agora o numero e o que ja existe no
+                 deposito, em caixa: "79 de 80 cx em estoque". */
+              ? '<b style="color:#1F7A46">\u2713 ' + (x.cxTot ? fmt(x.cxTot, 0) + ' cx' : fmtKg(x.kg)) + ' em estoque</b> \u00b7 '
+              : '<b style="color:#8A5A12">' + (x.cxTot
+                  ? fmt(Math.floor(x.cxCob || 0), 0) + ' de ' + fmt(x.cxTot, 0) + ' cx'
+                  : fmtKg(x.kgCob || 0) + ' de ' + fmtKg(x.kg)) + ' em estoque</b> \u00b7 ')
             : '')
           + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' \u00b7 '
             : (!x.cheio && x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
