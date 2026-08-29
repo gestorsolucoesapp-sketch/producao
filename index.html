@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.312.0';
+const APP_VER = '4.313.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22967,7 +22967,15 @@ async function atrRoteiro() {
         let esc = -1, dEsc = Infinity, palEsc = -1;
         for (let i = 0; i < fila.length; i++) {
           const p = fila[i];
-          if (c.pal + (p.pal || 0) > V.pal) continue;
+          /* 29/08/2026 (print da Carga 15: 3 paletes sozinhos indo 369 km).
+             Os dois pedidos da MINALBA para Campos do Jordao dao ~27 paletes —
+             UM a mais que a carreta — e o app mandava o segundo caminhao so
+             para levar 3 paletes. Mas esse 27 e ESTIMADO pelo peso, nao contado:
+             estourar a estimativa em 1 palete nao justifica uma viagem inteira.
+             Entao, quando a conta e estimada, o teto ganha 5% de folga e a carga
+             sai marcada como "no limite" para a expedicao conferir na doca. */
+          const teto = V.pal + ((c.palEst || p.palEst) ? Math.max(1, Math.round(V.pal * 0.05)) : 0);
+          if (c.pal + (p.pal || 0) > teto) continue;
           if (V.t && (c.kg + p.kg) > V.t * 1000) continue;
           let d = _km(ref, p);
           if (d >= 9999) d = RAIO_CARGA;        // sem coordenada: entra por ultimo, mas entra
@@ -22978,6 +22986,13 @@ async function atrRoteiro() {
         poe(fila.splice(esc, 1)[0]);
       }
       c.itens = _ordemDaFabrica(c.itens);
+      c.noLimite = c.pal > V.pal;
+      /* 29/08/2026: sobra pequena nao precisa de carreta. Procura no cadastro de
+         frota o MENOR veiculo que comporta a carga — 3 paletes cabem numa van,
+         e mandar carreta para isso e o que fazia a barra dizer 12%. */
+      c.veic = Object.keys(_VEICULOS).map(k => _VEICULOS[k])
+        .filter(v => c.pal <= v.pal && (!v.t || c.kg <= v.t * 1000))
+        .sort((a, b) => a.pal - b.pal)[0] || null;
       /* maior distancia entre duas cidades da carga: expoe carga esticada */
       c.span = 0;
       for (var q = 0; q < c.itens.length; q++)
@@ -23027,7 +23042,12 @@ async function atrRoteiro() {
              se espera mais pedido ou manda assim. */
           + (c.pal < V.pal
             ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">falta ' + (V.pal - c.pal) + ' palete(s)</div>'
-            : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ carga cheia</div>')
+            : c.noLimite
+              ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">no limite · confira na doca</div>'
+              : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ carga cheia</div>')
+          + (c.veic && c.veic.pal < V.pal
+            ? '<div style="font-size:10.5px;color:var(--navy);font-weight:800;margin-top:2px">\uD83D\uDE9A cabe num ' + escapeHtml(c.veic.nome) + ' (' + c.veic.pal + ' pal)</div>'
+            : '')
           + '</span></div>'
         + '<div style="display:flex;align-items:center;gap:7px;margin:4px 0 5px">'
         + '<div style="flex:1;height:8px;background:var(--leve-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / V.pal * 100)) + '%;background:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
