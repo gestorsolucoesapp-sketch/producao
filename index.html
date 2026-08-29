@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.294.0';
+const APP_VER = '4.295.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22399,7 +22399,9 @@ async function atrDetalhe(tipo) {
     cx.innerHTML = '<div style="margin-top:10px;border-top:2px solid ' + cor + ';padding-top:9px">'
       + '<div style="display:flex;justify-content:space-between;align-items:center">'
       + '<b style="font-size:13px;color:' + cor + '">' + rot + ' · ' + L.length + ' pedido(s)</b>'
-      + '<span onclick="atrDetalhe(\'' + tipo + '\')" style="cursor:pointer;font-size:11.5px;color:var(--fraco-2)">✕ fechar</span></div>'
+      + '<span>'
+      + (tipo === 'entrega' ? '<span onclick="atrRoteiro()" style="cursor:pointer;font-size:11.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:4px 11px;margin-right:8px">🚚 sugerir roteiro</span>' : '')
+      + '<span onclick="atrDetalhe(\'' + tipo + '\')" style="cursor:pointer;font-size:11.5px;color:var(--fraco-2)">✕ fechar</span></span></div>'
       + '<p class="desc" style="font-size:11px;margin:3px 0 5px">Toque em 💬 para justificar. A justificativa fica no pedido e vale para todos.</p>'
       + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px">'
       + Object.keys(porSetor).sort((p, q) => porSetor[q] - porSetor[p]).map(s =>
@@ -22420,8 +22422,14 @@ async function atrDetalhe(tipo) {
           + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
-          + (x.pctCob != null && x.pctCob < 99.9
-            ? '<b style="color:#8A5A12">' + Math.round(x.pctCob) + '% reservado</b> \u00b7 ' : '')
+          /* 29/08/2026 (Joao: "no vermelho, se tiver 100% reservado marque").
+             Pedido vencido com tudo separado nao espera fabrica nem compra:
+             espera caminhao. E o que da para resolver hoje. */
+          + (x.pctCob != null
+            ? (x.pctCob >= 99.9
+              ? '<b style="color:#1F7A46">✓ 100% reservado</b> \u00b7 '
+              : '<b style="color:#8A5A12">' + Math.round(x.pctCob) + '% reservado</b> \u00b7 ')
+            : '')
           + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' \u00b7 '
             : (x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
                            : '<b style="color:#1F7A46">\u2713 pronto \u00b7 aguardando sa\u00edda</b> \u00b7 '))
@@ -22504,6 +22512,75 @@ async function atrVerNoMapa(uf) {
       + '<p class="desc">Não consegui desenhar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p>'
       + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-weight:800;color:var(--navy)">fechar</span></div>';
   }
+}
+/* ===== SUGESTAO DE ROTEIRO DE CARGA — 29/08/2026 (pedido do Joao) =====
+   So entram pedidos 100% RESERVADOS: sugerir carga com material incompleto faria
+   o caminhao sair pela metade, ou nao sair.
+   Agrupa por UF, porque a viagem e por regiao, e quebra em cargas de ate 25 t.
+   A conta e por PESO: conferi e o REST196 nao traz o m3 preenchido (zero linhas
+   com volume), entao carga leve e volumosa fecha antes do que o app diz. Isso
+   esta escrito no balao, para ninguem fechar frete confiando so nisso.
+   E sugestao de AGRUPAMENTO, nao roteirizacao: nao calcula distancia entre
+   cidades nem ordem de entrega dentro do estado. */
+const _CARGA_T = 25;
+function atrRoteiro() {
+  const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
+  if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
+  const porUF = {};
+  L.forEach(x => { const u = x.uf || '(sem UF)'; (porUF[u] = porUF[u] || []).push(x); });
+  const cargas = [];
+  Object.keys(porUF).sort((a, b) =>
+    porUF[b].reduce((s, x) => s + x.kg, 0) - porUF[a].reduce((s, x) => s + x.kg, 0)
+  ).forEach(uf => {
+    const ps = porUF[uf].slice().sort((a, b) =>
+      String(a.cidade || '').localeCompare(String(b.cidade || '')) || a.ent.localeCompare(b.ent));
+    let atual = null;
+    ps.forEach(p => {
+      if (!atual || (atual.kg + p.kg) > _CARGA_T * 1000) { atual = { uf: uf, kg: 0, itens: [] }; cargas.push(atual); }
+      atual.kg += p.kg; atual.itens.push(p);
+    });
+  });
+  let cx = document.getElementById('atrMapaFlut');
+  if (!cx) {
+    cx = document.createElement('div'); cx.id = 'atrMapaFlut';
+    cx.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(12,24,38,.55);display:flex;align-items:center;justify-content:center;padding:14px';
+    cx.onclick = e => { if (e.target === cx) atrFecharMapa(); };
+    document.body.appendChild(cx);
+  }
+  const totT = L.reduce((s, x) => s + x.kg, 0);
+  cx.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:600px;width:100%;max-height:92vh;overflow:auto;padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.3)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<b style="font-size:15px">🚚 Sugestão de roteiro · ' + cargas.length + ' carga(s)</b>'
+    + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
+    + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) <b>100% reservados</b> · ' + fmtKg(totT) + ' · agrupados por estado, até ' + _CARGA_T + ' t por carga.</p>'
+    + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">A conta é por <b>peso</b> — o relatório não traz o volume (m³). Carga leve e volumosa fecha antes disso. Não substitui a conferência do transporte.</p>'
+    + cargas.map((c, i) => {
+      const cids = {};
+      c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
+      return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
+        + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+        + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
+        + '<span style="font-size:12.5px"><b>' + fmtKg(c.kg) + '</b> <span class="desc">' + Math.round(c.kg / (_CARGA_T * 10)) + '% da carreta</span></span></div>'
+        + '<div class="desc" style="font-size:11px;margin:2px 0 5px">' + Object.keys(cids).sort().map(k => escapeHtml(k)).join(' → ') + '</div>'
+        + c.itens.map(p => '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">'
+          + '<span><b>' + escapeHtml(p.ped) + '</b> <span class="desc">' + escapeHtml(String(p.cli || '').slice(0, 22)) + '</span></span>'
+          + '<span class="desc">' + escapeHtml(String(p.cidade || '')) + ' · ' + fmtKg(p.kg) + '</span></div>').join('')
+        + '</div>';
+    }).join('')
+    + '<span onclick="atrRoteiroCopiar()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:7px 14px">📋 copiar</span>'
+    + '</div>';
+  window._atrCargas = cargas;
+}
+async function atrRoteiroCopiar() {
+  const cargas = window._atrCargas || [];
+  let t = 'SUGESTAO DE ROTEIRO · ' + new Date().toLocaleDateString('pt-BR') + '\n';
+  t += '(pedidos 100% reservados, agrupados por estado, ate ' + _CARGA_T + ' t)\n';
+  cargas.forEach((c, i) => {
+    t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + (c.kg / 1000).toFixed(1) + ' t\n';
+    c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
+  });
+  try { await navigator.clipboard.writeText(t); toast('Roteiro copiado.'); }
+  catch (_) { try { prompt('Copie o roteiro:', t); } catch (__) { } }
 }
 function atrFecharMapa() { const c = document.getElementById('atrMapaFlut'); if (c) c.remove(); }
 async function atrJustificar(ped, tipo) {
