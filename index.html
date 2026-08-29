@@ -3701,7 +3701,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.299.0';
+const APP_VER = '4.300.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22558,7 +22558,32 @@ const _VEICULOS = {
 };
 let _veic = 'sider';
 function atrVeiculo(v) { _veic = v; atrRoteiro(); }
-function atrRoteiro() {
+/* distancia em linha reta entre duas cidades, pelas coordenadas do IBGE.
+   Nao e distancia de estrada — serve para agrupar, nao para calcular frete. */
+let _geoCoord = null;
+function _coordDe(p) {
+  if (!_geoCoord || !p || !p.cidade) return null;
+  return _geoCoord[(p.uf || '') + '|' + _geoNorm(p.cidade)] || null;
+}
+function _hav(a, b) {
+  const R = 6371, r = Math.PI / 180;
+  const dLa = (b.lat - a.lat) * r, dLo = (b.lon - a.lon) * r;
+  const h = Math.pow(Math.sin(dLa / 2), 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.pow(Math.sin(dLo / 2), 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function _km(a, b) { const ca = _coordDe(a), cb = _coordDe(b); return (ca && cb) ? _hav(ca, cb) : 9999; }
+/* a fabrica fica em Sao Jose do Rio Pardo/SP */
+const _FAB = { lat: -21.5947, lon: -46.8886 };
+function _kmFab(p) { const c = _coordDe(p); return c ? _hav(_FAB, c) : 0; }
+async function _carregaCoord(ufs) {
+  if (_geoCoord) return;
+  _geoCoord = {};
+  try {
+    const { data } = await sb.from('geo_municipios').select('uf,nome_norm,lat,lon').in('uf', ufs).limit(6000);
+    (data || []).forEach(m => { _geoCoord[m.uf + '|' + m.nome_norm] = { lat: +m.lat, lon: +m.lon }; });
+  } catch (_) { }
+}
+async function atrRoteiro() {
   /* 29/08/2026: a capacidade agora vem do CADASTRO de frota (Comercial >
      Cubagem). Os valores fixos abaixo continuam so como rede: se ninguem
      cadastrou nada ainda, o roteiro nao pode parar de funcionar. */
@@ -22579,12 +22604,33 @@ function atrRoteiro() {
   if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
   const porUF = {};
   L.forEach(x => { const u = x.uf || '(sem UF)'; (porUF[u] = porUF[u] || []).push(x); });
+  await _carregaCoord(Object.keys(porUF).filter(function (u) { return u !== '(sem UF)'; }));
   const cargas = [];
   Object.keys(porUF).sort((a, b) =>
     porUF[b].reduce((s, x) => s + x.kg, 0) - porUF[a].reduce((s, x) => s + x.kg, 0)
   ).forEach(uf => {
-    const ps = porUF[uf].slice().sort((a, b) =>
-      String(a.cidade || '').localeCompare(String(b.cidade || '')) || a.ent.localeCompare(b.ent));
+    /* ===== 29/08/2026 — O ERRO QUE O JOAO PEGOU =====
+       "Bebedouro nao tem nada a ver com Campos do Jordao, como voce fez esse
+       itinerario?" — eu ordenava as cidades por ORDEM ALFABETICA dentro do
+       estado e chamava isso de roteiro. As duas sao SP e cairam na mesma
+       carga; sao 358 km, em direcoes opostas.
+       Agora agrupa por PROXIMIDADE, com as coordenadas dos municipios (a
+       geo_municipios tem os 5.571 com lat/lon). O metodo: comeca pela cidade
+       mais longe da fabrica e vai puxando sempre a mais proxima da ultima —
+       a carga fecha por regiao, nao por letra.
+       Continua NAO sendo roteirizacao: e distancia em linha reta, nao de
+       estrada. Serve para agrupar; a ordem de entrega e do motorista. */
+    const rest = porUF[uf].slice();
+    const ps = [];
+    if (rest.length) {
+      let ref = rest.reduce(function (mx, x) { return _kmFab(x) > _kmFab(mx) ? x : mx; }, rest[0]);
+      while (rest.length) {
+        var i = 0, melhor = Infinity;
+        for (var k = 0; k < rest.length; k++) { var d = _km(rest[k], ref); if (d < melhor) { melhor = d; i = k; } }
+        var p2 = rest.splice(i, 1)[0];
+        ps.push(p2); ref = p2;
+      }
+    }
     let atual = null;
     ps.forEach(p => {
       /* 29/08/2026 (Joao): "a tonelagem nao e assim — 20 cxs pesam ~120 kg".
@@ -22596,6 +22642,13 @@ function atrRoteiro() {
       const estouraKg = atual && V.t && (atual.kg + p.kg) > V.t * 1000;
       if (!atual || estouraPal || estouraKg) { atual = { uf: uf, kg: 0, pal: 0, itens: [] }; cargas.push(atual); }
       atual.kg += p.kg; atual.pal += (p.pal || 0); atual.itens.push(p);
+      /* maior distancia entre duas cidades da carga: expoe carga esticada */
+      atual.span = 0;
+      for (var q = 0; q < atual.itens.length; q++)
+        for (var w = q + 1; w < atual.itens.length; w++) {
+          var dd = _km(atual.itens[q], atual.itens[w]);
+          if (dd < 9999 && dd > atual.span) atual.span = dd;
+        }
     });
   });
   let cx = document.getElementById('atrMapaFlut');
@@ -22628,7 +22681,9 @@ function atrRoteiro() {
         + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
         + '<span style="font-size:12.5px"><b>' + c.pal + '</b> <span class="desc">de ' + V.pal + ' paletes · ' + fmtKg(c.kg) + '</span></span></div>'
         + '<div style="height:6px;background:var(--leve-2);border-radius:4px;overflow:hidden;margin:3px 0 5px"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / V.pal * 100)) + '%;background:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
-        + '<div class="desc" style="font-size:11px;margin:2px 0 5px">' + Object.keys(cids).sort().map(k => escapeHtml(k)).join(' → ') + '</div>'
+        + '<div class="desc" style="font-size:11px;margin:2px 0 5px">'
+          + c.itens.map(function (p) { return escapeHtml(String(p.cidade || '?')); }).filter(function (v, i, ar) { return ar.indexOf(v) === i; }).join(' \u2192 ')
+          + (c.span > 1 ? ' <span style="opacity:.75">(\u2248' + Math.round(c.span) + ' km de ponta a ponta)</span>' : '') + '</div>'
         + c.itens.map(p => '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">'
           + '<span><b>' + escapeHtml(p.ped) + '</b> <span class="desc">' + escapeHtml(String(p.cli || '').slice(0, 22)) + '</span></span>'
           + '<span class="desc">' + escapeHtml(String(p.cidade || '')) + ' · ' + fmtKg(p.kg) + '</span></div>').join('')
