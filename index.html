@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.289.0';
+const APP_VER = '4.290.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22274,7 +22274,7 @@ function ppRender(alvo, dados) {
    a cada foto da carteira, e amarrar ao dia obrigaria a redigitar toda manhã.
    Quem já tem motivo aparece com o balãozinho preenchido — assim a reunião
    começa pelo que ainda não foi explicado. */
-let _atrTipo = '', _atrJust = {}, _atrSetor = '';
+let _atrTipo = '', _atrJust = {}, _atrSetor = '', _atrLista = [];
 function atrFiltraSetor(s) { _atrSetor = (_atrSetor === s ? '' : s); const t = _atrTipo; _atrTipo = ''; atrDetalhe(t); }
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
@@ -22354,6 +22354,7 @@ async function atrDetalhe(tipo) {
     L.forEach(x => { const k = x.setor || '(sem OP na fila)'; porSetor[k] = (porSetor[k] || 0) + 1; });
     if (alvo) L = L.filter(x => (x.setor || '(sem OP na fila)') === alvo);
     L.sort((a, b) => a.ent.localeCompare(b.ent));
+    _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
     const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[tipo];
     const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A' }[tipo];
     cx.innerHTML = '<div style="margin-top:10px;border-top:2px solid ' + cor + ';padding-top:9px">'
@@ -22410,20 +22411,58 @@ async function atrDetalhe(tipo) {
 /* 29/08/2026: leva para o mapa da aba Comercial ja com o estado selecionado.
    Reaproveita mapaSel(), que e a funcao que a propria aba usa ao tocar numa
    UF — assim o comportamento e identico ao de quem chega por la. */
-function atrVerNoMapa(uf) {
+/* ===== MAPA NUMA JANELA, SEM SAIR DO PAINEL — 29/08/2026 =====
+   Joao: "nao quero que abra a aba comercial, quero o mapa num card flutuante
+   no proprio painel". Trocar de aba perdia o contexto: quem esta olhando a
+   lista de atrasados quer ver ONDE fica aquele estado e voltar para a lista,
+   nao migrar para outra tela e ter que refazer o caminho.
+   O desenho reusa _mapaUFSvg(), o mesmo do mapa comercial — o que muda e o
+   que se pinta: aqui sao os PEDIDOS ATRASADOS daquele estado, nao a carteira
+   inteira. Cada bolha e uma cidade, com area pelo peso parado. */
+async function atrVerNoMapa(uf) {
   if (!uf) return;
+  let cx = document.getElementById('atrMapaFlut');
+  if (!cx) {
+    cx = document.createElement('div');
+    cx.id = 'atrMapaFlut';
+    cx.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(12,24,38,.55);display:flex;align-items:center;justify-content:center;padding:14px';
+    cx.onclick = e => { if (e.target === cx) atrFecharMapa(); };
+    document.body.appendChild(cx);
+  }
+  cx.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.3)">'
+    + '<p class="desc">Carregando o mapa de ' + escapeHtml(uf) + '…</p></div>';
   try {
-    trocarAba('comercial');
-    setTimeout(() => {
-      try {
-        if (typeof _mapaSel !== 'undefined' && _mapaSel === uf) return;   // ja esta nela
-        if (typeof mapaSel === 'function') mapaSel(uf);
-        const el = document.querySelector('#abaComl .card, #abaComercial .card');
-        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      } catch (_) { }
-    }, 500);
-  } catch (e) { toast('Nao consegui abrir o mapa: ' + ((e && e.message) || e)); }
+    const cids = await _geoCarrega(uf);
+    /* usa o que ja esta na tela: os pedidos do recorte aberto, filtrados por UF */
+    const L = (_atrLista || []).filter(x => x.uf === uf);
+    const lista = L.map(x => ({ cid: x.cidade, kg: (_atrTipo === 'producao' ? x.kgP : x.kg) || 0 }));
+    const totKg = lista.reduce((a, x) => a + x.kg, 0);
+    const porCid = {};
+    L.forEach(x => {
+      const k = x.cidade || '(sem cidade)';
+      const o = porCid[k] = porCid[k] || { ped: 0, kg: 0 };
+      o.ped++; o.kg += (_atrTipo === 'producao' ? x.kgP : x.kg) || 0;
+    });
+    const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[_atrTipo] || 'Atrasados';
+    cx.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.3)">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">'
+      + '<b style="font-size:15px">\U0001F4CD ' + escapeHtml(uf) + ' \u00b7 ' + L.length + ' pedido(s)</b>'
+      + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2);padding:0 4px">\u2715</span></div>'
+      + '<p class="desc" style="font-size:11.5px;margin:0 0 8px">' + escapeHtml(rot) + ' \u00b7 ' + fmtKg(totKg) + ' parado neste estado. A bolha cresce com o peso.</p>'
+      + _mapaUFSvg(uf, { lista: lista }, cids)
+      + '<div style="margin-top:10px">'
+      + Object.keys(porCid).sort((a, b) => porCid[b].kg - porCid[a].kg).map(k =>
+        '<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--linha);font-size:12.5px">'
+        + '<span>' + escapeHtml(k) + '</span>'
+        + '<span class="desc">' + porCid[k].ped + ' ped \u00b7 <b>' + fmtKg(porCid[k].kg) + '</b></span></div>').join('')
+      + '</div></div>';
+  } catch (e) {
+    cx.innerHTML = '<div style="background:#fff;border-radius:16px;padding:16px;max-width:420px">'
+      + '<p class="desc">Não consegui desenhar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p>'
+      + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-weight:800;color:var(--navy)">fechar</span></div>';
+  }
 }
+function atrFecharMapa() { const c = document.getElementById('atrMapaFlut'); if (c) c.remove(); }
 async function atrJustificar(ped, tipo) {
   const j = _atrJust[ped];
   let m = null;
