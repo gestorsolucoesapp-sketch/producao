@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.284.0';
+const APP_VER = '4.285.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22274,7 +22274,8 @@ function ppRender(alvo, dados) {
    a cada foto da carteira, e amarrar ao dia obrigaria a redigitar toda manhã.
    Quem já tem motivo aparece com o balãozinho preenchido — assim a reunião
    começa pelo que ainda não foi explicado. */
-let _atrTipo = '', _atrJust = {};
+let _atrTipo = '', _atrJust = {}, _atrSetor = '';
+function atrFiltraSetor(s) { _atrSetor = (_atrSetor === s ? '' : s); const t = _atrTipo; _atrTipo = ''; atrDetalhe(t); }
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
   if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
@@ -22284,11 +22285,21 @@ async function atrDetalhe(tipo) {
     const dia = (await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
     const d = dia && dia[0] ? dia[0].dia_foto : null;
     if (!d) { cx.innerHTML = '<p class="desc">Sem foto da carteira.</p>'; return; }
-    const [rp, re, rj] = await Promise.all([
+    /* 29/08/2026 (Joao: "mostre em qual setor esta parado"). O pedido quase
+       nunca casa com a fila pelo NUMERO: so 1 dos 93 bateu. O que casa e o
+       ITEM — a OP na fila carrega o item, e o item diz o setor.
+       Quem nao aparece em fila nenhuma e o caso mais grave: pedido atrasado
+       que nao esta programado em lugar algum. */
+    const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
+    const df = dfila && dfila[0] ? dfila[0].dia_foto : null;
+    const [rp, re, rj, rf] = await Promise.all([
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
-      _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido'))
+      _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
+      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome').eq('dia_foto', df).order('id')) : Promise.resolve([])
     ]);
+    const setorDoItem = {};
+    (rf || []).forEach(f => { if (f.item_cod && !setorDoItem[f.item_cod]) setorDoItem[f.item_cod] = f.setor; });
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
     _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
     const lim7 = new Date(d + 'T12:00:00'); lim7.setDate(lim7.getDate() + 7);
@@ -22298,7 +22309,9 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [] });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {} });
+      const si = setorDoItem[x.item_cod];
+      if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       if (e < o.ent) o.ent = e;
       o.kg += kg;
       if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
@@ -22310,6 +22323,17 @@ async function atrDetalhe(tipo) {
     if (tipo === 'entrega') L = L.filter(x => x.atr);
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
     else L = L.filter(x => x.prod);
+    L.forEach(x => {
+      const ks = Object.keys(x.setores);
+      x.setor = ks.length ? ks.sort((p, q) => x.setores[q] - x.setores[p])[0] : '';
+      x.multi = ks.length > 1;
+    });
+    /* o filtro de setor do app manda; as pilulas abaixo refinam dentro dele */
+    const setorApp = ($('fSetor') && $('fSetor').value) || '';
+    const alvo = _atrSetor || setorApp;
+    const porSetor = {};
+    L.forEach(x => { const k = x.setor || '(sem OP na fila)'; porSetor[k] = (porSetor[k] || 0) + 1; });
+    if (alvo) L = L.filter(x => (x.setor || '(sem OP na fila)') === alvo);
     L.sort((a, b) => a.ent.localeCompare(b.ent));
     const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[tipo];
     const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A' }[tipo];
@@ -22317,7 +22341,14 @@ async function atrDetalhe(tipo) {
       + '<div style="display:flex;justify-content:space-between;align-items:center">'
       + '<b style="font-size:13px;color:' + cor + '">' + rot + ' · ' + L.length + ' pedido(s)</b>'
       + '<span onclick="atrDetalhe(\'' + tipo + '\')" style="cursor:pointer;font-size:11.5px;color:var(--fraco-2)">✕ fechar</span></div>'
-      + '<p class="desc" style="font-size:11px;margin:3px 0 7px">Toque em 💬 para justificar. A justificativa fica no pedido e vale para todos.</p>'
+      + '<p class="desc" style="font-size:11px;margin:3px 0 5px">Toque em 💬 para justificar. A justificativa fica no pedido e vale para todos.</p>'
+      + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px">'
+      + Object.keys(porSetor).sort((p, q) => porSetor[q] - porSetor[p]).map(s =>
+        '<span onclick="atrFiltraSetor(' + JSON.stringify(s).replace(/"/g, '&quot;') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;'
+        + (alvo === s ? 'background:' + cor + ';color:#fff' : (s === '(sem OP na fila)' ? 'background:#FBE9E9;color:#9B2C2C;border:1px solid #E0B4B4' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)'))
+        + '">' + escapeHtml(s) + ' <b>' + porSetor[s] + '</b></span>').join('')
+      + (alvo ? '<span onclick="atrFiltraSetor(\'\')" style="cursor:pointer;font-size:11px;padding:4px 8px;color:var(--fraco-2)">✕ todos</span>' : '')
+      + '</div>'
       + L.slice(0, 60).map(x => {
         const j = _atrJust[x.ped];
         const dias = Math.round((new Date(d) - new Date(x.ent)) / 86400000);
@@ -22326,7 +22357,9 @@ async function atrDetalhe(tipo) {
           + '<span><b style="font-size:13px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span></span>'
           + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
-          + '<span class="desc" style="font-size:10.5px">entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
+          + '<span class="desc" style="font-size:10.5px">'
+          + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' · ' : '<b style="color:#9B2C2C">sem OP na fila</b> · ')
+          + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
           + (j ? '<div style="margin-top:4px;background:var(--leve-2);border-left:3px solid ' + cor + ';border-radius:0 8px 8px 0;padding:6px 9px;font-size:12px">'
               + escapeHtml(j.motivo) + '<div class="desc" style="font-size:10px;margin-top:2px">' + escapeHtml(j.quem_nome || '') + ' · ' + fmtDataHora(j.atualizado) + '</div></div>' : '')
