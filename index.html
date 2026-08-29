@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.309.0';
+const APP_VER = '4.310.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22828,12 +22828,39 @@ function _cargaMapa(c) {
       + '<title>' + escapeHtml(String(p.rot)) + ' \u00b7 ' + p.ped + ' ped \u00b7 ' + fmtKg(p.kg) + '</title></circle>'
       + '<text x="' + x.toFixed(1) + '" y="' + (y + 3.4).toFixed(1) + '" font-size="10" font-weight="800" fill="#fff" text-anchor="middle" style="pointer-events:none">' + (i + 1) + '</text>';
   });
+  /* a carga volta para a fabrica: para comparar cargas, o km que interessa e o
+     do circuito fechado, nao so o da ida */
+  const kmVolta = km + _hav(pts[pts.length - 1], _FAB);
   return '<div style="margin:6px 0 5px">'
     + '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="display:block;background:#FBFDFF;border:1px solid var(--linha-2s);border-radius:9px">'
     + fundo + svg + '</svg>'
     + '<div class="desc" style="font-size:10px;margin-top:3px">'
-    + '<b style="color:#1F7A46">F</b> fábrica \u2192 ' + pts.length + ' parada(s) \u00b7 \u2248<b>' + Math.round(km) + ' km</b> em linha reta '
-    + '(estrada dá mais). A ordem é sugestão de proximidade, não roteirização.</div></div>';
+    + '<b style="color:#1F7A46">F</b> sai de <b>São José do Rio Pardo</b> \u00b7 ' + pts.length + ' parada(s) \u00b7 \u2248<b>' + Math.round(km) + ' km</b> até a última, '
+    + '\u2248<b>' + Math.round(kmVolta) + ' km</b> com o retorno — em linha reta, estrada dá mais. '
+    + 'A ordem é sugestão de proximidade, não roteirização.</div></div>';
+}
+/* ordem de entrega saindo da fabrica: pega sempre a cidade mais proxima da
+   ultima parada, comecando pela mais proxima de Sao Jose do Rio Pardo. Pedidos
+   da MESMA cidade andam juntos — descarregar duas vezes no mesmo lugar seria
+   invencao de rota, nao roteirizacao. */
+function _ordemDaFabrica(itens) {
+  const cid = {};
+  itens.forEach(p => { const k = (p.uf || '') + '|' + _geoNorm(p.cidade || ''); (cid[k] = cid[k] || []).push(p); });
+  const restos = Object.keys(cid), out = [];
+  let ref = null;
+  const dist = (k) => {
+    const p = cid[k][0];
+    if (!ref) { const c = _coordDe(p); return c ? _hav(_FAB, c) : 9999; }
+    return _km(ref, p);
+  };
+  while (restos.length) {
+    let i = 0, melhor = Infinity;
+    for (let j = 0; j < restos.length; j++) { const d = dist(restos[j]); if (d < melhor) { melhor = d; i = j; } }
+    const k = restos.splice(i, 1)[0];
+    cid[k].forEach(p => out.push(p));
+    ref = cid[k][0];
+  }
+  return out;
 }
 async function atrRoteiro() {
   /* 29/08/2026: a capacidade agora vem do CADASTRO de frota (Comercial >
@@ -22883,6 +22910,14 @@ async function atrRoteiro() {
         ps.push(p2); ref = p2;
       }
     }
+    /* 29/08/2026 (Joao: "AS CARGAS SAEM 100% DE SAO JOSE DO RIO PARDO-SP").
+       O encadeamento acima serve para AGRUPAR (comeca pela cidade mais longe e
+       puxa as vizinhas, o que forma o bolo por regiao). Mas a ordem que ele
+       deixa e de fora para dentro: no mapa o caminhao saia da fabrica direto
+       para o ponto mais distante e voltava. Com a origem fixa, a ordem de
+       entrega e vizinho-mais-proximo A PARTIR DA FABRICA — e e ela que numera
+       o mapa. Reordeno depois que a carga fecha, para nao mexer em quem viaja
+       com quem. */
     let atual = null;
     ps.forEach(p => {
       /* 29/08/2026 (Joao): "a tonelagem nao e assim — 20 cxs pesam ~120 kg".
@@ -22894,6 +22929,7 @@ async function atrRoteiro() {
       const estouraKg = atual && V.t && (atual.kg + p.kg) > V.t * 1000;
       if (!atual || estouraPal || estouraKg) { atual = { uf: uf, kg: 0, pal: 0, itens: [] }; cargas.push(atual); }
       atual.kg += p.kg; atual.pal += (p.pal || 0); atual.itens.push(p);
+      atual.itens = _ordemDaFabrica(atual.itens);
       /* maior distancia entre duas cidades da carga: expoe carga esticada */
       atual.span = 0;
       for (var q = 0; q < atual.itens.length; q++)
@@ -22948,6 +22984,7 @@ async function atrRoteiro() {
         + '<div style="flex:1;height:8px;background:var(--leve-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / V.pal * 100)) + '%;background:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
         + '<b style="font-size:11.5px;color:' + (c.pal >= V.pal * .9 ? '#1F7A46' : c.pal >= V.pal * .6 ? '#9E5514' : '#9B2C2C') + '">' + Math.round(c.pal / V.pal * 100) + '%</b></div>'
         + '<div class="desc" style="font-size:11px;margin:2px 0 5px">'
+          + '<b>S\u00c3O JOS\u00c9 DO RIO PARDO</b> \u2192 '
           + c.itens.map(function (p) { return escapeHtml(String(p.cidade || '?')); }).filter(function (v, i, ar) { return ar.indexOf(v) === i; }).join(' \u2192 ')
           + (c.span > 1 ? ' <span style="opacity:.75">(\u2248' + Math.round(c.span) + ' km de ponta a ponta)</span>' : '') + '</div>'
         + _cargaMapa(c)
