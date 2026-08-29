@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.290.0';
+const APP_VER = '4.291.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22325,7 +22325,7 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [] });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false });
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       const fo = opDoItem[x.item_cod];
@@ -22334,6 +22334,12 @@ async function atrDetalhe(tipo) {
       o.kg += kg;
       if (o.itens.length < 4) o.itens.push((x.item_desc || x.item_cod || '').slice(0, 34));
       if (e < d) o.atr = true; else if (e < s7) o.v7 = true;
+      /* 29/08/2026 (Joao: "os atrasados na entrega ja estao prontos e nao vao
+         ter OP mesmo"). Ele tem razao e o rotulo vermelho estava mentindo:
+         dos 93 atrasados, 91 tem material pronto em estoque. Nao ha OP porque
+         nao ha o que produzir — o pedido esta parado DEPOIS da fabrica.
+         Agora so e alerta quem falta produzir de verdade. */
+      if ((est[x.item_cod] || 0) < kg) o.faltaProd = true;
       const dp = new Date(e + 'T12:00:00'); dp.setDate(dp.getDate() - 7);
       if (dp.toISOString().slice(0, 10) < d && (est[x.item_cod] || 0) < kg) { o.prod = true; o.kgP += kg; }
     });
@@ -22351,8 +22357,9 @@ async function atrDetalhe(tipo) {
     const setorApp = ($('fSetor') && $('fSetor').value) || '';
     const alvo = _atrSetor || setorApp;
     const porSetor = {};
-    L.forEach(x => { const k = x.setor || '(sem OP na fila)'; porSetor[k] = (porSetor[k] || 0) + 1; });
-    if (alvo) L = L.filter(x => (x.setor || '(sem OP na fila)') === alvo);
+    const _semOp = x => x.faltaProd ? '(sem OP \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
+    L.forEach(x => { const k = x.setor || _semOp(x); porSetor[k] = (porSetor[k] || 0) + 1; });
+    if (alvo) L = L.filter(x => (x.setor || _semOp(x)) === alvo);
     L.sort((a, b) => a.ent.localeCompare(b.ent));
     _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
     const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada' }[tipo];
@@ -22365,7 +22372,7 @@ async function atrDetalhe(tipo) {
       + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px">'
       + Object.keys(porSetor).sort((p, q) => porSetor[q] - porSetor[p]).map(s =>
         '<span onclick="atrFiltraSetor(' + JSON.stringify(s).replace(/"/g, '&quot;') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;'
-        + (alvo === s ? 'background:' + cor + ';color:#fff' : (s === '(sem OP na fila)' ? 'background:#FBE9E9;color:#9B2C2C;border:1px solid #E0B4B4' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)'))
+        + (alvo === s ? 'background:' + cor + ';color:#fff' : (s.indexOf('falta produzir') >= 0 ? 'background:#FBE9E9;color:#9B2C2C;border:1px solid #E0B4B4' : s.indexOf('pronto') === 1 ? 'background:#E8F5EC;color:#1F7A46;border:1px solid #A9D6BB' : 'background:var(--leve-2);color:var(--fraco);border:1px solid var(--linha-2s)'))
         + '" title="' + porSetor[s] + ' pedido(s) em ' + escapeHtml(s) + '">' + escapeHtml(s) + ' <b>' + porSetor[s] + '</b> ped</span>').join('')
       + (alvo ? '<span onclick="atrFiltraSetor(\'\')" style="cursor:pointer;font-size:11px;padding:4px 8px;color:var(--fraco-2)">✕ todos</span>' : '')
       + '</div>'
@@ -22381,7 +22388,9 @@ async function atrDetalhe(tipo) {
           + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
-          + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' · ' : '<b style="color:#9B2C2C">sem OP na fila</b> · ')
+          + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' \u00b7 '
+            : (x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
+                           : '<b style="color:#1F7A46">\u2713 pronto \u00b7 aguardando sa\u00edda</b> \u00b7 '))
           + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
           /* 29/08/2026 (Joao: "mostre OP e maquina programada"). Sem isso a
