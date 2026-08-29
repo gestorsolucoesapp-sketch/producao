@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.287.0';
+const APP_VER = '4.288.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22292,11 +22292,16 @@ async function atrDetalhe(tipo) {
        que nao esta programado em lugar algum. */
     const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
     const df = dfila && dfila[0] ? dfila[0].dia_foto : null;
-    const [rp, re, rj, rf] = await Promise.all([
+    const [rp, re, rj, rf, rg] = await Promise.all([
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
-      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio').eq('dia_foto', df).order('id')) : Promise.resolve([])
+      df ? _leTudoFlx(() => sb.from('fila_producao').select('item_cod,setor,recurso_cod,recurso_nome,op,ordem,peso,inicio').eq('dia_foto', df).order('id')) : Promise.resolve([]),
+      /* 29/08/2026 (Joao: "tem como por a regiao, estado e cidade e abrir no
+         mapa da aba comercial?"). A pedidos_regiao casa pelo NUMERO do pedido,
+         entao bate 93 de 93 — bem melhor que casar por nome de cliente, que
+         vem sujo ("... Transportador: 0 - NAO INFORMADO Cond. Pagto.: 30 DD"). */
+      _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
     ]);
     /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
        maquina ela esta programada. Fica a de menor posicao na fila — e a que
@@ -22307,6 +22312,8 @@ async function atrDetalhe(tipo) {
       const at = opDoItem[f.item_cod];
       if (!at || (+f.ordem || 999) < (+at.ordem || 999)) opDoItem[f.item_cod] = f;
     });
+    const geo = {};
+    (rg || []).forEach(g => { if (g.pedido && !geo[g.pedido]) geo[g.pedido] = g; });
     const setorDoItem = {};
     Object.keys(opDoItem).forEach(k => { setorDoItem[k] = opDoItem[k].setor; });
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
@@ -22334,6 +22341,7 @@ async function atrDetalhe(tipo) {
     if (tipo === 'entrega') L = L.filter(x => x.atr);
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
     else L = L.filter(x => x.prod);
+    L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
     L.forEach(x => {
       const ks = Object.keys(x.setores);
       x.setor = ks.length ? ks.sort((p, q) => x.setores[q] - x.setores[p])[0] : '';
@@ -22365,7 +22373,10 @@ async function atrDetalhe(tipo) {
         const dias = Math.round((new Date(d) - new Date(x.ent)) / 86400000);
         return '<div style="padding:7px 0;border-top:1px solid var(--linha)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
-          + '<span><b style="font-size:13px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span></span>'
+          + '<span><b style="font-size:13px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span>'
+          + (x.uf ? ' <span onclick="atrVerNoMapa(' + JSON.stringify(x.uf) + ')" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
+            + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
+          + '</span>'
           + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
@@ -22395,6 +22406,23 @@ async function atrDetalhe(tipo) {
   } catch (e) {
     cx.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
+}
+/* 29/08/2026: leva para o mapa da aba Comercial ja com o estado selecionado.
+   Reaproveita mapaSel(), que e a funcao que a propria aba usa ao tocar numa
+   UF — assim o comportamento e identico ao de quem chega por la. */
+function atrVerNoMapa(uf) {
+  if (!uf) return;
+  try {
+    trocarAba('comercial');
+    setTimeout(() => {
+      try {
+        if (typeof _mapaSel !== 'undefined' && _mapaSel === uf) return;   // ja esta nela
+        if (typeof mapaSel === 'function') mapaSel(uf);
+        const el = document.querySelector('#abaComl .card, #abaComercial .card');
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } catch (_) { }
+    }, 500);
+  } catch (e) { toast('Nao consegui abrir o mapa: ' + ((e && e.message) || e)); }
 }
 async function atrJustificar(ped, tipo) {
   const j = _atrJust[ped];
