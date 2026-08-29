@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.307.0';
+const APP_VER = '4.308.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9286,8 +9286,9 @@ async function entrevContexto(mat) {
     const maqs = [...new Set(ctx.aloc.map(x => String(x.maquina_codigo || '')).filter(Boolean))];
     if (maqs.length) {
       const de = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-      const pr = await sb.from('producao_resumo').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de);
-      const pe = await sb.from('perdas').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de);
+      /* 5.147 e 6.837 linhas em 30 dias — as duas liam 1.000 */
+      const pr = { data: await _leTudoFlx(() => sb.from('producao_resumo').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de).order('id')) };
+      const pe = { data: await _leTudoFlx(() => sb.from('perdas').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de).order('id')) };
       const ag = {};
       (pr.data || []).forEach(r => { const kk = r.recurso_cod; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).kg += (+r.peso || 0); });
       (pe.data || []).forEach(r => { const kk = r.recurso_cod; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).pe += (+r.peso || 0); });
@@ -18903,13 +18904,15 @@ async function detBocaItens(cod, boca) {
   abreDet('🔩 ' + cod + ' · boca ' + boca, '<p class="idet-desc">buscando itens…</p>');
   let L = [];
   try {
-    let q = sb.from('v_boca_item_dia').select('item_cod,item_desc,op,peso,quantidade,dia,turno')
-      .eq('recurso_cod', cod).eq('boca', String(boca));
-    if (de) q = q.gte('dia', de);
-    if (ate) q = q.lte('dia', ate);
-    const { data, error } = await q.limit(5000);
-    if (error) throw error;
-    L = data || [];
+    /* a consulta e MONTADA DE NOVO a cada pagina: o builder do supabase-js e de
+       uso unico, entao reaproveitar o mesmo objeto entre as paginas nao funciona. */
+    L = await _leTudoFlx(() => {
+      let q = sb.from('v_boca_item_dia').select('item_cod,item_desc,op,peso,quantidade,dia,turno')
+        .eq('recurso_cod', cod).eq('boca', String(boca));
+      if (de) q = q.gte('dia', de);
+      if (ate) q = q.lte('dia', ate);
+      return q.order('dia').order('op');
+    });
   } catch (e) {
     abreDet('🔩 ' + cod + ' · boca ' + boca, `<p class="desc">Não consegui buscar: ${escapeHtml(e.message || String(e))}</p>`); return;
   }
@@ -21988,7 +21991,10 @@ async function rpCarregar() {
   try {
     const de = addDiasISO(hojeISO(), -60);
     const [t, g] = await Promise.all([
-      sb.from('perdas').select('tipo_perda_desc,peso,recurso_cod').gte('dia', de),
+      /* 13.073 perdas em 60 dias: sem paginar vinham 1.000 e a tabela de tipos
+         mostrava menos de 8% do refugo — e e por ela que se escolhe o setor
+         culpado de cada tipo. */
+      _leTudoFlx(() => sb.from('perdas').select('tipo_perda_desc,peso,recurso_cod').gte('dia', de).order('id')).then(d => ({ data: d })),
       sb.from('tipo_perda_regra').select('*').order('prioridade', { ascending: true })
     ]);
     const agg = {};
@@ -24193,10 +24199,9 @@ async function carregarPerfMaq() {
     if (!de || !ate) return;
     const k = de + '|' + ate;
     if (_perfMaqExtraKey === k && _perfMaqExtra) return;
-    const { data, error } = await sb.from('producao_resumo')
-      .select('dia,recurso_cod,peso,quantidade,unidade').gte('dia', de).lte('dia', ate).limit(20000);
-    if (error) throw error;
-    _perfMaqExtra = data || []; _perfMaqExtraKey = k;
+    _perfMaqExtra = await _leTudoFlx(() => sb.from('producao_resumo')
+      .select('dia,recurso_cod,peso,quantidade,unidade').gte('dia', de).lte('dia', ate).order('id'));
+    _perfMaqExtraKey = k;
     _perfMaqCacheKey = null;      // invalida o cache do calculo
   } catch (e) { _perfMaqExtra = null; console.warn('perfMaq:', e && e.message); }
 }
@@ -26366,11 +26371,9 @@ async function detProdMaqTurno(cod, bloco) {
   abreDet(cod + ' · Apontamentos' + (bloco ? ' · ' + bloco : ''), '<p class="idet-desc"><span class="spin"></span> buscando no relatório 622…</p>');
   let rows = [];
   try {
-    const { data, error } = await sb.from('producao')
+    rows = await _leTudoFlx(() => sb.from('producao')
       .select('dia,data_inicio,turno,op,item_cod,item_desc,quantidade,peso,unidade')
-      .eq('recurso_cod', String(cod)).gte('dia', de).lte('dia', ate1).limit(3000);
-    if (error) throw error;
-    rows = data || [];
+      .eq('recurso_cod', String(cod)).gte('dia', de).lte('dia', ate1).order('id'));
   } catch (e) {
     abreDet(cod + ' · Apontamentos', `<p class="vazio-painel">Não consegui buscar: ${escapeHtml((e && e.message) || String(e))}</p>`);
     return;
@@ -30070,11 +30073,15 @@ function progGrupo(g) { _progGrupoSel = g; renderProgramacao(); try { const el =
    dia comecar. Usar o relatório do proprio dia daria numero inflado, porque ela ja
    nasce sem o que a fabrica produziu de manha. */
 let _progReal = null;
+/* 29/08/2026 — VARREDURA DO TETO DE 1.000 LINHAS (Joao: "quero minuciosamente,
+   principalmente Programacao e Comercial e Logistica"). O PostgREST devolve no
+   MAXIMO 1.000 linhas e IGNORA .limit() maior. Cada ponto abaixo foi conferido
+   contando a linha no banco antes de mexer. */
 async function carregarProgReal() {
   try {
-    const { data, error } = await sb.from('v_prog_real_dia').select('*').limit(6000);
-    if (error) throw error;
-    _progReal = data || [];
+    /* 3.150 linhas na view; o .limit(6000) trazia 1.000 e o realizado do dia
+       saia pela metade em 2 de cada 3 maquinas. */
+    _progReal = await _leTudoFlx(() => sb.from('v_prog_real_dia').select('*').order('dia').order('recurso_cod'));
   } catch (e) { _progReal = null; console.warn('progReal:', e && e.message); }
 }
 /* ONDE O ESTOQUE ESTA (19/08/2026 - achado do Joao no pedido 219908).
@@ -30403,9 +30410,15 @@ async function carregarFilaVenc() {
 let _filaDesv = null;
 async function carregarFilaDesvio() {
   try {
-    const { data, error } = await sb.from('v_fila_desvio').select('*').limit(4000);
-    if (error) throw error;
-    _filaDesv = data || [];
+    /* a view tem 22.823 linhas (todos os pares de fotos) e o app so usa a foto
+       MAIS NOVA — que o proprio JS filtrava depois. Lendo tudo, o teto de 1.000
+       devolvia um pedaco arbitrario e a reprogramacao do dia ficava incompleta.
+       Agora o corte e no banco: 1.231 linhas em vez de 22.823. */
+    const { data: uf } = await sb.from('v_fila_desvio').select('foto_nova').order('foto_nova', { ascending: false }).limit(1);
+    const ultFoto = uf && uf[0] && uf[0].foto_nova;
+    _filaDesv = ultFoto
+      ? await _leTudoFlx(() => sb.from('v_fila_desvio').select('*').eq('foto_nova', ultFoto).order('recurso_cod').order('ordem'))
+      : [];
     try { _corrigirEntregasPelaCarteira(_filaDesv); } catch (_) { }
   } catch (e) { _filaDesv = null; console.warn('filaDesvio:', e && e.message); }
 }
@@ -30649,9 +30662,9 @@ async function _progCarregarSetup() {
   const m = {};
   try {
     const d = new Date(); d.setDate(d.getDate() - 60);
-    const { data, error } = await sb.from('paradas').select('recurso_cod,tempo_horas,motivo_desc')
-      .eq('motivo_desc', 'SETUP').gte('dia', d.toISOString().slice(0, 10)).limit(8000);
-    if (error) throw error;
+    /* 1.791 setups em 60 dias: lia 1.000 e a media por maquina saia do pedaco */
+    const data = await _leTudoFlx(() => sb.from('paradas').select('recurso_cod,tempo_horas,motivo_desc')
+      .eq('motivo_desc', 'SETUP').gte('dia', d.toISOString().slice(0, 10)).order('id'));
     const soma = {}, n = {};
     (data || []).forEach(r => {
       const c = String(r.recurso_cod || ''); if (!c) return;
@@ -30708,9 +30721,11 @@ async function _progCarregarCap() {
     const ate = new Date(); ate.setDate(ate.getDate() - 1);
     const de = new Date(ate); de.setDate(de.getDate() - 27);
     const iso = (d) => d.toISOString().slice(0, 10);
-    const { data, error } = await sb.from('producao_resumo').select('recurso_cod,peso,dia')
-      .gte('dia', iso(de)).lte('dia', iso(ate)).limit(20000);
-    if (error) throw error;
+    /* 4.706 linhas em 28 dias: lia 1.000 e a CAPACIDADE de cada setor saia
+       cerca de 4x menor do que a fabrica produz — numero que a Programacao usa
+       para dizer se a carteira cabe na semana. */
+    const data = await _leTudoFlx(() => sb.from('producao_resumo').select('recurso_cod,peso,dia')
+      .gte('dia', iso(de)).lte('dia', iso(ate)).order('id'));
     (data || []).forEach(r => { const st = setorDe(r.recurso_cod); cap[st] = (cap[st] || 0) + (+r.peso || 0); });
     Object.keys(cap).forEach(k => { cap[k] = cap[k] / 4; });     // 28 dias = 4 semanas
   } catch (_) { }
@@ -35603,10 +35618,9 @@ async function _fdMotivos(boxId, maqs, de, ate, desvio) {
   if (!maqs.length) { box.innerHTML = '<p style="margin:0">Sem máquina identificada nessas OPs.</p>'; return; }
   let P = [];
   try {
-    const { data, error } = await sb.from('paradas')
+    const data = await _leTudoFlx(() => sb.from('paradas')
       .select('recurso_cod,recurso_nome,dia,motivo_desc,tempo_horas,inicio,op')
-      .in('recurso_cod', maqs.slice(0, 40)).gte('dia', de).lte('dia', ate).limit(3000);
-    if (error) throw error;
+      .in('recurso_cod', maqs.slice(0, 40)).gte('dia', de).lte('dia', ate).order('id'));
     P = data || [];
   } catch (e) { box.innerHTML = '<p style="margin:0">Não consegui buscar as paradas.</p>'; return; }
   if (!P.length) {
@@ -35703,10 +35717,9 @@ async function _vencCausas(boxId, setor) {
   const vencOp = new Set(V.map(r => String(r.op)));
   let P = [];
   try {
-    const { data, error } = await sb.from('producao')
+    const data = await _leTudoFlx(() => sb.from('producao')
       .select('recurso_cod,dia,op,item_desc,peso,quantidade')
-      .in('recurso_cod', maqs.slice(0, 40)).gte('dia', de).lte('dia', hoje).limit(3000);
-    if (error) throw error;
+      .in('recurso_cod', maqs.slice(0, 40)).gte('dia', de).lte('dia', hoje).order('id'));
     P = data || [];
   } catch (_) { box.innerHTML = '<p style="margin:0">Não consegui buscar a produção das máquinas.</p>'; return; }
 
