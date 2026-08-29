@@ -3692,7 +3692,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.295.0';
+const APP_VER = '4.296.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22533,7 +22533,11 @@ async function atrVerNoMapa(uf) {
    esta escrito no balao, para ninguem fechar frete confiando so nisso.
    E sugestao de AGRUPAMENTO, nao roteirizacao: nao calcula distancia entre
    cidades nem ordem de entrega dentro do estado. */
-const _CARGA_T = 25;
+/* 29/08/2026: a carga fecha por PALETE, nao por peso. Embalagem plastica e leve
+   e volumosa — o caminhao lota de volume muito antes de bater 25 t. Palete PBR
+   120x120, carreta bau: 26 paletes. O peso vira teto secundario, para o caso
+   raro de carga pesada. */
+const _CARGA_T = 25, _PAL_CARRETA = 26;
 function atrRoteiro() {
   const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
   if (!L.length) { toast('Nenhum pedido 100% reservado neste recorte.'); return; }
@@ -22547,8 +22551,10 @@ function atrRoteiro() {
       String(a.cidade || '').localeCompare(String(b.cidade || '')) || a.ent.localeCompare(b.ent));
     let atual = null;
     ps.forEach(p => {
-      if (!atual || (atual.kg + p.kg) > _CARGA_T * 1000) { atual = { uf: uf, kg: 0, itens: [] }; cargas.push(atual); }
-      atual.kg += p.kg; atual.itens.push(p);
+      const estouraPal = atual && (atual.pal + (p.pal || 0)) > _PAL_CARRETA;
+      const estouraKg = atual && (atual.kg + p.kg) > _CARGA_T * 1000;
+      if (!atual || estouraPal || estouraKg) { atual = { uf: uf, kg: 0, pal: 0, itens: [] }; cargas.push(atual); }
+      atual.kg += p.kg; atual.pal += (p.pal || 0); atual.itens.push(p);
     });
   });
   let cx = document.getElementById('atrMapaFlut');
@@ -22559,19 +22565,21 @@ function atrRoteiro() {
     document.body.appendChild(cx);
   }
   const totT = L.reduce((s, x) => s + x.kg, 0);
+  const totP = L.reduce((s, x) => s + (x.pal || 0), 0);
   cx.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:600px;width:100%;max-height:92vh;overflow:auto;padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.3)">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'
     + '<b style="font-size:15px">🚚 Sugestão de roteiro · ' + cargas.length + ' carga(s)</b>'
     + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
-    + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) <b>100% reservados</b> · ' + fmtKg(totT) + ' · agrupados por estado, até ' + _CARGA_T + ' t por carga.</p>'
-    + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">A conta é por <b>peso</b> — o relatório não traz o volume (m³). Carga leve e volumosa fecha antes disso. Não substitui a conferência do transporte.</p>'
+    + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) <b>100% reservados</b> · ' + totP + ' palete(s) · ' + fmtKg(totT) + '</p>'
+    + '<p class="desc" style="font-size:10.5px;margin:0 0 9px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:6px 9px;border-radius:0 7px 7px 0">Palete = <b>20 caixas</b>, arredondado por item. Carreta: <b>' + _PAL_CARRETA + ' paletes PBR</b>. Item em MIL, UN ou PC não entra na conta. Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
       return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
         + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
         + '<b style="font-size:13.5px">Carga ' + (i + 1) + ' · ' + escapeHtml(c.uf) + '</b>'
-        + '<span style="font-size:12.5px"><b>' + fmtKg(c.kg) + '</b> <span class="desc">' + Math.round(c.kg / (_CARGA_T * 10)) + '% da carreta</span></span></div>'
+        + '<span style="font-size:12.5px"><b>' + c.pal + ' pal</b> <span class="desc">de ' + _PAL_CARRETA + ' · ' + fmtKg(c.kg) + '</span></span></div>'
+        + '<div style="height:6px;background:var(--leve-2);border-radius:4px;overflow:hidden;margin:3px 0 5px"><div style="height:100%;width:' + Math.min(100, Math.round(c.pal / _PAL_CARRETA * 100)) + '%;background:' + (c.pal >= _PAL_CARRETA * .9 ? '#1F7A46' : c.pal >= _PAL_CARRETA * .6 ? '#E8862B' : '#C0392B') + '"></div></div>'
         + '<div class="desc" style="font-size:11px;margin:2px 0 5px">' + Object.keys(cids).sort().map(k => escapeHtml(k)).join(' → ') + '</div>'
         + c.itens.map(p => '<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">'
           + '<span><b>' + escapeHtml(p.ped) + '</b> <span class="desc">' + escapeHtml(String(p.cli || '').slice(0, 22)) + '</span></span>'
@@ -22588,7 +22596,7 @@ async function atrRoteiroCopiar() {
   t += '(pedidos 100% reservados, ate ' + _PAL_CARRETA + ' paletes por carga)\n';
   cargas.forEach((c, i) => {
     t += '\nCARGA ' + (i + 1) + ' · ' + c.uf + ' · ' + c.pal + ' paletes · ' + (c.kg / 1000).toFixed(1) + ' t\n';
-    c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + (p.pal || 0) + ' pal  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
+    c.itens.forEach(p => { t += '  ' + p.ped + '  ' + String(p.cidade || '') + '  ' + (p.pal || 0) + ' pal  ' + (p.pal || 0) + ' pal  ' + Math.round(p.kg) + ' kg  ' + String(p.cli || '').slice(0, 24) + '\n'; });
   });
   try { await navigator.clipboard.writeText(t); toast('Roteiro copiado.'); }
   catch (_) { try { prompt('Copie o roteiro:', t); } catch (__) { } }
