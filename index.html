@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.306.0';
+const APP_VER = '4.307.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22712,8 +22712,18 @@ async function _carregaCoord(ufs) {
   if (_geoCoord) return;
   _geoCoord = {};
   try {
-    const { data } = await sb.from('geo_municipios').select('uf,nome_norm,lat,lon').in('uf', ufs).limit(6000);
-    (data || []).forEach(m => { _geoCoord[m.uf + '|' + m.nome_norm] = { lat: +m.lat, lon: +m.lon }; });
+    /* 29/08/2026 — A ARMADILHA DO POSTGREST DE NOVO (3a vez em 4 dias).
+       Isto era .limit(6000) numa tabela de 5.571 municipios: o PostgREST
+       devolve NO MAXIMO 1000 linhas, ignorando o limite maior, e sem ordem
+       garantida. Resultado: os municipios de SP nao vinham no bolo, _coordDe
+       devolvia null para todo mundo, _km virava 9999 e o agrupamento por
+       proximidade caia num encadeamento sem sentido (Campos do Jordao entre
+       Leme e Rio Claro) — e o mapa da carga, que exige coordenada, nao
+       desenhava nada. Agora pagina com _leTudoFlx, ordenando por uf+nome_norm
+       para a paginacao ser estavel. */
+    const dados = await _leTudoFlx(() => sb.from('geo_municipios')
+      .select('uf,nome_norm,lat,lon').in('uf', ufs).order('uf').order('nome_norm'));
+    (dados || []).forEach(m => { _geoCoord[m.uf + '|' + m.nome_norm] = { lat: +m.lat, lon: +m.lon }; });
   } catch (_) { }
 }
 /* 29/08/2026 (Joao: "tem como mostrar o mapa e a rota em linha reta no mapa,
@@ -22735,7 +22745,9 @@ function _cargaMapa(c) {
     vis[k] = { rot: p.cidade, lat: co.lat, lon: co.lon, kg: p.kg, ped: 1 };
     pts.push(vis[k]);
   });
-  if (!pts.length) return '';
+  /* sumir calado foi o que me custou uma versao: o mapa nao aparecia e nao
+     havia como saber que o problema era coordenada faltando */
+  if (!pts.length) return '<p class="desc" style="font-size:10.5px;margin:4px 0">Sem coordenada das cidades desta carga \u2014 mapa n\u00e3o desenhado.</p>';
   var mnLa = _FAB.lat, mxLa = _FAB.lat, mnLo = _FAB.lon, mxLo = _FAB.lon;
   pts.forEach(function (p) {
     if (p.lat < mnLa) mnLa = p.lat; if (p.lat > mxLa) mxLa = p.lat;
