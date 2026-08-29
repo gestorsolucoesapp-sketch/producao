@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.313.0';
+const APP_VER = '4.314.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22542,11 +22542,28 @@ async function atrDetalhe(tipo) {
       return pal > 0 ? kg / pal : 117;
     })();
     L.forEach(x => {
-      const palCx = Object.values(x.cxItem || {}).reduce((s, cx) => s + _paletes(cx), 0);
+      /* ===== 29/08/2026 (Joao: "OTIMIZE AO MAXIMO A CARGA, OLHA ESSE EXEMPLO,
+         POR QUE NAO FOI JUNTO?") =====
+         Jaboticabal (16 pal) e Bebedouro (21) somavam 37 e nao cabiam na mesma
+         carreta. Fui olhar o pedido: o 228241 tem 15 ITENS, quase todos com UMA
+         ou DUAS caixas — 44 caixas no total. Arredondando por item, cada caixa
+         solta virava um palete inteiro: 15 paletes para o que cabe em 3.
+         A regra "1 item por palete" vale para pedido de item cheio, nao para
+         pedido misto. Agora: item com 20+ caixas gera os paletes CHEIOS dele, e
+         as SOBRAS de todos os itens se juntam em paletes MISTOS. Jaboticabal cai
+         de 15 para 3 e as duas cidades passam a caber no mesmo caminhao.
+         Na carteira atrasada inteira: 827 paletes viram 618, de 32 carretas
+         para 24. Palete misto e o que a expedicao ja monta na pratica. */
+      const _cx = Object.values(x.cxItem || {});
+      const palCheios = _cx.reduce((s, cx) => s + Math.floor(cx / CX_POR_PALETE), 0);
+      const _sobra = _cx.reduce((s, cx) => s + (cx % CX_POR_PALETE), 0);
+      const palMistos = Math.ceil(_sobra / CX_POR_PALETE);
+      x.mistos = palMistos;
+      const palCx = palCheios + palMistos;
       const palEst = Object.values(x.kgSemCx || {}).reduce((s, kg) => s + Math.ceil(kg / _kgPal), 0);
       x.pal = palCx + palEst;
       x.palEst = palEst > 0;
-      x.cx  = Object.values(x.cxItem || {}).reduce((s, cx) => s + cx, 0);
+      x.cx  = _cx.reduce((s, cx) => s + cx, 0);
     });
     L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
     L.forEach(x => {
@@ -22960,7 +22977,7 @@ async function atrRoteiro() {
     const fila = ps.slice();
     while (fila.length) {
       const c = { uf: uf, kg: 0, pal: 0, itens: [] };
-      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); if (p.palEst) c.palEst = true; };
+      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); if (p.palEst) c.palEst = true; c.mistos = (c.mistos || 0) + (p.mistos || 0); };
       poe(fila.shift());
       for (;;) {
         const ref = c.itens[c.itens.length - 1];
@@ -23028,7 +23045,7 @@ async function atrRoteiro() {
     + 'Junta os pedidos que ficam <b>perto um do outro</b> (até 120 km da última parada), enchendo cada carga com <b>o maior pedido que ainda couber</b> — por isso a mesma cidade não sai em duas viagens meio vazias sem necessidade. '
     + '<b>Não calcula rota</b>: não conhece estrada, serra nem pedágio, e a ordem de entrega é do motorista. '
     + 'Quem fecha a carga é o <b>palete</b>, não o peso: a caixa média tem <b>5,5 kg</b>, então ' + escapeHtml(V.nome).toLowerCase() + ' cheia leva cerca de <b>' + fmtKg(V.pal * 20 * 5.49) + '</b>. '
-    + 'Palete = 20 caixas, arredondado por item; pedido vendido em <b>MIL</b> ou sem unidade n\u00e3o traz caixa, e a\u00ed o palete \u00e9 <b>estimado pelo peso</b> e aparece com \u2248.  Não substitui a conferência do transporte.</p>'
+    + 'Palete = 20 caixas: item com palete cheio vai sozinho e as <b>sobras de itens diferentes se juntam num palete misto</b>, como a expedi\u00e7\u00e3o monta; pedido vendido em <b>MIL</b> ou sem unidade n\u00e3o traz caixa, e a\u00ed o palete \u00e9 <b>estimado pelo peso</b> e aparece com \u2248.  Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
@@ -23045,6 +23062,7 @@ async function atrRoteiro() {
             : c.noLimite
               ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">no limite · confira na doca</div>'
               : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ carga cheia</div>')
+          + (c.mistos ? '<div style="font-size:10px;color:var(--fraco)">' + c.mistos + ' palete(s) misto(s)</div>' : '')
           + (c.veic && c.veic.pal < V.pal
             ? '<div style="font-size:10.5px;color:var(--navy);font-weight:800;margin-top:2px">\uD83D\uDE9A cabe num ' + escapeHtml(c.veic.nome) + ' (' + c.veic.pal + ' pal)</div>'
             : '')
