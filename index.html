@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.325.0';
+const APP_VER = '4.326.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -9285,12 +9285,19 @@ async function entrevContexto(mat) {
     const maqs = [...new Set(ctx.aloc.map(x => String(x.maquina_codigo || '')).filter(Boolean))];
     if (maqs.length) {
       const de = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-      /* 5.147 e 6.837 linhas em 30 dias — as duas liam 1.000 */
-      const pr = { data: await _leTudoFlx(() => sb.from('producao_resumo').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de).order('id')) };
-      const pe = { data: await _leTudoFlx(() => sb.from('perdas').select('recurso_cod,turno,peso').in('recurso_cod', maqs).gte('dia', de).order('id')) };
+      /* 30/08/2026: 5.147 e 6.837 linhas em 30 dias viravam duas somas simples.
+         O banco soma por maquina e turno (292 e 299 linhas); o filtro das
+         maquinas do grupo continua aqui, que e onde o organograma sabe quem e
+         de quem. */
+      const hj = hojeISO();
+      const [pr, pe] = await Promise.all([
+        sb.rpc('producao_por_recurso', { p_de: de, p_ate: hj }),
+        sb.rpc('perdas_por_recurso', { p_de: de, p_ate: hj })
+      ]);
+      const _daqui = new Set((maqs || []).map(String));
       const ag = {};
-      (pr.data || []).forEach(r => { const kk = r.recurso_cod; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).kg += (+r.peso || 0); });
-      (pe.data || []).forEach(r => { const kk = r.recurso_cod; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).pe += (+r.peso || 0); });
+      (pr.data || []).forEach(r => { const kk = String(r.recurso_cod); if (!_daqui.has(kk)) return; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).kg += (+r.kg || 0); });
+      (pe.data || []).forEach(r => { const kk = String(r.recurso_cod); if (!_daqui.has(kk)) return; (ag[kk] = ag[kk] || { kg: 0, pe: 0 }).pe += (+r.kg || 0); });
       ctx.perf = Object.keys(ag).map(kk => ({ maq: kk, kg: ag[kk].kg, pe: ag[kk].pe }));
     }
   } catch (_) { }
@@ -21990,10 +21997,13 @@ async function rpCarregar() {
   try {
     const de = addDiasISO(hojeISO(), -60);
     const [t, g] = await Promise.all([
-      /* 13.073 perdas em 60 dias: sem paginar vinham 1.000 e a tabela de tipos
-         mostrava menos de 8% do refugo — e e por ela que se escolhe o setor
-         culpado de cada tipo. */
-      _leTudoFlx(() => sb.from('perdas').select('tipo_perda_desc,peso,recurso_cod').gte('dia', de).order('id')).then(d => ({ data: d })),
+      /* 30/08/2026 — A CONTA SAIU DO CELULAR E FOI PARA O BANCO.
+         Este card baixava as 13.065 perdas de 60 dias so para somar por tipo.
+         Agora `perdas_tipos_desde` soma no Postgres e devolve 709 linhas (tipo x
+         maquina): mesmo numero, 18x menos dado no 4G do chao de fabrica.
+         Agrupa por MAQUINA de proposito — quem traduz maquina->setor e o
+         `setorDe` daqui, e duplicar esse mapa no banco criaria duas reguas. */
+      sb.rpc('perdas_tipos_desde', { p_de: de }),
       sb.from('tipo_perda_regra').select('*').order('prioridade', { ascending: true })
     ]);
     const agg = {};
@@ -22001,7 +22011,7 @@ async function rpCarregar() {
       const k = String(r.tipo_perda_desc || '(sem tipo)').trim();
       const st = setorDe(r.recurso_cod) || '—';
       (agg[k] = agg[k] || { kg: 0, n: 0, set: new Set() });
-      agg[k].kg += (+r.peso || 0); agg[k].n++; agg[k].set.add(st);
+      agg[k].kg += (+r.kg || 0); agg[k].n += (+r.n || 0); agg[k].set.add(st);
     });
     _rpTipos = Object.keys(agg).map(k => ({ tipo: k, kg: agg[k].kg, n: agg[k].n, setores: [...agg[k].set] }))
       .sort((a, b) => b.kg - a.kg);
@@ -30978,12 +30988,12 @@ async function _progCarregarCap() {
     const ate = new Date(); ate.setDate(ate.getDate() - 1);
     const de = new Date(ate); de.setDate(de.getDate() - 27);
     const iso = (d) => d.toISOString().slice(0, 10);
-    /* 4.706 linhas em 28 dias: lia 1.000 e a CAPACIDADE de cada setor saia
-       cerca de 4x menor do que a fabrica produz — numero que a Programacao usa
-       para dizer se a carteira cabe na semana. */
-    const data = await _leTudoFlx(() => sb.from('producao_resumo').select('recurso_cod,peso,dia')
-      .gte('dia', iso(de)).lte('dia', iso(ate)).order('id'));
-    (data || []).forEach(r => { const st = setorDe(r.recurso_cod); cap[st] = (cap[st] || 0) + (+r.peso || 0); });
+    /* 30/08/2026: eram 4.706 linhas de 28 dias baixadas so para somar por setor
+       (e antes disso, so 1.000 delas — a capacidade saia 4x menor). O banco soma
+       por maquina e devolve 292 linhas; o setor continua sendo decidido aqui. */
+    const { data, error: eCap } = await sb.rpc('producao_por_recurso', { p_de: iso(de), p_ate: iso(ate) });
+    if (eCap) throw eCap;
+    (data || []).forEach(r => { const st = setorDe(r.recurso_cod); cap[st] = (cap[st] || 0) + (+r.kg || 0); });
     Object.keys(cap).forEach(k => { cap[k] = cap[k] / 4; });     // 28 dias = 4 semanas
   } catch (_) { }
   _progCap = cap;
