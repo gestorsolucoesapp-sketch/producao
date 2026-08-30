@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.331.0';
+const APP_VER = '4.332.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14858,15 +14858,28 @@ function cardSemaforoMaq(D, val) {
      unidade do SEU setor: caixa nas embaladeiras, kg no resto. */
   const _cx = c => setorEmCx(setorDe(c));
   const _fmtU = (c, v) => _cx(c) ? (Math.round(v).toLocaleString('pt-BR') + ' cxs') : fmtKg(v);
-  const prod = {}, nomes = {}, diasMaq = {};
+  /* 30/08/2026 (Joao: "Sleeve kg; faca e marque o que esta divergente").
+     O semaforo compara na unidade do SETOR (caixa nas embaladeiras, kg no
+     resto), mas a maquina pode apontar noutra: as tres AGILLE e a ITC900
+     apontam em MIL e caem contra uma meta que nao esta em MIL — dai a
+     Compressao aparecer com 396%. Nao sei em que unidade aquelas metas foram
+     cadastradas e NAO vou adivinhar: o app passa a MARCAR a divergencia, para
+     quem cadastrou a meta conferir. */
+  const prod = {}, nomes = {}, diasMaq = {}, unMaq = {};
   (D.producao || []).forEach(r => {
     const c = String(r.recurso_cod);
+    const u = String(r.unidade || '').toUpperCase().trim();
+    if (u) { (unMaq[c] = unMaq[c] || {})[u] = (unMaq[c][u] || 0) + 1; }
     prod[c] = (prod[c] || 0) + (_cx(c) ? (+r.quantidade || 0) : (val ? (val(r) || 0) : (+r.peso || 0)));
     nomes[c] = (D.nomeMaq && D.nomeMaq[c]) || r.recurso_nome || c;
     (diasMaq[c] = diasMaq[c] || new Set()).add(String(r.dia).slice(0, 10));
   });
   const cods = Object.keys(prod);
   if (!cods.length) return '';
+  const unDe = c => { const m = unMaq[c]; if (!m) return ''; return Object.keys(m).sort((a, b) => m[b] - m[a])[0] || ''; };
+  /* KG e MT viram peso, CX tem peso na linha: nenhum dos dois e divergencia.
+     O que nao fecha e MIL — milheiro nao vira kg nem caixa sem a regua do item. */
+  const unDiverge = c => { const u = unDe(c); if (!u) return false; return _cx(c) ? (u !== 'CX') : (u === 'MIL'); };
   const metaDe = c => {
     const m = (typeof metasData === 'object' && metasData) ? metasData[c] : null;
     if (!m) return null;
@@ -14891,8 +14904,8 @@ function cardSemaforoMaq(D, val) {
        como está cada máquina; o total diz quanto o setor entregou. Só somo a
        meta das máquinas que TÊM meta — misturar máquina sem régua no
        denominador faria o setor parecer pior do que é. */
-    let pS = 0, mS = 0, semMeta = 0;
-    lista.forEach(c => { pS += (prod[c] || 0); const m = metaDe(c); if (m) mS += m; else semMeta++; });
+    let pS = 0, mS = 0, semMeta = 0, nDiv = 0;
+    lista.forEach(c => { pS += (prod[c] || 0); const m = metaDe(c); if (m) mS += m; else semMeta++; if (unDiverge(c)) nDiv++; });
     const pctS = mS > 0 ? (pS / mS) * 100 : null;
     const corS = pctS == null ? 'var(--fraco-2)'
       : (pctS > META_SUSPEITA ? COR.revisar : (pctS >= 100 ? '#00964D' : (pctS >= 85 ? '#B98900' : '#D64545')));
@@ -14903,16 +14916,19 @@ function cardSemaforoMaq(D, val) {
         + '<span style="font-size:11px;font-weight:800;color:' + corS + '">' + Math.round(pctS) + '%</span>'
         + (pctS > META_SUSPEITA ? '<span title="produziu mais de ' + META_SUSPEITA + '% da meta — a meta provavelmente est\u00e1 desatualizada" style="font-size:10px;font-weight:800;color:' + COR.revisar + ';background:#F3EAF9;border-radius:6px;padding:1px 6px">\u26A0 meta a revisar</span>' : '') : '')
       + (semMeta ? '<span style="font-size:10px;color:var(--fraco-2)">· ' + semMeta + ' sem meta fora da conta</span>' : '')
+      + (nDiv ? '<span title="a máquina aponta em MIL e a meta está sendo comparada noutra unidade — conferir o cadastro da meta" style="font-size:10px;font-weight:800;color:#9B2C2C;background:#FDECEA;border-radius:6px;padding:1px 6px">⚠ ' + nDiv + ' com unidade divergente</span>' : '')
       + '</div><div style="display:flex;flex-wrap:wrap;gap:7px">';
     lista.forEach(c => {
       const p = prod[c] || 0, mt = metaDe(c);
       const pct = mt ? (p / mt) * 100 : null;
-      const cls = pct == null ? 'semMeta'
-        : (pct > META_SUSPEITA ? 'revisar' : (pct >= 100 ? 'ok' : (pct >= 85 ? 'quase' : 'ruim')));
+      const div = unDiverge(c);
+      const cls = div ? 'revisar' : (pct == null ? 'semMeta'
+        : (pct > META_SUSPEITA ? 'revisar' : (pct >= 100 ? 'ok' : (pct >= 85 ? 'quase' : 'ruim'))));
       n[cls]++;
       const tit = escapeHtml(c + ' · ' + (nomes[c] || '')) + ' — produziu ' + _fmtU(c, p)
         + (mt ? ' de ' + _fmtU(c, mt) + ' (' + Math.round(pct) + '% da meta)' : ' · sem meta cadastrada')
-        + (pct != null && pct > META_SUSPEITA ? ' — acima de ' + META_SUSPEITA + '%: meta provavelmente desatualizada, revisar' : '');
+        + (pct != null && pct > META_SUSPEITA ? ' — acima de ' + META_SUSPEITA + '%: meta provavelmente desatualizada, revisar' : '')
+        + (div ? ' — aponta em ' + unDe(c) + ' e a meta está sendo comparada em ' + (_cx(c) ? 'caixas' : 'kg') + ': conferir o cadastro da meta' : '');
       corpo += '<span title="' + tit + '" onclick="detMaquina(\'' + escapeHtml(c) + '\')" '
         + 'style="width:19px;height:19px;border-radius:50%;background:' + COR[cls]
         + ';cursor:pointer;display:inline-block;box-shadow:0 1px 2px rgba(0,0,0,.18)"></span>';
@@ -14923,7 +14939,7 @@ function cardSemaforoMaq(D, val) {
     + '<span style="width:10px;height:10px;border-radius:50%;background:' + cor + ';display:inline-block"></span>' + txt + ' ' + q + '</span>';
   return card('🚦 Semáforo por máquina',
     'passe o mouse (ou toque e segure) na bolinha para ver produção × meta · toque abre a máquina' + cardChave('semaforo'),
-    corpo + '<div style="margin-top:10px">' + (n.revisar ? leg(COR.revisar, 'meta a revisar', n.revisar) : '') + leg(COR.ok, 'bateu', n.ok) + leg(COR.quase, 'perto', n.quase)
+    corpo + '<div style="margin-top:10px">' + (n.revisar ? leg(COR.revisar, 'meta a revisar ou unidade divergente', n.revisar) : '') + leg(COR.ok, 'bateu', n.ok) + leg(COR.quase, 'perto', n.quase)
       + leg(COR.ruim, 'abaixo', n.ruim) + leg(COR.semMeta, 'sem meta', n.semMeta) + '</div>');
 }
 function cardParadasTotais(D, filtroSetor) {
