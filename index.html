@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.326.0';
+const APP_VER = '4.327.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22432,23 +22432,39 @@ function _seloFila(x) {
   return ' <span style="font-size:10px;font-weight:800;color:var(--fraco);background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:0 5px" title="'
     + _tituloFila(x) + '">' + x.filaItem + '\u00ba de ' + x.nPedItem + ' no item</span>';
 }
+/* 30/08/2026 (Joao: "deixe o mais fluido possivel"). Os quatro numeros do card
+   abrem a MESMA base — carteira, estoque, fila, regiao: cerca de 9.400 linhas.
+   Sem cache, trocar de "entrega vencida" para "vence em 7 dias" baixava tudo de
+   novo, dez idas ao banco por clique. Agora a foto fica guardada por 5 minutos:
+   o primeiro clique paga, os outros abrem na hora. A foto do dia nao muda no
+   meio da manha, entao nao ha risco de mostrar dado velho. */
+let _atrDados = null;
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
   if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
   _atrTipo = tipo;
-  cx.innerHTML = '<p class="desc" style="padding:8px 0">Carregando…</p>';
+  const _quente = _atrDados && (Date.now() - _atrDados.em) < 300000;
+  cx.innerHTML = _quente ? '' : '<p class="desc" style="padding:8px 0">Carregando…</p>';
   try {
-    const dia = (await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
-    const d = dia && dia[0] ? dia[0].dia_foto : null;
+    let d, df;
+    if (_quente) { d = _atrDados.d; df = _atrDados.df; }
+    else {
+      const dia = (await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
+      d = dia && dia[0] ? dia[0].dia_foto : null;
+    }
     if (!d) { cx.innerHTML = '<p class="desc">Sem foto da carteira.</p>'; return; }
     /* 29/08/2026 (Joao: "mostre em qual setor esta parado"). O pedido quase
        nunca casa com a fila pelo NUMERO: so 1 dos 93 bateu. O que casa e o
        ITEM — a OP na fila carrega o item, e o item diz o setor.
        Quem nao aparece em fila nenhuma e o caso mais grave: pedido atrasado
        que nao esta programado em lugar algum. */
-    const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
-    const df = dfila && dfila[0] ? dfila[0].dia_foto : null;
-    const [rp, re, rj, rf, _lg, rg] = await Promise.all([
+    if (!_quente) {
+      const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
+      df = dfila && dfila[0] ? dfila[0].dia_foto : null;
+    }
+    const [rp, re, rj, rf, _lg, rg] = _quente
+      ? [_atrDados.rp, _atrDados.re, _atrDados.rj, _atrDados.rf, null, _atrDados.rg]
+      : await Promise.all([
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente,un,qtd_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
       _leTudoFlx(() => sb.from('carteira_justificativa').select('*').order('pedido')),
@@ -22460,6 +22476,8 @@ async function atrDetalhe(tipo) {
       (!_logCarregado ? logCarrega() : Promise.resolve()),
             _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
     ]);
+    if (!_quente) _atrDados = { d, df, rp, re, rj, rf, rg, em: Date.now() };
+    if (_quente && !_logCarregado) { try { await logCarrega(); } catch (_) { } }
     /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
        maquina ela esta programada. Fica a de menor posicao na fila — e a que
        roda primeiro, entao e a que responde "quando sai". */
