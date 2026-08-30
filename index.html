@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.329.0';
+const APP_VER = '4.330.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22455,6 +22455,24 @@ function _seloFilaItem(x) {
    o primeiro clique paga, os outros abrem na hora. A foto do dia nao muda no
    meio da manha, entao nao ha risco de mostrar dado velho. */
 let _atrDados = null;
+/* ===== REGUA DE PALETE POR ITEM — 30/08/2026 =====
+   O palete dos itens vendidos em MIL era ESTIMADO pelo peso (117 kg/palete,
+   media que eu mesmo tirei). Na Minalba isso deu 27 paletes onde o certo eram
+   20, e o app separou em duas carretas uma carga que cabia em uma.
+   Agora a conta so existe onde a fabrica informou a regua (item_paletizacao):
+   unidades = qtd x 1.000 -> caixas = unidades / unid_por_caixa -> paletes.
+   Item em MIL sem regua NAO e estimado: a tela diz que falta o dado. */
+let _paletItem = null;
+async function carregarPaletizacao() {
+  if (_paletItem) return _paletItem;
+  const m = {};
+  try {
+    const { data } = await sb.from('item_paletizacao').select('item_cod,unid_por_caixa,cx_por_palete');
+    (data || []).forEach(r => { m[String(r.item_cod)] = r; });
+  } catch (_) { }
+  _paletItem = m;
+  return m;
+}
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
   if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
@@ -22478,8 +22496,8 @@ async function atrDetalhe(tipo) {
       const dfila = (await sb.from('fila_producao').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
       df = dfila && dfila[0] ? dfila[0].dia_foto : null;
     }
-    const [rp, re, rj, rf, _lg, rg] = _quente
-      ? [_atrDados.rp, _atrDados.re, _atrDados.rj, _atrDados.rf, null, _atrDados.rg]
+    const [rp, re, rj, rf, _lg, _pl, rg] = _quente
+      ? [_atrDados.rp, _atrDados.re, _atrDados.rj, _atrDados.rf, null, null, _atrDados.rg]
       : await Promise.all([
       _leTudoFlx(() => sb.from('rest196_pendente').select('pedido,cliente,entrega,item_cod,item_desc,peso_pendente,un,qtd_pendente').eq('dia_foto', d).order('id')),
       _leTudoFlx(() => sb.from('rest196_estoque').select('item_cod,peso').eq('dia_foto', d).order('item_cod')),
@@ -22490,6 +22508,7 @@ async function atrDetalhe(tipo) {
          entao bate 93 de 93 — bem melhor que casar por nome de cliente, que
          vem sujo ("... Transportador: 0 - NAO INFORMADO Cond. Pagto.: 30 DD"). */
       (!_logCarregado ? logCarrega() : Promise.resolve()),
+      carregarPaletizacao(),
             _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
     ]);
     if (!_quente) _atrDados = { d, df, rp, re, rj, rf, rg, em: Date.now() };
@@ -22524,7 +22543,7 @@ async function atrDetalhe(tipo) {
       const p = String(x.pedido || '').split('/')[0]; if (!p || !x.entrega) return;
       const e = String(x.entrega).slice(0, 10);
       const kg = +x.peso_pendente || 0;
-      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false, cxItem: {}, kgSemCx: {} });
+      const o = (P[p] = P[p] || { ped: p, cli: x.cliente, ent: e, kg: 0, atr: false, v7: false, prod: false, kgP: 0, itens: [], setores: {}, ops: [], faltaProd: false, cxItem: {}, milItem: {} });
       const si = setorDoItem[x.item_cod];
       if (si) o.setores[si] = (o.setores[si] || 0) + kg;
       const fo = opDoItem[x.item_cod];
@@ -22552,7 +22571,7 @@ async function atrDetalhe(tipo) {
          carteira — 78 t que entravam no caminhao como se ocupassem ZERO espaco,
          e por isso o empacotador enfiava tudo numa carga so e a barra dizia 0%.
          Agora esses viram palete ESTIMADO pelo peso, marcado com ≈. */
-      else o.kgSemCx[String(x.item_cod)] = (o.kgSemCx[String(x.item_cod)] || 0) + kg;
+      else o.milItem[String(x.item_cod)] = (o.milItem[String(x.item_cod)] || 0) + (+x.qtd_pendente || 0);
       if (e < d) o.atr = true; else if (e < s7) o.v7 = true;
       /* 29/08/2026 (Joao: "os atrasados na entrega ja estao prontos e nao vao
          ter OP mesmo"). Ele tem razao e o rotulo vermelho estava mentindo:
@@ -22618,20 +22637,7 @@ async function atrDetalhe(tipo) {
     else if (tipo === 'vence') L = L.filter(x => x.v7 && !x.atr);
     else if (tipo === 'parcial') L = L.filter(x => x.atr && x.parcial);
     else L = L.filter(x => x.prod);
-    /* quantos kg cabem num palete, medido no PROPRIO relatorio de hoje (nao
-       chutado): soma o peso das linhas em CX e divide pelos paletes que elas
-       dao. Deu 117 kg/palete na carteira de 29/08 — coerente com a caixa media
-       de 5,5 kg x 20 caixas. Se um dia o mix mudar, a regua muda junto. */
-    const _kgPal = (() => {
-      const porItem = {}; let kg = 0;
-      (rp || []).forEach(x => {
-        if (!_ehCx(x.un)) return;
-        porItem[String(x.item_cod)] = (porItem[String(x.item_cod)] || 0) + (+x.qtd_pendente || 0);
-        kg += (+x.peso_pendente || 0);
-      });
-      const pal = Object.values(porItem).reduce((s, cx) => s + _paletes(cx), 0);
-      return pal > 0 ? kg / pal : 117;
-    })();
+    const _reg = _paletItem || {};
     L.forEach(x => {
       /* ===== 29/08/2026 (Joao: "OTIMIZE AO MAXIMO A CARGA, OLHA ESSE EXEMPLO,
          POR QUE NAO FOI JUNTO?") =====
@@ -22650,10 +22656,17 @@ async function atrDetalhe(tipo) {
       const _sobra = _cx.reduce((s, cx) => s + (cx % CX_POR_PALETE), 0);
       const palMistos = Math.ceil(_sobra / CX_POR_PALETE);
       x.mistos = palMistos;
-      const palCx = palCheios + palMistos;
-      const palEst = Object.values(x.kgSemCx || {}).reduce((s, kg) => s + Math.ceil(kg / _kgPal), 0);
-      x.pal = palCx + palEst;
-      x.palEst = palEst > 0;
+      /* item em MIL: so conta se a fabrica informou a regua daquele item */
+      let palMil = 0, semRegua = 0;
+      Object.keys(x.milItem || {}).forEach(it => {
+        const r = _reg[it];
+        if (!r) { semRegua++; return; }
+        const caixas = (x.milItem[it] * 1000) / r.unid_por_caixa;
+        palMil += Math.ceil(caixas / r.cx_por_palete);
+      });
+      x.pal = palCheios + palMistos + palMil;
+      x.semRegua = semRegua;
+      x.palEst = false;
       x.cx  = _cx.reduce((s, cx) => s + cx, 0);
     });
     L.forEach(x => { const g = geo[x.ped]; if (g) { x.cidade = g.cidade; x.uf = g.uf; x.regiao = g.regiao; x.vend = g.vendedor_nome; } });
@@ -22720,7 +22733,8 @@ async function atrDetalhe(tipo) {
           + (x.uf ? ' <span onclick="atrVerNoMapa(&quot;' + escapeHtml(x.uf) + '&quot;)" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
             + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
           + '</span>'
-          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + (x.cx ? '<b>' + fmt(x.cx, 0) + '</b> cx \u00b7 ' : '') + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + (x.pal ? ' \u00b7 <b>' + (x.palEst ? '\u2248' : '') + x.pal + '</b> pal' : '') + '</span></div>'
+          + '<span style="white-space:nowrap;font-size:11.5px"><b style="color:' + cor + '">' + (dias > 0 ? dias + 'd' : 'hoje') + '</b> · ' + (x.cx ? '<b>' + fmt(x.cx, 0) + '</b> cx \u00b7 ' : '') + fmtKg(tipo === 'producao' ? x.kgP : x.kg) + (x.pal ? ' \u00b7 <b>' + x.pal + '</b> pal' : '')
+          + (x.semRegua ? ' \u00b7 <span style="color:#9B2C2C;font-weight:800" title="item vendido em MIL sem cadastro de unidades por caixa e caixas por palete">sem r\u00e9gua de palete</span>' : '') + '</span></div>'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:2px">'
           + '<span class="desc" style="font-size:10.5px">'
           /* 29/08/2026 (Joao: "no vermelho, se tiver 100% reservado marque").
@@ -23109,7 +23123,7 @@ async function atrRoteiro() {
     const fila = ps.slice();
     while (fila.length) {
       const c = { uf: uf, kg: 0, pal: 0, itens: [] };
-      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); if (p.palEst) c.palEst = true; c.mistos = (c.mistos || 0) + (p.mistos || 0); };
+      const poe = p => { c.kg += p.kg; c.pal += (p.pal || 0); c.itens.push(p); c.semRegua = (c.semRegua || 0) + (p.semRegua || 0); c.mistos = (c.mistos || 0) + (p.mistos || 0); };
       poe(fila.shift());
       for (;;) {
         const ref = c.itens[c.itens.length - 1];
@@ -23184,7 +23198,7 @@ async function atrRoteiro() {
     + '<b>Não calcula rota</b>: não conhece estrada, serra nem pedágio, e a ordem de entrega é do motorista. '
     + 'Quem fecha a carga é o <b>palete</b>, não o peso: a caixa média tem <b>5,5 kg</b>, então ' + escapeHtml(V.nome).toLowerCase() + ' cheia leva cerca de <b>' + fmtKg(V.pal * 20 * 5.49) + '</b>. '
     + 'O veículo de cada carga é <b>escolhido pelo app</b>: o menor do cadastro de frota que comporta aquilo. '
-    + 'Palete = 20 caixas: item com palete cheio vai sozinho e as <b>sobras de itens diferentes se juntam num palete misto</b>, como a expedi\u00e7\u00e3o monta; pedido vendido em <b>MIL</b> ou sem unidade n\u00e3o traz caixa, e a\u00ed o palete \u00e9 <b>estimado pelo peso</b> e aparece com \u2248.  Não substitui a conferência do transporte.</p>'
+    + 'Palete = 20 caixas: item com palete cheio vai sozinho e as <b>sobras de itens diferentes se juntam num palete misto</b>, como a expedi\u00e7\u00e3o monta; pedido vendido em <b>MIL</b> s\u00f3 vira palete quando o item tem r\u00e9gua cadastrada (unidades por caixa e caixas por palete); sem isso a tela avisa em vez de chutar.  Não substitui a conferência do transporte.</p>'
     + cargas.map((c, i) => {
       const cids = {};
       c.itens.forEach(p => { const k = p.cidade || '?'; cids[k] = (cids[k] || 0) + p.kg; });
@@ -23205,6 +23219,7 @@ async function atrRoteiro() {
                 ? '<div style="font-size:11px;color:var(--laranja-4,#9E5514);font-weight:800">no limite · confira na doca</div>'
                 : '<div style="font-size:11px;color:#1F7A46;font-weight:800">✓ veículo cheio</div>')
           + (c.mistos ? '<div style="font-size:10px;color:var(--fraco)">' + c.mistos + ' palete(s) misto(s)</div>' : '')
+          + (c.semRegua ? '<div style="font-size:10px;color:#9B2C2C;font-weight:800">' + c.semRegua + ' item(ns) sem r\u00e9gua de palete</div>' : '')
 
           + '</span></div>'
         + '<div style="display:flex;align-items:center;gap:7px;margin:4px 0 5px">'
@@ -31917,7 +31932,10 @@ function detCargaMaquina(cod) {
    ITEM e para cima: palete misturado existe, mas o normal e um item por palete,
    entao somar caixas de itens diferentes e dividir por 20 subestimaria. */
 const CX_POR_PALETE = 20;
-const _ehCx = u => String(u || '').toUpperCase() === 'CX';
+/* 30/08/2026 — Joao confirmou: linha do REST196 com a unidade EM BRANCO esta
+   em CAIXAS. Sao 275 linhas e 171 pedidos (20 t) que ate hoje o app tratava
+   como "nao e caixa" e mandava para a estimativa por peso. */
+const _ehCx = u => { const s = String(u || '').toUpperCase().trim(); return s === 'CX' || s === ''; };
 /* DESCRIÇÃO QUE DIFERENCIA — cortar em 40 caracteres pelo começo esconde
    exatamente o que distingue os itens de um mesmo pedido: "EMB CP FA BRANCO
    300ML (75X122) NATIVO A / NATIVO L / NATIVO U" viravam três linhas idênticas
