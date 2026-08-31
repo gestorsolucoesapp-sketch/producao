@@ -1664,6 +1664,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="entrada" onclick="tintaVer('entrada')">📥 Entrada</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="resumo" onclick="tintaVer('resumo')">📊 Resumo</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="compra" onclick="tintaVer('compra')">🛒 Compra</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="balanco" onclick="tintaVer('balanco')">⚖️ Balanço</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-tv="etiquetas" onclick="tintaVer('etiquetas')">🏷️ Etiquetas</button>
         </div>
         <div id="tintaConteudo"><p class="desc">Carregando…</p></div>
@@ -3843,7 +3844,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.356.0';
+const APP_VER = '4.357.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20694,6 +20695,14 @@ const _bolinha = n => '<span style="display:inline-block;width:13px;height:13px;
   + _corDe(n) + ';border:1px solid rgba(0,0,0,.25);vertical-align:-2px;margin-right:6px"></span>';
 
 let _tintaVista = 'estoque', _tintaSaldo = [], _tintaMov = [], _tintaBusca = '', _tintaCarregando = false;
+/* 31/08/2026 (Joao: "na saida, quando clicar para dar baixa mostre em cima a
+   ultima operacao; e um contador nas pilulas — clico no amarelo aparece o
+   contador, quando passo para outra zera").
+   Duas coisas diferentes e as duas sobre a MESMA duvida de quem esta bipando:
+   "quantas eu ja dei desta cor?". O contador anda enquanto e a mesma cor e
+   volta a zero quando muda — e a contagem da rodada, nao do dia. */
+let _tintaUlt = null;          // ultima baixa: { id, nome, hora, cod }
+let _tintaSeq = { id: null, n: 0 };   // cor da vez e quantas baixas seguidas
 /* 28/08/2026 (João: "deixe filtrar as marcas") — special color e sulflex são os
    dois fornecedores, e quase toda cor existe nos dois. Separar por marca é o que
    permite conferir prateleira por prateleira. */
@@ -20718,6 +20727,7 @@ let _tintaCarrinho = {};
 
 async function tintaAbrir() {
   _tintaVista = 'estoque'; _tintaBusca = '';
+  try { await tintaBalancoCarregar(); } catch (_) { }
   /* 30/08/2026: para quem nao ve valor, o botao Resumo some — nao adianta
      mostrar uma aba que so vai dizer "restrito". */
   try {
@@ -20759,6 +20769,7 @@ function tintaRender() {
   if (_tintaVista === 'estoque') return tintaTelaEstoque(box);
   if (_tintaVista === 'saida')   return tintaTelaSaida(box);
   if (_tintaVista === 'entrada') return tintaTelaEntrada(box);
+  if (_tintaVista === 'balanco') return tintaTelaBalanco(box);
   if (_tintaVista === 'etiquetas') return tintaTelaEtiquetas(box);
   if (_tintaVista === 'compra') return tintaTelaCompra(box);
   return tintaTelaResumo(box);
@@ -20816,6 +20827,141 @@ function tintaTelaEstoque(box) {
     }).join('')
     + '</tbody></table></div>'
     + (!vis.length ? '<p class="vazio-painel">Nada encontrado.</p>' : '');
+}
+
+/* ===== BALANÇO — 31/08/2026 (Joao: "coloque a aba balanco, estou contando
+   hoje") =====
+   Inventario fisico: a pessoa conta lata por lata e digita o que achou. O app
+   guarda a contagem E o saldo que o sistema tinha NAQUELE momento — sem isso,
+   abrir a mesma contagem amanha compararia com o saldo de amanha e a diferenca
+   mudaria sozinha.
+   O ajuste nao e automatico. Cada cor com diferenca tem o botao de acertar, e o
+   acerto vira movimento normal com motivo "Balanco": o historico continua
+   contando a mesma historia, e da para desfazer como qualquer outro. */
+let _balAtual = null, _balItens = {};
+async function tintaBalancoCarregar() {
+  try {
+    const { data: b } = await sb.from('tinta_balanco').select('*')
+      .eq('status', 'aberto').order('data', { ascending: false }).limit(1);
+    _balAtual = (b && b[0]) || null;
+    _balItens = {};
+    if (_balAtual) {
+      const { data: it } = await sb.from('tinta_balanco_item').select('*').eq('balanco_id', _balAtual.id);
+      (it || []).forEach(x => { _balItens[x.produto_id] = x; });
+    }
+  } catch (e) { _balAtual = null; _balItens = {}; console.warn('balanco:', e && e.message); }
+}
+async function tintaBalancoAbrir() {
+  try {
+    const { data, error } = await sb.from('tinta_balanco').insert({
+      criado_por: (perfil || {}).id || null, criado_nome: (perfil || {}).nome || null
+    }).select().single();
+    if (error) throw error;
+    _balAtual = data; _balItens = {};
+    toast('⚖️ Balanço aberto — conte e vá digitando.');
+    tintaRender();
+  } catch (e) { toast('Não consegui abrir: ' + ((e && e.message) || e)); }
+}
+async function tintaBalancoContar(id, valor) {
+  if (!_balAtual) return;
+  const p = _tintaSaldo.find(x => x.id === id); if (!p) return;
+  const n = (valor === '' || valor == null) ? null : Math.max(0, Math.round(+valor));
+  try {
+    if (n == null) {
+      await sb.from('tinta_balanco_item').delete().eq('balanco_id', _balAtual.id).eq('produto_id', id);
+      delete _balItens[id];
+    } else {
+      const reg = {
+        balanco_id: _balAtual.id, produto_id: id, contado: n,
+        saldo_sistema: +p.saldo || 0, contado_nome: (perfil || {}).nome || null,
+        contado_em: new Date().toISOString()
+      };
+      const { data, error } = await sb.from('tinta_balanco_item')
+        .upsert(reg, { onConflict: 'balanco_id,produto_id' }).select().single();
+      if (error) throw error;
+      _balItens[id] = data;
+    }
+    tintaRender();
+  } catch (e) { toast('Não consegui gravar a contagem: ' + ((e && e.message) || e)); }
+}
+async function tintaBalancoAjustar(id) {
+  const it = _balItens[id], p = _tintaSaldo.find(x => x.id === id);
+  if (!it || !p) return;
+  const dif = (+it.contado || 0) - (+it.saldo_sistema || 0);
+  if (!dif) return;
+  if (!confirm('Acertar ' + p.nome + '?\n\nSistema: ' + _tNum(it.saldo_sistema)
+    + '\nContado: ' + _tNum(it.contado) + '\nAjuste: ' + (dif > 0 ? '+' : '') + _tNum(dif) + ' lata(s)')) return;
+  try {
+    const { error } = await sb.from('tinta_movimento').insert({
+      produto_id: id, tipo: dif > 0 ? 'entrada' : 'saida',
+      quantidade: Math.abs(dif), unidade: p.unidade || 'LATA',
+      motivo: 'Balanço', observacao: 'Ajuste do balanço de ' + fmtData(String(_balAtual.data)),
+      quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (error) throw error;
+    await sb.from('tinta_balanco_item').update({ ajustado: true }).eq('id', it.id);
+    it.ajustado = true;
+    p.saldo = (+p.saldo || 0) + dif;
+    p.valor = p.saldo * (+p.preco || 0);
+    p.abaixo_minimo = p.saldo < (+p.estoque_min || 0);
+    toast('✓ ' + p.nome + ' acertado para ' + _tNum(it.contado));
+    tintaRender();
+  } catch (e) { toast('Não consegui ajustar: ' + ((e && e.message) || e)); }
+}
+async function tintaBalancoFechar() {
+  if (!_balAtual) return;
+  const pend = Object.values(_balItens).filter(x => !x.ajustado && (+x.contado || 0) !== (+x.saldo_sistema || 0)).length;
+  if (!confirm('Fechar o balanço de ' + fmtData(String(_balAtual.data)) + '?'
+    + (pend ? '\n\nAtenção: ' + pend + ' cor(es) com diferença ainda NÃO ajustada(s).' : ''))) return;
+  try {
+    await sb.from('tinta_balanco').update({
+      status: 'fechado', fechado_em: new Date().toISOString(),
+      fechado_nome: (perfil || {}).nome || null
+    }).eq('id', _balAtual.id);
+    _balAtual = null; _balItens = {};
+    toast('⚖️ Balanço fechado.');
+    tintaRender();
+  } catch (e) { toast('Não consegui fechar: ' + ((e && e.message) || e)); }
+}
+function tintaTelaBalanco(box) {
+  if (!_balAtual) {
+    box.innerHTML = '<p class="desc">Nenhum balanço aberto. Abra um para contar as latas e comparar com o saldo do sistema.</p>'
+      + '<span onclick="tintaBalancoAbrir()" style="cursor:pointer;display:inline-block;margin-top:8px;background:var(--navy);color:#fff;font-weight:800;border-radius:10px;padding:11px 18px">⚖️ Abrir balanço de hoje</span>';
+    return;
+  }
+  const f = _tintaBusca.trim().toLowerCase();
+  const L = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && (!f || (x.nome + ' ' + (x.cod_erp || '')).toLowerCase().includes(f))));
+  const cont = Object.keys(_balItens).length;
+  const dif = Object.values(_balItens).filter(x => (+x.contado || 0) !== (+x.saldo_sistema || 0));
+  const difLatas = dif.reduce((a, x) => a + ((+x.contado || 0) - (+x.saldo_sistema || 0)), 0);
+  box.innerHTML = '<div class="idet-grid">'
+    + '<div><b>' + cont + '</b><span>de ' + L.length + ' contadas</span></div>'
+    + '<div><b style="color:' + (dif.length ? 'var(--critico)' : 'var(--verde)') + '">' + dif.length + '</b><span>com diferença</span></div>'
+    + '<div><b>' + (difLatas > 0 ? '+' : '') + _tNum(difLatas) + '</b><span>latas de diferença</span></div>'
+    + '<div><b>' + escapeHtml(fmtData(String(_balAtual.data))) + '</b><span>balanço aberto</span></div>'
+    + '</div>'
+    + '<p class="desc" style="margin-top:8px">Digite o que <b>contou</b> em cada cor. O app guarda o saldo do sistema no momento da contagem — a diferença não muda depois.</p>'
+    + '<input id="tintaBusca" type="search" placeholder="🔎 buscar cor…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:8px 0;padding:10px;border:2px solid var(--azul-2);border-radius:10px;font-size:15px">'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+    + '<th style="text-align:left">Cor</th><th>Sistema</th><th>Contado</th><th>Dif.</th><th></th></tr></thead><tbody>'
+    + L.slice(0, 200).map(x => {
+      const it = _balItens[x.id];
+      const d = it ? (+it.contado || 0) - (+it.saldo_sistema || 0) : null;
+      return '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="text-align:left"><b>' + _bolinha(x.nome) + escapeHtml(x.nome) + '</b></td>'
+        + '<td style="text-align:center;color:var(--fraco-2)">' + _tNum(it ? it.saldo_sistema : x.saldo) + '</td>'
+        + '<td style="text-align:center"><input type="number" min="0" inputmode="numeric" value="' + (it ? it.contado : '') + '"'
+        + ' onchange="tintaBalancoContar(\'' + x.id + '\',this.value)" style="width:74px;padding:6px;border:1px solid var(--linha-2s);border-radius:8px;font-size:15px;text-align:center"></td>'
+        + '<td style="text-align:center;font-weight:800;color:' + (d == null ? 'var(--fraco-2)' : d === 0 ? 'var(--verde)' : 'var(--critico)') + '">'
+        + (d == null ? '—' : (d > 0 ? '+' : '') + _tNum(d)) + '</td>'
+        + '<td style="text-align:center">' + (d && !it.ajustado
+          ? '<span onclick="tintaBalancoAjustar(\'' + x.id + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:8px;padding:4px 10px;white-space:nowrap">acertar</span>'
+          : (it && it.ajustado ? '<span style="color:var(--verde);font-weight:800">✓</span>' : '')) + '</td></tr>';
+    }).join('')
+    + '</tbody></table></div>'
+    + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
+    + '<span onclick="tintaBalancoFechar()" style="cursor:pointer;background:var(--verde);color:#fff;font-weight:800;border-radius:10px;padding:10px 16px">✓ Fechar balanço</span>'
+    + '</div>';
 }
 
 /* ---------- LEITOR DE CODIGO DE BARRAS PELA CAMERA — 30/08/2026 ----------
@@ -20928,7 +21074,11 @@ function tintaTelaSaida(box) {
     + L.slice(0, 60).map(x =>
       '<div onclick="tintaSaidaUma(\'' + x.id + '\')" style="cursor:pointer;border:1px solid var(--linha-2s);border-radius:10px;padding:9px;background:' + (x.saldo > 0 ? 'var(--leve-2)' : '#FBE9E9') + '">'
       + '<b style="font-size:12.5px;display:block">' + _bolinha(x.nome) + escapeHtml(x.nome) + '</b>'
-      + '<span class="desc" style="font-size:11px">saldo ' + _tNum(x.saldo) + (x.abaixo_minimo ? ' · <b style="color:var(--critico)">abaixo do mín.</b>' : '') + '</span></div>').join('')
+      + '<span class="desc" style="font-size:11px">saldo ' + _tNum(x.saldo) + (x.abaixo_minimo ? ' · <b style="color:var(--critico)">abaixo do mín.</b>' : '') + '</span>'
+      + (_tintaSeq.id === x.id && _tintaSeq.n > 0
+        ? '<div style="margin-top:4px;display:inline-block;background:var(--verde);color:#fff;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px">' + _tintaSeq.n + ' nesta rodada</div>'
+        : '')
+      + '</div>').join('')
     + '</div>'
     + (L.length > 60 ? '<p class="desc">mostrando 60 de ' + L.length + ' — use a busca</p>' : '')
     + '<div style="margin-top:14px"><div class="titulo-sec">Últimas baixas</div>'
@@ -20950,6 +21100,11 @@ async function tintaBipar(cod) {
   await tintaSaidaUma(p.id);
   _tintaBusca = ''; tintaRender();
   setTimeout(() => { const el = $('tintaBip'); if (el) el.focus(); }, 60);
+}
+function _tintaConta(p) {
+  if (_tintaSeq.id === p.id) _tintaSeq.n++;
+  else _tintaSeq = { id: p.id, n: 1 };
+  _tintaUlt = { id: p.id, nome: p.nome, hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), saldo: p.saldo };
 }
 async function tintaSaidaUma(id) {
   const p = _tintaSaldo.find(x => x.id === id); if (!p) return;
