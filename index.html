@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.370.0';
+const APP_VER = '4.371.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28692,18 +28692,69 @@ let _saidaDia = null;
    separados. */
 let _anoDados = null, _anoSel = null, _anoMet = 'kg';
 function anoMet(v) { _anoMet = v; anoRender(); }
+/* 31/08/2026 (Joao: "tá muito lento; deixa a fotografia dos meses anteriores
+   porque não muda e atualiza o mês vigente").
+   A conta do ano inteiro levava 4,4 s toda vez que a aba abria — e mês fechado
+   não muda mais. Agora:
+     1. o histórico vem da MV `mv_resumo_ano` (0,2 s), atualizada no mesmo cron
+        diário das outras;
+     2. o mês VIGENTE vem fresco da `resumo_mes` (0,18 s) e sobrescreve o que a
+        MV tinha daquele mês — porque a MV pode ser de ontem e hoje já entrou
+        produção nova;
+     3. o resultado fica guardado no aparelho, então voltar à aba é instantâneo
+        e a rede só é usada para o mês corrente.
+   Se a rede falhar, mostro o que estiver guardado em vez de tela branca. */
+const _ANO_CACHE_K = 'resumoAnoCache';
+function _anoCacheLe(ano) {
+  try { const o = JSON.parse(localStorage.getItem(_ANO_CACHE_K) || '{}'); return o[ano] || null; }
+  catch (_) { return null; }
+}
+function _anoCacheGrava(ano, linhas) {
+  try {
+    const o = JSON.parse(localStorage.getItem(_ANO_CACHE_K) || '{}');
+    o[ano] = { em: Date.now(), linhas: linhas };
+    localStorage.setItem(_ANO_CACHE_K, JSON.stringify(o));
+  } catch (_) { }
+}
+function _anoJunta(base, mes, linhasMes) {
+  /* tira o mês vigente do histórico e põe a versão fresca no lugar */
+  const fora = (base || []).filter(r => String(r.mes) !== mes);
+  return fora.concat(linhasMes || []);
+}
 async function anoAbrir(forcar) {
   const ano = _anoSel || new Date().getFullYear();
   const wrap = document.getElementById('anoWrap'); if (!wrap) return;
   if (_anoDados && _anoDados.ano === ano && !forcar) return anoRender();
-  wrap.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando o ano…</p>';
+  const mesAtual = hojeISO().slice(0, 7);
+  /* 1. o que já está no aparelho aparece IMEDIATAMENTE */
+  const cache = _anoCacheLe(ano);
+  if (cache && cache.linhas && cache.linhas.length) {
+    _anoDados = { ano: ano, linhas: cache.linhas }; _anoSel = ano;
+    anoRender();
+  } else {
+    wrap.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando o ano…</p>';
+  }
   try {
-    const { data, error } = await sb.rpc('resumo_ano', { p_ano: ano });
-    if (error) throw error;
-    _anoDados = { ano: ano, linhas: data || [] };
-    _anoSel = ano;
+    /* 2. histórico da MV + mês vigente fresco, em paralelo */
+    const [hist, mes] = await Promise.all([
+      (cache && cache.linhas && cache.linhas.length && !forcar)
+        ? Promise.resolve({ data: cache.linhas })
+        : sb.from('mv_resumo_ano').select('mes,recurso_cod,kg,quantidade,unidade,perda_kg,parada_h,dias').like('mes', ano + '-%'),
+      String(ano) === mesAtual.slice(0, 4)
+        ? sb.rpc('resumo_mes', { p_mes: mesAtual })
+        : Promise.resolve({ data: [] })
+    ]);
+    if (hist.error) throw hist.error;
+    const linhas = _anoJunta(hist.data || [], mesAtual, (mes && mes.data) || []);
+    _anoDados = { ano: ano, linhas: linhas }; _anoSel = ano;
+    _anoCacheGrava(ano, linhas);
     anoRender();
   } catch (e) {
+    if (_anoDados && _anoDados.linhas && _anoDados.linhas.length) {
+      /* já tem o que mostrar: avisa em cima em vez de apagar a tela */
+      try { toast('Mostrando o resumo guardado — não consegui atualizar agora.'); } catch (_) { }
+      return;
+    }
     wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui carregar: '
       + escapeHtml((e && e.message) || String(e)) + '</p></div>';
   }
