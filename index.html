@@ -1379,6 +1379,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <button class="btn btn-borda" onclick="ordReset()" style="width:auto;padding:5px 12px;font-size:12px" title="Voltar à ordem original">↺</button>
       </div>
       <div id="cardAtrasoDia"></div>
+      <div id="cardSaidaDia"></div>
       <div id="painelConteudo"><p class="desc" style="padding:20px;text-align:center">Carregando dados…</p></div>
     </section>
 
@@ -3844,7 +3845,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.362.0';
+const APP_VER = '4.363.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28652,6 +28653,79 @@ async function _atrResUmo() {
       + '</div>';
   } catch (e) { el.innerHTML = ''; console.warn('resUmo:', e && e.message); }
 }
+/* ===== O QUE SAIU POR DIA — 31/08/2026 =====
+   (Joao: "quantas toneladas saiu diariamente... o pedido reservado nao conta
+   mais porque faturou", meta de 42 t/dia).
+   Nao existe relatorio de faturamento aqui. Mas a carteira e uma foto diaria: o
+   que estava pendente ontem e nao esta mais hoje, SAIU. A view
+   `v_saida_carteira_dia` soma o que DIMINUIU linha a linha (pedido+item) — assim
+   entrega parcial entra pelo que saiu de fato, e pedido novo entrando no meio
+   nao vira "saida" (a diferenca positiva e ignorada).
+   A meta segue a mesma regua do resto do app: 42 t no dia util, proporcional no
+   sabado (0,46) e nenhuma no domingo — cobrar 42 t de um domingo pintaria de
+   vermelho um dia em que ninguem carrega.
+   LIMITE HONESTO, escrito na tela: a conta e entre FOTOS, nao entre dias civis.
+   Se a foto de hoje saiu de manha, o dia aparece pela metade. */
+const META_SAIDA_T = 42;
+let _saidaDia = null;
+async function cardSaidaDia(forcar) {
+  const box = document.getElementById('cardSaidaDia'); if (!box) return;
+  if (_saidaDia && !forcar) return _saidaDiaRender(box);
+  try {
+    const { data, error } = await sb.from('v_saida_carteira_dia')
+      .select('dia,foto_anterior,saiu_kg,linhas').order('dia');
+    if (error) throw error;
+    _saidaDia = data || [];
+    _saidaDiaRender(box);
+  } catch (e) { box.innerHTML = ''; try { console.warn('saidaDia:', e && e.message); } catch (_) { } }
+}
+function _saidaDiaRender(box) {
+  const L = (_saidaDia || []).slice(-30);
+  if (!L.length) { box.innerHTML = ''; return; }
+  const hoje = hojeISO();
+  const metaDe = d => {
+    const e = (typeof equivDiaCal === 'function') ? equivDiaCal(String(d).slice(0, 10)) : 1;
+    return e > 0 ? META_SAIDA_T * e : 0;
+  };
+  const mx = Math.max(META_SAIDA_T, ...L.map(x => (+x.saiu_kg || 0) / 1000));
+  const comMeta = L.filter(x => metaDe(x.dia) > 0 && String(x.dia).slice(0, 10) !== hoje);
+  const bateu = comMeta.filter(x => (+x.saiu_kg || 0) / 1000 >= metaDe(x.dia)).length;
+  const somaT = L.reduce((a, x) => a + (+x.saiu_kg || 0), 0) / 1000;
+  const mediaUtil = comMeta.length ? comMeta.reduce((a, x) => a + (+x.saiu_kg || 0), 0) / 1000 / comMeta.length : 0;
+  const yMeta = h => Math.round(h * (META_SAIDA_T / mx));
+  const ALT = 132;
+  box.innerHTML = '<div class="card">'
+    + '<div class="titulo-sec">🚚 Saiu da carteira por dia</div>'
+    + '<p class="desc" style="margin:0 0 6px;font-size:12px">O que estava pendente na foto anterior e não está mais na de hoje — <b>proxy de faturamento</b>. '
+    + 'Meta de <b>' + META_SAIDA_T + ' t</b> por dia útil, proporcional no sábado e nenhuma no domingo.</p>'
+    + '<div class="idet-grid">'
+    + '<div><b>' + fmt(mediaUtil, 1) + ' t</b><span>média por dia útil</span></div>'
+    + '<div><b style="color:' + (bateu >= comMeta.length / 2 ? 'var(--verde)' : 'var(--critico)') + '">' + bateu + ' de ' + comMeta.length + '</b><span>dias na meta</span></div>'
+    + '<div><b>' + fmt(somaT, 1) + ' t</b><span>no período</span></div>'
+    + '<div><b>' + L.length + '</b><span>dias medidos</span></div>'
+    + '</div>'
+    + '<div style="position:relative;margin-top:10px">'
+    /* a linha da meta atravessa o gráfico: o olho compara com ela, não com o eixo */
+    + '<div style="position:absolute;left:0;right:0;bottom:' + (18 + yMeta(ALT)) + 'px;border-top:2px dashed var(--laranja);pointer-events:none">'
+    + '<span style="position:absolute;right:0;top:-15px;font-size:10px;font-weight:800;color:var(--laranja);background:#fff;padding:0 4px">meta ' + META_SAIDA_T + ' t</span></div>'
+    + '<div style="display:flex;align-items:flex-end;gap:4px;height:' + (ALT + 18) + 'px">'
+    + L.map(x => {
+      const t = (+x.saiu_kg || 0) / 1000, m = metaDe(x.dia), d = String(x.dia).slice(0, 10);
+      const parcial = d === hoje;
+      const h = Math.max(2, Math.round(t / mx * ALT));
+      const cor = parcial ? '#9AA7B2' : (!m ? '#B9C4CF' : (t >= m ? '#1F7A46' : '#C0392B'));
+      return '<div style="flex:1;text-align:center;min-width:16px" title="' + fmtData(d) + ' · ' + fmt(t, 1) + ' t'
+        + (m ? ' · meta ' + fmt(m, 1) + ' t' : ' · domingo, sem meta')
+        + (parcial ? ' · dia em andamento' : '') + ' · ' + (x.linhas || 0) + ' linha(s)">'
+        + '<div style="background:' + cor + ';border-radius:4px 4px 0 0;height:' + h + 'px"></div>'
+        + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + fmtData(d).slice(0, 5) + '</span></div>';
+    }).join('')
+    + '</div></div>'
+    + '<p class="desc" style="font-size:11px;margin-top:6px">A conta é entre <b>fotos</b> do REST196, não entre dias civis: '
+    + 'a barra cinza do fim é o dia em andamento, e vai crescer até a próxima importação. '
+    + 'Faturamento de verdade só com um relatório de notas — este número é o que a carteira deixou de dever.</p>'
+    + '</div>';
+}
 async function cardAtrasoDia(forcar) {
   const box = document.getElementById('cardAtrasoDia'); if (!box) return;
   try {
@@ -28770,6 +28844,7 @@ async function cardAtrasoDia(forcar) {
 }
 function renderPainel() {
   try { setTimeout(cardAtrasoDia, 0); } catch (_) { }
+  try { setTimeout(cardSaidaDia, 0); } catch (_) { }
   try { setTimeout(ordAplica, 60); } catch (_) { }
   if (!dadosPainel) return;
   aprovReg = [];
