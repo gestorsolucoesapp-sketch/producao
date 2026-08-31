@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.349.0';
+const APP_VER = '4.350.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -30529,6 +30529,32 @@ async function gravar(id, substituir = false) {
         }
       }
     }
+    /* ===== 31/08/2026 — A IMPORTACAO QUE APAGOU A REGIAO INTEIRA =====
+       O Joao importou as DUAS emissoes do RVEN002 (regiao e propostas). O
+       arquivo de propostas nao bateu com a marca de cabecalho esperada, caiu no
+       teste seguinte e foi lido como RVEN002 de regiao: 1 linha lixo gravada, e
+       o CASCADE da importacao anterior levou junto as 2.124 linhas de regiao.
+       Uma tela inteira (mapa, agrupamento por carga) ficou sem dado.
+       A causa raiz e a deteccao, mas a defesa que faltava e esta: NENHUMA
+       importacao substitui uma base por um punhado de linhas sem alguem
+       confirmar. Vale para qualquer rotina — o proximo erro de leitura vai ser
+       de outro relatorio. */
+    try {
+      const _SUBST = { 'RVEN002': 'pedidos_regiao', 'PROP': 'propostas', 'RVEN304': 'fluxo_pedido' };
+      const _tab = _SUBST[r.rotina];
+      if (_tab) {
+        const { count: _antes } = await sb.from(_tab).select('*', { count: 'exact', head: true });
+        if (_antes > 50 && linhas.length < _antes * 0.3) {
+          const _ok = confirm('Atenção: este arquivo tem ' + fmt(linhas.length, 0) + ' linha(s) e a base atual tem '
+            + fmt(_antes, 0) + '.\n\nImportar vai SUBSTITUIR o que já existe. Um arquivo muito menor costuma ser sinal de'
+            + ' relatório trocado ou recortado.\n\nImportar mesmo assim?');
+          if (!_ok) {
+            await sb.from('importacoes').delete().eq('id', imp.id);
+            throw new Error('Importação cancelada: o arquivo tem ' + linhas.length + ' linha(s) contra ' + _antes + ' já gravadas.');
+          }
+        }
+      }
+    } catch (e) { if (e && /Importação cancelada/.test(e.message || '')) throw e; }
     for (let i = 0; i < linhas.length; i += 400) {
       // producao_resumo tem UNIQUE (dia,turno,recurso_cod,unidade): sem upsert, a linha nova
       // colide com a antiga (que ainda não foi removida) e a importação inteira falha.
