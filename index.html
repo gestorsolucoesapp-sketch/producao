@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.367.0';
+const APP_VER = '4.368.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28721,47 +28721,70 @@ const _ANO_COR = {
   'Compressão': '#B98900', 'Embaladeiras': '#5C6B78', 'Outros': '#9AA7B2'
 };
 function _anoGrafico(meses, setores, val, cx, rot, fmtv) {
-  const emp = setores.filter(s => !(cx(s) && _anoMet === 'kg'));
-  const fora = setores.filter(s => cx(s) && _anoMet === 'kg');
-  const totM = m => emp.reduce((a, s) => a + val(m, s), 0);
-  const mx = Math.max(1, ...meses.map(totM));
-  const ALT = 160;
-  const uni = _anoMet === 'parada' ? 'h' : 't';
-  const emT = v => _anoMet === 'parada' ? fmt(v, 0) : fmt(v / 1000, 1);
-  let h = '<div style="display:flex;align-items:flex-end;gap:6px;height:' + (ALT + 20) + 'px;margin:6px 0 2px">'
-    + meses.map(m => {
-      const t = totM(m);
-      const col = emp.map(s => {
-        const v = val(m, s); if (!v) return '';
-        return '<div style="height:' + Math.max(1, Math.round(v / mx * ALT)) + 'px;background:' + (_ANO_COR[s] || '#9AA7B2') + '"'
-          + ' title="' + escapeHtml(s) + ' · ' + rot(m) + ' · ' + fmtv(v, s) + '"></div>';
-      }).reverse().join('');
-      return '<div style="flex:1;text-align:center;min-width:26px">'
-        + '<div style="font-size:9.5px;font-weight:800;color:var(--fraco-2);margin-bottom:2px">' + emT(t) + '</div>'
-        + '<div style="border-radius:4px 4px 0 0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end">' + col + '</div>'
-        + '<span style="font-size:9.5px;color:var(--fraco-2);display:block;margin-top:3px">' + rot(m) + '</span></div>';
-    }).join('')
-    + '</div>'
-    + '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;margin-bottom:6px">'
-    + emp.map(s => '<span style="display:inline-flex;align-items:center;gap:4px">'
-      + '<i style="width:10px;height:10px;border-radius:2px;background:' + (_ANO_COR[s] || '#9AA7B2') + ';display:inline-block"></i>'
-      + escapeHtml(s) + '</span>').join('')
-    + '<span class="desc" style="font-size:11px">· total do mês em ' + uni + ' acima de cada barra</span>'
-    + '</div>';
-  /* as que medem em caixa, na escala delas */
-  if (fora.length) {
-    const mxc = Math.max(1, ...meses.map(m => fora.reduce((a, s) => a + val(m, s), 0)));
-    h += '<div style="display:flex;align-items:flex-end;gap:6px;height:56px;margin-top:2px">'
-      + meses.map(m => {
-        const v = fora.reduce((a, s) => a + val(m, s), 0);
-        return '<div style="flex:1;text-align:center;min-width:26px" title="' + fora.join(' + ') + ' · ' + rot(m) + ' · ' + fmt(v, 0) + ' cx">'
-          + '<div style="background:#5C6B78;border-radius:3px 3px 0 0;height:' + Math.max(1, Math.round(v / mxc * 40)) + 'px"></div></div>';
-      }).join('')
+  /* 31/08/2026 (Joao: "faz um grafico um embaixo do outro separado por setor").
+     A barra empilhada respondia "quem fez o mes", mas achatava todo mundo: a
+     Extrusao tomava metade da coluna e a Rotulagem virava um fio de 1 px — ou
+     seja, o setor pequeno nao tinha grafico nenhum.
+     Agora e um grafico POR SETOR, cada um na SUA escala: a Rotulagem passa de
+     20,2 para 7,1 t e isso aparece do mesmo tamanho que uma queda da Extrusao.
+     O preco e que as alturas nao se comparam entre setores — por isso cada
+     faixa traz o total do ano e o texto avisa. Comparar setores continua sendo
+     trabalho da tabela abaixo. */
+  const uni = _anoMet === 'parada' ? ' h' : '';
+  const linha = s => {
+    const vs = meses.map(m => val(m, s));
+    const mx = Math.max(1, ...vs);
+    const soma = vs.reduce((a, b) => a + b, 0);
+    const ult = vs[vs.length - 1], penu = vs.length > 1 ? vs[vs.length - 2] : 0;
+    const dif = penu > 0 ? (ult - penu) / penu * 100 : null;
+    const cor = _ANO_COR[s] || '#9AA7B2';
+    return '<div style="padding:8px 0;border-top:1px solid var(--linha)">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+      + '<i style="width:10px;height:10px;border-radius:2px;background:' + cor + ';display:inline-block"></i>'
+      + '<b style="font-size:13px">' + escapeHtml(s) + '</b>'
+      + '<span class="desc" style="font-size:11.5px">ano ' + fmtv(soma, s) + '</span>'
+      + (dif !== null && isFinite(dif)
+        ? '<span style="font-size:11px;font-weight:800;margin-left:auto;color:' + (dif >= 0 ? '#1F7A46' : 'var(--critico)') + '">'
+          + (dif >= 0 ? '▲ +' : '▼ ') + fmt(Math.abs(dif), 0) + '% vs mês anterior</span>'
+        : '')
       + '</div>'
-      + '<p class="desc" style="font-size:11px;margin:2px 0 8px">Faixa cinza: <b>' + fora.join(' + ')
-      + '</b>, medidas em <b>caixas</b> — escala própria, porque caixa não empilha com quilo.</p>';
-  }
-  return h;
+      + '<div style="display:flex;align-items:flex-end;gap:4px;height:64px;margin-top:4px">'
+      + meses.map((m, k) => {
+        const v = vs[k];
+        return '<div style="flex:1;text-align:center;min-width:22px" title="' + escapeHtml(s) + ' · ' + rot(m) + ' · ' + fmtv(v, s) + '">'
+          + '<div style="background:' + cor + ';opacity:' + (v ? (0.45 + 0.55 * (v / mx)).toFixed(2) : 0)
+          + ';border-radius:3px 3px 0 0;height:' + Math.max(v ? 2 : 0, Math.round(v / mx * 52)) + 'px"></div>'
+          + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:2px">' + rot(m) + '</span></div>';
+      }).join('')
+      + '</div></div>';
+  };
+  /* o total da fábrica primeiro, para dar o pano de fundo; depois cada setor,
+     do maior para o menor, que é a ordem em que a pergunta costuma vir */
+  const emp = setores.filter(s => !(cx(s) && _anoMet === 'kg'));
+  const totMes = m => emp.reduce((a, s) => a + val(m, s), 0);
+  const vsT = meses.map(totMes), mxT = Math.max(1, ...vsT);
+  const cab = '<div style="padding-bottom:6px">'
+    + '<div style="display:flex;align-items:baseline;gap:8px"><b style="font-size:13px">Fábrica</b>'
+    + '<span class="desc" style="font-size:11.5px">soma dos setores medidos em '
+    + (_anoMet === 'parada' ? 'horas' : 'quilos') + '</span></div>'
+    + '<div style="display:flex;align-items:flex-end;gap:4px;height:76px;margin-top:4px">'
+    + meses.map((m, k) => '<div style="flex:1;text-align:center;min-width:22px" title="' + rot(m) + ' · '
+        + (_anoMet === 'parada' ? fmt(vsT[k], 0) + ' h' : fmt(vsT[k] / 1000, 1) + ' t') + '">'
+      + '<div style="font-size:9px;font-weight:800;color:var(--fraco-2)">'
+      + (_anoMet === 'parada' ? fmt(vsT[k], 0) : fmt(vsT[k] / 1000, 1)) + '</div>'
+      + '<div style="background:var(--navy);border-radius:3px 3px 0 0;height:' + Math.max(2, Math.round(vsT[k] / mxT * 52)) + 'px"></div>'
+      + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:2px">' + rot(m) + '</span></div>').join('')
+    + '</div></div>';
+  const ordem = setores.slice().sort((a, b) => {
+    const sa = meses.reduce((x, m) => x + val(m, a), 0), sb = meses.reduce((x, m) => x + val(m, b), 0);
+    /* quem mede em caixa vai para o fim: a soma dele não é comparável */
+    const ca = cx(a) && _anoMet === 'kg' ? 1 : 0, cb2 = cx(b) && _anoMet === 'kg' ? 1 : 0;
+    return ca - cb2 || sb - sa;
+  });
+  return cab + ordem.map(linha).join('')
+    + '<p class="desc" style="font-size:11px;margin:6px 0 10px;border-top:1px solid var(--linha);padding-top:6px">'
+    + 'Cada setor tem <b>escala própria</b> — a altura mostra o mês bom e o mês ruim <b>daquele setor</b>, não o tamanho dele frente aos outros. '
+    + 'Para comparar setores entre si, use a tabela abaixo.</p>';
 }
 function anoRender() {
   const wrap = document.getElementById('anoWrap'); if (!wrap || !_anoDados) return;
