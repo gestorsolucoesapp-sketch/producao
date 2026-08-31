@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.342.0';
+const APP_VER = '4.343.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22698,6 +22698,41 @@ function _seloFluxo(x) {
    Em vez de refazer a conta noutro lugar (duas reguas para o mesmo numero, que
    e como se cria divergencia), a propria funcao ganhou um modo SILENCIOSO:
    calcula igual, nao desenha nada e devolve a contagem por setor. */
+/* ===== 31/08/2026 (Joao: "se e entrega vencida nao falta OP, ja foi produzido,
+   e olha a OP ai") =====
+   O 227302 aparecia como "sem OP · falta produzir" e o ERP mostrava a OP 263202
+   ENCERRADA, produzida em 19/08. Nao e contradicao: a fila do RPCP339 so lista
+   o que esta PARA rodar — OP encerrada sai da fila, entao o app nao achava nada
+   e concluia que ninguem tinha programado.
+   Faltava olhar o outro lado: o RPCP622 guarda o que a maquina APONTOU. Agora,
+   para os pedidos sem OP na fila, busco a ultima OP produzida daquele item e
+   mostro na linha. Continua sendo OP DO ITEM, nao do pedido — o 622 nao traz o
+   numero do pedido — e a tela diz isso com todas as letras. */
+async function _ultimaProducaoDe(itens) {
+  const m = {};
+  const its = (itens || []).filter(Boolean);
+  if (!its.length) return m;
+  try {
+    const de = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const linhas = await _leTudoFlx(() => sb.from('producao')
+      .select('item_cod,op,dia,quantidade,recurso_nome')
+      .in('item_cod', its).gte('dia', de).order('dia'));
+    (linhas || []).forEach(r => {
+      const k = String(r.item_cod);
+      const at = m[k];
+      if (!at || String(r.dia) > String(at.dia)) m[k] = r;
+    });
+  } catch (e) { try { console.warn('ultimaProducao:', e && e.message); } catch (_) { } }
+  return m;
+}
+function _seloProduzido(x) {
+  const p = x && x._prodUlt; if (!p) return '';
+  return '<div style="font-size:10.5px;margin-top:2px;color:#1E6B3A;font-weight:700"'
+    + ' title="\u00faltima produ\u00e7\u00e3o apontada DESTE ITEM no RPCP622 — a OP pode ser de outro pedido">'
+    + '\u2713 item j\u00e1 rodou \u00b7 OP <b>' + escapeHtml(String(p.op || '?')) + '</b> em ' + fmtData(String(p.dia).slice(0, 10))
+    + (p.quantidade ? ' \u00b7 ' + fmt(+p.quantidade || 0, 0) + ' cx' : '')
+    + (p.recurso_nome ? ' \u00b7 ' + escapeHtml(String(p.recurso_nome)) : '') + '</div>';
+}
 async function atrDetalhe(tipo, _mudo) {
   const cx = _mudo ? null : $('atrDet'); if (!cx && !_mudo) return;
   if (!_mudo && _atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
@@ -22923,7 +22958,7 @@ async function atrDetalhe(tipo, _mudo) {
        recorta e so a pilula que a pessoa toca. */
     const alvo = _mudo ? '' : _atrSetor;
     const porSetor = {};
-    const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
+    const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP na fila \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
     L.forEach(x => { const k = x.setor || _semOp(x); porSetor[k] = (porSetor[k] || 0) + 1; });
     /* 31/08/2026 (Joao: "cliquei em vence em 7 dias, entao esta pronto, e da
        esse erro"). Nao era intermitente: a pilula de SETOR ficou ligada e o
@@ -22944,6 +22979,18 @@ async function atrDetalhe(tipo, _mudo) {
          sem erro nenhum — o pior tipo de defeito, o que falha calado. */
       const _fx = await _fluxoAtualDe(L.map(x => String(x.ped)));
       L.forEach(x => { x._flx = _fx[String(x.ped)] || null; });
+      /* so para quem nao tem OP na fila: e ai que a pergunta "e a OP?" aparece */
+      const _semOP = L.filter(x => !x.ops.length);
+      if (_semOP.length) {
+        const its = [];
+        _semOP.forEach(x => { Object.keys(x.cxItem || {}).forEach(i => its.push(i)); Object.keys(x.milItem || {}).forEach(i => its.push(i)); });
+        const _up = await _ultimaProducaoDe([...new Set(its)]);
+        _semOP.forEach(x => {
+          x._prodUlt = Object.keys(x.cxItem || {}).concat(Object.keys(x.milItem || {}))
+            .map(i => _up[String(i)]).filter(Boolean)
+            .sort((a, b) => String(b.dia).localeCompare(String(a.dia)))[0] || null;
+        });
+      }
     } catch (_) { }
     L.sort((a, b) => a.ent.localeCompare(b.ent));
     _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
@@ -23008,10 +23055,13 @@ async function atrDetalhe(tipo, _mudo) {
                 + _seloFilaItem(x) + ' \u00b7 ')
             : '')
           + (x.setor ? '<b style="color:var(--navy)">' + escapeHtml(x.setor) + '</b>' + (x.multi ? ' <span style="opacity:.7">+outros</span>' : '') + ' \u00b7 '
-            : (!x.cheio && x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
+            : (!x.cheio && x.faltaProd ? '<b style="color:#9B2C2C">'
+                + (x.cxTot ? 'falta ' + fmt(Math.max(0, Math.ceil(x.cxTot - (x.cxCob || 0))), 0) + ' cx' : 'falta produzir')
+                + ' \u00b7 sem OP na fila</b> \u00b7 '
                            : '<b style="color:#1F7A46">\u2713 pronto \u00b7 aguardando sa\u00edda</b> \u00b7 '))
           + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
           + _seloFluxo(x)
+          + _seloProduzido(x)
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
           /* 29/08/2026 (Joao: "mostre OP e maquina programada"). Sem isso a
              lista diz que o pedido esta atrasado mas nao diz onde ir cobrar.
