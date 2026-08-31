@@ -3614,6 +3614,67 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     ['qtde', 536, 576], ['rqtde', 576, 618], ['atend', 618, 676],
     ['valor', 676, 755], ['oc', 755, 900]
   ];
+  /* ===== LAYOUT NOVO DE PROPOSTAS — 31/08/2026 =====
+     (Joao: "pode importar proposta?"). O RVEN002 "Origem: Proposta" tem o MESMO
+     desenho do de regiao: o documento vem numa linha com rotulos fixos, so que
+     comeca com "Proposta:" em vez de "Pedido:". O leitor antigo esperava um
+     layout de colunas que este PDF nao tem, e leria zero linhas.
+     Este le pelos ROTULOS, como o do RVEN002 — largura de coluna muda, rotulo
+     nao. Do rodape "Total Proposta" saem peso, quantidade e valor.
+     O QUE NAO TEM NESTE LAYOUT: o numero do pedido gerado. Em compensacao, o
+     Fluxo/Situacao diz "PROPOSTA TRANSFORMADA EM PEDIDOS" quando virou pedido —
+     entao a informacao existe, muda de lugar. Nao invento o numero. */
+  function parsePropostasDoc(linhas, periodo) {
+    const out = [];
+    const vis = new Set();
+    const gerado = (periodo && periodo.gerado) || new Date().toISOString().slice(0, 10);
+    linhas.forEach(l => {
+      const t = (l.texto || '').trim();
+      let m;
+      if (/^Proposta:/.test(t)) {
+        const num = (/Proposta:\s*(\d+)/.exec(t) || [])[1];
+        if (!num || vis.has(num)) return;
+        const emi = (/Emiss[ãa]o:\s*(\d{2}\/\d{2}\/\d{4})/.exec(t) || [])[1];
+        const flx = (/Fluxo\s*\/\s*Situa[çc][ãa]o:\s*(.+?)\s*(?:Vendedor:|Transportador:|$)/.exec(t) || [])[1] || '';
+        vis.add(num);
+        out.push({
+          dia_foto: gerado, proposta: num, pedido: null,
+          emissao: dataBR(emi) || null, entrega: null,
+          cliente_cod: null, cliente: null,
+          situacao: flx.trim() || null,
+          peso: null, qtde: null, valor: null, rs_kg: null, ordem_compra: null
+        });
+        return;
+      }
+      if (!out.length) return;
+      const u = out[out.length - 1];
+      if ((m = /^Cliente:\s*(\d+)\s*-\s*(.+?)\s*$/.exec(t)) && !u.cliente_cod) {
+        u.cliente_cod = m[1];
+        u.cliente = m[2].replace(/\s+(Transportador|Cond\. Pagto\.|Fluxo\/Situa|Vendedor)\s*:.*$/i, '').trim();
+        return;
+      }
+      /* a entrega esta em cada linha de item; guardo a MAIS DISTANTE, que e a
+         que decide quando a proposta inteira precisa estar pronta */
+      if (/^\d{6,7}\/\d+\s/.test(t)) {
+        const de = (/\b(\d{2}\/\d{2}\/\d{4})\b/.exec(t) || [])[1];
+        const iso = dataBR(de);
+        if (iso && (!u.entrega || iso > u.entrega)) u.entrega = iso;
+        return;
+      }
+      /* "Total Proposta: 4,00 0,00 0,00 4,00 100,00 9,90 9,90 42,44 420,20 420,20"
+         -> quantidade, ..., peso, saldo peso, R$/kg, valor, saldo valor */
+      if (/^Total\s+Proposta:/.test(t)) {
+        const n = (t.match(/[\d.]+,\d{2}/g) || []).map(numBR);
+        if (n.length >= 5) {
+          u.qtde = n[0];
+          u.valor = n[n.length - 1];
+          u.rs_kg = n[n.length - 3];
+          u.peso = n[n.length - 4];
+        }
+      }
+    });
+    return out;
+  }
   function parsePropostas(linhas, periodo) {
     const dtBR = s => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(s || ''); return m ? m[3] + '-' + m[2] + '-' + m[1] : null; };
     const colDe = x => { for (const c of COLSPROP) if (x >= c[1] && x < c[2]) return c[0]; return null; };
@@ -3671,7 +3732,13 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       case '339': registros = parse339(linhas, periodo); break;
       case '241': registros = parse241(linhas, periodo); break;
       case '196': registros = parse196(linhas, periodo); break;
-      case 'PROP': registros = parsePropostas(linhas, periodo); break;
+      case 'PROP':
+        /* dois layouts vivos: o de colunas (antigo) e o "Relacao de Documentos"
+           com Origem: Proposta (atual). Escolho pelo que o arquivo tem. */
+        registros = linhas.some(l => /^Proposta:\s*\d+/.test(l.texto))
+          ? parsePropostasDoc(linhas, periodo)
+          : parsePropostas(linhas, periodo);
+        break;
       case 'RVEN002': registros = parseRVEN002(linhas, periodo); break;
       case 'RVEN304': registros = parseRVEN304(linhas); break;
       case 'RSMI010': registros = parseRSMI010(linhas); break;
@@ -3733,7 +3800,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.352.0';
+const APP_VER = '4.353.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31788,7 +31855,14 @@ function cardPropostas() {
   try { ((_cart196 && _cart196.pend) || []).forEach(p => { const b = String(p.pedido || '').split('/')[0]; if (b) naCart.add(b); }); } catch (_) { }
   const temCart = naCart.size > 0;
 
-  const grupo = r => !r.pedido ? 'sem' : (temCart && naCart.has(String(r.pedido)) ? 'cart' : 'fora');
+  /* 31/08/2026 — no layout novo do RVEN002 a proposta NAO traz o numero do
+     pedido gerado; quem diz que ela virou pedido e o Fluxo/Situacao
+     ("PROPOSTA TRANSFORMADA EM PEDIDOS"). Sem isto, proposta ja fechada cairia
+     em "sem pedido" e o funil mostraria demanda que nao existe mais. */
+  const virou = r => /TRANSFORMAD/i.test(String(r.situacao || ''));
+  const grupo = r => r.pedido
+    ? (temCart && naCart.has(String(r.pedido)) ? 'cart' : 'fora')
+    : (virou(r) ? 'fora' : 'sem');
   const G = { sem: [], fora: [], cart: [] };
   R.forEach(r => G[grupo(r)].push(r));
   const sKg = L => L.reduce((a, r) => a + (+r.peso || 0), 0);
