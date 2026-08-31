@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.338.0';
+const APP_VER = '4.339.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22667,12 +22667,18 @@ function _seloFluxo(x) {
   return '<div style="font-size:10.5px;font-weight:700;margin-top:2px;color:' + (grave ? '#9B2C2C' : 'var(--fraco-2)') + '"'
     + ' title="etapa em que o pedido est\u00e1 agora, pelo RVEN304">\uD83E\uDDED parado em <b>' + escapeHtml(f.setor) + '</b> h\u00e1 <b>' + t + '</b></div>';
 }
-async function atrDetalhe(tipo) {
-  const cx = $('atrDet'); if (!cx) return;
-  if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
-  _atrTipo = tipo;
+/* 31/08/2026 (Joao: "tem como separar por setor e informar quantos de cada
+   esta atrasado no canto superior direito?"). A conta por setor ja existia —
+   e ela que numera as pilulas — mas so nascia quando alguem abria a lista.
+   Em vez de refazer a conta noutro lugar (duas reguas para o mesmo numero, que
+   e como se cria divergencia), a propria funcao ganhou um modo SILENCIOSO:
+   calcula igual, nao desenha nada e devolve a contagem por setor. */
+async function atrDetalhe(tipo, _mudo) {
+  const cx = _mudo ? null : $('atrDet'); if (!cx && !_mudo) return;
+  if (!_mudo && _atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
+  if (!_mudo) _atrTipo = tipo;
   const _quente = _atrDados && (Date.now() - _atrDados.em) < 300000;
-  cx.innerHTML = _quente ? '' : '<p class="desc" style="padding:8px 0">Carregando…</p>';
+  if (cx) cx.innerHTML = _quente ? '' : '<p class="desc" style="padding:8px 0">Carregando…</p>';
   try {
     let d, df;
     if (_quente) { d = _atrDados.d; df = _atrDados.df; }
@@ -22680,7 +22686,7 @@ async function atrDetalhe(tipo) {
       const dia = (await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1)).data;
       d = dia && dia[0] ? dia[0].dia_foto : null;
     }
-    if (!d) { cx.innerHTML = '<p class="desc">Sem foto da carteira.</p>'; return; }
+    if (!d) { if (cx) cx.innerHTML = '<p class="desc">Sem foto da carteira.</p>'; return _mudo ? null : undefined; }
     /* 29/08/2026 (Joao: "mostre em qual setor esta parado"). O pedido quase
        nunca casa com a fila pelo NUMERO: so 1 dos 93 bateu. O que casa e o
        ITEM — a OP na fila carrega o item, e o item diz o setor.
@@ -22890,7 +22896,7 @@ async function atrDetalhe(tipo) {
        O setor aqui deixou de significar "onde o pedido esta" para significar
        "onde o item roda", entao o filtro global nao cabe mais nesta lista: quem
        recorta e so a pilula que a pessoa toca. */
-    const alvo = _atrSetor;
+    const alvo = _mudo ? '' : _atrSetor;
     const porSetor = {};
     const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
     L.forEach(x => { const k = x.setor || _semOp(x); porSetor[k] = (porSetor[k] || 0) + 1; });
@@ -22901,6 +22907,7 @@ async function atrDetalhe(tipo) {
        "nenhum pedido com 100%", sem dizer que a culpa era da pilula.
        Guardo a lista do recorte ANTES do filtro: carga se monta por regiao, nao
        por setor, entao o agrupamento passa a usar esta. */
+    if (_mudo) return { porSetor: porSetor, total: L.length };
     _atrListaAll = L.slice();
     if (alvo) L = L.filter(x => (x.setor || _semOp(x)) === alvo);
     /* so dos pedidos que sobraram no recorte: sao poucos e evita varrer as
@@ -23004,7 +23011,7 @@ async function atrDetalhe(tipo) {
       + (L.length > 60 ? '<p class="desc">mostrando 60 de ' + L.length + '</p>' : '')
       + '</div>';
   } catch (e) {
-    cx.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+    if (cx) cx.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
 }
 /* 29/08/2026: leva para o mapa da aba Comercial ja com o estado selecionado.
@@ -28057,6 +28064,29 @@ let _atrCache = null;
    precisa (carteira do 196 e o deposito reservado) e chama a funcao da
    Programacao SO pelo efeito colateral: e ela que preenche _progResHTML e
    _resDivG. Uma regua so para os dois cards. */
+/* resumo por setor no canto do card: quantos pedidos de PRODUCAO ATRASADA cada
+   setor segura. E o mesmo numero das pilulas da lista — vem da mesma funcao —
+   entao a soma bate com o KPI ao lado. Toque leva direto para a lista daquele
+   setor. */
+async function _atrSetores() {
+  const el = document.getElementById('atrSetores'); if (!el) return;
+  try {
+    const r = await atrDetalhe('producao', true);
+    if (!r || !r.total) { el.innerHTML = ''; return; }
+    const ord = Object.keys(r.porSetor).sort((a, b) => r.porSetor[b] - r.porSetor[a]);
+    el.innerHTML = '<div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Produção atrasada por setor</div>'
+      + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;justify-content:flex-end">'
+      + ord.map(k => '<span onclick="atrPorSetor(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')"'
+        + ' style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:3px 9px;background:var(--leve-2);border:1px solid var(--linha-2s);color:var(--navy)">'
+        + escapeHtml(k) + ' <b style="color:#6A1B9A">' + r.porSetor[k] + '</b></span>').join('')
+      + '</div>';
+  } catch (e) { el.innerHTML = ''; try { console.warn('setores:', e && e.message); } catch (_) { } }
+}
+function atrPorSetor(setor) {
+  _atrSetor = setor; _atrTipo = '';
+  atrDetalhe('producao');
+  try { const d = document.getElementById('atrDet'); if (d) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) { }
+}
 async function _atrResUmo() {
   const el = document.getElementById('atrResUmo'); if (!el) return;
   try {
@@ -28157,6 +28187,7 @@ async function cardAtrasoDia(forcar) {
          MESMO html que aquela aba monta (_progResHTML), senao os dois cards
          diriam numeros diferentes do mesmo fato — testei refazer e dava 292/64
          contra 303/53, so pela ordem de desempate da fila. */
+      + '<div id="atrSetores" style="margin-left:auto;text-align:right;max-width:380px"></div>'
       + '<div id="atrResUmo" style="flex:1;min-width:300px"></div>'
       + '</div>'
       + '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:520px;display:block">'
@@ -28181,6 +28212,7 @@ async function cardAtrasoDia(forcar) {
     /* o bloco de reserva chega depois: depende da carteira e do deposito, e o
        card nao pode ficar esperando esses dois para desenhar os numeros */
     try { _atrResUmo(); } catch (_) { }
+    try { _atrSetores(); } catch (_) { }
   } catch (e) { box.innerHTML = ''; try { console.warn('atrasoDia:', e && e.message); } catch (_) { } }
 }
 function renderPainel() {
