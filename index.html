@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.332.0';
+const APP_VER = '4.333.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20532,7 +20532,16 @@ const _tintaFiltra = L => _tintaMarca ? L.filter(x => (x.fornecedor || '').trim(
    o João salva. Nada aqui toca o estoque. */
 let _tintaCarrinho = {};
 
-async function tintaAbrir() { _tintaVista = 'estoque'; _tintaBusca = ''; await tintaCarregar(); }
+async function tintaAbrir() {
+  _tintaVista = 'estoque'; _tintaBusca = '';
+  /* 30/08/2026: para quem nao ve valor, o botao Resumo some — nao adianta
+     mostrar uma aba que so vai dizer "restrito". */
+  try {
+    const bt = document.querySelector('#tintaSubAbas [data-tv="resumo"]');
+    if (bt) bt.style.display = _tintaVeDinheiro() ? '' : 'none';
+  } catch (_) { }
+  await tintaCarregar();
+}
 function tintaVer(v) {
   _tintaVista = v; _tintaBusca = '';
   document.querySelectorAll('#tintaSubAbas [data-tv]').forEach(b =>
@@ -20571,6 +20580,20 @@ function tintaRender() {
 }
 
 /* ---------- ESTOQUE ---------- */
+/* 30/08/2026 (Joao: "na aba Casa de Tintas so mostre o valor para meu usuario").
+   Quem opera a Casa de Tintas precisa do SALDO e do MINIMO para nao deixar
+   faltar cor — nao precisa saber quanto custa. Preco, valor do estoque e
+   estimativa do pedido passam a aparecer so para o dono do e-mail cadastrado
+   em ADMIN_EMAILS. ATENCAO: isto e a TELA. O dado continua vindo do banco e
+   quem abrir o codigo-fonte alcanca; esconder aqui resolve o dia a dia, nao a
+   seguranca. O certo e uma politica no banco, e para isso eu preciso do acesso
+   ao projeto de producao de volta. */
+function _tintaVeDinheiro() {
+  try {
+    const email = String((perfil && perfil.email) || '').toLowerCase();
+    return ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);
+  } catch (_) { return false; }
+}
 function tintaTelaEstoque(box) {
   const L = _tintaSaldo;
   const tot = L.reduce((a, x) => a + (+x.valor || 0), 0);
@@ -20582,7 +20605,7 @@ function tintaTelaEstoque(box) {
     .filter(x => x.saldo > 0 || f);
   box.innerHTML = '<div class="idet-grid">'
     + '<div><b>' + _tNum(latas) + '</b><span>latas em estoque</span></div>'
-    + '<div><b>' + _tBRL(tot) + '</b><span>valor do estoque</span></div>'
+    + (_tintaVeDinheiro() ? '<div><b>' + _tBRL(tot) + '</b><span>valor do estoque</span></div>' : '')
     + '<div><b style="color:' + (baixo.length ? 'var(--critico)' : 'var(--verde)') + '">' + baixo.length + '</b><span>abaixo do mínimo</span></div>'
     + '<div><b>' + L.filter(x => x.saldo > 0).length + '</b><span>cores com saldo</span></div>'
     + '</div>'
@@ -20590,7 +20613,9 @@ function tintaTelaEstoque(box) {
     + _tintaBarraMarcas()
     + '<input id="tintaBusca" type="search" placeholder="🔎 buscar cor, código ou fornecedor…" value="' + escapeHtml(_tintaBusca) + '" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
-    + '<th style="text-align:left">Cor</th><th>Saldo</th><th>Mín.</th><th style="text-align:right">Preço</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
+    + '<th style="text-align:left">Cor</th><th>Saldo</th><th>Mín.</th>'
+    + (_tintaVeDinheiro() ? '<th style="text-align:right">Preço</th><th style="text-align:right">Valor</th>' : '')
+    + '</tr></thead><tbody>'
     + vis.map(x => {
       const bx = x.abaixo_minimo && x.ativo;
       return '<tr style="border-top:1px solid var(--linha)">'
@@ -20599,8 +20624,10 @@ function tintaTelaEstoque(box) {
         + (x.preco_aviso ? '<br><span style="color:var(--laranja-4,#9E5514);font-weight:700">⚠️ ' + escapeHtml(x.preco_aviso) + '</span>' : '') + '</div></td>'
         + '<td style="text-align:center;font-weight:800;color:' + (bx ? 'var(--critico)' : 'inherit') + '">' + _tNum(x.saldo) + '</td>'
         + '<td style="text-align:center;color:var(--fraco-2)">' + _tNum(x.estoque_min) + '</td>'
-        + '<td style="text-align:right">' + (x.preco ? _tBRL(x.preco) : '—') + '</td>'
-        + '<td style="text-align:right;font-weight:700">' + (x.valor ? _tBRL(x.valor) : '—') + '</td></tr>';
+        + (_tintaVeDinheiro()
+          ? '<td style="text-align:right">' + (x.preco ? _tBRL(x.preco) : '—') + '</td>'
+            + '<td style="text-align:right;font-weight:700">' + (x.valor ? _tBRL(x.valor) : '—') + '</td>'
+          : '') + '</tr>';
     }).join('')
     + '</tbody></table></div>'
     + (!vis.length ? '<p class="vazio-painel">Nada encontrado.</p>' : '');
@@ -20759,16 +20786,17 @@ function tintaTelaCompra(box) {
         + _bolinha(x.nome) + escapeHtml(x.nome) + ' <b>(' + _tNum(x.saldo) + ')</b></span>').join('') + '</div></div>' : '')
     + (itens.length ? '<div style="margin-top:12px"><div class="titulo-sec">Pedido · ' + itens.length + ' item(ns) · ' + _tNum(totLatas) + ' lata(s)</div>'
       + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
-      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>'
+      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th>'
+      + (_tintaVeDinheiro() ? '<th style="text-align:right">Valor</th>' : '') + '<th></th></tr></thead><tbody>'
       + itens.map(x => '<tr style="border-top:1px solid var(--linha)">'
         + '<td style="text-align:left;font-family:monospace">' + escapeHtml(x.p.cod_barras || '') + '</td>'
         + '<td style="text-align:left">' + _bolinha(x.p.nome) + escapeHtml(x.p.nome) + '</td>'
         + '<td style="text-align:left;font-size:11.5px">' + escapeHtml(x.p.fornecedor || '') + '</td>'
         + '<td style="text-align:center"><input type="number" min="1" value="' + x.q + '" onchange="tintaCompraQtd(\'' + x.p.id + '\',this.value)" style="width:62px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:center;font-size:13px"></td>'
-        + '<td style="text-align:right">' + (x.p.preco ? _tBRL(x.q * x.p.preco) : '—') + '</td>'
+        + (_tintaVeDinheiro() ? '<td style="text-align:right">' + (x.p.preco ? _tBRL(x.q * x.p.preco) : '—') + '</td>' : '')
         + '<td style="text-align:center"><span onclick="tintaCompraRem(\'' + x.p.id + '\')" style="cursor:pointer;color:var(--critico);font-weight:800">✕</span></td></tr>').join('')
       + '</tbody></table></div>'
-      + '<p class="desc" style="text-align:right;margin:6px 0 0;font-size:13px">estimativa: <b style="font-size:15px;color:var(--navy)">' + _tBRL(itens.reduce((a, x) => a + x.q * (+x.p.preco || 0), 0)) + '</b> <span style="font-size:11px">· pelo último preço pago</span></p>'
+      + (_tintaVeDinheiro() ? '<p class="desc" style="text-align:right;margin:6px 0 0;font-size:13px">estimativa: <b style="font-size:15px;color:var(--navy)">' + _tBRL(itens.reduce((a, x) => a + x.q * (+x.p.preco || 0), 0)) + '</b> <span style="font-size:11px">· pelo último preço pago</span></p>' : '')
       + '<p class="desc" style="font-size:11px;margin:2px 0 0">O valor é só para você conferir — <b>o e-mail sai sem valor</b>, quem negocia preço é o departamento de compras.</p>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
       + '<span onclick="tintaCompraEmail()" style="cursor:pointer;font-size:12.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:9px 16px">✉️ Enviar por e-mail</span>'
@@ -20974,15 +21002,19 @@ function tintaImprimirEstoque() {
     + 'th{text-align:left;background:#eee;font-size:8pt}td.n{text-align:right}'
     + '.bx{color:#B00;font-weight:700}.av{color:#8a5a00;font-size:7pt}h1{font-size:13pt;margin:0 0 2mm}</style></head><body>'
     + '<h1>Casa de Tintas · posição em ' + new Date().toLocaleDateString('pt-BR') + '</h1>'
-    + '<p>' + L.length + ' itens · ' + _tNum(L.reduce((a, x) => a + (+x.saldo || 0), 0)) + ' latas · ' + _tBRL(tot) + '</p>'
-    + '<table><tr><th>Cor</th><th>Fornecedor</th><th>Saldo</th><th>Mín</th><th>kg</th><th>Preço</th><th>Valor</th></tr>'
+    + '<p>' + L.length + ' itens · ' + _tNum(L.reduce((a, x) => a + (+x.saldo || 0), 0)) + ' latas'
+    + (_tintaVeDinheiro() ? ' · ' + _tBRL(tot) : '') + '</p>'
+    + '<table><tr><th>Cor</th><th>Fornecedor</th><th>Saldo</th><th>Mín</th><th>kg</th>'
+    + (_tintaVeDinheiro() ? '<th>Preço</th><th>Valor</th>' : '') + '</tr>'
     + L.map(x => '<tr><td>' + escapeHtml(x.nome) + (x.preco_aviso ? '<br><span class="av">' + escapeHtml(x.preco_aviso) + '</span>' : '') + '</td>'
       + '<td>' + escapeHtml(x.fornecedor || '') + '</td>'
       + '<td class="n' + (x.abaixo_minimo ? ' bx' : '') + '">' + _tNum(x.saldo) + '</td>'
       + '<td class="n">' + _tNum(x.estoque_min) + '</td>'
       + '<td class="n">' + _tNum(x.saldo_kg) + '</td>'
-      + '<td class="n">' + (x.preco ? _tBRL(x.preco) : '—') + '</td>'
-      + '<td class="n">' + (x.valor ? _tBRL(x.valor) : '—') + '</td></tr>').join('')
+      + (_tintaVeDinheiro()
+        ? '<td class="n">' + (x.preco ? _tBRL(x.preco) : '—') + '</td>'
+          + '<td class="n">' + (x.valor ? _tBRL(x.valor) : '—') + '</td>'
+        : '') + '</tr>').join('')
     + '</table></body></html>');
   w.document.close();
   setTimeout(() => { try { w.print(); } catch (_) { } }, 400);
