@@ -3844,7 +3844,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.360.0';
+const APP_VER = '4.361.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4843,8 +4843,16 @@ async function posLogin(userPronto) {
   souDev = !!(perfil && perfil.desenvolvedor === true);
   souRH = ADMIN_EMAILS.map(e => e.toLowerCase()).includes(email);  // espelha a policy so_joao
   vejoFolha = souAdmin || !!(perfil && perfil.ve_folha === true);  // ver folha não exige ser admin
-  vePromo = souDevReal || !!(perfil && perfil.ve_folha === true && perfil.folha_setor);
-  vePromoSetor = souDevReal ? null : (perfil && perfil.ve_folha === true ? (perfil.folha_setor || null) : null);
+  /* 31/08/2026 (Joao: "no celular nao aparece a aba, e e o mesmo login").
+     Nao era permissao: era ORDEM. Estas duas linhas liam `souDevReal`, que so
+     recebe valor mais abaixo, noutra funcao. No desktop uma segunda passada
+     acabava corrigindo; no celular, com o perfil chegando por outro caminho,
+     nao havia segunda passada e o botao Promocoes nunca aparecia.
+     Leio direto do perfil, que e a fonte — assim nao depende de quem roda
+     primeiro. */
+  const _ehDev = !!(perfil && perfil.desenvolvedor === true);
+  vePromo = _ehDev || !!(perfil && perfil.ve_folha === true && perfil.folha_setor);
+  vePromoSetor = _ehDev ? null : (perfil && perfil.ve_folha === true ? (perfil.folha_setor || null) : null);
   if (souDev) souAdmin = true;   // desenvolvedor = tudo do gestor + Organograma
   /* 13/08/2026 (João): "faltas e atestados devem ser vistas somente pelo gestor
      e RH". Dado sensível de pessoa não pode ficar aberto para o chão de fábrica. */
@@ -5271,8 +5279,9 @@ async function revalidarPermissoes() {
     souRH = eAdminEmail;
     if (souDev) souAdmin = true;
     vejoFolha = souAdmin || p.ve_folha === true;
-    vePromo = souDevReal || (p.ve_folha === true && !!p.folha_setor);
-    vePromoSetor = souDevReal ? null : (p.ve_folha === true ? (p.folha_setor || null) : null);
+    const _dev2 = (p.desenvolvedor === true);
+    vePromo = _dev2 || (p.ve_folha === true && !!p.folha_setor);
+    vePromoSetor = _dev2 ? null : (p.ve_folha === true ? (p.folha_setor || null) : null);
     podeEditarEscala = souAdmin || !!p.pode_editar_escala;
     telasSetor = null;                                      // derruba o cache eterno do getTelasSetor
     const antes = abasPermitidas.slice().sort().join(',');
@@ -43277,7 +43286,7 @@ function _pmResolve(cargoErp) {
 }
 function _promoAtual(mat) {
   const c = (_promoColabs || []).find(x => x.matricula === mat) || {};
-  const ap = (_promoRegs || [])
+  const ap = _promoVis(_promoRegs)
     .filter(p => p.matricula === mat && p.status === 'aplicada')
     .sort((a, b) => String(b.data_efeito || b.criado_em).localeCompare(String(a.data_efeito || a.criado_em)))[0];
   if (ap) return { cargo: ap.cargo_para, nivel: ap.nivel_para, salario: +ap.salario_para || null,
@@ -43572,7 +43581,7 @@ async function carregarUltPromo(forcar) {
 /* mesma coisa, mas ignorando UM registro — ao editar uma promoção já aplicada
    ela seria a "última promoção" dela mesma, e o campo se apontaria em círculo */
 function ultimaPromocaoExceto(mat, id) {
-  const ap = (_promoRegs || [])
+  const ap = _promoVis(_promoRegs)
     .filter(p => String(p.matricula) === String(mat) && p.status === 'aplicada' && p.data_efeito && p.id !== id)
     .sort((a, b) => String(b.data_efeito).localeCompare(String(a.data_efeito)))[0];
   if (ap) return { data: String(ap.data_efeito).slice(0, 10), fonte: 'histórico do app' };
@@ -43582,7 +43591,7 @@ function ultimaPromocaoExceto(mat, id) {
 }
 /* devolve { data, fonte } — histórico do app primeiro, cadastro manual depois */
 function ultimaPromocao(mat) {
-  const ap = (_promoRegs || [])
+  const ap = _promoVis(_promoRegs)
     .filter(p => String(p.matricula) === String(mat) && p.status === 'aplicada' && p.data_efeito)
     .sort((a, b) => String(b.data_efeito).localeCompare(String(a.data_efeito)))[0];
   if (ap) return { data: String(ap.data_efeito).slice(0, 10), fonte: 'histórico do app' };
@@ -44253,7 +44262,7 @@ function _promoImpacto() {
     + '<summary style="cursor:pointer;font-weight:800;font-size:13px;color:var(--navy)">Encargos sobre a folha'
     + (enc != null ? ' · usando <b>' + String(enc).replace('.', ',') + '</b>' : ' <span style="color:var(--laranja)">· definir</span>') + '</summary>'
     + '<div style="margin-top:8px">' + _encHTML() + '</div></details>';
-  const regs = (_promoRegs || []).filter(p => p.status !== 'cancelada');
+  const regs = _promoVis(_promoRegs).filter(p => p.status !== 'cancelada');
   if (!regs.length) return h + '<p class="desc" style="margin:0">Nada para somar ainda.</p></div>';
   const porStatus = {};
   const porSetor = {};
@@ -44318,13 +44327,27 @@ let _relSel = null, _relFaltas = true, _relDesemp = false;
 function _relIni() {
   if (_relSel) return _relSel;
   _relSel = {};
-  (_promoRegs || []).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = true; });
+  _promoVis(_promoRegs).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = true; });
   return _relSel;
 }
 function relTica(id, on) { _relIni()[id] = !!on; renderOrgPromo(); }
 function relTodos(on) { _relIni(); (_promoRegs || []).forEach(p => { if (p.status !== 'cancelada') _relSel[p.id] = !!on; }); renderOrgPromo(); }
 function relOpc(k, on) { if (k === 'faltas') _relFaltas = !!on; else _relDesemp = !!on; renderOrgPromo(); }
-function _relEscolhidas() { const s = _relIni(); return (_promoRegs || []).filter(p => s[p.id]); }
+/* 31/08/2026 (Joao: "nao esta filtrando por setor as promocoes"). A tela so
+   respeitava o recorte de PERMISSAO (o gestor que ve apenas o proprio setor).
+   O filtro do topo — o mesmo que recorta o resto do app — nao chegava aqui:
+   com "Impressao" escolhido, o relatorio listava Termoformagem inteira.
+   Agora tudo que a tela mostra passa por este funil. */
+function _promoSetorGlobal() {
+  try { return ($('fSetor') && $('fSetor').value) || ''; } catch (_) { return ''; }
+}
+function _promoVis(L) {
+  const g = _promoSetorGlobal();
+  if (!g) return L || [];
+  const alvo = String(g).toLowerCase();
+  return (L || []).filter(p => String(p && p.setor || '').toLowerCase() === alvo);
+}
+function _relEscolhidas() { const s = _relIni(); return _promoVis(_promoRegs).filter(p => s[p.id]); }
 /* ===== FOLHA MENSAL POR SETOR — BASE DE COMPARAÇÃO DO IMPACTO =====
    24/08/2026. O João viu Impressão como R$ 138.663,43 e disse que está errado.
    Estava: a conta anterior varria o CADASTRO (colaboradores) e só somava quem
