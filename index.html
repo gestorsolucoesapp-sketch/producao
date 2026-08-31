@@ -1331,6 +1331,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     <button class="aba oculto" id="abaBtnAnRec" data-aba="anrec" onclick="trocarAba('anrec')">Análise de Recurso</button>
     <button class="aba oculto" id="abaBtnComl" data-aba="comercial" onclick="trocarAba('comercial')">Comercial / Logística</button>
     <button class="aba oculto" id="abaBtnRH" data-aba="rh" onclick="trocarAba('rh')">Diagnóstico RH</button>
+    <button class="aba oculto" id="abaBtnAno" data-aba="ano" onclick="trocarAba('ano')">Resumo Anual</button>
     <button class="aba oculto" id="abaBtnTintas" data-aba="tintas" onclick="trocarAba('tintas')">Casa de Tintas</button>
     <!-- 28/08/2026 (João: "põe nas abas o atalho, como se fizesse parte do app").
          Os atalhos para outros sistemas entram aqui, no fim da fila de abas, com
@@ -1466,6 +1467,9 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         </select>
         <div id="anmConteudo"></div>
       </div>
+    </section>
+    <section id="abaAno" class="oculto">
+      <div id="anoWrap"><p class="desc" style="padding:20px;text-align:center">Carregando…</p></div>
     </section>
     <section id="abaEstrategia" class="oculto">
       <select id="estratPeriodo" onchange="mudarPeriodoEstrat()" aria-label="Período" style="display:none"></select>
@@ -3845,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.364.0';
+const APP_VER = '4.365.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4736,6 +4740,7 @@ const ABAS = [
   { id: 'painel', nome: 'Painel' }, { id: 'analise', nome: 'Itens' },
   { id: 'analisemais', nome: 'Análise+' },
   { id: 'estrategia', nome: 'Análise de Tendência' },
+  { id: 'ano', nome: 'Resumo Anual' },
   { id: 'programacao', nome: 'Programação' },
   { id: 'demanda', nome: 'Demanda' },
   { id: 'tarefas', nome: 'Tarefas' },
@@ -5218,6 +5223,7 @@ async function aplicarPermissoes() {
     if (!abasPermitidas.includes('tarefas')) abasPermitidas.push('tarefas'); // tarefas para todos
     if (!abasPermitidas.includes('analisemais')) abasPermitidas.push('analisemais'); // Análise+ para todos
     if (!abasPermitidas.includes('estrategia')) abasPermitidas.push('estrategia'); // Análise de Tendência para todos
+    if (!abasPermitidas.includes('ano')) abasPermitidas.push('ano');               // Resumo Anual idem
     if (!abasPermitidas.includes('programacao')) abasPermitidas.push('programacao'); // Programação para todos
   }
   // Organograma: além da flag 'desenvolvedor', vale a caixinha da categoria (ou a exceção individual).
@@ -11030,6 +11036,7 @@ function _trocarAbaReal(qual) {
   $('abaOrganograma').classList.toggle('oculto', qual !== 'organograma');
   $('abaRH').classList.toggle('oculto', qual !== 'rh');
   $('abaConf').classList.toggle('oculto', qual !== 'conf');
+  { const _an = $('abaAno'); if (_an) { _an.classList.toggle('oculto', qual !== 'ano'); if (qual === 'ano') { try { anoAbrir(); } catch (_) { } } } }
   { const _t = $('abaTintas'); if (_t) { _t.classList.toggle('oculto', qual !== 'tintas'); if (qual === 'tintas') { try { tintaAbrir(); } catch (_) { } } } }
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} try { arOrigem(window._arOrigem, true); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
@@ -28668,6 +28675,117 @@ async function _atrResUmo() {
    Se a foto de hoje saiu de manha, o dia aparece pela metade. */
 const META_SAIDA_T = 42;
 let _saidaDia = null;
+/* ===== RESUMO ANUAL — 31/08/2026 =====
+   (Joao: "faz uma aba de resumo anual com as producoes dos meses do ano de
+   todos os setores").
+   Uma tabela mes x setor com o ano inteiro, e a mesma tabela para perda e
+   parada — a pergunta "como foi o ano" nao se responde so com tonelada.
+   A conta vem da RPC `resumo_ano`, que agrega no Postgres por MAQUINA (as 27.767
+   linhas do ano viram 428) e deixa a traducao maquina->setor com o `setorDe`
+   daqui — uma regua so, como no resto do app.
+   Embaladeiras aparecem em CAIXAS, como no semaforo; o resto em kg. Somar caixa
+   com quilo numa linha de total seria mentira, entao o total geral traz os dois
+   separados. */
+let _anoDados = null, _anoSel = null, _anoMet = 'kg';
+function anoMet(v) { _anoMet = v; anoRender(); }
+async function anoAbrir(forcar) {
+  const ano = _anoSel || new Date().getFullYear();
+  const wrap = document.getElementById('anoWrap'); if (!wrap) return;
+  if (_anoDados && _anoDados.ano === ano && !forcar) return anoRender();
+  wrap.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando o ano…</p>';
+  try {
+    const { data, error } = await sb.rpc('resumo_ano', { p_ano: ano });
+    if (error) throw error;
+    _anoDados = { ano: ano, linhas: data || [] };
+    _anoSel = ano;
+    anoRender();
+  } catch (e) {
+    wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui carregar: '
+      + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+  }
+}
+function anoRender() {
+  const wrap = document.getElementById('anoWrap'); if (!wrap || !_anoDados) return;
+  const L = _anoDados.linhas || [];
+  const cx = s => (typeof setorEmCx === 'function') ? setorEmCx(s) : (s === 'Embaladeiras');
+  /* mes x setor */
+  const M = {}, S = {};
+  L.forEach(r => {
+    const st = setorDe(r.recurso_cod) || '—', m = String(r.mes || '').slice(0, 7);
+    if (!m) return;
+    M[m] = M[m] || {};
+    const c = (M[m][st] = M[m][st] || { kg: 0, cx: 0, perda: 0, parada: 0 });
+    c.kg += (+r.kg || 0);
+    if (String(r.unidade || '').toUpperCase() === 'CX') c.cx += (+r.quantidade || 0);
+    c.perda += (+r.perda_kg || 0);
+    c.parada += (+r.parada_h || 0);
+    S[st] = true;
+  });
+  const meses = Object.keys(M).sort();
+  const setores = Object.keys(S).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (!meses.length) { wrap.innerHTML = '<div class="card"><p class="desc">Sem produção importada em ' + _anoDados.ano + '.</p></div>'; return; }
+  const rot = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m.slice(5, 7) - 1] || m;
+  const val = (m, s) => {
+    const c = (M[m] || {})[s]; if (!c) return 0;
+    if (_anoMet === 'perda') return c.perda;
+    if (_anoMet === 'parada') return c.parada;
+    return cx(s) ? c.cx : c.kg;
+  };
+  const fmtv = (v, s) => {
+    if (!v) return '—';
+    if (_anoMet === 'parada') return fmt(v, 0) + ' h';
+    if (_anoMet === 'perda') return v >= 1000 ? fmt(v / 1000, 1) + ' t' : fmt(v, 0) + ' kg';
+    return cx(s) ? fmt(v, 0) + ' cx' : (v >= 1000 ? fmt(v / 1000, 1) + ' t' : fmt(v, 0) + ' kg');
+  };
+  /* o maximo é por SETOR (a linha), não geral: senão a Extrusão apagaria a cor
+     de todos os outros e a tabela viraria uma coluna escura e sete claras */
+  const mxSetor = {};
+  setores.forEach(s => { mxSetor[s] = Math.max(1, ...meses.map(m => val(m, s))); });
+  const tot = m => setores.reduce((a, s) => a + (cx(s) && _anoMet === 'kg' ? 0 : val(m, s)), 0);
+  const totCx = m => setores.reduce((a, s) => a + (cx(s) && _anoMet === 'kg' ? val(m, s) : 0), 0);
+  const anos = [];
+  for (let a = new Date().getFullYear(); a >= 2026; a--) anos.push(a);
+  wrap.innerHTML = '<div class="card"><div class="titulo-sec" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<span>📆 Resumo anual · ' + _anoDados.ano + '</span>'
+    + (anos.length > 1 ? '<select class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px" onchange="_anoSel=+this.value;anoAbrir(true)">'
+      + anos.map(a => '<option value="' + a + '"' + (a === _anoDados.ano ? ' selected' : '') + '>' + a + '</option>').join('') + '</select>' : '')
+    + [['kg', 'produção'], ['perda', 'perda'], ['parada', 'parada']].map(([v, r]) =>
+      '<span onclick="anoMet(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:4px 12px;'
+      + (_anoMet === v ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('')
+    + '</div>'
+    + '<p class="desc" style="margin:0 0 8px;font-size:12px">Cada linha é um setor e cada coluna um mês. A cor compara o mês com o <b>melhor mês daquele setor</b> — '
+    + 'não entre setores, senão a Extrusão apagaria todos os outros. Embaladeiras aparecem em <b>caixas</b>.</p>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
+    + '<th style="text-align:left;position:sticky;left:0;background:#fff">Setor</th>'
+    + meses.map(m => '<th style="text-align:center;padding:4px 6px">' + rot(m) + '</th>').join('')
+    + '<th style="text-align:right;padding:4px 6px">Ano</th></tr></thead><tbody>'
+    + setores.map(s => {
+      const somaS = meses.reduce((a, m) => a + val(m, s), 0);
+      return '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="text-align:left;font-weight:700;position:sticky;left:0;background:#fff;white-space:nowrap">' + escapeHtml(s) + '</td>'
+        + meses.map(m => {
+          const v = val(m, s), int = v / mxSetor[s];
+          const bg = v ? 'rgba(11,42,74,' + (0.06 + int * 0.5).toFixed(2) + ')' : 'transparent';
+          return '<td style="text-align:center;padding:5px 6px;background:' + bg + ';color:' + (int > 0.62 ? '#fff' : 'inherit')
+            + '" title="' + escapeHtml(s) + ' · ' + rot(m) + '/' + m.slice(2, 4) + ' · ' + fmtv(v, s) + '">' + fmtv(v, s) + '</td>';
+        }).join('')
+        + '<td style="text-align:right;font-weight:800;padding:5px 6px">' + fmtv(somaS, s) + '</td></tr>';
+    }).join('')
+    + '<tr style="border-top:2px solid var(--navy);background:var(--leve-2)">'
+    + '<td style="text-align:left;font-weight:800;position:sticky;left:0;background:var(--leve-2)">Total</td>'
+    + meses.map(m => '<td style="text-align:center;font-weight:800;padding:5px 6px">'
+      + (_anoMet === 'parada' ? fmt(tot(m), 0) + ' h' : fmt(tot(m) / 1000, 1) + ' t')
+      + (_anoMet === 'kg' && totCx(m) ? '<div style="font-size:10px;font-weight:700;color:var(--fraco)">' + fmt(totCx(m), 0) + ' cx</div>' : '')
+      + '</td>').join('')
+    + '<td style="text-align:right;font-weight:800;padding:5px 6px">'
+    + (_anoMet === 'parada' ? fmt(meses.reduce((a, m) => a + tot(m), 0), 0) + ' h'
+      : fmt(meses.reduce((a, m) => a + tot(m), 0) / 1000, 1) + ' t')
+    + '</td></tr>'
+    + '</tbody></table></div>'
+    + '<p class="desc" style="font-size:11px;margin-top:6px">Produção do RPCP621, perda do 624 e parada do 643. '
+    + 'O total soma quilos; as caixas das Embaladeiras vão na linha de baixo, porque somar caixa com quilo não diria nada.</p>'
+    + '</div>';
+}
 async function cardSaidaDia(forcar) {
   const box = document.getElementById('cardSaidaDia'); if (!box) return;
   if (_saidaDia && !forcar) return _saidaDiaRender(box);
