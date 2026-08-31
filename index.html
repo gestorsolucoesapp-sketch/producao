@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.344.0';
+const APP_VER = '4.345.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22847,8 +22847,9 @@ async function atrDetalhe(tipo, _mudo) {
          nao ha o que produzir — o pedido esta parado DEPOIS da fabrica.
          Agora so e alerta quem falta produzir de verdade. */
       if ((est[x.item_cod] || 0) < kg) o.faltaProd = true;
-      const dp = new Date(e + 'T12:00:00'); dp.setDate(dp.getDate() - 7);
-      if (dp.toISOString().slice(0, 10) < d && (est[x.item_cod] || 0) < kg) { o.prod = true; o.kgP += kg; }
+      /* a marcacao de producao atrasada saiu daqui: era feita com o saldo BRUTO
+         do item, sem repartir entre os pedidos. Agora nasce depois da alocacao,
+         junto do pctCob, com a mesma regua do banco. */
     });
     let L = Object.values(P);
     /* 29/08/2026 — este calculo TEM que vir antes dos filtros: eu o havia
@@ -22899,6 +22900,21 @@ async function atrDetalhe(tipo, _mudo) {
         x.filaItem = c.fila; x.nPedItem = c.nPed;
         x.parcial = c.cob > 0 && c.cob < c.kg * 0.999;
         x.semReserva = c.cob <= 0;
+        /* ===== 31/08/2026 — DUAS REGUAS PARA O MESMO NUMERO (Joao apontou:
+           as pilulas somavam 23 e o KPI dizia 40) =====
+           O KPI vem do banco (`carteira_dia_recalc`), que decide "producao
+           atrasada" com a cobertura ALOCADA por ordem de entrega — a mesma que
+           esta tela usa para mostrar o pctCob. O app decidia por outra conta,
+           mais frouxa: olhava o saldo BRUTO do item contra cada linha, sem
+           repartir entre os pedidos que disputam aquele item. Resultado: o
+           pedido cujo item "tem estoque" mas ja foi prometido a um pedido mais
+           antigo escapava da conta do app e entrava na do banco.
+           Conferi no banco: 40 contra 23, com 17 pedidos so no banco e NENHUM so
+           no app — ou seja, a regua do app deixava passar. Ela morre aqui: prod
+           passa a sair da mesma cobertura alocada. */
+        const _e7 = new Date(x.ent + 'T12:00:00'); _e7.setDate(_e7.getDate() - 7);
+        x.prod = _e7.toISOString().slice(0, 10) < d && c.cob < c.kg * 0.999;
+        x.kgP = Math.max(0, c.kg - c.cob);
       });
     })();
     if (tipo === 'entrega') L = L.filter(x => x.atr);
