@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.336.0';
+const APP_VER = '4.337.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22579,7 +22579,7 @@ function ppRender(alvo, dados) {
    a cada foto da carteira, e amarrar ao dia obrigaria a redigitar toda manhã.
    Quem já tem motivo aparece com o balãozinho preenchido — assim a reunião
    começa pelo que ainda não foi explicado. */
-let _atrTipo = '', _atrJust = {}, _atrSetor = '', _atrLista = [];
+let _atrTipo = '', _atrJust = {}, _atrSetor = '', _atrLista = [], _atrListaAll = [];
 function atrFiltraSetor(s) { _atrSetor = (_atrSetor === s ? '' : s); const t = _atrTipo; _atrTipo = ''; atrDetalhe(t); }
 /* o estoque do REST196 nao tem dono: e saldo livre do item. Quando mais de um
    pedido quer o mesmo item, quem decide e a data de entrega — e isso precisa
@@ -22894,6 +22894,14 @@ async function atrDetalhe(tipo) {
     const porSetor = {};
     const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
     L.forEach(x => { const k = x.setor || _semOp(x); porSetor[k] = (porSetor[k] || 0) + 1; });
+    /* 31/08/2026 (Joao: "cliquei em vence em 7 dias, entao esta pronto, e da
+       esse erro"). Nao era intermitente: a pilula de SETOR ficou ligada e o
+       agrupamento herdava o filtro. Com "Impressao 8 ped" — que sao justamente
+       os que FALTAM produzir — nenhum tinha material pronto, e o app respondia
+       "nenhum pedido com 100%", sem dizer que a culpa era da pilula.
+       Guardo a lista do recorte ANTES do filtro: carga se monta por regiao, nao
+       por setor, entao o agrupamento passa a usar esta. */
+    _atrListaAll = L.slice();
     if (alvo) L = L.filter(x => (x.setor || _semOp(x)) === alvo);
     /* so dos pedidos que sobraram no recorte: sao poucos e evita varrer as
        6.588 linhas do RVEN304 inteiro */
@@ -23268,8 +23276,18 @@ async function atrRoteiro() {
   const _frota = Object.keys(_VEICULOS).map(k => _VEICULOS[k]).sort((a, b) => b.pal - a.pal);
   const V = _frota[0] || { nome: 'Carreta', pal: 26, t: 25 };
   const _rotRec = { entrega: 'entrega vencida', vence: 'vence em 7 dias', producao: 'produ\u00e7\u00e3o atrasada', parcial: 'reserva parcial' }[_atrTipo] || '';
-  const L = (_atrLista || []).filter(x => x.pctCob != null && x.pctCob >= 99.9);
-  if (!L.length) { toast('Nenhum pedido com 100% do material em estoque neste recorte.'); return; }
+  /* o agrupamento ignora a pilula de setor de proposito: caminhao se monta por
+     REGIAO. Se a pilula estiver ligada, aviso no topo em vez de devolver lista
+     vazia. */
+  const _base = (_atrListaAll && _atrListaAll.length) ? _atrListaAll : (_atrLista || []);
+  const L = _base.filter(x => x.pctCob != null && x.pctCob >= 99.9);
+  if (!L.length) {
+    const n = _base.length;
+    toast(n
+      ? 'Dos ' + n + ' pedidos deste recorte, nenhum tem o material todo em estoque — não há carga para montar.'
+      : 'Nenhum pedido neste recorte.');
+    return;
+  }
   const porUF = {};
   L.forEach(x => { const u = x.uf || '(sem UF)'; (porUF[u] = porUF[u] || []).push(x); });
   await _carregaCoord(Object.keys(porUF).filter(function (u) { return u !== '(sem UF)'; }));
@@ -23382,6 +23400,8 @@ async function atrRoteiro() {
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'
     + '<b style="font-size:15px">🚚 Agrupamento por região · ' + cargas.length + ' carga(s)</b>'
     + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
+    + (_atrSetor ? '<p class="desc" style="font-size:11.5px;margin:0 0 6px;background:#FFF6E5;border-left:3px solid var(--laranja);border-radius:0 7px 7px 0;padding:6px 9px">'
+      + 'A pílula <b>' + escapeHtml(_atrSetor) + '</b> não vale aqui: carga se monta por <b>região</b>, não por setor. Estou usando os ' + L.length + ' prontos do recorte inteiro.</p>' : '')
     + '<p class="desc" style="font-size:11.5px;margin:0 0 4px">' + L.length + ' pedido(s) com <b>100% do material em estoque</b>'
     + (_rotRec ? ' de <b>' + _rotRec + '</b>' : '') + ' \u00b7 ' + totP + ' palete(s) \u00b7 ' + fmtKg(totT) + '</p>'
     /* resumo da frota que este agrupamento pede — e o que a logistica contrata,
