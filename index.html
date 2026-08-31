@@ -3844,7 +3844,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.358.0';
+const APP_VER = '4.359.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -38197,6 +38197,15 @@ async function apagarImportacao(id, nome) {
 
 /* ================= CONFERÊNCIA DE APONTAMENTOS ================= */
 let _cfDados = null, _cfDiaAtual = null, _cfSigma = 3, _cfModo = 'dia';
+/* 31/08/2026 (Joao: "nao consigo filtrar setores" na Conferencia — terceira vez
+   que este filtro me pega).
+   A raiz e a ordem das coisas: o select `cfSetor` nasce VAZIO e so ganha opcoes
+   quando os dados chegam. A pilula do topo copia o select; se copiar antes,
+   copia vazio. E a escolha feita na pilula, se a opcao ainda nao existe, se
+   perde sem aviso.
+   A escolha passa a viver numa VARIAVEL, nao no select. O select vira espelho.
+   Assim ela sobrevive a reconstrucao da lista e a ordem de chegada dos dados. */
+let _cfSetorPref = '';
 let _cfPerSel = '';   // último período GLOBAL já aplicado nesta aba
 // a função do banco já agrupa T1+T3 = Manhã, T2+T4 = Tarde, T5 = Noite,
 // igual ao Análise+. Antes o T4 sozinho virava alerta só por ter apontamento curto.
@@ -42120,7 +42129,12 @@ function cfSetores() {
   sel.dataset.assin = assin;
   sel.innerHTML = '<option value="">Todos os setores</option>' +
     S.map(x => '<option value="' + escapeHtml(x) + '">' + escapeHtml(x) + ' (' + cont[x].size + ')</option>').join('');
-  if (atual && S.indexOf(atual) >= 0) { sel.value = atual; return; }
+  if (_cfSetorPref && S.indexOf(_cfSetorPref) >= 0) sel.value = _cfSetorPref;
+  else if (atual && S.indexOf(atual) >= 0) sel.value = atual;
+  /* a pilula do topo copiou este select quando ele ainda estava vazio e ficou
+     "nao se aplica"; agora que as opcoes existem, mando ela copiar de novo */
+  setTimeout(() => { try { sincSetorGlobal(); } catch (_) { } }, 0);
+  if (sel.value) return;
   /* 19/08/2026 (João): "não está filtrando por setor". Ao entrar na aba, este
      select ainda está VAZIO — só é montado quando os dados chegam. A propagação
      do setor global roda antes disso, não acha a opção e desiste; o filtro
@@ -42266,7 +42280,11 @@ function cfRender() {
   cfSetores();
   try { cfRenderAbsurdas(); } catch (_) { }
   try { cfAprovBobina(); } catch (_) { }
-  const setorSel = ($('cfSetor') && $('cfSetor').value) || '';
+  { const s = $('cfSetor');
+    if (s && s.value) _cfSetorPref = s.value;
+    else if (s && _cfSetorPref && [...s.options].some(o => o.value === _cfSetorPref)) s.value = _cfSetorPref;
+    else if (s && !s.value && !_cfSetorPref) _cfSetorPref = ''; }
+  const setorSel = _cfSetorPref || '';
   const metSel = ($('cfMetrica') && $('cfMetrica').value) || '';
   const D = (_cfDados || []).filter(r =>
     (!setorSel || setorDe(r.recurso_cod) === setorSel) && (!metSel || r.metrica === metSel));
