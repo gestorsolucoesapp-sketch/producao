@@ -3844,7 +3844,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.359.0';
+const APP_VER = '4.360.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -21378,7 +21378,105 @@ function tintaImprimirEtiquetas(soComSaldo) {
 }
 
 /* ---------- RESUMO ---------- */
+/* ===== RESUMO: DIA / MÊS / ANO E A DIFERENÇA DO INVENTÁRIO — 31/08/2026 =====
+   (Joao: "faca um grafico com as quantidades por dia por mes e ano e o valor" e
+   "coloca um de diferenca de inventario tambem").
+   O grafico que existia so mostrava mes, e so em R$. Agora a mesma barra serve
+   para os tres recortes e para as duas leituras — latas ou reais — porque a
+   pergunta muda conforme quem olha: quem compra pensa em dinheiro, quem opera
+   pensa em lata.
+   O segundo grafico e outra coisa: nao e consumo, e ERRO. Mostra, por balanco,
+   quanto o contado se afastou do que o sistema dizia. Se as barras diminuem ao
+   longo dos meses, o controle esta ficando melhor; se crescem, alguem esta
+   dando baixa errado ou a lata sai sem passar pelo app. */
+let _tGraf = { por: 'mes', met: 'valor' };
+let _tBalHist = null;
+function tintaGrafPor(v) { _tGraf.por = v; tintaRender(); }
+function tintaGrafMet(v) { _tGraf.met = v; tintaRender(); }
+async function tintaBalHistCarregar() {
+  if (_tBalHist) return _tBalHist;
+  try {
+    const { data } = await sb.from('tinta_balanco')
+      .select('id,data,status,tinta_balanco_item(contado,saldo_sistema)')
+      .order('data', { ascending: true }).limit(24);
+    _tBalHist = (data || []).map(b => {
+      const it = b.tinta_balanco_item || [];
+      let sobra = 0, falta = 0, ok = 0;
+      it.forEach(x => {
+        const d = (+x.contado || 0) - (+x.saldo_sistema || 0);
+        if (d > 0) sobra += d; else if (d < 0) falta += -d; else ok++;
+      });
+      return { data: b.data, status: b.status, itens: it.length, sobra: sobra, falta: falta, ok: ok };
+    });
+  } catch (e) { _tBalHist = []; console.warn('balHist:', e && e.message); }
+  return _tBalHist;
+}
+function _tintaGrafConsumo() {
+  /* uma passada só nos movimentos, agrupando na chave do recorte escolhido */
+  const por = {};
+  (_tintaMov || []).forEach(m => {
+    if (m.tipo !== 'saida') return;
+    const d = String(m.quando || '').slice(0, 10); if (!d) return;
+    const k = _tGraf.por === 'dia' ? d : (_tGraf.por === 'ano' ? d.slice(0, 4) : d.slice(0, 7));
+    const p = _tintaSaldo.find(s => s.id === m.produto_id);
+    const q = +m.quantidade || 0;
+    if (!por[k]) por[k] = { latas: 0, valor: 0, kg: 0 };
+    por[k].latas += q;
+    por[k].valor += q * (+(p && p.preco) || 0);
+    por[k].kg += q * (+(p && p.peso_lata_kg) || 0);
+  });
+  const ks = Object.keys(por).sort().slice(_tGraf.por === 'dia' ? -30 : (_tGraf.por === 'ano' ? -6 : -12));
+  if (!ks.length) return '<p class="desc">Sem saídas registradas ainda.</p>';
+  const val = k => _tGraf.met === 'valor' ? por[k].valor : por[k].latas;
+  const mx = Math.max(1, ...ks.map(val));
+  const rot = k => _tGraf.por === 'dia' ? k.slice(8, 10) + '/' + k.slice(5, 7)
+    : (_tGraf.por === 'ano' ? k : k.slice(5, 7) + '/' + k.slice(2, 4));
+  const fmtv = v => _tGraf.met === 'valor' ? _tBRL(v) : _tNum(v) + ' lata(s)';
+  const tot = ks.reduce((a, k) => a + val(k), 0);
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px">'
+    + [['dia', 'por dia'], ['mes', 'por mês'], ['ano', 'por ano']].map(([v, r]) =>
+      '<span onclick="tintaGrafPor(\'' + v + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;'
+      + (_tGraf.por === v ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('')
+    + '<span style="width:10px"></span>'
+    + [['valor', 'R$'], ['latas', 'latas']].map(([v, r]) =>
+      '<span onclick="tintaGrafMet(\'' + v + '\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;'
+      + (_tGraf.met === v ? 'background:var(--verde);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('')
+    + '</div>'
+    + '<div style="display:flex;align-items:flex-end;gap:3px;height:140px;padding-top:6px">'
+    + ks.map(k => {
+      const v = val(k), h = Math.max(2, Math.round(v / mx * 118));
+      return '<div style="flex:1;text-align:center;min-width:14px" title="' + rot(k) + ' \u00b7 ' + fmtv(v) + ' \u00b7 ' + _tNum(por[k].kg) + ' kg">'
+        + '<div style="background:var(--navy);border-radius:4px 4px 0 0;height:' + h + 'px"></div>'
+        + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + rot(k) + '</span></div>';
+    }).join('')
+    + '</div>'
+    + '<p class="desc" style="font-size:11px;margin-top:4px">' + ks.length + ' ' + (_tGraf.por === 'dia' ? 'dia(s)' : _tGraf.por === 'ano' ? 'ano(s)' : 'mês(es)')
+    + ' \u00b7 total ' + fmtv(tot) + '</p>';
+}
+function _tintaGrafInventario() {
+  const H = _tBalHist;
+  if (H === null) return '<p class="desc">Carregando balanços…</p>';
+  if (!H.length) return '<p class="desc">Nenhum balanço fechado ainda. O primeiro vira a linha de base.</p>';
+  const mx = Math.max(1, ...H.map(b => Math.max(b.sobra, b.falta)));
+  return '<div style="display:flex;align-items:flex-end;gap:8px;height:150px;padding-top:6px">'
+    + H.map(b => {
+      const hS = Math.round(b.sobra / mx * 60), hF = Math.round(b.falta / mx * 60);
+      return '<div style="flex:1;text-align:center;min-width:34px" title="' + fmtData(String(b.data))
+        + ' \u00b7 sobra ' + _tNum(b.sobra) + ' \u00b7 falta ' + _tNum(b.falta) + ' \u00b7 ' + b.ok + ' cor(es) certas de ' + b.itens + '">'
+        + '<div style="height:64px;display:flex;align-items:flex-end;justify-content:center">'
+        + '<div style="width:70%;background:#1F7A46;border-radius:4px 4px 0 0;height:' + Math.max(b.sobra ? 2 : 0, hS) + 'px"></div></div>'
+        + '<div style="height:1px;background:var(--linha-2s)"></div>'
+        + '<div style="height:64px;display:flex;align-items:flex-start;justify-content:center">'
+        + '<div style="width:70%;background:#C0392B;border-radius:0 0 4px 4px;height:' + Math.max(b.falta ? 2 : 0, hF) + 'px"></div></div>'
+        + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + fmtData(String(b.data)).slice(0, 5) + '</span></div>';
+    }).join('')
+    + '</div>'
+    + '<p class="desc" style="font-size:11px;margin-top:4px"><b style="color:#1F7A46">acima da linha</b> = contou MAIS do que o sistema tinha \u00b7 '
+    + '<b style="color:#C0392B">abaixo</b> = contou MENOS. Barra menor a cada balanço quer dizer controle melhorando.</p>';
+}
 function tintaTelaResumo(box) {
+  /* o historico de balancos chega depois; quando chegar, redesenha uma vez */
+  if (_tBalHist === null) tintaBalHistCarregar().then(() => { if (_tintaVista === 'resumo') tintaRender(); });
   /* 28/08/2026 (João: "dar gastos mensais em kg e valor").
      kg = latas x peso da lata (2 kg em todas). O valor usa o preço ATUAL de cada
      cor, não o da época: a pergunta aqui é "quanto custa o que estou gastando",
@@ -21416,7 +21514,11 @@ function tintaTelaResumo(box) {
     + '<div><b>' + _tBRL(mm) + '</b><span>média por mês</span></div>'
     + '<div><b style="color:' + (baixo.length ? 'var(--critico)' : 'var(--verde)') + '">' + baixo.length + '</b><span>a comprar</span></div>'
     + '</div>'
-    + (graf ? '<div class="titulo-sec" style="margin-top:12px">Consumo por mês (R$)</div>' + graf : '')
+    /* o grafico antigo (so mes, so R$) sai: o novo faz o mesmo e mais */
+    + '<div class="titulo-sec" style="margin-top:12px">Consumo</div>'
+    + _tintaGrafConsumo()
+    + '<div class="titulo-sec" style="margin-top:14px">Diferença do inventário</div>'
+    + _tintaGrafInventario()
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
     + '<th style="text-align:left">Mês</th><th>Entradas</th><th>Saídas</th><th>kg</th><th style="text-align:right">Valor</th></tr></thead><tbody>'
     + ult.slice().reverse().map(k => {
