@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.366.0';
+const APP_VER = '4.367.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28708,6 +28708,61 @@ async function anoAbrir(forcar) {
       + escapeHtml((e && e.message) || String(e)) + '</p></div>';
   }
 }
+/* 31/08/2026 (Joao: "faz grafico tambem"). Barra EMPILHADA por mes: cada mes e
+   uma coluna e cada setor um pedaco dela. Escolhi empilhada e nao barras lado a
+   lado porque a pergunta do resumo anual e dupla — "o mes foi maior ou menor" e
+   "quem fez esse mes" — e a empilhada responde as duas na mesma altura.
+   As EMBALADEIRAS ficam FORA do empilhado quando a metrica e producao: elas
+   medem em caixa e o resto em quilo; empilhar as duas daria uma barra que nao
+   significa nada. Elas ganham uma faixa propria embaixo, na escala delas. */
+const _ANO_COR = {
+  'Termoformagem': '#0B2A4A', 'Extrusão': '#1F7A46', 'Impressão': '#E8871F',
+  'Sleeve': '#7A3E9D', 'Rotulagem': '#C0392B', 'Injeção': '#2E86AB',
+  'Compressão': '#B98900', 'Embaladeiras': '#5C6B78', 'Outros': '#9AA7B2'
+};
+function _anoGrafico(meses, setores, val, cx, rot, fmtv) {
+  const emp = setores.filter(s => !(cx(s) && _anoMet === 'kg'));
+  const fora = setores.filter(s => cx(s) && _anoMet === 'kg');
+  const totM = m => emp.reduce((a, s) => a + val(m, s), 0);
+  const mx = Math.max(1, ...meses.map(totM));
+  const ALT = 160;
+  const uni = _anoMet === 'parada' ? 'h' : 't';
+  const emT = v => _anoMet === 'parada' ? fmt(v, 0) : fmt(v / 1000, 1);
+  let h = '<div style="display:flex;align-items:flex-end;gap:6px;height:' + (ALT + 20) + 'px;margin:6px 0 2px">'
+    + meses.map(m => {
+      const t = totM(m);
+      const col = emp.map(s => {
+        const v = val(m, s); if (!v) return '';
+        return '<div style="height:' + Math.max(1, Math.round(v / mx * ALT)) + 'px;background:' + (_ANO_COR[s] || '#9AA7B2') + '"'
+          + ' title="' + escapeHtml(s) + ' · ' + rot(m) + ' · ' + fmtv(v, s) + '"></div>';
+      }).reverse().join('');
+      return '<div style="flex:1;text-align:center;min-width:26px">'
+        + '<div style="font-size:9.5px;font-weight:800;color:var(--fraco-2);margin-bottom:2px">' + emT(t) + '</div>'
+        + '<div style="border-radius:4px 4px 0 0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end">' + col + '</div>'
+        + '<span style="font-size:9.5px;color:var(--fraco-2);display:block;margin-top:3px">' + rot(m) + '</span></div>';
+    }).join('')
+    + '</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;margin-bottom:6px">'
+    + emp.map(s => '<span style="display:inline-flex;align-items:center;gap:4px">'
+      + '<i style="width:10px;height:10px;border-radius:2px;background:' + (_ANO_COR[s] || '#9AA7B2') + ';display:inline-block"></i>'
+      + escapeHtml(s) + '</span>').join('')
+    + '<span class="desc" style="font-size:11px">· total do mês em ' + uni + ' acima de cada barra</span>'
+    + '</div>';
+  /* as que medem em caixa, na escala delas */
+  if (fora.length) {
+    const mxc = Math.max(1, ...meses.map(m => fora.reduce((a, s) => a + val(m, s), 0)));
+    h += '<div style="display:flex;align-items:flex-end;gap:6px;height:56px;margin-top:2px">'
+      + meses.map(m => {
+        const v = fora.reduce((a, s) => a + val(m, s), 0);
+        return '<div style="flex:1;text-align:center;min-width:26px" title="' + fora.join(' + ') + ' · ' + rot(m) + ' · ' + fmt(v, 0) + ' cx">'
+          + '<div style="background:#5C6B78;border-radius:3px 3px 0 0;height:' + Math.max(1, Math.round(v / mxc * 40)) + 'px"></div></div>';
+      }).join('')
+      + '</div>'
+      + '<p class="desc" style="font-size:11px;margin:2px 0 8px">Faixa cinza: <b>' + fora.join(' + ')
+      + '</b>, medidas em <b>caixas</b> — escala própria, porque caixa não empilha com quilo.</p>';
+  }
+  return h;
+}
 function anoRender() {
   const wrap = document.getElementById('anoWrap'); if (!wrap || !_anoDados) return;
   const L = _anoDados.linhas || [];
@@ -28759,6 +28814,7 @@ function anoRender() {
     + '</div>'
     + '<p class="desc" style="margin:0 0 8px;font-size:12px">Cada linha é um setor e cada coluna um mês. A cor compara o mês com o <b>melhor mês daquele setor</b> — '
     + 'não entre setores, senão a Extrusão apagaria todos os outros. Embaladeiras aparecem em <b>caixas</b>.</p>'
+    + _anoGrafico(meses, setores, val, cx, rot, fmtv)
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
     + '<th style="text-align:left;position:sticky;left:0;background:#fff">Setor</th>'
     + meses.map(m => '<th style="text-align:center;padding:4px 6px">' + rot(m) + '</th>').join('')
