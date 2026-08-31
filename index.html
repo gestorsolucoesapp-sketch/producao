@@ -3845,7 +3845,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.363.0';
+const APP_VER = '4.364.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28672,10 +28672,22 @@ async function cardSaidaDia(forcar) {
   const box = document.getElementById('cardSaidaDia'); if (!box) return;
   if (_saidaDia && !forcar) return _saidaDiaRender(box);
   try {
-    const { data, error } = await sb.from('v_saida_carteira_dia')
-      .select('dia,foto_anterior,saiu_kg,linhas').order('dia');
-    if (error) throw error;
-    _saidaDia = data || [];
+    /* duas fontes, cada uma dizendo o que sabe: o 196 sabe o PESO mas só desde
+       22/08; o 304 sabe QUANTOS pedidos saíram e cobre o mês inteiro. Junto as
+       duas pela data e deixo a tela mostrar as duas leituras separadas. */
+    const [sd, ex] = await Promise.all([
+      sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia'),
+      sb.from('v_expedidos_dia').select('dia,pedidos').order('dia')
+    ]);
+    if (sd.error) throw sd.error;
+    const porDia = {};
+    (sd.data || []).forEach(r => { porDia[String(r.dia).slice(0, 10)] = { dia: r.dia, saiu_kg: r.saiu_kg, linhas: r.linhas, ped: null }; });
+    (ex.data || []).forEach(r => {
+      const k = String(r.dia).slice(0, 10);
+      if (!porDia[k]) porDia[k] = { dia: r.dia, saiu_kg: null, linhas: 0, ped: r.pedidos };
+      else porDia[k].ped = r.pedidos;
+    });
+    _saidaDia = Object.keys(porDia).sort().map(k => porDia[k]);
     _saidaDiaRender(box);
   } catch (e) { box.innerHTML = ''; try { console.warn('saidaDia:', e && e.message); } catch (_) { } }
 }
@@ -28688,6 +28700,8 @@ function _saidaDiaRender(box) {
     return e > 0 ? META_SAIDA_T * e : 0;
   };
   const mx = Math.max(META_SAIDA_T, ...L.map(x => (+x.saiu_kg || 0) / 1000));
+  const mxP = Math.max(1, ...L.map(x => +x.ped || 0));
+  const comT = L.filter(x => x.saiu_kg != null).length;
   const comMeta = L.filter(x => metaDe(x.dia) > 0 && String(x.dia).slice(0, 10) !== hoje);
   const bateu = comMeta.filter(x => (+x.saiu_kg || 0) / 1000 >= metaDe(x.dia)).length;
   const somaT = L.reduce((a, x) => a + (+x.saiu_kg || 0), 0) / 1000;
@@ -28702,7 +28716,7 @@ function _saidaDiaRender(box) {
     + '<div><b>' + fmt(mediaUtil, 1) + ' t</b><span>média por dia útil</span></div>'
     + '<div><b style="color:' + (bateu >= comMeta.length / 2 ? 'var(--verde)' : 'var(--critico)') + '">' + bateu + ' de ' + comMeta.length + '</b><span>dias na meta</span></div>'
     + '<div><b>' + fmt(somaT, 1) + ' t</b><span>no período</span></div>'
-    + '<div><b>' + L.length + '</b><span>dias medidos</span></div>'
+    + '<div><b>' + comT + ' de ' + L.length + '</b><span>dias com peso</span></div>'
     + '</div>'
     + '<div style="position:relative;margin-top:10px">'
     /* a linha da meta atravessa o gráfico: o olho compara com ela, não com o eixo */
@@ -28714,16 +28728,24 @@ function _saidaDiaRender(box) {
       const parcial = d === hoje;
       const h = Math.max(2, Math.round(t / mx * ALT));
       const cor = parcial ? '#9AA7B2' : (!m ? '#B9C4CF' : (t >= m ? '#1F7A46' : '#C0392B'));
-      return '<div style="flex:1;text-align:center;min-width:16px" title="' + fmtData(d) + ' · ' + fmt(t, 1) + ' t'
-        + (m ? ' · meta ' + fmt(m, 1) + ' t' : ' · domingo, sem meta')
-        + (parcial ? ' · dia em andamento' : '') + ' · ' + (x.linhas || 0) + ' linha(s)">'
-        + '<div style="background:' + cor + ';border-radius:4px 4px 0 0;height:' + h + 'px"></div>'
+      return '<div style="flex:1;text-align:center;min-width:16px" title="' + fmtData(d) + ' · '
+        + (x.saiu_kg == null ? 'sem foto da carteira neste dia' : fmt(t, 1) + ' t' + (m ? ' · meta ' + fmt(m, 1) + ' t' : ' · domingo, sem meta'))
+        + (x.ped != null ? ' · ' + x.ped + ' pedido(s) expedido(s)' : '')
+        + (parcial ? ' · dia em andamento' : '') + '">'
+        + (x.saiu_kg == null
+          /* dia sem foto do 196: em vez de barra zerada (que leria como "não saiu
+             nada"), mostro a contagem do 304 em cinza claro, na altura da própria
+             escala de pedidos. É outra régua, e a legenda diz isso. */
+          ? '<div style="background:repeating-linear-gradient(45deg,#D5DEE6,#D5DEE6 3px,#EAF0F5 3px,#EAF0F5 6px);border-radius:4px 4px 0 0;height:'
+            + Math.max(2, Math.round((+x.ped || 0) / mxP * (ALT * 0.55))) + 'px"></div>'
+          : '<div style="background:' + cor + ';border-radius:4px 4px 0 0;height:' + h + 'px"></div>')
         + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + fmtData(d).slice(0, 5) + '</span></div>';
     }).join('')
     + '</div></div>'
-    + '<p class="desc" style="font-size:11px;margin-top:6px">A conta é entre <b>fotos</b> do REST196, não entre dias civis: '
-    + 'a barra cinza do fim é o dia em andamento, e vai crescer até a próxima importação. '
-    + 'Faturamento de verdade só com um relatório de notas — este número é o que a carteira deixou de dever.</p>'
+    + '<p class="desc" style="font-size:11px;margin-top:6px">'
+    + '<b>Barra colorida</b> = toneladas, medidas entre <b>fotos</b> do REST196 (só existe desde 22/08). '
+    + '<b>Barra hachurada</b> = dias sem foto: aí só sei <b>quantos pedidos</b> foram expedidos, pelo RVEN304 — é outra régua, não é tonelada. '
+    + 'A barra cinza do fim é o dia em andamento. Para ter tonelada do mês inteiro seria preciso um relatório de notas com peso.</p>'
     + '</div>';
 }
 async function cardAtrasoDia(forcar) {
