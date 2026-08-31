@@ -3844,7 +3844,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.361.0';
+const APP_VER = '4.362.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -43520,10 +43520,55 @@ async function _promoDesCarrega(mat) {
   if (el && _promoSel === mat) el.outerHTML = _promoDesHTML(mat);
 }
 
-async function renderOrgPromo() {
+/* 31/08/2026 (Joao: "quando clico roda a tela, tem que ficar travado no local
+   que estou"). Cada aprovar/aplicar redesenha a aba inteira e o navegador volta
+   ao topo — com 36 promocoes, quem estava na vigesima perdia o lugar a cada
+   clique. Guardo a rolagem e devolvo depois de redesenhar. */
+function _promoScrollGuarda() {
+  try { return (document.scrollingElement || document.documentElement).scrollTop || window.scrollY || 0; }
+  catch (_) { return 0; }
+}
+function _promoScrollVolta(y) {
+  if (!y) return;
+  try {
+    const ir = () => window.scrollTo(0, y);
+    ir(); requestAnimationFrame(ir); setTimeout(ir, 60);
+  } catch (_) { }
+}
+/* ===== APROVAR E APLICAR EM LOTE =====
+   (Joao: "permita selecionar e aplicar e aprovar em varias pessoas ao mesmo
+   tempo"). Aprovar 20 promocoes uma a uma sao 20 cliques e 20 recarregamentos.
+   O status segue a MESMA regra do botao individual — rascunho vira aprovada,
+   aprovada vira aplicada — entao ninguem pula etapa por usar o lote. */
+let _promoLote = {};
+function promoLoteTica(id, on) { if (on) _promoLote[id] = true; else delete _promoLote[id]; renderOrgPromo(); }
+function promoLoteTodos(on, ids) {
+  _promoLote = {};
+  if (on) (ids || []).forEach(i => { _promoLote[i] = true; });
+  renderOrgPromo();
+}
+async function promoLoteStatus(st) {
+  const ids = Object.keys(_promoLote);
+  if (!ids.length) { toast('Nenhuma promoção selecionada.'); return; }
+  const rotulo = st === 'aprovada' ? 'Aprovar' : 'Marcar como aplicada';
+  if (!confirm(rotulo + ' ' + ids.length + ' promoção(ões)?')) return;
+  const y = _promoScrollGuarda();
+  try {
+    const { error } = await sb.from('promocoes')
+      .update({ status: st, atualizado_em: new Date().toISOString() })
+      .in('id', ids);
+    if (error) throw error;
+    toast('✓ ' + ids.length + ' promoção(ões) \u00b7 ' + st);
+    _promoLote = {};
+    await promoCarregar(true);
+    renderOrgPromo(y);
+  } catch (e) { toast('❌ ' + ((e && e.message) || e)); }
+}
+async function renderOrgPromo(_manterY) {
   const wrap = $('orgWrap');
+  const _y = (_manterY != null) ? _manterY : _promoScrollGuarda();
   if (!_promoSouDono()) { wrap.innerHTML = '<div class="card"><p class="desc" style="margin:0">Esta tela é restrita.</p></div>'; return; }
-  wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
+  if (!_promoRegs) wrap.innerHTML = '<div class="desc" style="text-align:center;padding:16px">carregando…</div>';
   try { await promoCarregar(); }
   catch (e) {
     wrap.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui ler as promoções: '
@@ -43557,6 +43602,7 @@ async function renderOrgPromo() {
   else if (_promoAba === 'cargos') h += _promoDePara();
   else h += _promoTabela();
   wrap.innerHTML = h + '</div>';
+  _promoScrollVolta(_y);
 }
 function promoAba(k) { _promoAba = k; renderOrgPromo(); }
 
@@ -44103,7 +44149,7 @@ const _PM_ST = {
 let _promoSetorSel = '';
 function promoSetSetor(v) { _promoSetorSel = String(v || ''); renderOrgPromo(); }
 function _promoHist() {
-  const todos = _promoRegs || [];
+  const todos = _promoVis(_promoRegs);
   if (!todos.length) return '<div class="card"><p class="desc" style="margin:0">Nenhuma promoção registrada ainda.</p></div>';
   const _setDe = p => String(p.setor || '').trim() || '— sem setor';
   const setores = [...new Set(todos.map(_setDe))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
@@ -44129,13 +44175,33 @@ function _promoHist() {
     + anos.map(a => '<option value="' + a + '"' + (a === _perfAnoSel() ? ' selected' : '') + '>' + a + '</option>').join('')
     + '</select>'
     + (anos.length < 2 ? '<span class="desc" style="font-size:11px;font-weight:600;color:#8A5A12">só ' + anos[0] + ' tem produção importada</span>' : '')
-    + '</div>';
+    + '</div>'
+    /* barra de lote: aparece sempre, para a pessoa saber que existe */
+    + (function () {
+      const ids = regs.filter(p => p.status === 'rascunho' || p.status === 'aprovada').map(p => p.id);
+      const n = Object.keys(_promoLote).length;
+      const podeAprov = regs.filter(p => _promoLote[p.id] && p.status === 'rascunho').length;
+      const podeAplic = regs.filter(p => _promoLote[p.id] && p.status === 'aprovada').length;
+      if (!ids.length) return '';
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--leve-2);border-radius:10px;padding:8px 11px;margin:8px 0">'
+        + '<label style="font-size:12.5px;font-weight:700;cursor:pointer"><input type="checkbox" ' + (n && n >= ids.length ? 'checked' : '')
+        + ' onchange="promoLoteTodos(this.checked,' + JSON.stringify(ids).replace(/"/g, '&quot;') + ')"> selecionar tod' + (ids.length === 1 ? 'a' : 'as') + ' (' + ids.length + ')</label>'
+        + '<span class="desc" style="font-size:12px">' + (n ? n + ' selecionada(s)' : 'nenhuma selecionada') + '</span>'
+        + (podeAprov ? '<span onclick="promoLoteStatus(\'aprovada\')" style="cursor:pointer;background:var(--navy);color:#fff;font-weight:800;font-size:12.5px;border-radius:8px;padding:6px 13px">✓ Aprovar ' + podeAprov + '</span>' : '')
+        + (podeAplic ? '<span onclick="promoLoteStatus(\'aplicada\')" style="cursor:pointer;background:var(--verde);color:#fff;font-weight:800;font-size:12.5px;border-radius:8px;padding:6px 13px">✓ Marcar aplicada ' + podeAplic + '</span>' : '')
+        + (n && !podeAprov && !podeAplic ? '<span class="desc" style="font-size:11.5px">as selecionadas já estão aplicadas ou canceladas</span>' : '')
+        + '</div>';
+    })();
   if (!regs.length) return h + '<p class="desc" style="margin:10px 0 0">Nenhuma promoção em <b>' + escapeHtml(_promoSetorSel) + '</b>. <span style="color:var(--azul-2);font-weight:700;cursor:pointer" onclick="promoSetSetor(\'\')">ver todos os setores</span></p></div>';
   h += regs.map(p => {
     const st = _PM_ST[p.status] || [p.status, '#555', '#EEE'];
     const d = (+p.salario_para || 0) - (+p.salario_de || 0);
     return '<div style="padding:10px 0;border-bottom:1px solid var(--linha)">'
       + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+      + ((p.status === 'rascunho' || p.status === 'aprovada')
+        ? '<input type="checkbox" ' + (_promoLote[p.id] ? 'checked' : '')
+          + ' onchange="promoLoteTica(\'' + p.id + '\',this.checked)" style="width:17px;height:17px;cursor:pointer">'
+        : '')
       + '<b>' + escapeHtml(p.nome || p.matricula) + '</b>'
       + '<span style="font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;background:' + st[2] + ';color:' + st[1] + '">' + st[0] + '</span>'
       + '<span class="desc" style="font-size:11.5px;margin-left:auto">' + (p.data_efeito ? fmtData(p.data_efeito) : '') + '</span></div>'
@@ -44162,7 +44228,8 @@ async function promoStatus(id, st) {
   const { error } = await sb.from('promocoes').update({ status: st, atualizado_em: new Date().toISOString() }).eq('id', id);
   if (error) { toast('❌ ' + error.message); return; }
   toast('Status: ' + st);
-  await promoCarregar(true); renderOrgPromo();
+  const y = _promoScrollGuarda();
+  await promoCarregar(true); renderOrgPromo(y);
 }
 async function promoExcluir(id) {
   if (!confirm('Excluir este registro de vez?')) return;
