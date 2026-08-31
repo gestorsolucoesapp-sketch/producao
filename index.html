@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.335.0';
+const APP_VER = '4.336.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -22625,6 +22625,48 @@ async function carregarPaletizacao() {
   _paletItem = m;
   return m;
 }
+/* ===== EM QUE ETAPA O PEDIDO ESTA PARADO — 31/08/2026 =====
+   (Joao: "marque o fluxo que esta parado cada pedido atrasado").
+   A resposta ja existia, mas escondida um toque adentro, no detalhe do pedido.
+   Aqui ela sobe para a linha da lista: qual setor segura o pedido AGORA e ha
+   quanto tempo.
+   A regra e a MESMA do detalhe, para as duas telas nao discordarem: a etapa
+   atual e a ultima linha do RVEN304 daquele documento, e o tempo e o corrido
+   desde a entrada nela — nao o tempo fechado, que so existe depois do repasse.
+   Se a ultima etapa for de fim (EXPEDIDOS, DESPACHADO, NFE, CANCELAMENTO), o
+   pedido nao esta parado em lugar nenhum e nada e marcado. */
+const _FLX_FIM = ['EXPEDIDOS', 'DESPACHADO', 'CANCELAMENTO', 'NFE'];
+async function _fluxoAtualDe(nums) {
+  const m = {};
+  const docs = (nums || []).filter(Boolean);
+  if (!docs.length) return m;
+  try {
+    const linhas = await _leTudoFlx(() => sb.from('fluxo_pedido')
+      .select('documento,seq,setor,data_inclusao')
+      .in('documento', docs).order('documento').order('seq'));
+    const ult = {};
+    (linhas || []).forEach(r => { ult[String(r.documento)] = r; });   // ordenado por seq: sobra o ultimo
+    Object.keys(ult).forEach(k => {
+      const r = ult[k], nome = flxNome(r.setor);
+      if (_FLX_FIM.includes(String(nome).toUpperCase())) return;      // ja saiu
+      m[k] = {
+        setor: nome,
+        min: r.data_inclusao ? Math.max(0, Math.round((Date.now() - new Date(r.data_inclusao).getTime()) / 60000)) : 0
+      };
+    });
+  } catch (e) { try { console.warn('fluxoAtual:', e && e.message); } catch (_) { } }
+  return m;
+}
+function _seloFluxo(x) {
+  const f = x && x._flx; if (!f) return '';
+  const d = Math.floor((f.min || 0) / 1440), h = Math.floor(((f.min || 0) % 1440) / 60);
+  const t = d ? d + 'd' : h + 'h';
+  /* passou de 3 dias na mesma etapa e o que o card de motivos ja considera
+     demora — aqui ganha cor, para saltar na lista */
+  const grave = (f.min || 0) >= 3 * 1440;
+  return '<div style="font-size:10.5px;font-weight:700;margin-top:2px;color:' + (grave ? '#9B2C2C' : 'var(--fraco-2)') + '"'
+    + ' title="etapa em que o pedido est\u00e1 agora, pelo RVEN304">\uD83E\uDDED parado em <b>' + escapeHtml(f.setor) + '</b> h\u00e1 <b>' + t + '</b></div>';
+}
 async function atrDetalhe(tipo) {
   const cx = $('atrDet'); if (!cx) return;
   if (_atrTipo === tipo) { _atrTipo = ''; cx.innerHTML = ''; return; }
@@ -22853,6 +22895,12 @@ async function atrDetalhe(tipo) {
     const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
     L.forEach(x => { const k = x.setor || _semOp(x); porSetor[k] = (porSetor[k] || 0) + 1; });
     if (alvo) L = L.filter(x => (x.setor || _semOp(x)) === alvo);
+    /* so dos pedidos que sobraram no recorte: sao poucos e evita varrer as
+       6.588 linhas do RVEN304 inteiro */
+    try {
+      const _fx = await _fluxoAtualDe(L.map(x => String(x.num)));
+      L.forEach(x => { x._flx = _fx[String(x.num)] || null; });
+    } catch (_) { }
     L.sort((a, b) => a.ent.localeCompare(b.ent));
     _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
     const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada', parcial: 'Atrasados com reserva parcial' }[tipo];
@@ -22919,6 +22967,7 @@ async function atrDetalhe(tipo) {
             : (!x.cheio && x.faltaProd ? '<b style="color:#9B2C2C">sem OP \u00b7 falta produzir</b> \u00b7 '
                            : '<b style="color:#1F7A46">\u2713 pronto \u00b7 aguardando sa\u00edda</b> \u00b7 '))
           + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
+          + _seloFluxo(x)
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
           /* 29/08/2026 (Joao: "mostre OP e maquina programada"). Sem isso a
              lista diz que o pedido esta atrasado mas nao diz onde ir cobrar.
