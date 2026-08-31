@@ -3709,7 +3709,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.333.0';
+const APP_VER = '4.334.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20543,6 +20543,7 @@ async function tintaAbrir() {
   await tintaCarregar();
 }
 function tintaVer(v) {
+  try { tintaCameraFechar(); } catch (_) { }
   _tintaVista = v; _tintaBusca = '';
   document.querySelectorAll('#tintaSubAbas [data-tv]').forEach(b =>
     b.classList.toggle('ativa', b.getAttribute('data-tv') === v));
@@ -20633,6 +20634,77 @@ function tintaTelaEstoque(box) {
     + (!vis.length ? '<p class="vazio-painel">Nada encontrado.</p>' : '');
 }
 
+/* ---------- LEITOR DE CODIGO DE BARRAS PELA CAMERA — 30/08/2026 ----------
+   (Joao: "nao esta abrindo a camera para dar baixa"). Nao estava mesmo: o campo
+   tinha o emoji de camera no texto, mas a leitura era so por leitor fisico ou
+   digitacao — eu tinha deixado anotado que ficava "para depois". Chegou o
+   depois.
+   O Safari do iPhone nao tem leitor de codigo de barras nativo, entao vem de
+   biblioteca (ZXing), carregada SO quando a pessoa toca no botao: quem nunca
+   usar a camera nao baixa nada a mais. Precisa de HTTPS — o GitHub Pages e —
+   e de um toque da pessoa para o iOS liberar a camera, que e o proprio botao.
+   Le em sequencia: bipou uma lata, continua ligado para a proxima, com um
+   respiro de 1,2 s para nao dar baixa dupla do mesmo codigo. */
+let _zxLeitor = null, _zxUltimo = { cod: '', em: 0 };
+async function _zxCarregar() {
+  if (window.ZXingBrowser) return true;
+  return new Promise((ok, falhou) => {
+    const s = document.createElement('script');
+    /* o arquivo mora NO PROPRIO repositorio, nao numa CDN de terceiro: a rede
+       da fabrica bloqueia o que quiser sem me avisar, e script de fora e porta
+       de entrada. 386 KB, baixado uma vez e cacheado pelo navegador. */
+    s.src = './zxing-browser.min.js';
+    s.onload = () => ok(true);
+    s.onerror = () => falhou(new Error('sem internet para carregar o leitor'));
+    document.head.appendChild(s);
+  });
+}
+async function tintaCamera() {
+  const cx = document.getElementById('tintaCam');
+  if (!cx) return;
+  if (_zxLeitor) return tintaCameraFechar();
+  cx.innerHTML = '<p class="desc" style="padding:10px 0">Abrindo a câmera…</p>';
+  try {
+    await _zxCarregar();
+    cx.innerHTML = '<div style="position:relative;border:2px solid var(--navy);border-radius:12px;overflow:hidden;background:#000">'
+      + '<video id="tintaVid" playsinline muted style="width:100%;max-height:60vh;display:block"></video>'
+      + '<div style="position:absolute;left:8%;right:8%;top:50%;height:2px;background:#E8871F;opacity:.9"></div></div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0 2px">'
+      + '<span class="desc" id="tintaCamMsg">Aponte para o código de barras da lata.</span>'
+      + '<span onclick="tintaCameraFechar()" style="cursor:pointer;font-weight:800;color:var(--critico);font-size:13px">✕ fechar</span></div>';
+    const leitor = new window.ZXingBrowser.BrowserMultiFormatReader();
+    /* facingMode environment = camera de TRAS. Sem isso o iPhone abre a frontal
+       e a pessoa fica se filmando em vez de ler a lata. */
+    _zxLeitor = await leitor.decodeFromConstraints(
+      { video: { facingMode: { ideal: 'environment' } } }, 'tintaVid', (res) => {
+      if (!res) return;
+      const cod = String(res.getText() || '').trim();
+      const agora = Date.now();
+      if (!cod || (cod === _zxUltimo.cod && agora - _zxUltimo.em < 1200)) return;
+      _zxUltimo = { cod: cod, em: agora };
+      try { if (navigator.vibrate) navigator.vibrate(60); } catch (_) { }
+      const m = document.getElementById('tintaCamMsg');
+      if (m) m.innerHTML = '✅ lido <b>' + escapeHtml(cod) + '</b>';
+      tintaBipar(cod);
+      });
+  } catch (e) {
+    /* o motivo importa: sem permissao e diferente de sem internet, e a pessoa
+       precisa saber qual dos dois para resolver */
+    const msg = String((e && e.message) || e);
+    cx.innerHTML = '<p class="desc" style="background:#FDECEA;border-left:3px solid var(--critico);border-radius:0 8px 8px 0;padding:8px 11px">'
+      + (msg.indexOf('internet') >= 0
+        ? 'Não consegui carregar o leitor — precisa de internet na primeira vez.'
+        : 'A câmera não abriu. No iPhone: Ajustes → Safari → Câmera → Permitir, e abra o app de novo.')
+      + '<br><span style="font-size:11px">Você pode digitar o código no campo acima.</span></p>';
+    _zxLeitor = null;
+  }
+}
+function tintaCameraFechar() {
+  try { if (_zxLeitor && _zxLeitor.stop) _zxLeitor.stop(); } catch (_) { }
+  _zxLeitor = null;
+  const cx = document.getElementById('tintaCam'); if (cx) cx.innerHTML = '';
+}
+
 /* ---------- SAÍDA ----------
    O código de barras é POR COR, então cada leitura baixa UMA lata. O campo
    aceita leitor físico (que digita e dá Enter) e digitação manual. Leitura pela
@@ -20646,6 +20718,9 @@ function tintaTelaSaida(box) {
     + '<input id="tintaBip" type="search" placeholder="📷 bipe o código de barras ou digite a cor…" value="' + escapeHtml(_tintaBusca) + '"'
     + ' oninput="_tintaBusca=this.value;tintaRender()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();tintaBipar(this.value)}"'
     + ' style="width:100%;margin:8px 0;padding:11px;border:2px solid var(--azul-2);border-radius:10px;font-size:15px">'
+    + '<div style="display:flex;gap:8px;margin:0 0 8px">'
+    + '<span onclick="tintaCamera()" style="cursor:pointer;flex:1;text-align:center;background:var(--navy);color:#fff;font-weight:800;font-size:14px;border-radius:10px;padding:11px">📷 Ler com a câmera</span>'
+    + '</div><div id="tintaCam"></div>'
     + (saidasHoje.length ? '<p class="desc">Hoje: <b>' + saidasHoje.length + '</b> baixa(s) · ' + _tNum(saidasHoje.reduce((a, m) => a + (+m.quantidade || 0), 0)) + ' lata(s)</p>' : '')
     + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;margin-top:8px">'
     + L.slice(0, 60).map(x =>
