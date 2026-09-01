@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.374.0';
+const APP_VER = '4.375.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28723,10 +28723,26 @@ function _anoCacheGrava(ano, linhas) {
     localStorage.setItem(_ANO_CACHE_K, JSON.stringify(o));
   } catch (_) { }
 }
-function _anoJunta(base, mes, linhasMes) {
-  /* tira o mês vigente do histórico e põe a versão fresca no lugar */
-  const fora = (base || []).filter(r => String(r.mes) !== mes);
-  return fora.concat(linhasMes || []);
+function _anoJunta(base, meses, linhasNovas) {
+  /* tira os meses recarregados do histórico e põe a versão fresca no lugar */
+  const set = new Set(meses || []);
+  const fora = (base || []).filter(r => !set.has(String(r.mes)));
+  return fora.concat(linhasNovas || []);
+}
+/* 01/09/2026 (Joao: "por que não atualizou agosto?"). Na virada do mês, agosto
+   virou "mês fechado" e passou a vir só da fotografia — mas o 621 dos dias 30 e
+   31 chegou HOJE, depois da virada. A fotografia é de ontem e não tinha esses
+   dias: a tela mostrava 3.060 t quando agosto já era 3.175 t.
+   Mês anterior não é mês fechado enquanto os últimos dias dele ainda estão
+   chegando. Então busco fresco SEMPRE os dois: o vigente e o anterior. São duas
+   consultas de 0,2 s — o resto do ano continua vindo da fotografia. */
+function _anoMesesFrescos(ano) {
+  const hoje = hojeISO();
+  const atual = hoje.slice(0, 7);
+  const d = new Date(+hoje.slice(0, 4), +hoje.slice(5, 7) - 1, 1);
+  d.setMonth(d.getMonth() - 1);
+  const ant = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  return [atual, ant].filter(m => m.slice(0, 4) === String(ano));
 }
 async function anoAbrir(forcar) {
   const ano = _anoSel || new Date().getFullYear();
@@ -28742,17 +28758,17 @@ async function anoAbrir(forcar) {
     wrap.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Carregando o ano…</p>';
   }
   try {
-    /* 2. histórico da MV + mês vigente fresco, em paralelo */
-    const [hist, mes] = await Promise.all([
+    /* 2. histórico da MV + os meses que ainda mudam, frescos, em paralelo */
+    const frescos = _anoMesesFrescos(ano);
+    const [hist, ...ms] = await Promise.all([
       (cache && cache.linhas && cache.linhas.length && !forcar)
         ? Promise.resolve({ data: cache.linhas })
         : sb.from('mv_resumo_ano').select('mes,recurso_cod,kg,quantidade,unidade,perda_kg,parada_h,dias').like('mes', ano + '-%'),
-      String(ano) === mesAtual.slice(0, 4)
-        ? sb.rpc('resumo_mes', { p_mes: mesAtual })
-        : Promise.resolve({ data: [] })
+      ...frescos.map(m => sb.rpc('resumo_mes', { p_mes: m }))
     ]);
     if (hist.error) throw hist.error;
-    const linhas = _anoJunta(hist.data || [], mesAtual, (mes && mes.data) || []);
+    const novas = ms.reduce((a, r) => a.concat((r && r.data) || []), []);
+    const linhas = _anoJunta(hist.data || [], frescos, novas);
     _anoDados = { ano: ano, linhas: linhas }; _anoSel = ano;
     _anoCacheGrava(ano, linhas);
     anoRender();
