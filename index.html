@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.377.0';
+const APP_VER = '4.378.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28926,6 +28926,112 @@ function anoTextoZap() {
   return out.join('\n');
 }
 function anoEnviarZap() { const t = anoTextoZap(); if (t) enviarTexto(t, 'resumo anual'); }
+/* ===== 01/09/2026 (Joao: "quero enviar os graficos") =====
+   Texto explica, imagem convence — e numa conversa de WhatsApp a barra diz em
+   um segundo o que oito numeros em sequencia levam meio minuto.
+   Desenho num CANVAS a partir dos mesmos dados da tela, em vez de tentar
+   fotografar a pagina: printar HTML no navegador exige biblioteca de fora, e eu
+   nao quero pendurar o app num script de terceiro so para isso. Canvas e nativo,
+   sai igual em qualquer aparelho e nao depende de rede.
+   No iPhone vai pela folha de compartilhamento com o arquivo junto; onde isso
+   nao existir, baixa o PNG e a pessoa anexa. */
+function _anoAgrega() {
+  const L = (_anoDados && _anoDados.linhas) || [];
+  const cxS = s => (typeof setorEmCx === 'function') ? setorEmCx(s) : (s === 'Embaladeiras');
+  const M = {}, S = {};
+  L.forEach(r => {
+    const st = setorDe(r.recurso_cod) || '—', m = String(r.mes || '').slice(0, 7); if (!m) return;
+    M[m] = M[m] || {};
+    const c = (M[m][st] = M[m][st] || { kg: 0, cx: 0, perda: 0, parada: 0 });
+    c.kg += (+r.kg || 0);
+    if (String(r.unidade || '').toUpperCase() === 'CX') c.cx += (+r.quantidade || 0);
+    c.perda += (+r.perda_kg || 0); c.parada += (+r.parada_h || 0);
+    S[st] = true;
+  });
+  const meses = Object.keys(M).sort();
+  const val = (m, s) => { const c = (M[m] || {})[s]; if (!c) return 0;
+    if (_anoMet === 'perda') return c.perda; if (_anoMet === 'parada') return c.parada;
+    return cxS(s) ? c.cx : c.kg; };
+  const setores = Object.keys(S).sort((a, b) => {
+    const ca = cxS(a) && _anoMet === 'kg' ? 1 : 0, cb = cxS(b) && _anoMet === 'kg' ? 1 : 0;
+    return ca - cb || meses.reduce((x, m) => x + val(m, b), 0) - meses.reduce((x, m) => x + val(m, a), 0);
+  });
+  return { meses, setores, val, cxS };
+}
+async function anoEnviarImagem() {
+  if (!_anoDados || !_anoDados.linhas || !_anoDados.linhas.length) { toast('Abra o resumo primeiro.'); return; }
+  const { meses, setores, val, cxS } = _anoAgrega();
+  const uteis = setores.filter(s => meses.some(m => val(m, s) > 0));
+  if (!uteis.length) { toast('Sem dados para desenhar.'); return; }
+  const rot = m => ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m.slice(5, 7) - 1] || m;
+  const num = (v, s) => !v ? '' : (_anoMet === 'parada' ? fmt(v, 0)
+    : (cxS(s) && _anoMet === 'kg' ? (v >= 1000 ? fmt(v / 1000, 1) + 'k' : fmt(v, 0))
+      : (v >= 100000 ? fmt(v / 1000, 0) : fmt(v / 1000, 1))));
+  const D = 2;                        // dobro da resolução: no celular a imagem não sai borrada
+  const W = 900, PAD = 26, LIN = 128, TOPO = 86;
+  const H = TOPO + uteis.length * LIN + 42;
+  const cv = document.createElement('canvas');
+  cv.width = W * D; cv.height = H * D;
+  const c = cv.getContext('2d'); c.scale(D, D);
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, H);
+  const rotMet = _anoMet === 'perda' ? 'PERDA' : (_anoMet === 'parada' ? 'PARADA' : 'PRODUÇÃO');
+  c.fillStyle = '#0B2A4A'; c.font = '700 22px -apple-system,Segoe UI,Roboto,sans-serif';
+  c.fillText('Resumo anual ' + _anoDados.ano + ' · ' + rotMet, PAD, 34);
+  c.fillStyle = '#5C6B78'; c.font = '13px -apple-system,Segoe UI,Roboto,sans-serif';
+  c.fillText('Rioplastic · ' + rot(meses[0]) + ' a ' + rot(meses[meses.length - 1])
+    + ' · ' + (_anoMet === 'parada' ? 'horas' : 'toneladas')
+    + (_anoMet === 'kg' ? ' (Embaladeiras em caixas)' : '') + ' · gerado em ' + fmtData(hojeISO()), PAD, 54);
+  c.strokeStyle = '#DFE4E8'; c.beginPath(); c.moveTo(PAD, 66); c.lineTo(W - PAD, 66); c.stroke();
+  uteis.forEach((s, i) => {
+    const y0 = TOPO + i * LIN;
+    const vs = meses.map(m => val(m, s));
+    const mx = Math.max(1, ...vs);
+    const soma = vs.reduce((a, b) => a + b, 0);
+    const cor = _ANO_COR[s] || '#9AA7B2';
+    c.fillStyle = cor; c.fillRect(PAD, y0 + 2, 11, 11);
+    c.fillStyle = '#12212E'; c.font = '700 15px -apple-system,Segoe UI,Roboto,sans-serif';
+    c.fillText(s, PAD + 18, y0 + 13);
+    c.fillStyle = '#5C6B78'; c.font = '12px -apple-system,Segoe UI,Roboto,sans-serif';
+    c.fillText('ano ' + num(soma, s) + (cxS(s) && _anoMet === 'kg' ? ' cx' : (_anoMet === 'parada' ? ' h' : ' t')),
+      PAD + 22 + c.measureText(s).width + 40, y0 + 13);
+    const bw = (W - PAD * 2) / meses.length, alt = 62;
+    meses.forEach((m, k) => {
+      const v = vs[k], h = v ? Math.max(2, Math.round(v / mx * alt)) : 0;
+      const x = PAD + k * bw, base = y0 + 34 + alt;
+      if (h) {
+        c.globalAlpha = 0.45 + 0.55 * (v / mx);
+        c.fillStyle = cor; c.fillRect(x + 4, base - h, bw - 8, h);
+        c.globalAlpha = 1;
+        c.fillStyle = '#5C6B78'; c.font = '700 10.5px -apple-system,Segoe UI,Roboto,sans-serif';
+        c.textAlign = 'center'; c.fillText(num(v, s), x + bw / 2, base - h - 5);
+      }
+      c.fillStyle = '#9AA7B2'; c.font = '10px -apple-system,Segoe UI,Roboto,sans-serif';
+      c.textAlign = 'center'; c.fillText(rot(m), x + bw / 2, base + 14);
+      c.textAlign = 'left';
+    });
+    if (i < uteis.length - 1) {
+      c.strokeStyle = '#EEF2F5'; c.beginPath();
+      c.moveTo(PAD, y0 + LIN - 8); c.lineTo(W - PAD, y0 + LIN - 8); c.stroke();
+    }
+  });
+  c.fillStyle = '#9AA7B2'; c.font = '11px -apple-system,Segoe UI,Roboto,sans-serif';
+  c.fillText('Cada setor na sua escala — a altura compara o setor com ele mesmo, não com os outros.', PAD, H - 16);
+  const nome = 'resumo-anual-' + _anoDados.ano + '-' + _anoMet + '.png';
+  cv.toBlob(async (blob) => {
+    if (!blob) { toast('Não consegui gerar a imagem.'); return; }
+    const arq = new File([blob], nome, { type: 'image/png' });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [arq] })) {
+        await navigator.share({ files: [arq], title: 'Resumo anual ' + _anoDados.ano });
+        return;
+      }
+    } catch (_) { return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nome; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Imagem baixada — anexe no WhatsApp.');
+  }, 'image/png');
+}
 function anoRender() {
   const wrap = document.getElementById('anoWrap'); if (!wrap || !_anoDados) return;
   const L = _anoDados.linhas || [];
@@ -28971,7 +29077,8 @@ function anoRender() {
     + '<span>📆 Resumo anual · ' + _anoDados.ano + '</span>'
     + (anos.length > 1 ? '<select class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px" onchange="_anoSel=+this.value;anoAbrir(true)">'
       + anos.map(a => '<option value="' + a + '"' + (a === _anoDados.ano ? ' selected' : '') + '>' + a + '</option>').join('') + '</select>' : '')
-    + '<span onclick="anoEnviarZap()" style="cursor:pointer;background:#25D366;color:#fff;font-weight:800;font-size:12px;border-radius:999px;padding:4px 12px;margin-left:auto">📲 WhatsApp</span>'
+    + '<span onclick="anoEnviarImagem()" style="cursor:pointer;background:#25D366;color:#fff;font-weight:800;font-size:12px;border-radius:999px;padding:4px 12px;margin-left:auto">🖼️ Enviar gráfico</span>'
+    + '<span onclick="anoEnviarZap()" style="cursor:pointer;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);font-weight:800;font-size:12px;border-radius:999px;padding:4px 12px">📝 Enviar texto</span>'
     + [['kg', 'produção'], ['perda', 'perda'], ['parada', 'parada']].map(([v, r]) =>
       '<span onclick="anoMet(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:4px 12px;'
       + (_anoMet === v ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('')
