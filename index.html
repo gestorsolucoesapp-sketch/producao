@@ -3852,7 +3852,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.387.0';
+const APP_VER = '4.388.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28917,6 +28917,59 @@ const _ANO_COR = {
 /* comparativo mes a mes contra o ano anterior. Barras pareadas: a clara e o ano
    passado, a escura e o ano escolhido. So os setores que medem na mesma unidade
    entram na soma — caixa nao entra em conta de quilo. */
+/* 01/09/2026 (Joao: "faça o crescimento por setor"). O comparativo da fabrica
+   dizia +8% e escondia o essencial: dentro desses 8% tem setor que dobrou e
+   setor que caiu. Aqui cada setor aparece com os dois anos lado a lado e a
+   variacao — nos MESMOS meses, senao comparo 12 com 8 e todo mundo "cai".
+   Ordeno pelo tamanho da mudanca em tonelada, nao em porcentagem: 100% de um
+   setor de 90 t muda menos a fabrica do que 8% da Extrusao. */
+function _anoCrescSetor(meses, setores, val, cx) {
+  if (!_anoPrev || !_anoPrev.linhas || !_anoPrev.linhas.length) return '';
+  const mesesN = meses.map(m => m.slice(5, 7));
+  const P = {};
+  _anoPrev.linhas.forEach(r => {
+    const mm = String(r.mes || '').slice(5, 7);
+    if (!mesesN.includes(mm)) return;                 // só os meses que os dois anos têm
+    const st = setorDe(r.recurso_cod) || '—';
+    const v = _anoMet === 'perda' ? (+r.perda_kg || 0)
+      : (_anoMet === 'parada' ? (+r.parada_h || 0)
+        : (cx(st) ? (String(r.unidade || '').toUpperCase() === 'CX' ? (+r.quantidade || 0) : 0) : (+r.kg || 0)));
+    P[st] = (P[st] || 0) + v;
+  });
+  const L = setores.map(s => {
+    const a = meses.reduce((x, m) => x + val(m, s), 0), p = P[s] || 0;
+    return { s: s, a: a, p: p, d: a - p, pct: p > 0 ? (a - p) / p * 100 : null, cx: cx(s) && _anoMet === 'kg' };
+  }).filter(x => x.a > 0 || x.p > 0).sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+  if (!L.length) return '';
+  const mxD = Math.max(1, ...L.map(x => Math.abs(x.d)));
+  const un = x => x.cx ? ' cx' : (_anoMet === 'parada' ? ' h' : ' t');
+  const nm = (v, x) => x.cx ? fmt(v, 0) : (_anoMet === 'parada' ? fmt(v, 0) : fmt(v / 1000, 1));
+  return '<div style="border:1px solid var(--linha-2s);border-radius:12px;padding:10px 11px;margin:0 0 12px">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px">'
+    + '<b style="font-size:13.5px">Crescimento por setor</b>'
+    + '<span class="desc" style="font-size:11.5px">' + _anoDados.ano + ' contra ' + _anoPrev.ano + ' · mesmos meses</span></div>'
+    + L.map(x => {
+      const pos = x.d >= 0, larg = Math.round(Math.abs(x.d) / mxD * 46);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--linha)">'
+        + '<b style="font-size:12.5px;flex:0 0 33%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(x.s) + '</b>'
+        /* barra que sai do meio: esquerda cai, direita cresce */
+        + '<div style="flex:1;display:flex;align-items:center;height:16px">'
+        + '<div style="flex:1;display:flex;justify-content:flex-end">'
+        + (pos ? '' : '<div style="width:' + larg + '%;height:11px;background:var(--critico);border-radius:3px 0 0 3px"></div>') + '</div>'
+        + '<div style="width:1px;height:16px;background:var(--linha-2s)"></div>'
+        + '<div style="flex:1">'
+        + (pos ? '<div style="width:' + larg + '%;height:11px;background:#1F7A46;border-radius:0 3px 3px 0"></div>' : '') + '</div>'
+        + '</div>'
+        + '<div style="flex:0 0 30%;text-align:right;white-space:nowrap">'
+        + '<b style="font-size:12.5px;color:' + (pos ? '#1F7A46' : 'var(--critico)') + '">'
+        + (x.pct === null ? 'novo' : (pos ? '+' : '') + fmt(x.pct, 0) + '%') + '</b>'
+        + '<div class="desc" style="font-size:10.5px">' + nm(x.p, x) + ' → ' + nm(x.a, x) + un(x) + '</div></div>'
+        + '</div>';
+    }).join('')
+    + '<p class="desc" style="font-size:11px;margin-top:6px">Ordenado pelo tamanho da mudança em '
+    + (_anoMet === 'parada' ? 'horas' : 'toneladas') + ', não em porcentagem: dobrar um setor pequeno mexe menos na fábrica que 8% da Extrusão.</p>'
+    + '</div>';
+}
 function _anoComparativo(meses, setores, val, cx, rot) {
   if (!_anoPrev || !_anoPrev.linhas || !_anoPrev.linhas.length) return '';
   const emp = setores.filter(s => !(cx(s) && _anoMet === 'kg'));
@@ -29276,6 +29329,7 @@ function anoRender() {
     + '<p class="desc" style="margin:0 0 8px;font-size:12px">Cada linha é um setor e cada coluna um mês. A cor compara o mês com o <b>melhor mês daquele setor</b> — '
     + 'não entre setores, senão a Extrusão apagaria todos os outros. Embaladeiras aparecem em <b>caixas</b>.</p>'
     + _anoComparativo(meses, setores, val, cx, rot)
+    + _anoCrescSetor(meses, setores, val, cx)
     + _anoGrafico(meses, setores, val, cx, rot, fmtv)
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
     + '<th style="text-align:left;position:sticky;left:0;background:#fff">Setor</th>'
