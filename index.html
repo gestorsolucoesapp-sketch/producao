@@ -1519,6 +1519,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <p class="desc" style="margin:6px 0 10px">Quantos dias cada mês tem em cada relatório. Se a produção estiver muito abaixo das paradas, é sinal de PDF que não entrou — foi o que aconteceu com junho.</p>
         <div id="saudeImport"><p class="desc">Carregando…</p></div>
       </div>
+      <div id="confImport"></div>
     </section>
 
     <!-- HISTÓRICO -->
@@ -3850,7 +3851,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.381.0';
+const APP_VER = '4.382.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -5868,6 +5869,86 @@ async function _confereHistorico() {
   } catch (_) { return ''; }
 }
 
+/* ===== CONFERÊNCIA GRAVADA — 01/09/2026 (Joao: "toda importacao quero que voce
+   confira com o final do relatorio e grave na tela do importador") =====
+   A conferencia contra o Total Geral ja existia, mas o resultado morria no toast
+   do momento: quem abrisse o app depois nao sabia se aquele arquivo tinha
+   batido. Agora o historico fica aqui, por importacao, com o numero do rodape,
+   o que o app leu e o veredito.
+   Tres estados, e a diferenca entre eles importa:
+     BATEU              — comparado com o rodape e igual;
+     DIVERGIU           — comparado e diferente: nao usar ate entender;
+     SEM TOTAL          — o relatorio nao tem rodape comparavel (fotos, fluxo,
+                          propostas). Nao e um "ok": e um "nao da para conferir",
+                          e a tela diz isso com todas as letras.
+   Sem essa distincao, "nada em vermelho" viraria "esta tudo certo" — que foi
+   exatamente o erro das paradas de ontem. */
+let _confImp = null;
+async function carregarConfImport(forcar) {
+  const box = document.getElementById('confImport'); if (!box) return;
+  if (_confImp && !forcar) return _confRender();
+  try {
+    const { data, error } = await sb.from('v_conferencia_import')
+      .select('id,rotina,arquivo,criado_em,registros,conf_esperado,conf_obtido,conf_ok,conf_msg,veredito')
+      .order('criado_em', { ascending: false }).limit(60);
+    if (error) throw error;
+    _confImp = data || [];
+    _confRender();
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p class="desc" style="color:var(--critico-s)">Não consegui ler a conferência: '
+      + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+  }
+}
+function _confNum(j) {
+  if (!j) return '—';
+  try {
+    const o = (typeof j === 'string') ? JSON.parse(j) : j;
+    return Object.keys(o).map(k => k + ' ' + fmt(+o[k] || 0, 2)).join(' · ');
+  } catch (_) { return '—'; }
+}
+function _confRender() {
+  const box = document.getElementById('confImport'); if (!box || !_confImp) return;
+  const L = _confImp;
+  const c = { bateu: 0, divergiu: 0, sem: 0, nao: 0 };
+  L.forEach(r => {
+    if (r.veredito === 'bateu') c.bateu++;
+    else if (r.veredito === 'divergiu') c.divergiu++;
+    else if (r.veredito === 'sem total no relatório') c.sem++;
+    else c.nao++;
+  });
+  const cor = v => v === 'bateu' ? 'var(--verde)' : (v === 'divergiu' ? 'var(--critico)' : '#9E5514');
+  const ico = v => v === 'bateu' ? '✓' : (v === 'divergiu' ? '✗' : '—');
+  box.innerHTML = '<div class="card">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+    + '<div class="titulo-sec" style="margin:0">🧾 Conferência contra o rodapé do relatório</div>'
+    + '<button class="btn btn-borda" style="padding:6px 12px;font-size:12px;width:auto" onclick="carregarConfImport(true)">🔄 Atualizar</button>'
+    + '</div>'
+    + '<div class="idet-grid" style="margin-top:8px">'
+    + '<div><b style="color:var(--verde)">' + c.bateu + '</b><span>bateram</span></div>'
+    + '<div><b style="color:' + (c.divergiu ? 'var(--critico)' : 'var(--fraco-2)') + '">' + c.divergiu + '</b><span>divergiram</span></div>'
+    + '<div><b style="color:#9E5514">' + c.sem + '</b><span>sem total no relatório</span></div>'
+    + '<div><b>' + c.nao + '</b><span>não conferidos</span></div>'
+    + '</div>'
+    + '<p class="desc" style="font-size:11.5px;margin:8px 0 6px">"Sem total" <b>não é</b> um visto: é um relatório que não traz rodapé comparável (foto de estoque, fluxo, propostas). '
+    + 'Nada em vermelho não quer dizer que está tudo certo.</p>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr>'
+    + '<th style="text-align:left">Quando</th><th style="text-align:left">Relatório</th>'
+    + '<th style="text-align:right">Linhas</th><th style="text-align:left">Rodapé × lido</th><th></th></tr></thead><tbody>'
+    + L.slice(0, 30).map(r => {
+      const q = new Date(r.criado_em);
+      return '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="white-space:nowrap">' + escapeHtml(fmtData(String(r.criado_em).slice(0, 10)))
+        + ' <span class="desc" style="font-size:10.5px">' + String(q.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })) + '</span></td>'
+        + '<td><b>' + escapeHtml(r.rotina || '—') + '</b></td>'
+        + '<td style="text-align:right">' + fmt(+r.registros || 0, 0) + '</td>'
+        + '<td style="font-size:11px;color:var(--fraco-2)">'
+        + (r.conf_esperado ? escapeHtml(_confNum(r.conf_esperado)) + '<br>' + escapeHtml(_confNum(r.conf_obtido))
+          : '<span style="color:#9E5514">' + escapeHtml(r.conf_msg || 'sem rodapé comparável') + '</span>') + '</td>'
+        + '<td style="text-align:right;white-space:nowrap"><b style="color:' + cor(r.veredito) + '">'
+        + ico(r.veredito) + ' ' + escapeHtml(r.veredito) + '</b></td></tr>';
+    }).join('')
+    + '</tbody></table></div></div>';
+}
 async function carregarSaudeImport(manual) {
   const box = $('saudeImport'); if (!box) return;
   let _confHtml = ''; try { _confHtml = await _confereHistorico(); } catch (_) { }
@@ -11094,7 +11175,7 @@ function _trocarAbaReal(qual) {
     if (qual === 'painel') carregarPainel();
     if (qual === 'analise') carregarAnalise();
     if (qual === 'tarefas') carregarTarefas();
-    if (qual === 'importar') { carregarSaudeImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
+    if (qual === 'importar') { carregarSaudeImport(); carregarConfImport(); try { renderFila(); renderHorariosImport(); } catch (_) {} }
     if (qual === 'historico') carregarHistorico();
     if (qual === 'ferramentas') ferrSub(_fSubAtual || 'caderno');
     if (qual === 'usuarios')  { carregarUsuarios(); try { renderDiagPausa(); } catch (_) {} }
@@ -26167,7 +26248,7 @@ async function executarComando(cmd) {
   $('abaMetas').classList.toggle('oculto', aba !== 'metas');
   $('abaOEE').classList.toggle('oculto', aba !== 'oee');
   $('abaManut').classList.toggle('oculto', aba !== 'manut');
-  if (aba === 'importar') carregarSaudeImport();
+  if (aba === 'importar') { carregarSaudeImport(); carregarConfImport(); }
   const partes = [];
   if (aba === 'painel') {
     await carregarPainel();
@@ -31747,7 +31828,7 @@ async function gravar(id, substituir = false) {
     // Conferência, metas e regras. Sem isso a tela continua mostrando o valor antigo.
     limparCachesDados();
     try { localStorage.setItem('ultimaImport', String(Date.now())); } catch (_) {}
-    carregarHistorico(); carregarSaudeImport();
+    carregarHistorico(); carregarSaudeImport(); try { carregarConfImport(true); } catch (_) { }
     return true;
   } catch (e) {
     const ehDup = !!e.dup;
