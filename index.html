@@ -3852,7 +3852,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.386.0';
+const APP_VER = '4.387.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28809,7 +28809,7 @@ let _saidaDia = null;
    Embaladeiras aparecem em CAIXAS, como no semaforo; o resto em kg. Somar caixa
    com quilo numa linha de total seria mentira, entao o total geral traz os dois
    separados. */
-let _anoDados = null, _anoSel = null, _anoMet = 'kg';
+let _anoDados = null, _anoSel = null, _anoMet = 'kg', _anoPrev = null;
 function anoMet(v) { _anoMet = v; anoRender(); }
 /* 31/08/2026 (Joao: "tá muito lento; deixa a fotografia dos meses anteriores
    porque não muda e atualiza o mês vigente").
@@ -28871,7 +28871,15 @@ async function anoAbrir(forcar) {
   }
   try {
     /* 2. histórico da MV + os meses que ainda mudam, frescos, em paralelo */
+    /* 01/09/2026 (Joao: "faz um comparativo mensal no resumo"). Com 2025 no
+       banco, o mes sozinho parou de bastar: 2.824 t em agosto so quer dizer
+       alguma coisa ao lado das 2.608 do agosto passado. Carrego o ano anterior
+       junto — vem da mesma fotografia, custa nada. */
     const frescos = _anoMesesFrescos(ano);
+    sb.from('mv_resumo_ano').select('mes,recurso_cod,kg,quantidade,unidade,perda_kg,parada_h')
+      .like('mes', (ano - 1) + '-%')
+      .then(r => { _anoPrev = { ano: ano - 1, linhas: (r && r.data) || [] }; try { anoRender(); } catch (_) { } })
+      .catch(() => { _anoPrev = { ano: ano - 1, linhas: [] }; });
     const [hist, ...ms] = await Promise.all([
       (cache && cache.linhas && cache.linhas.length && !forcar)
         ? Promise.resolve({ data: cache.linhas })
@@ -28906,6 +28914,60 @@ const _ANO_COR = {
   'Sleeve': '#7A3E9D', 'Rotulagem': '#C0392B', 'Injeção': '#2E86AB',
   'Compressão': '#B98900', 'Embaladeiras': '#5C6B78', 'Outros': '#9AA7B2'
 };
+/* comparativo mes a mes contra o ano anterior. Barras pareadas: a clara e o ano
+   passado, a escura e o ano escolhido. So os setores que medem na mesma unidade
+   entram na soma — caixa nao entra em conta de quilo. */
+function _anoComparativo(meses, setores, val, cx, rot) {
+  if (!_anoPrev || !_anoPrev.linhas || !_anoPrev.linhas.length) return '';
+  const emp = setores.filter(s => !(cx(s) && _anoMet === 'kg'));
+  const P = {};
+  _anoPrev.linhas.forEach(r => {
+    const st = setorDe(r.recurso_cod) || '—';
+    if (cx(st) && _anoMet === 'kg') return;
+    const m = String(r.mes || '').slice(5, 7); if (!m) return;
+    const v = _anoMet === 'perda' ? (+r.perda_kg || 0) : (_anoMet === 'parada' ? (+r.parada_h || 0) : (+r.kg || 0));
+    P[m] = (P[m] || 0) + v;
+  });
+  const A = {};
+  meses.forEach(m => { A[m.slice(5, 7)] = emp.reduce((a, s) => a + val(m, s), 0); });
+  const mm = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+  const mx = Math.max(1, ...mm.map(m => Math.max(A[m] || 0, P[m] || 0)));
+  const un = _anoMet === 'parada' ? 'h' : 't';
+  const nm = v => _anoMet === 'parada' ? fmt(v, 0) : fmt(v / 1000, 1);
+  const somaA = mm.reduce((a, m) => a + (A[m] || 0), 0);
+  /* o ano anterior so conta nos meses que o atual tem, senao comparo 12 com 8 */
+  const somaP = mm.filter(m => (A[m] || 0) > 0).reduce((a, m) => a + (P[m] || 0), 0);
+  const dif = somaP > 0 ? (somaA - somaP) / somaP * 100 : null;
+  return '<div style="border:1px solid var(--linha-2s);border-radius:12px;padding:10px 11px;margin:2px 0 12px">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<b style="font-size:13.5px">' + _anoDados.ano + ' × ' + _anoPrev.ano + '</b>'
+    + '<span class="desc" style="font-size:11.5px">mesmos meses · ' + nm(somaA) + ' ' + un + ' contra ' + nm(somaP) + ' ' + un + '</span>'
+    + (dif !== null && isFinite(dif)
+      ? '<span style="margin-left:auto;font-weight:800;font-size:13px;color:' + (dif >= 0 ? '#1F7A46' : 'var(--critico)') + '">'
+        + (dif >= 0 ? '▲ +' : '▼ ') + fmt(Math.abs(dif), 0) + '%</span>' : '')
+    + '</div>'
+    + '<div style="display:flex;align-items:flex-end;gap:5px;height:104px">'
+    + mm.map(m => {
+      const a = A[m] || 0, p = P[m] || 0;
+      const d = p > 0 && a > 0 ? (a - p) / p * 100 : null;
+      return '<div style="flex:1;text-align:center;min-width:20px" title="' + rot('2000-' + m) + ' · '
+        + _anoDados.ano + ': ' + (a ? nm(a) + ' ' + un : '—') + ' · ' + _anoPrev.ano + ': ' + (p ? nm(p) + ' ' + un : '—')
+        + (d !== null ? ' · ' + (d >= 0 ? '+' : '') + fmt(d, 0) + '%' : '') + '">'
+        + (d !== null ? '<div style="font-size:9px;font-weight:800;color:' + (d >= 0 ? '#1F7A46' : 'var(--critico)') + '">'
+          + (d >= 0 ? '+' : '') + fmt(d, 0) + '%</div>' : '<div style="height:11px"></div>')
+        + '<div style="display:flex;align-items:flex-end;justify-content:center;gap:2px;height:64px">'
+        + '<div style="width:42%;background:#C9D4DE;border-radius:3px 3px 0 0;height:' + Math.max(p ? 2 : 0, Math.round(p / mx * 60)) + 'px"></div>'
+        + '<div style="width:42%;background:var(--navy);border-radius:3px 3px 0 0;height:' + Math.max(a ? 2 : 0, Math.round(a / mx * 60)) + 'px"></div>'
+        + '</div>'
+        + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + rot('2000-' + m) + '</span></div>';
+    }).join('')
+    + '</div>'
+    + '<p class="desc" style="font-size:11px;margin-top:6px">'
+    + '<i style="display:inline-block;width:9px;height:9px;background:#C9D4DE;border-radius:2px"></i> ' + _anoPrev.ano
+    + ' · <i style="display:inline-block;width:9px;height:9px;background:var(--navy);border-radius:2px"></i> ' + _anoDados.ano
+    + ' — o total compara só os meses que os dois anos têm.</p>'
+    + '</div>';
+}
 function _anoGrafico(meses, setores, val, cx, rot, fmtv) {
   /* 31/08/2026 (Joao: "faz um grafico um embaixo do outro separado por setor").
      A barra empilhada respondia "quem fez o mes", mas achatava todo mundo: a
@@ -29213,6 +29275,7 @@ function anoRender() {
     + '</div>'
     + '<p class="desc" style="margin:0 0 8px;font-size:12px">Cada linha é um setor e cada coluna um mês. A cor compara o mês com o <b>melhor mês daquele setor</b> — '
     + 'não entre setores, senão a Extrusão apagaria todos os outros. Embaladeiras aparecem em <b>caixas</b>.</p>'
+    + _anoComparativo(meses, setores, val, cx, rot)
     + _anoGrafico(meses, setores, val, cx, rot, fmtv)
     + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
     + '<th style="text-align:left;position:sticky;left:0;background:#fff">Setor</th>'
