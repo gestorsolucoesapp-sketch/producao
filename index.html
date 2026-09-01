@@ -3852,7 +3852,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.383.0';
+const APP_VER = '4.384.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41089,15 +41089,24 @@ function _cmFaixa(d) {
    Rotuladora Diedro, com 1.386 h de apontamento aberto, viraria a campea de
    improdutividade por um erro de digitacao.
    O clique abre a ficha com os numeros que classificaram o item. */
-let _cmSku = null, _cmSkuVer = 'maiores';
+let _cmSku = null, _cmSkuVer = 'maiores', _cmSkuErro = null;
 function cmSkuVer(v) { _cmSkuVer = v; cmSkusRender(); }
 async function cmSkusCarregar() {
   if (_cmSku) return _cmSku;
+  /* 01/09/2026 — o card veio ZERADO no celular. A conta estava certa, mas leva
+     7,9 s e o servidor corta antes; o app recebia erro e mostrava lista vazia,
+     calado. Agora le a materializada (0,4 s) e, se der erro, DIZ que deu — em
+     vez de fingir que a fabrica tem zero SKU. */
+  _cmSkuErro = null;
   try {
-    const { data, error } = await sb.rpc('skus_perfil', { p_dias: 365 });
+    const { data, error } = await sb.from('mv_skus_perfil')
+      .select('item_cod,item_desc,kg,ops,dias,perda_kg,perda_pct,setup_h,ocupacao_h,setup_pct,na_carteira,ultima_producao');
     if (error) throw error;
     _cmSku = data || [];
-  } catch (e) { _cmSku = []; console.warn('skus:', e && e.message); }
+  } catch (e) {
+    _cmSku = []; _cmSkuErro = (e && e.message) || String(e);
+    console.warn('skus:', _cmSkuErro);
+  }
   return _cmSku;
 }
 function _skuCritico(s) { return (+s.kg || 0) >= 500 && (+s.perda_pct || 0) > 10; }
@@ -41129,6 +41138,13 @@ function cmSkuDet(cod) {
 function cmSkusRender() {
   const box = document.getElementById('cmSkus'); if (!box || !_cmSku) return;
   const S = _cmSku;
+  if (!S.length) {
+    box.innerHTML = '<div class="card"><div class="titulo-sec">📦 SKUs</div>'
+      + '<p class="desc" style="color:var(--critico-s)">'
+      + (_cmSkuErro ? 'Não consegui carregar: ' + escapeHtml(_cmSkuErro) : 'Sem produção nos últimos 12 meses.')
+      + '</p></div>';
+    return;
+  }
   const crit = S.filter(_skuCritico), impr = S.filter(_skuImprod);
   const t = v => (+v || 0) >= 1000 ? fmt((+v) / 1000, 1) + ' t' : fmt(+v || 0, 0) + ' kg';
   let L, col;
