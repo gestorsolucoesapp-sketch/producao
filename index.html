@@ -2045,6 +2045,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-cv="cubagem" onclick="comlVer('cubagem')">📦 Cubagem e frota</button>
       </div>
       <div id="comlCubagem" class="oculto"></div>
+      <div id="cmClientes"></div>
       <div id="comlMapaBloco">
       <!-- 24/08/2026 (João: "deixe mais compacta essa parte e o mapa maior").
            Título, carimbo e busca cabiam em uma linha só e ocupavam três. O
@@ -3849,7 +3850,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.379.0';
+const APP_VER = '4.380.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11045,6 +11046,7 @@ function _trocarAbaReal(qual) {
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} try { arOrigem(window._arOrigem, true); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
             const a2 = $('anrecImpIco'); if (a2 && !a2.innerHTML) a2.innerHTML = ico('anrecimp'); } catch (_) {} } } }
+  if (qual === 'comercial') { try { cmClientesCarregar().then(cmClientesRender); } catch (_) { } }
   { const _cm = $('abaComercial'); if (_cm) { _cm.classList.toggle('oculto', qual !== 'comercial'); if (qual === 'comercial') { try { cmAbrir(); } catch (_) {} } } }
   try { _remedirTopo(); } catch (_) {}
   { const _e = $('abaEstoque'); if (_e) _e.classList.toggle('oculto', qual !== 'estoque'); }
@@ -40948,6 +40950,59 @@ function _cmFaixa(d) {
    dia quisermos a previsão de término por máquina, é só voltar a chamar
    _cmAbrirAntigo. A guarda abaixo impede que ele quebre procurando elementos
    que não existem mais no HTML. */
+/* ===== CLIENTES — 01/09/2026 (Joao: "quero saber o numero de clientes e o
+   historico mes a mes de novos") =====
+   O NUMERO sai da carteira e e solido. O "novos" nao: nenhum relatorio traz a
+   data do primeiro pedido de cada cliente — a carteira so mostra pedido em
+   aberto e o RVEN002 so alcanca a janela pedida. Chamar de "cliente novo" a
+   primeira vez que ELE APARECEU AQUI seria inventar: em agosto isso daria 316,
+   e a maioria compra ha anos.
+   Entao a tabela `cliente_visto` passa a guardar, a cada importacao, a primeira
+   e a ultima vez que cada cliente aparece. Daqui pra frente a serie e real. Ate
+   la a tela mostra a serie com o nome certo — "vistos pela primeira vez" — e diz
+   de onde ela vem. */
+let _cmCli = null;
+async function cmClientesCarregar() {
+  if (_cmCli) return _cmCli;
+  try {
+    const [r, s] = await Promise.all([
+      sb.from('v_clientes_resumo').select('*').single(),
+      sb.from('cliente_visto').select('cliente_cod,primeira_vez,ultima_vez')
+    ]);
+    _cmCli = { res: r.data || null, vistos: s.data || [] };
+  } catch (e) { _cmCli = { res: null, vistos: [] }; console.warn('clientes:', e && e.message); }
+  return _cmCli;
+}
+function cmClientesRender() {
+  const box = document.getElementById('cmClientes'); if (!box || !_cmCli) return;
+  const R = _cmCli.res || {}, V = _cmCli.vistos || [];
+  const M = {};
+  V.forEach(x => { const m = String(x.primeira_vez || '').slice(0, 7); if (m) M[m] = (M[m] || 0) + 1; });
+  const meses = Object.keys(M).sort().slice(-12);
+  const mx = Math.max(1, ...meses.map(m => M[m]));
+  const rot = m => ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m.slice(5,7)-1] + '/' + m.slice(2,4);
+  const ativos = V.filter(x => x.ultima_vez && String(x.ultima_vez) >= new Date(Date.now() - 90*86400000).toISOString().slice(0,10)).length;
+  box.innerHTML = '<div class="card">'
+    + '<div class="titulo-sec">👥 Clientes</div>'
+    + '<div class="idet-grid">'
+    + '<div><b>' + fmt(+R.clientes_carteira || 0, 0) + '</b><span>com pedido em aberto</span></div>'
+    + '<div><b>' + fmt(V.length, 0) + '</b><span>conhecidos pelo app</span></div>'
+    + '<div><b>' + fmt(ativos, 0) + '</b><span>ativos nos últimos 90 dias</span></div>'
+    + '<div><b>' + (R.desde ? escapeHtml(fmtData(String(R.desde))) : '—') + '</b><span>desde</span></div>'
+    + '</div>'
+    + (meses.length ? '<div class="titulo-sec" style="margin-top:12px;font-size:13px">Vistos pela primeira vez, por mês</div>'
+      + '<div style="display:flex;align-items:flex-end;gap:5px;height:96px;margin-top:6px">'
+      + meses.map(m => '<div style="flex:1;text-align:center;min-width:22px" title="' + rot(m) + ' · ' + M[m] + ' cliente(s)">'
+        + '<div style="font-size:10px;font-weight:800;color:var(--fraco-2)">' + M[m] + '</div>'
+        + '<div style="background:var(--navy);border-radius:4px 4px 0 0;height:' + Math.max(2, Math.round(M[m] / mx * 58)) + 'px"></div>'
+        + '<span style="font-size:9.5px;color:var(--fraco-2);display:block;margin-top:3px">' + rot(m) + '</span></div>').join('')
+      + '</div>' : '')
+    + '<p class="desc" style="font-size:11px;margin-top:8px;background:#FFF6E5;border-left:3px solid var(--laranja);border-radius:0 8px 8px 0;padding:7px 10px">'
+    + '<b>Não é "cliente novo".</b> É a primeira vez que o cliente aparece nos relatórios que o app importa — a maioria dos de agosto compra há anos e só entrou aqui agora. '
+    + 'A contagem de cliente novo de verdade precisa da data do primeiro pedido, que nenhum relatório traz. '
+    + 'A partir de hoje o app guarda quem aparece, então daqui para frente a série passa a valer.</p>'
+    + '</div>';
+}
 function cmRender() {
   if (!$('cmResumo')) return;
   const box = $('cmLista'); if (!box || !_cmDados) return;
