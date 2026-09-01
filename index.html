@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.376.0';
+const APP_VER = '4.377.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -28878,6 +28878,54 @@ function _anoGrafico(meses, setores, val, cx, rot, fmtv) {
     + 'Cada setor tem <b>escala própria</b> — a altura mostra o mês bom e o mês ruim <b>daquele setor</b>, não o tamanho dele frente aos outros. '
     + 'Para comparar setores entre si, use a tabela abaixo.</p>';
 }
+/* ===== 01/09/2026 (Joao: "quero enviar o Anual pelo WhatsApp") =====
+   O mesmo recorte que a tela mostra, em texto. Uma linha por setor com os meses
+   em sequencia — no WhatsApp a tabela nao sobrevive, mas a sequencia sim, e e
+   ela que conta a historia (quando subiu, quando caiu).
+   O total vai no topo, os setores em ordem de tamanho, e as Embaladeiras saem
+   com "cx" ao lado para ninguem somar caixa com quilo do outro lado da conversa. */
+function anoTextoZap() {
+  if (!_anoDados || !_anoDados.linhas || !_anoDados.linhas.length) { toast('Abra o resumo primeiro.'); return ''; }
+  const L = _anoDados.linhas, cxS = s => (typeof setorEmCx === 'function') ? setorEmCx(s) : (s === 'Embaladeiras');
+  const M = {}, S = {};
+  L.forEach(r => {
+    const st = setorDe(r.recurso_cod) || '—', m = String(r.mes || '').slice(0, 7); if (!m) return;
+    M[m] = M[m] || {};
+    const c = (M[m][st] = M[m][st] || { kg: 0, cx: 0, perda: 0, parada: 0 });
+    c.kg += (+r.kg || 0);
+    if (String(r.unidade || '').toUpperCase() === 'CX') c.cx += (+r.quantidade || 0);
+    c.perda += (+r.perda_kg || 0); c.parada += (+r.parada_h || 0);
+    S[st] = true;
+  });
+  const meses = Object.keys(M).sort();
+  const rot = m => ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m.slice(5, 7) - 1] || m;
+  const val = (m, s) => { const c = (M[m] || {})[s]; if (!c) return 0;
+    if (_anoMet === 'perda') return c.perda; if (_anoMet === 'parada') return c.parada;
+    return cxS(s) ? c.cx : c.kg; };
+  const num = (v, s) => !v ? '—'
+    : (_anoMet === 'parada' ? fmt(v, 0) + 'h'
+      : (cxS(s) && _anoMet === 'kg' ? fmt(v, 0) + 'cx'
+        : (v >= 100000 ? fmt(v / 1000, 0) + 't' : fmt(v / 1000, 1) + 't')));
+  const setores = Object.keys(S).sort((a, b) => {
+    const ca = cxS(a) && _anoMet === 'kg' ? 1 : 0, cb = cxS(b) && _anoMet === 'kg' ? 1 : 0;
+    return ca - cb || meses.reduce((x, m) => x + val(m, b), 0) - meses.reduce((x, m) => x + val(m, a), 0);
+  });
+  const rotMet = _anoMet === 'perda' ? 'PERDA' : (_anoMet === 'parada' ? 'PARADA' : 'PRODUÇÃO');
+  const out = ['*RESUMO ANUAL ' + _anoDados.ano + ' \u00b7 ' + rotMet + '*',
+    'de ' + rot(meses[0]) + ' a ' + rot(meses[meses.length - 1]) + ' \u00b7 gerado em ' + fmtData(hojeISO()), ''];
+  setores.forEach(s => {
+    const soma = meses.reduce((a, m) => a + val(m, s), 0);
+    if (!soma) return;
+    out.push('*' + s + '* — ano ' + num(soma, s));
+    out.push('  ' + meses.map(m => rot(m) + ' ' + num(val(m, s), s)).join(' \u00b7 '));
+  });
+  const totMes = m => setores.filter(s => !(cxS(s) && _anoMet === 'kg')).reduce((a, s) => a + val(m, s), 0);
+  out.push('', '*Total* — ' + meses.map(m => rot(m) + ' '
+    + (_anoMet === 'parada' ? fmt(totMes(m), 0) + 'h' : fmt(totMes(m) / 1000, 1) + 't')).join(' \u00b7 '));
+  out.push('', '_Produção do RPCP621, perda do 624 e parada do 643._');
+  return out.join('\n');
+}
+function anoEnviarZap() { const t = anoTextoZap(); if (t) enviarTexto(t, 'resumo anual'); }
 function anoRender() {
   const wrap = document.getElementById('anoWrap'); if (!wrap || !_anoDados) return;
   const L = _anoDados.linhas || [];
@@ -28923,6 +28971,7 @@ function anoRender() {
     + '<span>📆 Resumo anual · ' + _anoDados.ano + '</span>'
     + (anos.length > 1 ? '<select class="sel-pad" style="width:auto;font-size:13px;padding:3px 9px" onchange="_anoSel=+this.value;anoAbrir(true)">'
       + anos.map(a => '<option value="' + a + '"' + (a === _anoDados.ano ? ' selected' : '') + '>' + a + '</option>').join('') + '</select>' : '')
+    + '<span onclick="anoEnviarZap()" style="cursor:pointer;background:#25D366;color:#fff;font-weight:800;font-size:12px;border-radius:999px;padding:4px 12px;margin-left:auto">📲 WhatsApp</span>'
     + [['kg', 'produção'], ['perda', 'perda'], ['parada', 'parada']].map(([v, r]) =>
       '<span onclick="anoMet(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:4px 12px;'
       + (_anoMet === v ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('')
