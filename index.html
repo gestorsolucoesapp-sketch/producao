@@ -3852,7 +3852,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.384.0';
+const APP_VER = '4.385.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41099,10 +41099,19 @@ async function cmSkusCarregar() {
      vez de fingir que a fabrica tem zero SKU. */
   _cmSkuErro = null;
   try {
-    const { data, error } = await sb.from('mv_skus_perfil')
-      .select('item_cod,item_desc,kg,ops,dias,perda_kg,perda_pct,setup_h,ocupacao_h,setup_pct,na_carteira,ultima_producao');
-    if (error) throw error;
-    _cmSku = data || [];
+    /* 01/09/2026 — o card dizia "1.000 produzidos em 12 meses" e sao 1.624: o
+       PostgREST devolve no maximo 1.000 e nao avisa. Numero redondo na tela e
+       quase sempre teto, nao contagem. Leio em paginas. */
+    const _lin = [];
+    for (let ini = 0; ini < 20000; ini += 1000) {
+      const { data, error } = await sb.from('mv_skus_perfil')
+        .select('item_cod,item_desc,kg,ops,dias,perda_kg,perda_pct,setup_h,ocupacao_h,setup_pct,na_carteira,ultima_producao')
+        .order('item_cod').range(ini, ini + 999);
+      if (error) throw error;
+      (data || []).forEach(x => _lin.push(x));
+      if (!data || data.length < 1000) break;
+    }
+    _cmSku = _lin;
   } catch (e) {
     _cmSku = []; _cmSkuErro = (e && e.message) || String(e);
     console.warn('skus:', _cmSkuErro);
@@ -41186,11 +41195,61 @@ async function cmClientesCarregar() {
   try {
     const [r, s] = await Promise.all([
       sb.from('v_clientes_resumo').select('*').single(),
-      sb.from('cliente_visto').select('cliente_cod,primeira_vez,ultima_vez')
+      sb.from('cliente_visto').select('cliente_cod,cliente_nome,primeira_vez,ultima_vez').order('cliente_cod').range(0, 4999)
     ]);
     _cmCli = { res: r.data || null, vistos: s.data || [] };
   } catch (e) { _cmCli = { res: null, vistos: [] }; console.warn('clientes:', e && e.message); }
   return _cmCli;
+}
+/* 01/09/2026 (Joao: "quero clicar e ver clientes tambem"). A lista vale pelo
+   PESO, nao pelo nome: quem manda na conversa e quantas toneladas o cliente tem
+   parado. Por isso a de carteira vem da `v_clientes_carteira`, com kg, cidade e
+   pedidos vencidos, ordenada por peso — e a de conhecidos, que nao tem peso,
+   vem por data. */
+let _cmCliCart = null;
+async function cmCliLista(qual) {
+  const t = v => (+v || 0) >= 1000 ? fmt((+v) / 1000, 1) + ' t' : fmt(+v || 0, 0) + ' kg';
+  if (qual === 'carteira') {
+    if (!_cmCliCart) {
+      try {
+        const { data, error } = await sb.from('v_clientes_carteira')
+          .select('cliente_cod,cliente_nome,cidade,uf,regiao,pedidos,kg,entrega_mais_proxima,pedidos_vencidos')
+          .order('kg', { ascending: false }).range(0, 1999);
+        if (error) throw error;
+        _cmCliCart = data || [];
+      } catch (e) { toast('Não consegui carregar: ' + ((e && e.message) || e)); return; }
+    }
+    const L = _cmCliCart;
+    abreDet('Clientes com pedido em aberto',
+      '<p class="idet-desc"><b>' + fmt(L.length, 0) + '</b> cliente(s) · <b>' + t(L.reduce((a, x) => a + (+x.kg || 0), 0)) + '</b> na carteira · '
+      + fmt(L.filter(x => +x.pedidos_vencidos > 0).length, 0) + ' com entrega vencida</p>'
+      + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
+      + '<th style="text-align:left">Cliente</th><th style="text-align:right">Pedidos</th><th style="text-align:right">Carteira</th></tr></thead><tbody>'
+      + L.slice(0, 200).map(x => '<tr style="border-top:1px solid var(--linha)">'
+        + '<td style="text-align:left"><b>' + escapeHtml(String(x.cliente_nome || x.cliente_cod).slice(0, 30)) + '</b>'
+        + '<div class="desc" style="font-size:10.5px">' + escapeHtml([x.cidade, x.uf].filter(Boolean).join(' - ') || '—')
+        + (x.regiao ? ' · ' + escapeHtml(String(x.regiao)) : '') + '</div></td>'
+        + '<td style="text-align:right">' + fmt(+x.pedidos || 0, 0)
+        + (+x.pedidos_vencidos > 0 ? '<div style="font-size:10.5px;color:var(--critico);font-weight:800">' + x.pedidos_vencidos + ' vencido(s)</div>' : '') + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">' + t(x.kg) + '</td></tr>').join('')
+      + '</tbody></table></div>'
+      + (L.length > 200 ? '<p class="desc" style="font-size:11px">mostrando os 200 maiores de ' + fmt(L.length, 0) + '</p>' : ''));
+    return;
+  }
+  const V = ((_cmCli || {}).vistos || []).slice();
+  const lim = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const L = (qual === 'ativos' ? V.filter(x => String(x.ultima_vez || '') >= lim) : V)
+    .sort((a, b) => String(b.ultima_vez || '').localeCompare(String(a.ultima_vez || '')));
+  abreDet(qual === 'ativos' ? 'Clientes ativos nos últimos 90 dias' : 'Clientes conhecidos pelo app',
+    '<p class="idet-desc"><b>' + fmt(L.length, 0) + '</b> cliente(s)</p>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
+    + '<th style="text-align:left">Cliente</th><th style="text-align:right">1ª vez</th><th style="text-align:right">Última</th></tr></thead><tbody>'
+    + L.slice(0, 200).map(x => '<tr style="border-top:1px solid var(--linha)">'
+      + '<td style="text-align:left"><b>' + escapeHtml(String(x.cliente_nome || x.cliente_cod).slice(0, 30)) + '</b></td>'
+      + '<td style="text-align:right;white-space:nowrap">' + escapeHtml(x.primeira_vez ? fmtData(String(x.primeira_vez)) : '—') + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">' + escapeHtml(x.ultima_vez ? fmtData(String(x.ultima_vez)) : '—') + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + (L.length > 200 ? '<p class="desc" style="font-size:11px">mostrando 200 de ' + fmt(L.length, 0) + '</p>' : ''));
 }
 function cmClientesRender() {
   const box = document.getElementById('cmClientes'); if (!box || !_cmCli) return;
@@ -41204,9 +41263,9 @@ function cmClientesRender() {
   box.innerHTML = '<div class="card">'
     + '<div class="titulo-sec">👥 Clientes</div>'
     + '<div class="idet-grid">'
-    + '<div><b>' + fmt(+R.clientes_carteira || 0, 0) + '</b><span>com pedido em aberto</span></div>'
-    + '<div><b>' + fmt(V.length, 0) + '</b><span>conhecidos pelo app</span></div>'
-    + '<div><b>' + fmt(ativos, 0) + '</b><span>ativos nos últimos 90 dias</span></div>'
+    + '<div onclick="cmCliLista(\'carteira\')" style="cursor:pointer"><b>' + fmt(+R.clientes_carteira || 0, 0) + '</b><span>com pedido em aberto ›</span></div>'
+    + '<div onclick="cmCliLista(\'todos\')" style="cursor:pointer"><b>' + fmt(V.length, 0) + '</b><span>conhecidos pelo app ›</span></div>'
+    + '<div onclick="cmCliLista(\'ativos\')" style="cursor:pointer"><b>' + fmt(ativos, 0) + '</b><span>ativos nos últimos 90 dias ›</span></div>'
     + '<div><b>' + (R.desde ? escapeHtml(fmtData(String(R.desde))) : '—') + '</b><span>desde</span></div>'
     + '</div>'
     + (meses.length ? '<div class="titulo-sec" style="margin-top:12px;font-size:13px">Vistos pela primeira vez, por mês</div>'
