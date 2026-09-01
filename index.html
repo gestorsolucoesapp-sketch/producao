@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.375.0';
+const APP_VER = '4.376.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35021,6 +35021,37 @@ function destravaReserva(qual) {
     + nota + tabSimples(['Pedido · cliente', qual === 'parcial' ? 'Pedido / separar' : 'Pedido'], linhas));
 }
 
+/* ===== 01/09/2026 (Joao: "crie um botao enviar por WhatsApp") =====
+   O relatorio de material pronto ja imprimia; faltava o caminho curto — mandar
+   a lista para o pessoal da expedicao sem passar por papel.
+   O texto e montado para ser LIDO NO CELULAR, nao para ser bonito: uma linha
+   por pedido, com o que decide a carga — cliente, cidade, peso, paletes e o
+   atraso. O `enviarTexto` ja existe e resolve o resto (folha do iPhone no
+   celular, wa.me no computador).
+   Corto em 40 pedidos porque acima disso ninguem le no WhatsApp, e digo quantos
+   ficaram de fora em vez de deixar a lista mentir por omissao. */
+let _dtGrupoUlt = null;
+function _dtTextoZap() {
+  const D = _dtGrupoUlt;
+  if (!D || !D.L.length) { toast('Abra a lista primeiro.'); return ''; }
+  const kgT = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0) + ' kg';
+  const LIM = 40;
+  const out = ['*' + D.tit.toUpperCase() + '*',
+    fmtData(hojeISO()) + ' \u00b7 ' + D.L.length + ' pedido(s) \u00b7 ' + kgT(D.L.reduce((s, p) => s + p.kg, 0))
+    + (D.pal ? ' \u00b7 ' + fmtNum(D.pal) + ' palete(s)' : ''), ''];
+  D.L.slice(0, LIM).forEach(p => {
+    const g = (_pedReg || {})[String(p.num)] || {};
+    const cid = [g.cidade, g.uf].filter(Boolean).join('-');
+    out.push('\u2022 *' + p.num + '* ' + String(p.cli || '').slice(0, 26)
+      + (cid ? ' \u00b7 ' + cid : '')
+      + '\n   ' + kgT(p.kg) + (p.pal ? ' \u00b7 ' + p.pal + ' pal' : '')
+      + (p.ent ? ' \u00b7 entrega ' + fmtDataSem(p.ent) : '')
+      + (p.atraso > 0 ? ' \u00b7 *' + p.atraso + 'd vencido*' : ''));
+  });
+  if (D.L.length > LIM) out.push('', '_... e mais ' + (D.L.length - LIM) + ' pedido(s) \u2014 lista completa no app._');
+  return out.join('\n');
+}
+function dtEnviarZap() { const t = _dtTextoZap(); if (t) enviarTexto(t, 'lista'); }
 function detGrupoTravado(gid, filtro) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
@@ -35141,8 +35172,19 @@ function detGrupoTravado(gid, filtro) {
       + (blq ? `<span style="flex-basis:100%;margin-top:3px">${blq}</span>` : `<span style="background:#F2F7F4;color:#1F7A46;font-weight:800;padding:1px 7px;border-radius:7px">nada falta</span>`)
       + `</div></div></td></tr>`;
   }).join('');
+  try {
+    _dtGrupoUlt = {
+      tit: TIT[gid],
+      pal: L.reduce((s, p) => s + (_paletesPorItem(_porPedido.get(p.num) || []) || 0), 0),
+      L: L.map(p => Object.assign({}, p, { pal: _paletesPorItem(_porPedido.get(p.num) || []) || 0 }))
+    };
+  } catch (_) { _dtGrupoUlt = null; }
   abreDet(TIT[gid],
-    `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(L.reduce((s, p) => s + p.kg, 0))}</b>`
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px">'
+    + '<span onclick="dtEnviarZap()" style="cursor:pointer;background:#25D366;color:#fff;font-weight:800;font-size:13px;border-radius:10px;padding:9px 15px">📲 Enviar por WhatsApp</span>'
+    + '<span onclick="window.print()" style="cursor:pointer;background:var(--leve-2);color:var(--navy);font-weight:800;font-size:13px;border-radius:10px;padding:9px 15px;border:1px solid var(--linha-2s)">🖨️ Imprimir</span>'
+    + '</div>'
+    + `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(L.reduce((s, p) => s + p.kg, 0))}</b>`
     + (() => {
       const t = L.reduce((s, p) => s + (_paletesPorItem(_porPedido.get(p.num) || []) || 0), 0);
       return t ? ` · <b>${fmtNum(t)}</b> palete(s)` : '';
