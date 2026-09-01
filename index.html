@@ -2047,6 +2047,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       </div>
       <div id="comlCubagem" class="oculto"></div>
       <div id="cmClientes"></div>
+      <div id="cmSkus"></div>
       <div id="comlMapaBloco">
       <!-- 24/08/2026 (João: "deixe mais compacta essa parte e o mapa maior").
            Título, carimbo e busca cabiam em uma linha só e ocupavam três. O
@@ -3851,7 +3852,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.382.0';
+const APP_VER = '4.383.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11127,7 +11128,10 @@ function _trocarAbaReal(qual) {
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} try { arOrigem(window._arOrigem, true); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
             const a2 = $('anrecImpIco'); if (a2 && !a2.innerHTML) a2.innerHTML = ico('anrecimp'); } catch (_) {} } } }
-  if (qual === 'comercial') { try { cmClientesCarregar().then(cmClientesRender); } catch (_) { } }
+  if (qual === 'comercial') {
+    try { cmClientesCarregar().then(cmClientesRender); } catch (_) { }
+    try { cmSkusCarregar().then(cmSkusRender); } catch (_) { }
+  }
   { const _cm = $('abaComercial'); if (_cm) { _cm.classList.toggle('oculto', qual !== 'comercial'); if (qual === 'comercial') { try { cmAbrir(); } catch (_) {} } } }
   try { _remedirTopo(); } catch (_) {}
   { const _e = $('abaEstoque'); if (_e) _e.classList.toggle('oculto', qual !== 'estoque'); }
@@ -41069,6 +41073,97 @@ function _cmFaixa(d) {
    e a ultima vez que cada cliente aparece. Daqui pra frente a serie e real. Ate
    la a tela mostra a serie com o nome certo — "vistos pela primeira vez" — e diz
    de onde ela vem. */
+/* ===== SKUs — 01/09/2026 (Joao: "quantos SKUs temos, quais os maiores, quais
+   sao criticos e improdutivos, permita clicar e ver detalhes") =====
+   "Critico" e "improdutivo" nao existem no ERP: sao REGUAS, e regua escolhida no
+   escuro vira opiniao. As tres saem de numero do proprio banco e estao escritas
+   na tela, para poderem ser discutidas:
+     MAIOR       — kg em 12 meses.
+     CRITICO     — perda acima de 10% do que produziu, com pelo menos 500 kg. A
+                   fabrica inteira perde 2,5%; 10% e quatro vezes a casa. O piso
+                   de 500 kg existe para um item de 20 kg com 3 kg de perda nao
+                   entrar na lista dizendo nada.
+     IMPRODUTIVO — setup passa de 30% do tempo que o item ocupou a maquina. E o
+                   item que come agenda sem render.
+   Apontamento marcado como suspeito NAO entra na conta de horas — senao a
+   Rotuladora Diedro, com 1.386 h de apontamento aberto, viraria a campea de
+   improdutividade por um erro de digitacao.
+   O clique abre a ficha com os numeros que classificaram o item. */
+let _cmSku = null, _cmSkuVer = 'maiores';
+function cmSkuVer(v) { _cmSkuVer = v; cmSkusRender(); }
+async function cmSkusCarregar() {
+  if (_cmSku) return _cmSku;
+  try {
+    const { data, error } = await sb.rpc('skus_perfil', { p_dias: 365 });
+    if (error) throw error;
+    _cmSku = data || [];
+  } catch (e) { _cmSku = []; console.warn('skus:', e && e.message); }
+  return _cmSku;
+}
+function _skuCritico(s) { return (+s.kg || 0) >= 500 && (+s.perda_pct || 0) > 10; }
+function _skuImprod(s) { return (+s.setup_pct || 0) > 30 && (+s.setup_h || 0) >= 5; }
+function cmSkuDet(cod) {
+  const s = (_cmSku || []).find(x => String(x.item_cod) === String(cod)); if (!s) return;
+  const t = v => (+v || 0) >= 1000 ? fmt((+v) / 1000, 1) + ' t' : fmt(+v || 0, 0) + ' kg';
+  abreDet('SKU ' + s.item_cod,
+    '<p class="idet-desc"><b>' + escapeHtml(s.item_desc || '') + '</b></p>'
+    + '<div class="idet-grid">'
+    + '<div><b>' + t(s.kg) + '</b><span>produzido em 12 meses</span></div>'
+    + '<div><b>' + fmt(+s.ops || 0, 0) + '</b><span>ordens</span></div>'
+    + '<div><b>' + fmt(+s.dias || 0, 0) + '</b><span>dias com produção</span></div>'
+    + '<div><b style="color:' + (_skuCritico(s) ? 'var(--critico)' : 'inherit') + '">' + fmt(+s.perda_pct || 0, 1) + '%</b><span>de perda</span></div>'
+    + '<div><b>' + t(s.perda_kg) + '</b><span>perdidos</span></div>'
+    + '<div><b style="color:' + (_skuImprod(s) ? 'var(--critico)' : 'inherit') + '">' + fmt(+s.setup_pct || 0, 1) + '%</b><span>do tempo em setup</span></div>'
+    + '<div><b>' + fmt(+s.setup_h || 0, 1) + ' h</b><span>de setup</span></div>'
+    + '<div><b>' + fmt(+s.ocupacao_h || 0, 1) + ' h</b><span>de máquina ocupada</span></div>'
+    + '<div><b>' + t(s.na_carteira) + '</b><span>na carteira hoje</span></div>'
+    + '<div><b>' + (s.ultima_producao ? escapeHtml(fmtData(String(s.ultima_producao))) : '—') + '</b><span>última produção</span></div>'
+    + '</div>'
+    + (_skuCritico(s) ? '<p class="desc" style="margin-top:8px;color:var(--critico-s)"><b>Crítico:</b> perde ' + fmt(+s.perda_pct || 0, 1)
+      + '% do que produz — a fábrica inteira perde 2,5%. São ' + t(s.perda_kg) + ' no ano.</p>' : '')
+    + (_skuImprod(s) ? '<p class="desc" style="margin-top:6px;color:var(--critico-s)"><b>Improdutivo:</b> ' + fmt(+s.setup_pct || 0, 1)
+      + '% do tempo de máquina foi setup (' + fmt(+s.setup_h || 0, 1) + ' h de ' + fmt(+s.ocupacao_h || 0, 1) + ' h). '
+      + 'Cada ordem rende ' + t((+s.kg || 0) / Math.max(1, +s.ops || 1)) + '.</p>' : '')
+    + '<p class="desc" style="font-size:11px;margin-top:8px">Janela de 12 meses. Apontamento de parada marcado como suspeito não entra na conta de horas.</p>');
+}
+function cmSkusRender() {
+  const box = document.getElementById('cmSkus'); if (!box || !_cmSku) return;
+  const S = _cmSku;
+  const crit = S.filter(_skuCritico), impr = S.filter(_skuImprod);
+  const t = v => (+v || 0) >= 1000 ? fmt((+v) / 1000, 1) + ' t' : fmt(+v || 0, 0) + ' kg';
+  let L, col;
+  if (_cmSkuVer === 'criticos') { L = crit.slice().sort((a, b) => b.perda_kg - a.perda_kg); col = 'perda'; }
+  else if (_cmSkuVer === 'improdutivos') { L = impr.slice().sort((a, b) => b.setup_h - a.setup_h); col = 'setup'; }
+  else { L = S.slice().sort((a, b) => b.kg - a.kg); col = 'kg'; }
+  const pill = (v, r, n) => '<span onclick="cmSkuVer(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:4px 12px;'
+    + (_cmSkuVer === v ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + ' ' + n + '</span>';
+  box.innerHTML = '<div class="card">'
+    + '<div class="titulo-sec">📦 SKUs</div>'
+    + '<div class="idet-grid">'
+    + '<div><b>' + fmt(S.length, 0) + '</b><span>produzidos em 12 meses</span></div>'
+    + '<div><b>' + fmt(S.filter(x => +x.na_carteira > 0).length, 0) + '</b><span>com pedido hoje</span></div>'
+    + '<div><b style="color:var(--critico)">' + fmt(crit.length, 0) + '</b><span>críticos</span></div>'
+    + '<div><b style="color:#9E5514">' + fmt(impr.length, 0) + '</b><span>improdutivos</span></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px">'
+    + pill('maiores', '🏆 maiores', '') + pill('criticos', '⚠️ críticos', crit.length) + pill('improdutivos', '🐌 improdutivos', impr.length)
+    + '</div>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
+    + '<th style="text-align:left">Item</th><th style="text-align:right">12 meses</th>'
+    + '<th style="text-align:right">' + (col === 'perda' ? 'Perda' : col === 'setup' ? 'Setup' : 'Ordens') + '</th></tr></thead><tbody>'
+    + L.slice(0, 25).map(s => '<tr style="border-top:1px solid var(--linha);cursor:pointer" onclick="cmSkuDet(\'' + s.item_cod + '\')">'
+      + '<td style="text-align:left"><b>' + escapeHtml(s.item_cod) + '</b> <span class="desc" style="font-size:11px">'
+      + escapeHtml(String(s.item_desc || '').slice(0, 34)) + '</span></td>'
+      + '<td style="text-align:right;white-space:nowrap">' + t(s.kg) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">'
+      + (col === 'perda' ? '<b style="color:var(--critico)">' + fmt(+s.perda_pct || 0, 1) + '%</b> <span class="desc" style="font-size:10.5px">' + t(s.perda_kg) + '</span>'
+        : col === 'setup' ? '<b style="color:#9E5514">' + fmt(+s.setup_pct || 0, 0) + '%</b> <span class="desc" style="font-size:10.5px">' + fmt(+s.setup_h || 0, 0) + ' h</span>'
+        : fmt(+s.ops || 0, 0)) + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + '<p class="desc" style="font-size:11px;margin-top:8px">Toque numa linha para a ficha. <b>Crítico</b>: perde mais de 10% do que produz (a fábrica perde 2,5%), com pelo menos 500 kg no ano. '
+    + '<b>Improdutivo</b>: setup passa de 30% do tempo de máquina do item. Apontamento suspeito não entra na conta.</p>'
+    + '</div>';
+}
 let _cmCli = null;
 async function cmClientesCarregar() {
   if (_cmCli) return _cmCli;
