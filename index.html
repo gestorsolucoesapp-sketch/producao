@@ -3849,7 +3849,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.373.0';
+const APP_VER = '4.374.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -35041,6 +35041,14 @@ function detGrupoTravado(gid, filtro) {
   const _sufT = _rotFiltro ? ' · ' + _rotFiltro : '';
   const TIT = ['Material pronto — dá para faturar hoje' + _sufT, 'Travados por 1 item só' + _sufT, 'Travados por 2 itens' + _sufT, 'Travados por 3 ou mais' + _sufT, 'No prazo — falta produzir' + _sufT];
   if (!L.length) { abreDet(TIT[gid], '<p class="desc">Nenhum pedido neste grupo.</p>'); return; }
+  /* 31/08/2026 (Joao: "coloque cidade e regiao e quantidade de paletes").
+     O palete ja era calculado aqui; faltava aparecer junto do peso, e faltava a
+     geografia — sem cidade, quem monta carga precisa abrir pedido por pedido
+     para saber para onde vai. A regiao vem do RVEN002, que ja esta carregado
+     noutras telas; se ainda nao estiver, busco e redesenho, em vez de segurar
+     a lista esperando. */
+  if (!_pedReg) { try { carregarPedidosRegiao().then(() => { try { detGrupoTravado(gid, filtro); } catch (_) { } }); } catch (_) { } }
+  const _reg = _pedReg || {};
   const descItem = {};
   A.linhas.forEach(l => { if (!descItem[l.item_cod]) descItem[l.item_cod] = l.item_desc || ''; });
   const faltaItem = {};
@@ -35100,11 +35108,18 @@ function detGrupoTravado(gid, filtro) {
       + `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">`
       + `<span style="flex:1;min-width:0">${_seloDesvio(p.ent, gid === 0)}</span>`
       + `<span style="flex:0 0 auto;text-align:right"><b style="font-size:14px">${kg(p.kg)}</b>`
-      + `<span style="font-size:10.5px;color:var(--fraco);display:block;line-height:1.2">${p.cx > 0 ? fmtNum(Math.round(p.cx)) + ' cx · ' : ''}${pal} pal</span></span></div>`
+      + `<span style="font-size:10.5px;color:var(--fraco);display:block;line-height:1.2">${p.cx > 0 ? fmtNum(Math.round(p.cx)) + ' cx · ' : ''}<b style="color:var(--navy);font-size:12px">${pal}</b> pal</span></span></div>`
       + `<div style="font-size:13.5px;font-weight:700;line-height:1.25;margin-bottom:3px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || ''))} <span style="color:var(--fraco-2);font-weight:600">›</span></div>`
       + `<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:10.5px;color:var(--fraco-2)">`
       + `${_it}${_it ? '<span>·</span>' : ''}<span>${p.linhas} linha(s)</span>`
       + (p.ent ? `<span>·</span><span>entrega ${escapeHtml(fmtDataSem(p.ent))}</span>` : '')
+      + (() => {
+        const g = _reg[String(p.num)]; if (!g) return '';
+        const cid = [g.cidade, g.uf].filter(Boolean).join(' - ');
+        if (!cid && !g.regiao) return '';
+        return `<span>·</span><span style="font-weight:700;color:var(--navy)">📍 ${escapeHtml(cid || '—')}</span>`
+          + (g.regiao ? `<span style="background:#EEF3FA;color:#33506E;font-weight:700;padding:1px 7px;border-radius:7px">${escapeHtml(String(g.regiao))}</span>` : '');
+      })()
       + (p.atraso > 0 ? `<span style="background:#FCF3F3;color:#C0392B;font-weight:800;padding:1px 7px;border-radius:7px">${p.atraso}d vencido</span>` : '')
       + (p.reprog > 0 ? `<span title="diferença entre a data de origem e a entrega atual" style="background:#EEF3FA;color:#33506E;font-weight:800;padding:1px 7px;border-radius:7px">reprog. ${p.reprog}d</span>` : '')
       + (blq ? `<span style="flex-basis:100%;margin-top:3px">${blq}</span>` : `<span style="background:#F2F7F4;color:#1F7A46;font-weight:800;padding:1px 7px;border-radius:7px">nada falta</span>`)
@@ -35112,6 +35127,10 @@ function detGrupoTravado(gid, filtro) {
   }).join('');
   abreDet(TIT[gid],
     `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(L.reduce((s, p) => s + p.kg, 0))}</b>`
+    + (() => {
+      const t = L.reduce((s, p) => s + (_paletesPorItem(_porPedido.get(p.num) || []) || 0), 0);
+      return t ? ` · <b>${fmtNum(t)}</b> palete(s)` : '';
+    })()
     + (L.reduce((s, p) => s + (p.cx || 0), 0) > 0 ? ` · <b>${fmtNum(Math.round(L.reduce((s, p) => s + (p.cx || 0), 0)))}</b> cxs` : '')
     + (gid ? ` · <b>${gid === 3 ? '3 ou mais itens' : gid + ' item' + (gid > 1 ? 'ns' : '')}</b> segurando cada pedido — o resto das linhas já tem material` : '')
     + '</p>'
@@ -37509,7 +37528,10 @@ function fsRender() {
     const pc = Math.round(g.kg / maxKg * 100), ab = _fsAberto === g.st;
     h += '<div onclick="fsToggle(\'' + escapeHtml(g.st).replace(/'/g, '&#39;') + '\')" style="cursor:pointer;padding:7px 0;border-bottom:1px solid var(--leve-2s)">'
       + '<div style="display:flex;gap:8px;align-items:baseline;font-size:13px">'
-      + '<b style="flex:1;min-width:0">' + escapeHtml(g.st) + '</b>'
+      /* 31/08/2026 (Joao: "por que as vencidas estao divergentes?") — nao
+         estavam: o nome do setor invadia a pilula vermelha no celular e escondia
+         o primeiro digito. A Impressao tem 24 vencidas e aparecia "1". */
+      + '<b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(g.st) + '</b>'
       + (g.atras ? '<span style="background:#FDE8E8;color:#B3261E;border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:800">' + g.atras + ' vencida(s)</span>' : '')
       + (g.mesOps ? '<span style="background:var(--leve);color:var(--txt-2s);border-radius:6px;padding:1px 7px;font-size:10.5px;font-weight:700" title="OPs com entrega dentro de ' + _fsMesRot + '">' + g.mesOps + ' p/ ' + _fsMesRot + '</span>' : '')
       + (g.ate ? '<span style="font-size:10.5px;font-weight:700;color:' + (g.ate > _fsMesFim ? 'var(--critico-s)' : 'var(--fraco)') + '" title="último término previsto da fila deste setor">até ' + _dm(g.ate) + '</span>' : '')
