@@ -2048,6 +2048,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       <div id="comlCubagem" class="oculto"></div>
       <div id="cmClientes"></div>
       <div id="cmSkus"></div>
+      <div id="cmSkuAno"></div>
       <div id="comlMapaBloco">
       <!-- 24/08/2026 (João: "deixe mais compacta essa parte e o mapa maior").
            Título, carimbo e busca cabiam em uma linha só e ocupavam três. O
@@ -3852,7 +3853,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.388.0';
+const APP_VER = '4.389.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11131,6 +11132,7 @@ function _trocarAbaReal(qual) {
   if (qual === 'comercial') {
     try { cmClientesCarregar().then(cmClientesRender); } catch (_) { }
     try { cmSkusCarregar().then(cmSkusRender); } catch (_) { }
+    try { cmAnoCarregar(_cmAnoSel || new Date().getFullYear()).then(cmAnoRender); } catch (_) { }
   }
   { const _cm = $('abaComercial'); if (_cm) { _cm.classList.toggle('oculto', qual !== 'comercial'); if (qual === 'comercial') { try { cmAbrir(); } catch (_) {} } } }
   try { _remedirTopo(); } catch (_) {}
@@ -41234,6 +41236,70 @@ async function cmSkusCarregar() {
     console.warn('skus:', _cmSkuErro);
   }
   return _cmSku;
+}
+/* ===== SKU POR ANO — 01/09/2026 =====
+   Com o 622 de 2025 no banco da para comparar produto contra produto. E a
+   pergunta nao e so "cresceu ou caiu": com 1.946 itens em 2025 e 1.565 em 2026,
+   o que interessa tambem e quem SUMIU e quem e NOVO — informacao comercial que
+   nao existia em lugar nenhum.
+   Comparo ANO CIVIL e corto o ano anterior nos MESMOS meses: senao, em setembro,
+   todo produto "cai" porque estou comparando 12 meses com 8. */
+let _cmAno = null, _cmAnoSel = null, _cmAnoVer = 'cresceu';
+function cmAnoVer(v) { _cmAnoVer = v; cmAnoRender(); }
+async function cmAnoCarregar(ano, forcar) {
+  if (_cmAno && _cmAno.ano === ano && !forcar) return _cmAno;
+  try {
+    const { data, error } = await sb.rpc('skus_ano', { p_ano: ano });
+    if (error) throw error;
+    _cmAno = { ano: ano, linhas: (data || []).filter(x => !/^BOBINA/i.test(String(x.item_desc || ''))) };
+  } catch (e) { _cmAno = { ano: ano, linhas: [], erro: (e && e.message) || String(e) }; }
+  return _cmAno;
+}
+function cmAnoRender() {
+  const box = document.getElementById('cmSkuAno'); if (!box || !_cmAno) return;
+  const L = _cmAno.linhas || [];
+  if (!L.length) {
+    box.innerHTML = '<div class="card"><div class="titulo-sec">📦 Produtos · ' + _cmAno.ano + ' × ' + (_cmAno.ano - 1) + '</div>'
+      + '<p class="desc">' + (_cmAno.erro ? escapeHtml(_cmAno.erro) : 'Sem produção nesse ano.') + '</p></div>';
+    return;
+  }
+  const t = v => Math.abs(+v || 0) >= 1000 ? fmt((+v) / 1000, 1) + ' t' : fmt(+v || 0, 0) + ' kg';
+  const g = {};
+  L.forEach(x => { (g[x.situacao] = g[x.situacao] || []).push(x); });
+  const soma = k => (g[k] || []).reduce((a, x) => a + (+x.dif_kg || 0), 0);
+  const V = _cmAnoVer;
+  const lista = (g[V] || []).slice().sort((a, b) =>
+    (V === 'caiu' || V === 'parou') ? (+a.dif_kg || 0) - (+b.dif_kg || 0) : (+b.dif_kg || 0) - (+a.dif_kg || 0));
+  const anos = [];
+  for (let a = new Date().getFullYear(); a >= 2026; a--) anos.push(a);
+  const pil = (k, r) => '<span onclick="cmAnoVer(\'' + k + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:4px 11px;'
+    + (V === k ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">'
+    + r + ' ' + fmt((g[k] || []).length, 0) + '</span>';
+  box.innerHTML = '<div class="card">'
+    + '<div class="titulo-sec">📦 Produtos · ' + _cmAno.ano + ' × ' + (_cmAno.ano - 1) + '</div>'
+    + '<p class="desc" style="margin:0 0 8px;font-size:12px">Ano civil, comparando os <b>mesmos meses</b> dos dois anos. Bobina fora.</p>'
+    + '<div class="idet-grid">'
+    + '<div><b style="color:#1F7A46">' + fmt((g.cresceu || []).length, 0) + '</b><span>cresceram · ' + t(soma('cresceu')) + '</span></div>'
+    + '<div><b style="color:#1F7A46">' + fmt((g.novo || []).length, 0) + '</b><span>novos · ' + t(soma('novo')) + '</span></div>'
+    + '<div><b style="color:var(--critico)">' + fmt((g.caiu || []).length, 0) + '</b><span>caíram · ' + t(soma('caiu')) + '</span></div>'
+    + '<div><b style="color:var(--critico)">' + fmt((g.parou || []).length, 0) + '</b><span>pararam · ' + t(soma('parou')) + '</span></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px">'
+    + pil('cresceu', '▲ cresceram') + pil('novo', '✨ novos') + pil('caiu', '▼ caíram') + pil('parou', '⛔ pararam')
+    + '</div>'
+    + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr>'
+    + '<th style="text-align:left">Item</th><th style="text-align:right">' + (_cmAno.ano - 1) + ' → ' + _cmAno.ano + '</th>'
+    + '<th style="text-align:right">Dif.</th></tr></thead><tbody>'
+    + lista.slice(0, 25).map(x => '<tr style="border-top:1px solid var(--linha);cursor:pointer" onclick="cmSkuDet(\'' + x.item_cod + '\')">'
+      + '<td style="text-align:left"><b>' + escapeHtml(x.item_cod) + '</b> <span class="desc" style="font-size:11px">'
+      + escapeHtml(String(x.item_desc || '').slice(0, 30)) + '</span></td>'
+      + '<td style="text-align:right;white-space:nowrap;color:var(--fraco-2)">' + t(x.kg_ant) + ' → ' + t(x.kg) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap"><b style="color:' + ((+x.dif_kg || 0) >= 0 ? '#1F7A46' : 'var(--critico)') + '">'
+      + ((+x.dif_kg || 0) >= 0 ? '+' : '−') + t(Math.abs(+x.dif_kg || 0)) + '</b>'
+      + (x.pct != null ? '<div class="desc" style="font-size:10.5px">' + ((+x.pct) >= 0 ? '+' : '') + fmt(x.pct, 0) + '%</div>' : '') + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + ((g[V] || []).length > 25 ? '<p class="desc" style="font-size:11px">mostrando 25 de ' + fmt((g[V] || []).length, 0) + '</p>' : '')
+    + '</div>';
 }
 function _skuCritico(s) { return (+s.kg || 0) >= 500 && (+s.perda_pct || 0) > 10; }
 function _skuImprod(s) { return (+s.setup_pct || 0) > 30 && (+s.setup_h || 0) >= 5; }
