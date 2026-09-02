@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.419.0';
+const APP_VER = '4.420.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -20909,7 +20909,20 @@ function _tintaBarraMarcas() {
 const _tintaFiltra = L => _tintaMarca ? L.filter(x => (x.fornecedor || '').trim() === _tintaMarca) : L;
 /* rascunho do pedido: fica na memória enquanto monta e só vai ao banco quando
    o João salva. Nada aqui toca o estoque. */
-let _tintaCarrinho = {};
+/* ===== 02/09/2026 (João) — DUAS COMPRAS =====
+   "deixa 2 campos, compra 1 e compra 2": dois pedidos vivos ao mesmo tempo.
+   Cada um guarda o próprio carrinho, gravado no aparelho para não se perder ao
+   trocar de aba. `_tintaCarrinho` continua existindo como apelido do carrinho
+   ATIVO — assim todo o resto (add, e-mail, imprimir) segue sem mudança. */
+let _tintaCarrinhos = { 1: {}, 2: {} };
+let _tintaCompraN = 1;
+try { const g = JSON.parse(localStorage.getItem('tintaCarrinhos') || 'null'); if (g && g['1'] && g['2']) _tintaCarrinhos = g; } catch (_) { }
+function _tintaSalvaCar() { try { localStorage.setItem('tintaCarrinhos', JSON.stringify(_tintaCarrinhos)); } catch (_) { } }
+function tintaCompraTrocar(n) { _tintaCompraN = (+n === 2 ? 2 : 1); tintaRender(); }
+Object.defineProperty(window, '_tintaCarrinho', {
+  get() { return _tintaCarrinhos[_tintaCompraN] || (_tintaCarrinhos[_tintaCompraN] = {}); },
+  set(v) { _tintaCarrinhos[_tintaCompraN] = v || {}; _tintaSalvaCar(); }
+});
 
 async function tintaAbrir() {
   _tintaVista = 'estoque'; _tintaBusca = '';
@@ -21401,7 +21414,19 @@ function tintaTelaCompra(box) {
   const totLatas = itens.reduce((a, x) => a + x.q, 0);
   const sug = _tintaFiltra(_tintaSaldo.filter(x => x.ativo && x.abaixo_minimo && !_tintaCarrinho[x.id]))
     .sort((a, b) => a.saldo - b.saldo).slice(0, 12);
-  box.innerHTML = '<p class="desc">Monte o pedido e envie ao departamento de compras. <b>Isto não altera o estoque</b> — a tinta só entra quando a nota for lançada na aba Entrada.</p>'
+  const totKg = itens.reduce((a, x) => a + x.q * (+x.p.peso_lata_kg || 0), 0);
+  const totRS = itens.reduce((a, x) => a + x.q * (+x.p.preco || 0), 0);
+  const semPeso = itens.filter(x => !(+x.p.peso_lata_kg)).length;
+  const lista = _tintaFiltra(_tintaSaldo.filter(x => x.ativo)).sort((a, b) => a.nome.localeCompare(b.nome));
+  const _pk = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const cxN = n => '<span onclick="tintaCompraTrocar(' + n + ')" style="cursor:pointer;font-size:12.5px;font-weight:800;border-radius:999px;padding:6px 14px;border:1px solid ' + (_tintaCompraN === n ? 'var(--navy);background:var(--navy);color:#fff' : 'var(--linha-2s);background:var(--leve-2);color:var(--navy)') + '">Compra ' + n + ' <b>(' + Object.keys(_tintaCarrinhos[n] || {}).length + ')</b></span>';
+  box.innerHTML = '<div style="display:flex;gap:6px;margin:0 0 10px">' + cxN(1) + cxN(2) + '</div>'
+    + '<div style="display:flex;gap:16px;flex-wrap:wrap;background:var(--leve-2);border-radius:12px;padding:10px 13px;margin-bottom:10px">'
+    + '<div><b style="font-size:19px">' + _tNum(totLatas) + '</b><div class="desc" style="font-size:11px">lata(s)</div></div>'
+    + '<div><b style="font-size:19px">' + _pk(totKg) + '</b><div class="desc" style="font-size:11px">peso' + (semPeso ? ' · ' + semPeso + ' sem peso cadastrado' : '') + '</div></div>'
+    + (_tintaVeDinheiro() ? '<div><b style="font-size:19px">' + _tBRL(totRS) + '</b><div class="desc" style="font-size:11px">estimativa</div></div>' : '')
+    + '</div>'
+    + '<p class="desc">Monte o pedido e envie ao departamento de compras. <b>Isto não altera o estoque</b> — a tinta só entra quando a nota for lançada na aba Entrada.</p>'
     + _tintaBarraMarcas()
     + '<div style="display:flex;gap:6px;margin:8px 0">'
     + '<input id="tintaCompraCod" type="search" placeholder="digite o nome ou o código da tinta…" autocomplete="off" '
@@ -21417,15 +21442,30 @@ function tintaTelaCompra(box) {
     + (sug.length ? '<div style="margin:8px 0"><span class="desc" style="font-size:11.5px">abaixo do mínimo · toque para incluir:</span><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">'
       + sug.map(x => '<span onclick="tintaCompraAdd(\'' + x.cod_barras + '\')" style="cursor:pointer;font-size:11.5px;background:#FBE9E9;border:1px solid #E0B4B4;border-radius:999px;padding:5px 11px">'
         + _bolinha(x.nome) + escapeHtml(x.nome) + ' <b>(' + _tNum(x.saldo) + ')</b></span>').join('') + '</div></div>' : '')
-    + (itens.length ? '<div style="margin-top:12px"><div class="titulo-sec">Pedido · ' + itens.length + ' item(ns) · ' + _tNum(totLatas) + ' lata(s)</div>'
+    /* 02/09/2026 (João: "a lista completa filtrar por marca e a gente poder
+       colocar quantas latas comprar"). Escolhida uma marca, a lista inteira
+       dela aparece com um campo por linha: dá para varrer a prateleira sem
+       digitar código. Zerar o campo tira do pedido. */
+    + (_tintaMarca ? '<div style="margin-top:10px"><div class="titulo-sec">' + escapeHtml(_tintaMarca) + ' · ' + lista.length + ' tinta(s)</div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;font-size:12.5px"><thead><tr>'
+      + '<th style="text-align:left">Tinta</th><th style="text-align:right">Saldo</th><th style="text-align:right">kg/lata</th><th style="text-align:center">Latas</th><th style="text-align:right">Peso</th></tr></thead><tbody>'
+      + lista.map(x => { const q = +_tintaCarrinho[x.id] || 0; return '<tr style="border-top:1px solid var(--linha)' + (x.abaixo_minimo ? ';background:#FDF3F3' : '') + '">'
+        + '<td style="text-align:left">' + _bolinha(x.nome) + escapeHtml(x.nome) + '<span class="desc" style="font-size:10.5px;display:block;margin-left:19px">' + escapeHtml(x.cod_barras || x.cod_erp || '') + '</span></td>'
+        + '<td style="text-align:right' + (x.abaixo_minimo ? ';color:var(--critico);font-weight:800' : '') + '">' + _tNum(x.saldo) + '</td>'
+        + '<td style="text-align:right;color:var(--fraco-2)">' + (x.peso_lata_kg ? Number(x.peso_lata_kg).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—') + '</td>'
+        + '<td style="text-align:center"><input type="number" min="0" step="1" value="' + (q || '') + '" placeholder="0" onchange="tintaCompraQtd(\'' + x.id + '\',this.value)" style="width:64px;padding:5px;border:1px solid var(--linha-2s);border-radius:8px;text-align:center;font-size:14px"></td>'
+        + '<td style="text-align:right;white-space:nowrap;font-weight:' + (q ? '800' : '400') + '">' + (q && x.peso_lata_kg ? _pk(q * x.peso_lata_kg) : '—') + '</td></tr>'; }).join('')
+      + '</tbody></table></div></div>' : '<p class="desc" style="font-size:11.5px;margin:6px 0">Escolha uma marca acima para ver a lista completa dela e ir marcando as latas.</p>')
+    + (itens.length ? '<div style="margin-top:12px"><div class="titulo-sec">Compra ' + _tintaCompraN + ' · ' + itens.length + ' item(ns) · ' + _tNum(totLatas) + ' lata(s)</div>'
       + '<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
-      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th>'
+      + '<th style="text-align:left">Código</th><th style="text-align:left">Tinta</th><th style="text-align:left">Marca</th><th>Qtd</th><th style="text-align:right">Peso</th>'
       + (_tintaVeDinheiro() ? '<th style="text-align:right">Valor</th>' : '') + '<th></th></tr></thead><tbody>'
       + itens.map(x => '<tr style="border-top:1px solid var(--linha)">'
         + '<td style="text-align:left;font-family:monospace">' + escapeHtml(x.p.cod_barras || '') + '</td>'
         + '<td style="text-align:left">' + _bolinha(x.p.nome) + escapeHtml(x.p.nome) + '</td>'
         + '<td style="text-align:left;font-size:11.5px">' + escapeHtml(x.p.fornecedor || '') + '</td>'
         + '<td style="text-align:center"><input type="number" min="1" value="' + x.q + '" onchange="tintaCompraQtd(\'' + x.p.id + '\',this.value)" style="width:62px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:center;font-size:13px"></td>'
+        + '<td style="text-align:right;white-space:nowrap">' + (x.p.peso_lata_kg ? _pk(x.q * x.p.peso_lata_kg) : '—') + '</td>'
         + (_tintaVeDinheiro() ? '<td style="text-align:right">' + (x.p.preco ? _tBRL(x.q * x.p.preco) : '—') + '</td>' : '')
         + '<td style="text-align:center"><span onclick="tintaCompraRem(\'' + x.p.id + '\')" style="cursor:pointer;color:var(--critico);font-weight:800">✕</span></td></tr>').join('')
       + '</tbody></table></div>'
@@ -21470,11 +21510,11 @@ function tintaCompraAdd(cod) {
 }
 function tintaCompraQtd(id, v) {
   const q = parseFloat(String(v).replace(',', '.'));
-  if (q > 0) _tintaCarrinho[id] = q; else delete _tintaCarrinho[id];
-  tintaRender();
+  if (q > 0) _tintaCarrinhos[_tintaCompraN][id] = q; else delete _tintaCarrinhos[_tintaCompraN][id];
+  _tintaSalvaCar(); tintaRender();
 }
-function tintaCompraRem(id) { delete _tintaCarrinho[id]; tintaRender(); }
-function tintaCompraLimpar() { if (confirm('Limpar o pedido?')) { _tintaCarrinho = {}; tintaRender(); } }
+function tintaCompraRem(id) { delete _tintaCarrinhos[_tintaCompraN][id]; _tintaSalvaCar(); tintaRender(); }
+function tintaCompraLimpar() { if (confirm('Limpar a Compra ' + _tintaCompraN + '?')) { _tintaCarrinhos[_tintaCompraN] = {}; _tintaSalvaCar(); tintaRender(); } }
 function _tintaCompraTexto() {
   const itens = Object.keys(_tintaCarrinho).map(id => {
     const p = _tintaSaldo.find(x => x.id === id); return p ? { p: p, q: _tintaCarrinho[id] } : null;
