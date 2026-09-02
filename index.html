@@ -3853,7 +3853,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.390.0';
+const APP_VER = '4.391.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31725,7 +31725,7 @@ async function gravar(id, substituir = false) {
       const _fset = new Set(r._diasFinos);
       _regsGravar = r.registros.filter(reg => !_fset.has(reg.dia));   // não pisa no dia já conferido
     }
-    const linhas = _regsGravar.map(reg => ({ importacao_id: imp.id, ...mapa.linha(reg) }));
+    let linhas = _regsGravar.map(reg => ({ importacao_id: imp.id, ...mapa.linha(reg) }));
     /* 20/08/2026 - TRAVA DA EMISSÃO SEM FILTRO (João: "olha a discrepância").
        O REST196 emitido sem "Situação Pedido: Abertos" traz o histórico inteiro:
        50.302 linhas, 87,6% delas com pendente ZERO, contra ~4.200 linhas e 0,5%
@@ -31774,6 +31774,34 @@ async function gravar(id, substituir = false) {
         }
       }
     } catch (e) { if (e && /Importação cancelada/.test(e.message || '')) throw e; }
+    /* ===== 01/09/2026 — A CAUDA DO DIA OPERACIONAL (revisao do importador) =====
+       Achado no banco: 01/07/2025 tinha 536 linhas de producao de DOIS arquivos —
+       88 do 622 de jan-jun e 448 do de jul-dez. 17,6 t contadas em dobro.
+       Por que: o 622 usa a data do apontamento, e o turno da noite de 30/06
+       termina na madrugada de 01/07. O arquivo de jan-jun traz essa madrugada
+       com dia 01/07 — FORA do periodo que ele declara. A limpeza por periodo
+       (que so olha jan-jun) nunca encosta nela, e o arquivo de jul-dez, que ja
+       estava no banco, tambem nao a apaga porque ele so limpa quem veio ANTES.
+       Regra: linha fora do periodo declarado e cauda. Se o dia dela ja existe
+       no banco vindo de outro arquivo, a cauda e descartada — quem cobre o dia
+       inteiro manda. Se nao existe, entra, e o proximo arquivo a substitui. */
+    try {
+      if (r.periodo && r.periodo.ate && mapa.tabela !== 'rest196_pendente' && mapa.tabela !== 'fila_producao'
+          && mapa.tabela !== 'estoque_deposito' && mapa.tabela !== 'propostas' && linhas.length && linhas[0].dia) {
+        const fim = String(r.periodo.ate).slice(0, 10), ini = String(r.periodo.de || '').slice(0, 10);
+        const diasCauda = [...new Set(linhas.map(l => String(l.dia || '').slice(0, 10)).filter(d => d && (d > fim || (ini && d < ini))))];
+        if (diasCauda.length) {
+          const { data: ja } = await sb.from(mapa.tabela).select('dia').in('dia', diasCauda).neq('importacao_id', imp.id).limit(1000);
+          const ocupados = new Set((ja || []).map(x => String(x.dia).slice(0, 10)));
+          if (ocupados.size) {
+            const antes = linhas.length;
+            linhas = linhas.filter(l => !ocupados.has(String(l.dia || '').slice(0, 10)));
+            toast('ℹ️ ' + (antes - linhas.length) + ' linha(s) de ' + [...ocupados].map(fmtData).join(', ')
+              + ' ficaram fora: esse dia já veio inteiro de outro arquivo.');
+          }
+        }
+      }
+    } catch (e) { try { console.warn('cauda:', e && e.message); } catch (_) { } }
     for (let i = 0; i < linhas.length; i += 400) {
       // producao_resumo tem UNIQUE (dia,turno,recurso_cod,unidade): sem upsert, a linha nova
       // colide com a antiga (que ainda não foi removida) e a importação inteira falha.
