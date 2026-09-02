@@ -3861,7 +3861,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.397.0';
+const APP_VER = '4.398.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12861,17 +12861,22 @@ async function carregarManut() {
   renderRoteamento();
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
-  /* ===== 01/09/2026 — MOSTRA O RECENTE PRIMEIRO =====
-     A tela esperava as 6.234 OS do histórico inteiro para desenhar qualquer
-     coisa. Agora desenha com os últimos 90 dias (uma ida ao banco, é o que o
-     João olha) e completa o histórico logo atrás, redesenhando quando chega.
-     Se a primeira carga falhar, a completa ainda tenta — não fica tela vazia. */
+  /* ===== 01/09/2026 — AS FECHADAS ANTIGAS VIRARAM FOTO (João: "só vou
+     precisar vê-las como informação, não movimentá-las") =====
+     A aba carregava as 6.234 OS do histórico inteiro só para desenhar a tela:
+     sete idas ao banco e ~2 MB antes de aparecer qualquer coisa. O que se
+     MEXE são as abertas; o resto é consulta. Agora a carga traz as ABERTAS
+     (todas, sem corte de data) mais os últimos 90 dias, e o histórico antigo
+     passa a viver no banco: a contagem por parte vem pronta da foto
+     `mv_os_parte` e a lista de ordens de uma parte é buscada na hora que o
+     João toca nela. Nada some da tela — muda de onde vem. */
   try {
-    const recente = await buscarTodasOS(null, _osPiso90());
-    if (recente && recente.length) { osLista = recente; renderManut(); }
-  } catch (_) { }
-  try {
-    osLista = await buscarTodasOS();
+    const [recentes, abertas] = await Promise.all([
+      buscarTodasOS(null, _osPiso90()),
+      sb.from('manutencao_os').select(OS_COLS).eq('situacao', 'Aberta').order('data_abertura', { ascending: false }).limit(1000)
+    ]);
+    const vistos = new Set((recentes || []).map(o => o.id));
+    osLista = (recentes || []).concat(((abertas && abertas.data) || []).filter(o => !vistos.has(o.id)));
   } catch (_) { osLista = osLista || []; }
   renderManut();
   try { carregarManuais(); } catch (_) {}
@@ -13721,12 +13726,27 @@ async function renderMqMapa() {
       L = L.filter(o => { const d = String(o.data_abertura || '').slice(0, 10); return d && d >= de && d <= ate; });
     }
     _mqCont = {}; let semParte = 0;
-    L.forEach(o => {
+    /* TODO O HISTÓRICO vem da foto do banco (`mv_os_parte`): a soma já está
+       pronta, uma linha por parte, e o navegador não precisa carregar as
+       fechadas antigas. Se a foto não responder, cai na conta antiga com o que
+       está em memória — melhor um mapa dos últimos 90 dias do que mapa nenhum,
+       e nesse caso a tela avisa. */
+    let _daFoto = false;
+    if (_mqTudo) {
+      try {
+        const { data, error } = await sb.from('mv_os_parte').select('parte_chave,ordens,horas').eq('setor', _mqSetor);
+        if (error) throw error;
+        (data || []).forEach(p => { _mqCont[p.parte_chave] = (_mqMetrica === 'h') ? (+p.horas || 0) : (+p.ordens || 0); });
+        _daFoto = true;
+      } catch (e) { try { console.warn('mv_os_parte:', e && e.message); } catch (_) { } }
+    }
+    if (!_daFoto) L.forEach(o => {
       const k = o.parte_chave;
       if (!k) { semParte++; return; }
       const v = (_mqMetrica === 'h') ? (+o.horas_parada || 0) : 1;
       _mqCont[k] = (_mqCont[k] || 0) + v;
     });
+    if (_daFoto) semParte = L.filter(o => !o.parte_chave).length;
     if (_mqMetrica === 'h') Object.keys(_mqCont).forEach(k => { _mqCont[k] = Math.round(_mqCont[k]); });
     const nome = {}; _mqPartes.forEach(p => { nome[p.chave] = p.nome; });
     /* ===== 27/08/2026 (João: "qualquer pessoa que abra o app já vê o mapa") =====
@@ -13755,7 +13775,7 @@ async function renderMqMapa() {
         + '</div>'
       + _mqDesenho(_mqCont, nome)
       + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> Escreva a parte entre parênteses no fim da conclusão — ex.: <b>(EXTRAÇÃO)</b> — e ela entra no mapa sozinha ao salvar.</div>' : '')
-      + (_mqSel ? _mqListaOS(L, _mqSel, nome) : '')
+      + (_mqSel ? (_daFoto ? '<div id="mqListaParte"><p class="desc" style="margin-top:10px">Buscando as ordens…</p></div>' : _mqListaOS(L, _mqSel, nome)) : '')
       + (_ehAdmCards()
         ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
           + '<span onclick="mqEditar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:6px 13px;'
@@ -13766,8 +13786,28 @@ async function renderMqMapa() {
           + '</div>'
         : ''), 'mapa-maquina');
     if (_mqEdit) { try { mqLigaDrag(); } catch (_) { } }
+    /* a lista da parte, no modo histórico, vem do banco depois do desenho —
+       assim o mapa não espera por ela */
+    if (_mqSel && _daFoto) _mqListaParteDoBanco(_mqSel, nome);
   } catch (e) {
     box.innerHTML = '<div class="card"><p class="desc">Não consegui montar o mapa: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+  }
+}
+/* 01/09/2026 — as 40 ordens mais recentes de uma parte, buscadas na hora.
+   Índice ix_manut_os_parte (setor, parte_chave) já existia. */
+async function _mqListaParteDoBanco(k, nome) {
+  const alvo = $('mqListaParte'); if (!alvo) return;
+  try {
+    const { data, error } = await sb.from('manutencao_os')
+      .select('id,os_num,recurso_cod,data_abertura,detalhes,motivo,parte_chave')
+      .eq('setor', _mqSetor).eq('parte_chave', k)
+      .order('data_abertura', { ascending: false }).limit(40);
+    if (error) throw error;
+    const el = $('mqListaParte'); if (!el) return;
+    el.innerHTML = _mqListaOS(data || [], k, nome);
+  } catch (e) {
+    const el = $('mqListaParte');
+    if (el) el.innerHTML = '<p class="desc" style="margin-top:10px">Não consegui buscar as ordens: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
 }
 function _mqListaOS(L, k, nome) {
@@ -31512,6 +31552,8 @@ async function gravar(id, substituir = false) {
       /* recarrega a lista de OS que o app tem em memória, senão o mapa e a aba
          Manutenção só mostrariam as ordens novas na próxima abertura */
       try { const d = await buscarTodasOS(null, _osPiso90()); if (d) osLista = d; } catch (_) { }
+      // a foto do mapa precisa acompanhar as OS que acabaram de entrar
+      try { await sb.rpc('refrescar_os_parte'); } catch (_) { }
       try { if (typeof renderManut === 'function') renderManut(); } catch (_) { }
       descartar(id);
       return;
