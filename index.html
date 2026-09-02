@@ -1312,7 +1312,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
   </div>
   <nav><div class="abas-env"><div class="abas">
     <button class="aba ativa" data-aba="painel" onclick="trocarAba('painel')">Painel</button>
-    <button class="aba oculto" id="abaBtnChao" data-aba="chao" onclick="trocarAba('chao')">Chão de Fábrica</button>
+    <button class="aba oculto" id="abaBtnChao" data-aba="chao" onclick="trocarAba('chao')">Resumo</button>
     <button class="aba" data-aba="analise" onclick="trocarAba('analise')">Itens</button>
     <button class="aba" data-aba="analisemais" onclick="trocarAba('analisemais')">Análise+</button>
     <button class="aba" data-aba="estrategia" onclick="trocarAba('estrategia')">Análise de Tendência</button>
@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.402.0';
+const APP_VER = '4.403.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4764,7 +4764,7 @@ let abasPermitidas = ['painel'];
    'rh' (Diagnóstico RH) também fica FORA: ela não olha abasPermitidas, é liberada
    pelo sinalizador souRH. Pôr aqui criaria um checkbox que não liberaria nada. */
 const ABAS = [
-  { id: 'painel', nome: 'Painel' }, { id: 'chao', nome: 'Chão de Fábrica' }, { id: 'analise', nome: 'Itens' },
+  { id: 'painel', nome: 'Painel' }, { id: 'chao', nome: 'Resumo' }, { id: 'analise', nome: 'Itens' },
   { id: 'analisemais', nome: 'Análise+' },
   { id: 'estrategia', nome: 'Análise de Tendência' },
   { id: 'ano', nome: 'Resumo Anual' },
@@ -5416,7 +5416,9 @@ async function mostrarApp() {
   setTimeout(() => { try { setupFabsMoviveis(); carregarPosFabs(); carregarGrafOcultos(); carregarBocaMap(); carregarLinkApps(); getSetupCfg(); getPerdaCfg(); preencherSelSetores(); atualizarLetreiro(); carregarLetreiroMes(); prepararSecoesRecolhiveis(); observarSecoesRecolhiveis(); medirTopoApp(); observarTopoApp(); } catch (_) {} }, 120);
   await aplicarPermissoes();
   // abre a primeira aba permitida
-  const primeira = abasPermitidas.find(x => x !== 'usuarios') || 'painel';
+  /* 02/09/2026 (João): o app abre no RESUMO para todo mundo. O Painel
+     continua a um toque, mas a primeira tela é a simples. */
+  const primeira = abasPermitidas.includes('chao') ? 'chao' : (abasPermitidas.find(x => x !== 'usuarios') || 'painel');
   trocarAba(primeira);
   ligarRevalidacaoPermissoes();
   { const _b = $('iaBtn');   // apaga posição inline antiga, se sobrou de versão anterior
@@ -8383,7 +8385,7 @@ function _selPerDaAba() {
    "Manutenção / Engenharia" por extenso — quem está no computador tem largura
    de sobra e o nome inteiro é mais claro. O nome longo fica guardado no próprio
    botão (dataset.longo), então girar o aparelho devolve ele. */
-const ABA_CURTA = { chao: 'Chão', estrategia: 'Tendência', manut: 'Manutenção', comercial: 'Comercial',
+const ABA_CURTA = { estrategia: 'Tendência', manut: 'Manutenção', comercial: 'Comercial',
   anrec: 'Recurso', organograma: 'Pessoas', usuarios: 'Acesso', rh: 'RH' };
 /* ==================== TRAVÔMETRO (22/08/2026) ====================
    João: "verifique minuciosamente o que está travando". A abertura já está
@@ -29008,92 +29010,126 @@ function _anoMesesFrescos(ano) {
   const ant = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   return [atual, ant].filter(m => m.slice(0, 4) === String(ano));
 }
-/* ==================== CHÃO DE FÁBRICA (02/09/2026) ====================
-   João: "um resumo simples do lado do Painel, com gráficos simples de produção,
-   perda e parada, pensando no nível operacional — me surpreenda".
-   Regras desta tela: nenhum filtro, nenhuma sigla, nenhum número que precise
-   de explicação. Fala como se fala no corredor: "ontem fizemos 32 t, a meta
-   era 35". Sete dias, três cores, uma frase por setor. Os mesmos dados e as
-   mesmas réguas do Painel (meta por setor, sábado reduzido, setores fora do
-   agregado) — só a linguagem muda. */
-let _chaoCache = null;
+/* ==================== RESUMO (02/09/2026) ====================
+   João: "um resumo simples, para o nível operacional. Sou da Termoformagem:
+   vejo o acumulado mensal do meu setor — carinha, produção, perda e parada —,
+   os turnos do mês e o último dia. Quem vê só o setor dele se escolhe em
+   Acesso. Chame de Resumo e abra o app nela."
+   Sem filtro, sem sigla. As MESMAS réguas do Painel: meta por máquina e bloco,
+   sábado reduzido, domingo sem meta, setores fora do agregado quando é a
+   fábrica, paradas em revisão fora. Só a linguagem muda.
+   Escopo: perfil.resumo_setor → o setor da pessoa; senão setor travado;
+   senão o setor escolhido no topo; senão a fábrica (com pílulas para trocar). */
+let _chaoCache = {};
+let _chaoSetor = null;
+function chaoEscolher(s) { _chaoSetor = s || ''; chaoAbrir(); }
 async function chaoAbrir(forcar) {
   const w = $('chaoWrap'); if (!w) return;
-  if (_chaoCache && !forcar && (Date.now() - _chaoCache.t) < 5 * 60 * 1000) { w.innerHTML = _chaoCache.html; return; }
-  w.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Olhando os últimos dias…</p>';
+  const preso = (perfil && perfil.resumo_setor && perfil.setor && SETOR_MAQ[perfil.setor]) ? perfil.setor : (typeof setorTravado === 'function' ? setorTravado() : null);
+  if (preso) _chaoSetor = preso;
+  else if (_chaoSetor === null) { const f = $('fSetor'); _chaoSetor = (f && f.value && SETOR_MAQ[f.value]) ? f.value : ''; }
+  const S = _chaoSetor || '';
+  const ck = _chaoCache[S];
+  if (ck && !forcar && (Date.now() - ck.t) < 5 * 60 * 1000) { w.innerHTML = ck.html; return; }
+  w.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Olhando ' + (S ? escapeHtml(S) : 'a fábrica') + '…</p>';
   try {
     await getMetas();
     const hoje = hojeISO();
-    const de = (() => { const d = new Date(hoje + 'T12:00:00'); d.setDate(d.getDate() - 13); return d.toISOString().slice(0, 10); })();
+    /* último dia = último dia com produção NO ESCOPO (o bug do 02/09: a fábrica
+       pegava um dia em que só a Extrusão tinha rodado) */
+    const setoresEscopo = S ? [S] : Object.keys(SETOR_MAQ).filter(s => !foraDoAgregado(s));
+    const cods = setoresEscopo.flatMap(s => (SETOR_MAQ[s] || []).map(String));
+    const noEscopo = c => cods.includes(String(parseInt(c, 10)));
+    const qU = await sb.from('producao_resumo').select('dia').in('recurso_cod', cods).gt('peso', 0).order('dia', { ascending: false }).limit(1);
+    const ult = qU.data && qU.data[0] ? String(qU.data[0].dia).slice(0, 10) : null;
+    if (!ult) { w.innerHTML = '<div class="card"><p class="desc">Ainda não tem produção para ' + (S ? escapeHtml(S) : 'a fábrica') + '.</p></div>'; return; }
+    const mes0 = ult.slice(0, 7) + '-01';
+    const de7 = (() => { const d = new Date(ult + 'T12:00:00'); d.setDate(d.getDate() - 12); return d.toISOString().slice(0, 10); })();
+    const de = de7 < mes0 ? de7 : mes0;
     const [P, X, R] = await Promise.all([
-      _leTudoFlx(() => sb.from('producao_resumo').select('dia,recurso_cod,peso').gte('dia', de).order('id')),
-      _leTudoFlx(() => sb.from('perdas').select('dia,recurso_cod,peso').gte('dia', de).order('id')),
-      _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,motivo_desc,tempo_horas,revisar').gte('dia', de).order('id'))
+      _leTudoFlx(() => sb.from('producao_resumo').select('dia,turno,recurso_cod,peso').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id')),
+      _leTudoFlx(() => sb.from('perdas').select('dia,turno,recurso_cod,peso').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id')),
+      _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,motivo_desc,tempo_horas,inicio,revisar').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id'))
     ]);
-    const dias = [...new Set(P.map(x => String(x.dia).slice(0, 10)))].sort().slice(-7);
-    if (!dias.length) { w.innerHTML = '<div class="card"><p class="desc">Ainda não tem produção nos últimos dias.</p></div>'; return; }
-    const SET = Object.keys(SETOR_MAQ);
-    const D = {};                       // dia -> setor -> {prod, perda, par, mot{}}
-    dias.forEach(d => { D[d] = {}; SET.forEach(s => { D[d][s] = { prod: 0, perda: 0, par: 0, mot: {} }; }); });
-    const ok = (d) => D[String(d).slice(0, 10)];
-    P.forEach(x => { const dd = ok(x.dia); if (!dd) return; const s = setorDe(x.recurso_cod); if (dd[s]) dd[s].prod += (+x.peso || 0); });
-    X.forEach(x => { const dd = ok(x.dia); if (!dd) return; const s = setorDe(x.recurso_cod); if (dd[s]) dd[s].perda += (+x.peso || 0); });
-    R.forEach(x => { const dd = ok(x.dia); if (!dd || x.revisar) return; const s = setorDe(x.recurso_cod); if (!dd[s]) return; const h = +x.tempo_horas || 0; dd[s].par += h; const m = x.motivo_desc || '?'; dd[s].mot[m] = (dd[s].mot[m] || 0) + h; });
-    const dow = d => new Date(d + 'T12:00:00').getDay();
-    const DS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-    const metaDia = (s, d) => { const m = s ? metaDiariaSetor(s) : metaDiariaSemExtrusao(); if (m == null) return null; const g = dow(d); if (g === 0) return null; return g === 6 ? m * EQ_DIA_REDUZIDO : m; };
-    const fab = d => { const o = { prod: 0, perda: 0, par: 0, mot: {} }; SET.filter(s => !foraDoAgregado(s)).forEach(s => { const v = D[d][s]; o.prod += v.prod; o.perda += v.perda; o.par += v.par; Object.keys(v.mot).forEach(m => { o.mot[m] = (o.mot[m] || 0) + v.mot[m]; }); }); return o; };
+    const BL = ['Manhã', 'Tarde', 'Noite'];
+    const vazio = () => ({ prod: 0, perda: 0, par: 0, mot: {}, bl: { 'Manhã': { prod: 0, perda: 0, par: 0 }, 'Tarde': { prod: 0, perda: 0, par: 0 }, 'Noite': { prod: 0, perda: 0, par: 0 } } });
+    const D = {};
+    const dd = d => { const k = String(d).slice(0, 10); return D[k] || (D[k] = vazio()); };
+    P.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.prod += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].prod += p; });
+    X.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.perda += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].perda += p; });
+    R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; const v = dd(x.dia), h = +x.tempo_horas || 0; v.par += h; const m = x.motivo_desc || '?'; v.mot[m] = (v.mot[m] || 0) + h;
+      try { const t = tempoParadaPorTurno(x.inicio, h, String(x.dia).slice(0, 10)); BL.forEach(b => { v.bl[b].par += (t[b] || 0); }); } catch (_) { } });
+    /* metas: por dia e por bloco, com a régua de dia do Painel */
+    const fatorDia = d => { const t = tipoDia(d); return t === 'domingo' || t === 'folga' ? 0 : (t === 'sabado' || t === 'reduzido') ? EQ_DIA_REDUZIDO : 1; };
+    const metaBloco = b => { let s = 0, ok = false; cods.forEach(c => { const m = metasData && metasData[c]; if (m && m[b]) { s += m[b]; ok = true; } }); return ok ? s : null; };
+    const metaDiaCheio = (() => { const v = BL.map(metaBloco); return v.some(x => x != null) ? v.reduce((a, x) => a + (x || 0), 0) : null; })();
+    const metaDia = d => metaDiaCheio == null ? null : (fatorDia(d) ? metaDiaCheio * fatorDia(d) : null);
+    const diasMes = []; for (let d = new Date(mes0 + 'T12:00:00'); d.toISOString().slice(0, 10) <= ult; d.setDate(d.getDate() + 1)) diasMes.push(d.toISOString().slice(0, 10));
+    const somaDias = ds => { const o = vazio(); ds.forEach(d => { const v = D[d]; if (!v) return; o.prod += v.prod; o.perda += v.perda; o.par += v.par; Object.keys(v.mot).forEach(m => { o.mot[m] = (o.mot[m] || 0) + v.mot[m]; }); BL.forEach(b => { o.bl[b].prod += v.bl[b].prod; o.bl[b].perda += v.bl[b].perda; o.bl[b].par += v.bl[b].par; }); }); return o; };
+    const M = somaDias(diasMes), U = D[ult] || vazio();
+    const metaMes = metaDiaCheio == null ? null : diasMes.reduce((a, d) => a + (metaDia(d) || 0), 0);
+    const metaBlMes = b => { const mb = metaBloco(b); return mb == null ? null : diasMes.reduce((a, d) => a + mb * fatorDia(d), 0); };
     const topMot = mot => { const ks = Object.keys(mot).sort((a, b) => mot[b] - mot[a]); return ks.length ? { nome: ks[0], h: mot[ks[0]] } : null; };
     const pct = (a, b) => b > 0 ? (100 * a / b) : null;
     const face = r => r == null ? '😶' : r >= 1 ? '😃' : r >= 0.9 ? '😐' : '😟';
     const corR = r => r == null ? '#9AA5B1' : r >= 1 ? '#2E7A4C' : r >= 0.9 ? '#C98A00' : '#B3261E';
-    const ult = dias[dias.length - 1];
-    const F = fab(ult), mF = metaDia('', ult), rF = mF ? F.prod / mF : null;
-    const perdaF = pct(F.perda, F.prod + F.perda), tmF = topMot(F.mot);
+    const corP = p => p == null ? '#9AA5B1' : p <= 2 ? '#2E7A4C' : p <= 4 ? '#C98A00' : '#B3261E';
+    const fpct = p => p == null ? '—' : p.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+    const DS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+    const dow = d => new Date(d + 'T12:00:00').getDay();
     const dLabel = d => DS[dow(d)] + ' ' + d.slice(8, 10) + '/' + d.slice(5, 7);
-    const h1 = 'font-size:34px;font-weight:900;line-height:1;letter-spacing:-.5px';
-    let html = '<div class="card" style="padding:14px 15px">'
-      + '<div class="desc" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:800">' + (ult === hoje ? 'Hoje' : 'Último dia · ' + dLabel(ult)) + ' · fábrica</div>'
-      + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">'
-      + '<div style="background:' + corR(rF) + '12;border-radius:12px;padding:10px 8px;text-align:center"><div style="font-size:26px">' + face(rF) + '</div><div style="' + h1 + ';color:' + corR(rF) + '">' + fmtKg(F.prod) + '</div><div class="desc" style="font-size:11px;margin-top:4px">'
-        + (mF ? 'meta ' + fmtKg(mF) + '<br><b>' + (rF >= 1 ? 'bateu (' + Math.round(rF * 100) + '%)' : 'faltou ' + fmtKg(mF - F.prod)) + '</b>' : 'sem meta cadastrada') + '</div></div>'
-      + '<div style="background:#F5EFE6;border-radius:12px;padding:10px 8px;text-align:center"><div style="font-size:26px">🗑️</div><div style="' + h1 + ';color:' + (perdaF == null ? '#9AA5B1' : perdaF <= 2 ? '#2E7A4C' : perdaF <= 4 ? '#C98A00' : '#B3261E') + '">' + (perdaF == null ? '—' : perdaF.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%') + '</div><div class="desc" style="font-size:11px;margin-top:4px">de perda<br><b>' + fmtKg(F.perda) + ' no lixo</b></div></div>'
-      + '<div style="background:#EEF1F6;border-radius:12px;padding:10px 8px;text-align:center"><div style="font-size:26px">⏸️</div><div style="' + h1 + '">' + Math.round(F.par) + ' h</div><div class="desc" style="font-size:11px;margin-top:4px">de máquina parada' + (tmF ? '<br><b>' + escapeHtml(tmF.nome.toLowerCase()) + ' ' + Math.round(tmF.h) + ' h</b>' : '') + '</div></div>'
-      + '</div>'
-      + '<p class="desc" style="font-size:11px;margin:10px 0 0">Verde bateu a meta · amarelo chegou perto (90%) · vermelho ficou longe. Perda é o quanto do que saiu da máquina foi para o lixo.</p>'
+    const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    const nomeMes = MESES[+ult.slice(5, 7) - 1];
+    const h1 = 'font-size:30px;font-weight:900;line-height:1;letter-spacing:-.5px';
+    const trio = (o, meta) => {
+      const r = meta ? o.prod / meta : null, pp = pct(o.perda, o.prod + o.perda), tm = topMot(o.mot);
+      return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">'
+        + '<div style="background:' + corR(r) + '14;border-radius:12px;padding:10px 6px;text-align:center"><div style="font-size:26px">' + face(r) + '</div><div style="' + h1 + ';color:' + corR(r) + '">' + fmtKg(o.prod) + '</div><div class="desc" style="font-size:11px;margin-top:4px">'
+          + (meta ? 'meta ' + fmtKg(meta) + '<br><b>' + (r >= 1 ? 'bateu · ' + Math.round(r * 100) + '%' : 'faltou ' + fmtKg(meta - o.prod)) + '</b>' : 'sem meta cadastrada') + '</div></div>'
+        + '<div style="background:#F5EFE6;border-radius:12px;padding:10px 6px;text-align:center"><div style="font-size:26px">🗑️</div><div style="' + h1 + ';color:' + corP(pp) + '">' + fpct(pp) + '</div><div class="desc" style="font-size:11px;margin-top:4px">de perda<br><b>' + fmtKg(o.perda) + ' no lixo</b></div></div>'
+        + '<div style="background:#EEF1F6;border-radius:12px;padding:10px 6px;text-align:center"><div style="font-size:26px">⏸️</div><div style="' + h1 + '">' + Math.round(o.par) + ' h</div><div class="desc" style="font-size:11px;margin-top:4px">máquina parada' + (tm ? '<br><b>' + escapeHtml(tm.nome.toLowerCase()) + ' ' + Math.round(tm.h) + ' h</b>' : '') + '</div></div>'
+        + '</div>';
+    };
+    const tit = t => '<div class="desc" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:800">' + t + '</div>';
+    let html = '';
+    /* cabeçalho: escopo + pílulas quando a pessoa pode trocar */
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 2px 8px">'
+      + '<b style="font-size:16px">' + (S ? '🏭 ' + escapeHtml(S) : '🏭 Fábrica') + '</b>'
+      + (preso ? '' : '<div style="display:flex;gap:4px;flex-wrap:wrap">'
+        + ['', ...Object.keys(SETOR_MAQ)].map(s => '<span onclick="chaoEscolher(' + JSON.stringify(s).replace(/"/g, '&quot;') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;' + (s === S ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);border:1px solid var(--linha-2s)') + '">' + (s || 'Fábrica') + '</span>').join('') + '</div>')
       + '</div>';
-    /* 7 dias, um setor por linha */
-    const ordem = SET.filter(s => dias.some(d => D[d][s].prod > 0)).sort((a, b) => (foraDoAgregado(a) ? 1 : 0) - (foraDoAgregado(b) ? 1 : 0) || dias.reduce((s, d) => s + D[d][b].prod, 0) - dias.reduce((s, d) => s + D[d][a].prod, 0));
-    html += '<div class="card" style="padding:14px 15px"><div class="desc" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:800">Últimos 7 dias · por setor</div>';
-    ordem.forEach(s => {
-      const vals = dias.map(d => D[d][s]);
-      const max = Math.max(...vals.map(v => v.prod), ...dias.map(d => metaDia(s, d) || 0), 1);
+    /* 1) mês acumulado */
+    html += '<div class="card" style="padding:14px 15px">' + tit(nomeMes + ' até ' + dLabel(ult) + ' · acumulado do mês') + trio(M, metaMes) + '</div>';
+    /* 2) turnos do mês */
+    html += '<div class="card" style="padding:14px 15px">' + tit('turnos · ' + nomeMes)
+      + BL.map(b => { const o = M.bl[b], mb = metaBlMes(b), r = mb ? o.prod / mb : null, pp = pct(o.perda, o.prod + o.perda);
+        return '<div style="display:grid;grid-template-columns:78px 1fr 1fr 1fr;gap:6px;align-items:center;padding:8px 0;border-top:1px solid var(--linha)">'
+          + '<b style="font-size:13px">' + (b === 'Manhã' ? '🌅' : b === 'Tarde' ? '☀️' : '🌙') + ' ' + b + '</b>'
+          + '<div style="text-align:center"><div style="font-size:18px">' + face(r) + '</div><b style="color:' + corR(r) + '">' + fmtKg(o.prod) + '</b><div class="desc" style="font-size:10px">' + (mb ? 'meta ' + fmtKg(mb) : 'sem meta') + '</div></div>'
+          + '<div style="text-align:center"><div style="font-size:18px">🗑️</div><b style="color:' + corP(pp) + '">' + fpct(pp) + '</b><div class="desc" style="font-size:10px">' + fmtKg(o.perda) + '</div></div>'
+          + '<div style="text-align:center"><div style="font-size:18px">⏸️</div><b>' + Math.round(o.par) + ' h</b><div class="desc" style="font-size:10px">parada</div></div>'
+          + '</div>'; }).join('')
+      + '</div>';
+    /* 3) último dia */
+    html += '<div class="card" style="padding:14px 15px">' + tit((ult === hoje ? 'Hoje' : 'Último dia') + ' · ' + dLabel(ult)) + trio(U, metaDia(ult)) + '</div>';
+    /* 4) 7 dias em barras */
+    const dias = Object.keys(D).filter(d => D[d].prod > 0).sort().slice(-7);
+    if (dias.length) {
+      const max = Math.max(...dias.map(d => D[d].prod), ...dias.map(d => metaDia(d) || 0), 1);
       let bateu = 0, comMeta = 0;
-      const barras = dias.map((d, i) => {
-        const v = vals[i], m = metaDia(s, d), r = m ? v.prod / m : null;
-        if (m) { comMeta++; if (r >= 1) bateu++; }
-        const hP = Math.round(54 * v.prod / max), hM = m ? Math.round(54 * m / max) : 0;
+      const barras = dias.map(d => { const v = D[d], m = metaDia(d), r = m ? v.prod / m : null; if (m) { comMeta++; if (r >= 1) bateu++; }
+        const hP = Math.round(60 * v.prod / max), hM = m ? Math.round(60 * m / max) : 0;
         return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="' + dLabel(d) + ' · ' + fmtKg(v.prod) + (m ? ' de ' + fmtKg(m) : '') + '">'
-          + '<div style="height:56px;width:100%;display:flex;align-items:flex-end;justify-content:center;position:relative">'
+          + '<div style="height:62px;width:100%;display:flex;align-items:flex-end;justify-content:center;position:relative">'
           + (m ? '<div style="position:absolute;left:8%;right:8%;bottom:' + hM + 'px;border-top:2px dashed #223;opacity:.45"></div>' : '')
           + '<div style="width:62%;height:' + hP + 'px;background:' + corR(r) + ';border-radius:5px 5px 2px 2px"></div></div>'
-          + '<div style="font-size:9.5px;color:var(--fraco-2);font-weight:800">' + DS[dow(d)] + '</div></div>';
-      }).join('');
-      const prodS = vals.reduce((a, v) => a + v.prod, 0), perdaS = vals.reduce((a, v) => a + v.perda, 0), parS = vals.reduce((a, v) => a + v.par, 0);
-      const motS = {}; vals.forEach(v => Object.keys(v.mot).forEach(m => { motS[m] = (motS[m] || 0) + v.mot[m]; })); const tm = topMot(motS);
-      const pp = pct(perdaS, prodS + perdaS);
+          + '<div style="font-size:9.5px;color:var(--fraco-2);font-weight:800">' + DS[dow(d)] + '</div><div style="font-size:9px;color:var(--fraco-2)">' + d.slice(8, 10) + '</div></div>'; }).join('');
       const frase = comMeta ? (bateu === comMeta ? 'Bateu a meta todos os dias. 👏' : bateu === 0 ? 'Não bateu a meta nenhum dia.' : 'Bateu a meta em ' + bateu + ' de ' + comMeta + ' dias.') : 'Sem meta cadastrada.';
-      html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--linha)">'
-        + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><b style="font-size:14px">' + escapeHtml(s) + '</b><span class="desc" style="font-size:11.5px">' + fmtKg(prodS) + ' na semana</span></div>'
-        + '<div style="display:flex;gap:4px;margin-top:6px">' + barras + '</div>'
-        + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:11.5px">'
-        + '<span style="background:var(--leve-2);border-radius:999px;padding:3px 9px">' + frase + '</span>'
-        + '<span style="background:#F5EFE6;border-radius:999px;padding:3px 9px">🗑️ perda <b>' + (pp == null ? '—' : pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%') + '</b></span>'
-        + '<span style="background:#EEF1F6;border-radius:999px;padding:3px 9px">⏸️ <b>' + Math.round(parS) + ' h</b> parada' + (tm ? ' · ' + escapeHtml(tm.nome.toLowerCase()) + ' ' + Math.round(tm.h) + ' h' : '') + '</span>'
-        + '</div></div>';
-    });
-    html += '<p class="desc" style="font-size:11px;margin:12px 0 0">Linha tracejada = meta do dia (sábado vale menos porque o turno é menor; domingo não tem meta). Paradas marcadas para revisão não entram.</p></div>';
-    _chaoCache = { t: Date.now(), html };
+      html += '<div class="card" style="padding:14px 15px">' + tit('últimos 7 dias com produção') + '<div style="display:flex;gap:4px;margin-top:8px">' + barras + '</div>'
+        + '<div style="margin-top:8px;font-size:12.5px"><span style="background:var(--leve-2);border-radius:999px;padding:3px 10px">' + frase + '</span></div>'
+        + '<p class="desc" style="font-size:11px;margin:10px 0 0">Verde bateu a meta · amarelo chegou perto (90%) · vermelho ficou longe. Tracejado = meta do dia (sábado vale menos, domingo não tem). Perda é o quanto do que saiu da máquina foi para o lixo. Paradas em revisão não entram.</p></div>';
+    }
+    _chaoCache[S] = { t: Date.now(), html };
     w.innerHTML = html;
   } catch (e) {
     w.innerHTML = '<div class="card"><p class="desc">Não consegui montar o resumo: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
@@ -30584,6 +30620,7 @@ function _usrCartao(u, ctx) {
               `<label><input type="checkbox" ${abasU.includes(a.id) ? 'checked' : ''} onchange="usrAbas('${u.id}','${a.id}',this.checked)"> ${a.nome}</label>`).join('')}</div>`
           : `<div class="usr-telas desc">Herda do setor: ${herdadas.length ? herdadas.map(id => (ABAS.find(a => a.id === id) || {}).nome || id).join(', ') : '<span style="color:var(--laranja)">só o Painel (setor sem padrão definido)</span>'}</div>`));
     const setorSel = `<div class="usr-telas"><span class="tl-tit">Setor:</span><select onchange="usrSetor('${u.id}', this.value)" style="padding:4px 8px;border:1px solid var(--borda);border-radius:10px;font-size:13px"><option value="">— definir —</option>${(setoresLista || []).map(s => `<option ${s === u.setor ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}</select></div>`;
+    const resumoTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Resumo:</span><label><input type="checkbox" ${u.resumo_setor ? 'checked' : ''} onchange="usrResumoSetor('${u.id}',this.checked)"> Vê no Resumo só o setor dele</label></div>`;
     const metasTog = admin ? '' : `<div class="usr-telas"><span class="tl-tit">Metas:</span><label><input type="checkbox" ${u.metas_edit ? 'checked' : ''} onchange="usrMetasEdit('${u.id}',this.checked)"> Pode editar metas</label></div>`;
     acoes.push(`<button onclick="verHistCiencia('${u.id}','${escapeHtml(u.nome || '').replace(/'/g, "&#39;")}')">📌 Histórico de tarefas fixas</button>`);
     if (souAdmin && u.papel !== 'admin') acoes.push(`<button onclick="togVeRH('${u.id}', ${u.ve_rh ? 'false' : 'true'})">${u.ve_rh ? '🔓 Tirar acesso de RH' : '🔒 Dar acesso de RH (faltas)'}</button>`);
@@ -30602,7 +30639,7 @@ function _usrCartao(u, ctx) {
       <div class="usr-meta">Último acesso: ${fmtDataHora(ultimo[u.id])}${acessouHoje(ultimo[u.id]) ? ' <span style="display:inline-block;background:var(--laranja-4);color:#fff;font-weight:800;font-size:10px;padding:2px 7px;border-radius:6px;vertical-align:middle;letter-spacing:.4px">HOJE</span>' : ''} · ${cont[u.id] || 0} acesso(s) · 🤖 IA: ${iaCont[u.id] || 0} uso(s)</div>
       ${telas}
       ${setorSel}
-      ${metasTog}
+      ${metasTog}${resumoTog}
       ${presTog}
       ${acoes.length ? `<div class="usr-acoes">${acoes.join('')}</div>` : ''}
       ${eu ? '' : `<div style="margin-top:8px;border-top:1px dashed var(--borda);padding-top:8px">
@@ -30917,6 +30954,11 @@ async function usrSetor(id, setor) {
   const { error } = await sb.from('perfis').update({ setor: setor || null }).eq('id', id);
   if (error) { toast('❌ ' + error.message); return; }
   toast(setor ? '🏭 Setor definido: ' + setor : 'Setor removido.');
+  _usrMarcarAncora(id); carregarUsuarios();
+}
+async function usrResumoSetor(id, on) {
+  const { error } = await sb.from('perfis').update({ resumo_setor: !!on }).eq('id', id);
+  toast(error ? 'Erro: ' + error.message : (on ? '✅ No Resumo verá só o próprio setor.' : '✅ No Resumo verá a fábrica toda.'));
   _usrMarcarAncora(id); carregarUsuarios();
 }
 async function usrMetasEdit(id, on) {
