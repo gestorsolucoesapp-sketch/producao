@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.423.0';
+const APP_VER = '4.424.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -17428,9 +17428,9 @@ async function detDia(setor, dia) {
     const cods = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
     // turno entra no select por causa da conferencia 621 x 622 (a divergencia
     // costuma estar num turno so, e sem o turno nao da para apontar onde)
-    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,unidade,recurso_cod,op,turno').eq('dia', dia).in('recurso_cod', cods);
-    if (error) throw error;
-    rows622 = data || [];
+    /* 02/09/2026 — o maior dia de 2026 tem 988 linhas aqui, doze do teto de
+       1.000. Paginado antes de virar bug silencioso. */
+    rows622 = await _leTudoFlx(() => sb.from('producao').select('item_cod,item_desc,peso,quantidade,unidade,recurso_cod,op,turno').eq('dia', dia).in('recurso_cod', cods).order('id'));
     const porItem = {};
     /* 04/08/2026: caixa e MILHEIRO sao unidades diferentes e estavam somando na
        mesma coluna — a Compressao e as impressoras 704/707 apontam em MIL, e o
@@ -17544,9 +17544,8 @@ async function detDiaTurno(setor, dia, bloco) {
   const cods = (setor ? (SETOR_MAQ[setor] || []) : Object.values(SETOR_MAQ).flat()).map(String);
   let rows = [];
   try {
-    const { data, error } = await sb.from('producao').select('item_cod,item_desc,peso,quantidade,unidade,recurso_cod,turno,op').eq('dia', dia).in('recurso_cod', cods);
-    if (error) throw error;
-    rows = (data || []).filter(r => blocoTurno(r.turno, dia) === bloco);
+    const _todas = await _leTudoFlx(() => sb.from('producao').select('item_cod,item_desc,peso,quantidade,unidade,recurso_cod,turno,op').eq('dia', dia).in('recurso_cod', cods).order('id'));
+    rows = _todas.filter(r => blocoTurno(r.turno, dia) === bloco);
   } catch (e) {
     _detVoltar = () => detDia(setor, dia);
     abreDet('Turno ' + bloco + ' \u00b7 ' + fmtDataSem(dia), `<p class="desc">Erro ao buscar itens: ${escapeHtml(e.message || String(e))}</p>`);
@@ -23111,6 +23110,13 @@ async function ppCarregar(setor, de, ate, alvo) {
   if (_ppCache[chave]) { ppRender(alvo, _ppCache[chave]); return; }
   try {
     const maqs = (SETOR_MAQ[setor] || []).map(String);
+    /* 02/09/2026 — TETO DE 1.000 (5ª vez): 90 dias da Termoformagem dão 1.568
+       linhas aqui; o resto sumia calado e o peso da peça saía menor. */
+    const L1568 = await _leTudoFlx(() => {
+      let q = sb.from('v_peso_peca_dia').select('*').gte('dia', de).lte('dia', ate);
+      if (maqs.length) q = q.in('recurso_cod', maqs);
+      return q.order('dia');
+    });
     let q = sb.from('v_peso_peca_dia').select('*').gte('dia', de).lte('dia', ate);
     if (maqs.length) q = q.in('recurso_cod', maqs);
     /* 22/08/2026 (João: "dia 17/08 não foi 8,7, foi 10,2").
@@ -23130,7 +23136,7 @@ async function ppCarregar(setor, de, ate, alvo) {
     /* paginado: um mês de produção passa de 1.000 linhas e o corte silencioso
        faria o quilo oficial sair por baixo — justamente o número que este card
        passou a usar hoje para bater com o gráfico de cima. */
-    const [{ data, error }, dRes] = await Promise.all([q,
+    const [{ data, error }, dRes] = await Promise.all([Promise.resolve({ data: L1568, error: null }),
       fetchTudo('producao_resumo', 'dia,recurso_cod,peso', de, ate,
         maqs.length ? 'recurso_cod.in.(' + maqs.join(',') + ')' : null)]);
     if (error) throw error;
@@ -41259,7 +41265,10 @@ async function _geoCarrega(uf) {
   if (_geoCid[uf]) return _geoCid[uf];
   try {
     const [m, o] = await Promise.all([
-      sb.from('geo_municipios').select('nome_norm,lat,lon').eq('uf', uf).limit(1200),
+      /* 02/09: limit(1200) era LETRA MORTA — o PostgREST corta em 1.000 e
+         ignora pedidos maiores. MG tem 853 municípios, então hoje passa; a
+         paginação tira a bomba-relógio. */
+      _leTudoFlx(() => sb.from('geo_municipios').select('nome_norm,lat,lon').eq('uf', uf).order('nome_norm')).then(d => ({ data: d })),
       sb.from('geo_uf').select('aneis').eq('uf', uf).limit(1)
     ]);
     _geoCid[uf] = m.data || [];
