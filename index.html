@@ -3861,7 +3861,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.398.0';
+const APP_VER = '4.399.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23994,9 +23994,14 @@ async function atrRoteiro() {
   const L = _base.filter(x => x.pctCob != null && x.pctCob >= 99.9);
   if (!L.length) {
     const n = _base.length;
-    toast(n
-      ? 'Dos ' + n + ' pedidos deste recorte, nenhum tem o material todo em estoque — não há carga para montar.'
-      : 'Nenhum pedido neste recorte.');
+    if (!n) { toast('Nenhum pedido neste recorte.'); return; }
+    /* ===== 01/09/2026 — PRODUÇÃO ATRASADA AGRUPADA POR REGIÃO (print do João) =====
+       No recorte de produção atrasada NENHUM pedido tem material completo por
+       definição — o botão só devolvia "não há carga para montar", um beco.
+       O que interessa aqui é o inverso: ONDE está faltando produzir. Mesmo
+       modal, outra leitura: por região, quantos pedidos, quilos, o que já está
+       coberto e a entrega mais próxima. É lista de prioridade, não de carga. */
+    _atrOndeFalta(_base, _rotRec);
     return;
   }
   const porUF = {};
@@ -24170,6 +24175,45 @@ async function atrRoteiro() {
     + '<span onclick="atrRoteiroCopiar()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);border-radius:999px;padding:7px 14px">📋 copiar</span>'
     + '</div>';
   window._atrCargas = cargas;
+}
+function _atrOndeFalta(B, rec) {
+  let cx = $('atrMapaFlut');
+  if (!cx) {
+    cx = document.createElement('div'); cx.id = 'atrMapaFlut';
+    cx.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(12,24,38,.55);display:flex;align-items:center;justify-content:center;padding:14px';
+    cx.onclick = e => { if (e.target === cx) atrFecharMapa(); };
+    document.body.appendChild(cx);
+  }
+  const G = {};
+  B.forEach(x => {
+    const k = x.regiao || (x.uf ? 'UF ' + x.uf : '(sem região)');
+    const g = (G[k] = G[k] || { n: 0, kg: 0, cob: 0, ent: null, set: {}, cid: {} });
+    g.n++; g.kg += (+x.kg || 0);
+    g.cob += (+x.kg || 0) * ((x.pctCob != null ? +x.pctCob : 0) / 100);
+    if (x.ent && (!g.ent || x.ent < g.ent)) g.ent = x.ent;
+    if (x.setor) g.set[x.setor] = (g.set[x.setor] || 0) + 1;
+    if (x.cidade) g.cid[x.cidade] = (g.cid[x.cidade] || 0) + 1;
+  });
+  const ks = Object.keys(G).sort((a, b) => G[b].kg - G[a].kg);
+  const totKg = B.reduce((s, x) => s + (+x.kg || 0), 0);
+  cx.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:600px;width:100%;max-height:92vh;overflow:auto;padding:14px 15px;box-shadow:0 18px 50px rgba(0,0,0,.3)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<b style="font-size:15px">🧭 Onde falta produzir · por região</b>'
+    + '<span onclick="atrFecharMapa()" style="cursor:pointer;font-size:20px;line-height:1;color:var(--fraco-2)">✕</span></div>'
+    + '<p class="desc" style="font-size:11.5px;margin:0 0 8px">' + B.length + ' pedido(s)' + (rec ? ' de <b>' + escapeHtml(rec) + '</b>' : '') + ' · ' + fmtKg(totKg)
+    + '. Nenhum tem o material completo, então não há carga a montar — esta é a lista de <b>prioridade</b>: quem tem mais peso parado e entrega mais perto.</p>'
+    + ks.map(k => {
+      const g = G[k], pct = g.kg ? Math.round(100 * g.cob / g.kg) : 0;
+      const sets = Object.keys(g.set).sort((a, b) => g.set[b] - g.set[a]).map(s => s + ' ' + g.set[s]).join(' · ');
+      const cids = Object.keys(g.cid).sort((a, b) => g.cid[b] - g.cid[a]).slice(0, 4).join(', ') + (Object.keys(g.cid).length > 4 ? '…' : '');
+      return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:9px 11px;margin-bottom:8px">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px"><b>' + escapeHtml(k) + '</b><span><b>' + g.n + '</b> ped · <b>' + fmtKg(g.kg) + '</b></span></div>'
+        + '<div class="desc" style="font-size:11.5px;margin-top:3px">coberto por estoque: <b>' + pct + '%</b>' + (g.ent ? ' · entrega mais próxima <b>' + fmtData(g.ent) + '</b>' : '') + '</div>'
+        + (sets ? '<div class="desc" style="font-size:11px">' + escapeHtml(sets) + '</div>' : '')
+        + (cids ? '<div class="desc" style="font-size:11px">📍 ' + escapeHtml(cids) + '</div>' : '')
+        + '</div>';
+    }).join('')
+    + '</div>';
 }
 async function atrRoteiroCopiar() {
   const cargas = window._atrCargas || [];
