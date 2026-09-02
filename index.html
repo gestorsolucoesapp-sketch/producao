@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.422.0';
+const APP_VER = '4.423.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -29367,7 +29367,7 @@ async function anoAbrir(forcar) {
        alguma coisa ao lado das 2.608 do agosto passado. Carrego o ano anterior
        junto — vem da mesma fotografia, custa nada. */
     const frescos = _anoMesesFrescos(ano);
-    sb.from('mv_resumo_ano').select('mes,recurso_cod,kg,quantidade,unidade,perda_kg,parada_h')
+    sb.from('mv_resumo_ano').select('mes,recurso_cod,kg,quantidade,unidade,perda_kg,parada_h,dias')
       .like('mes', (ano - 1) + '-%')
       .then(r => { _anoPrev = { ano: ano - 1, linhas: (r && r.data) || [] }; try { anoRender(); } catch (_) { } })
       .catch(() => { _anoPrev = { ano: ano - 1, linhas: [] }; });
@@ -29414,6 +29414,24 @@ const _ANO_COR = {
    variacao — nos MESMOS meses, senao comparo 12 com 8 e todo mundo "cai".
    Ordeno pelo tamanho da mudanca em tonelada, nao em porcentagem: 100% de um
    setor de 90 t muda menos a fabrica do que 8% da Extrusao. */
+/* ===== 02/09/2026 (João: "o mês que começou tem que contar proporcional, não
+   pode influenciar") =====
+   Setembro tinha 1 dia deste ano contra o mês inteiro do ano passado: -96% no
+   mês e o total da fábrica puxado para baixo. Agora o mês em curso é comparado
+   PROPORCIONALMENTE — o mês do ano passado entra pela mesma fatia de dias
+   trabalhados (dias com produção, que a foto `mv_resumo_ano` já traz).
+   Nada de estimativa: é regra de três com os dias que existem nos dois anos.
+   Só o ÚLTIMO mês do ano atual é ajustado, e só quando tem menos dias que o
+   mesmo mês do ano anterior. */
+function _anoFatorMes(mm, meses) {
+  try {
+    if (!_anoDados || !_anoPrev || mm !== meses[meses.length - 1].slice(5, 7)) return 1;
+    const dA = Math.max(...(_anoDados.linhas || []).filter(r => String(r.mes || '').slice(5, 7) === mm).map(r => +r.dias || 0), 0);
+    const dP = Math.max(...(_anoPrev.linhas || []).filter(r => String(r.mes || '').slice(5, 7) === mm).map(r => +r.dias || 0), 0);
+    if (!dA || !dP || dA >= dP) return 1;
+    return dA / dP;
+  } catch (_) { return 1; }
+}
 function _anoCrescSetor(meses, setores, val, cx) {
   if (!_anoPrev || !_anoPrev.linhas || !_anoPrev.linhas.length) return '';
   const mesesN = meses.map(m => m.slice(5, 7));
@@ -29422,9 +29440,10 @@ function _anoCrescSetor(meses, setores, val, cx) {
     const mm = String(r.mes || '').slice(5, 7);
     if (!mesesN.includes(mm)) return;                 // só os meses que os dois anos têm
     const st = setorDe(r.recurso_cod) || '—';
-    const v = _anoMet === 'perda' ? (+r.perda_kg || 0)
+    const v = (_anoMet === 'perda' ? (+r.perda_kg || 0)
       : (_anoMet === 'parada' ? (+r.parada_h || 0)
-        : (cx(st) ? (String(r.unidade || '').toUpperCase() === 'CX' ? (+r.quantidade || 0) : 0) : (+r.kg || 0)));
+        : (cx(st) ? (String(r.unidade || '').toUpperCase() === 'CX' ? (+r.quantidade || 0) : 0) : (+r.kg || 0))))
+      * _anoFatorMes(mm, meses);                      // mês em curso entra proporcional
     P[st] = (P[st] || 0) + v;
   });
   const L = setores.map(s => {
@@ -29457,6 +29476,8 @@ function _anoCrescSetor(meses, setores, val, cx) {
         + '<div class="desc" style="font-size:10.5px">' + nm(x.p, x) + ' → ' + nm(x.a, x) + un(x) + '</div></div>'
         + '</div>';
     }).join('')
+    + (_anoFatorMes(meses[meses.length - 1].slice(5, 7), meses) < 1
+      ? '<p class="desc" style="font-size:11px;margin-top:6px">O mês em curso entra <b>proporcional</b>: o ano passado é cortado na mesma fatia de dias já trabalhados.</p>' : '')
     + '<p class="desc" style="font-size:11px;margin-top:6px">Ordenado pelo tamanho da mudança em '
     + (_anoMet === 'parada' ? 'horas' : 'toneladas') + ', não em porcentagem: dobrar um setor pequeno mexe menos na fábrica que 8% da Extrusão.</p>'
     + '</div>';
@@ -29469,7 +29490,8 @@ function _anoComparativo(meses, setores, val, cx, rot) {
     const st = setorDe(r.recurso_cod) || '—';
     if (cx(st) && _anoMet === 'kg') return;
     const m = String(r.mes || '').slice(5, 7); if (!m) return;
-    const v = _anoMet === 'perda' ? (+r.perda_kg || 0) : (_anoMet === 'parada' ? (+r.parada_h || 0) : (+r.kg || 0));
+    const v = (_anoMet === 'perda' ? (+r.perda_kg || 0) : (_anoMet === 'parada' ? (+r.parada_h || 0) : (+r.kg || 0)))
+      * _anoFatorMes(m, meses);                       // mês em curso entra proporcional
     P[m] = (P[m] || 0) + v;
   });
   const A = {};
