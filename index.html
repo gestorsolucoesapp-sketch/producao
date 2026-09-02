@@ -3861,7 +3861,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.394.0';
+const APP_VER = '4.395.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31529,17 +31529,14 @@ async function gravar(id, substituir = false) {
        gravar, apago os documentos que estão entrando: reimportar passa a ser
        seguro e o histórico de cada pedido fica sempre com a versão mais recente.
        Em blocos de 200 porque a lista tem milhares de números e URL tem limite. */
+    /* ===== 01/09/2026 — O 304 TAMBÉM PASSA A GRAVAR ANTES DE APAGAR =====
+       Em 01/09 o delete por documento rodou, a gravação abortou logo depois
+       (timeout na remoção da importação anterior) e a tabela ficou com 3.187
+       das 6.658 linhas — os pedidos do arquivo novo sumiram até a reimportação.
+       Mesma correção do 241: os documentos que entram são guardados aqui e as
+       linhas ANTIGAS deles só saem depois da nova gravação (bloco `_docs304`). */
     if (r.rotina === 'RVEN304') {
-      try {
-        const docs = [...new Set((r.registros || []).map(x => String(x.documento)).filter(Boolean))];
-        for (let i = 0; i < docs.length; i += 200) {
-          const { error } = await sb.from('fluxo_pedido').delete().in('documento', docs.slice(i, i + 200));
-          if (error) throw error;
-        }
-        if (docs.length) toast('♻️ ' + docs.length + ' pedido(s) serão substituídos');
-      } catch (e) {
-        throw new Error('Não consegui limpar o fluxo anterior: ' + ((e && e.message) || e));
-      }
+      r._docs304 = [...new Set((r.registros || []).map(x => String(x.documento)).filter(Boolean))];
     }
     if (r.rotina === '241') {
       /* ===== ARQUIVA ANTES DE LIMPAR — 25/08/2026 (pedido do João) =====
@@ -31958,6 +31955,16 @@ async function gravar(id, substituir = false) {
                          bloco das 06:30 tinha 'bobina' e 'vendido' e o das
                          18:23 nao. Filtrar por hora perde categoria inteira.
        Por isso a limpeza abaixo so vale para o 196. */
+    if (r.rotina === 'RVEN304' && Array.isArray(r._docs304) && r._docs304.length) {
+      try {
+        const docs = r._docs304;
+        for (let i = 0; i < docs.length; i += 200) {
+          const { error } = await sb.from('fluxo_pedido').delete().in('documento', docs.slice(i, i + 200)).neq('importacao_id', imp.id);
+          if (error) throw error;
+        }
+        toast('♻️ ' + docs.length + ' pedido(s) substituídos pela versão nova');
+      } catch (e) { console.warn('limpeza do fluxo anterior falhou (versão velha ficou junto):', e && e.message); toast('⚠️ a versão anterior de alguns pedidos não saiu: ' + ((e && e.message) || e)); }
+    }
     if (r._limpa241 && mapa.tabela === 'estoque_deposito') {
       /* foto nova gravada: agora sim a anterior sai (linhas e registro 241). Se
          esta limpeza falhar, sobra foto velha junto — o app lê a MAIOR dia_foto
