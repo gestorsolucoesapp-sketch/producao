@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.410.0';
+const APP_VER = '4.411.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -32139,10 +32139,21 @@ async function gravar(id, substituir = false) {
       const _SUBST = { 'RVEN002': 'pedidos_regiao', 'PROP': 'propostas', 'RVEN304': 'fluxo_pedido' };
       const _tab = _SUBST[r.rotina];
       if (_tab) {
-        const { count: _antes } = await sb.from(_tab).select('*', { count: 'exact', head: true });
+        /* 02/09/2026: o 304 e o RVEN002 substituem POR DOCUMENTO/PEDIDO e a
+           tabela guarda o histórico de importações antigas (13.360 linhas de
+           fluxo). Comparar o arquivo com a tabela inteira gritava à toa
+           (3.905 vs 13.360). A régua certa para eles é o ÚLTIMO ARQUIVO da
+           mesma rotina. Propostas continua contra a base, que é o que substitui. */
+        let _antes = 0, _base = 'a base atual';
+        if (r.rotina === 'RVEN304' || r.rotina === 'RVEN002') {
+          const { data: _u } = await sb.from('importacoes').select('registros').eq('rotina', r.rotina).neq('id', imp.id).order('criado_em', { ascending: false }).limit(1);
+          _antes = (_u && _u[0] && +_u[0].registros) || 0; _base = 'o último arquivo importado';
+        } else {
+          const { count } = await sb.from(_tab).select('*', { count: 'exact', head: true }); _antes = count || 0;
+        }
         if (_antes > 50 && linhas.length < _antes * 0.3) {
-          const _ok = confirm('Atenção: este arquivo tem ' + fmt(linhas.length, 0) + ' linha(s) e a base atual tem '
-            + fmt(_antes, 0) + '.\n\nImportar vai SUBSTITUIR o que já existe. Um arquivo muito menor costuma ser sinal de'
+          const _ok = confirm('Atenção: este arquivo tem ' + fmt(linhas.length, 0) + ' linha(s) e ' + _base + ' tem '
+            + fmt(_antes, 0) + '.\n\n' + (r.rotina === 'PROP' ? 'Importar vai SUBSTITUIR o que já existe.' : 'Importar substitui só os documentos que vêm no arquivo; os outros ficam.') + ' Um arquivo muito menor costuma ser sinal de'
             + ' relatório trocado ou recortado.\n\nImportar mesmo assim?');
           if (!_ok) {
             await sb.from('importacoes').delete().eq('id', imp.id);
