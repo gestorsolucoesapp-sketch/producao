@@ -1311,7 +1311,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       </select></div>
   </div>
   <nav><div class="abas-env"><div class="abas">
-    <button class="aba oculto" id="abaBtnChao" data-aba="chao" onclick="trocarAba('chao')">Resumo</button>
+    <button class="aba oculto" id="abaBtnChao" data-aba="chao" onclick="trocarAba('chao')">Gestão à Vista</button>
     <button class="aba ativa" data-aba="painel" onclick="trocarAba('painel')">Painel</button>
     <button class="aba" data-aba="analise" onclick="trocarAba('analise')">Itens</button>
     <button class="aba" data-aba="analisemais" onclick="trocarAba('analisemais')">Análise+</button>
@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.405.0';
+const APP_VER = '4.406.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4764,7 +4764,7 @@ let abasPermitidas = ['painel'];
    'rh' (Diagnóstico RH) também fica FORA: ela não olha abasPermitidas, é liberada
    pelo sinalizador souRH. Pôr aqui criaria um checkbox que não liberaria nada. */
 const ABAS = [
-  { id: 'chao', nome: 'Resumo' }, { id: 'painel', nome: 'Painel' }, { id: 'analise', nome: 'Itens' },
+  { id: 'chao', nome: 'Gestão à Vista' }, { id: 'painel', nome: 'Painel' }, { id: 'analise', nome: 'Itens' },
   { id: 'analisemais', nome: 'Análise+' },
   { id: 'estrategia', nome: 'Análise de Tendência' },
   { id: 'ano', nome: 'Resumo Anual' },
@@ -8385,7 +8385,7 @@ function _selPerDaAba() {
    "Manutenção / Engenharia" por extenso — quem está no computador tem largura
    de sobra e o nome inteiro é mais claro. O nome longo fica guardado no próprio
    botão (dataset.longo), então girar o aparelho devolve ele. */
-const ABA_CURTA = { estrategia: 'Tendência', manut: 'Manutenção', comercial: 'Comercial',
+const ABA_CURTA = { chao: 'Gestão à Vista', estrategia: 'Tendência', manut: 'Manutenção', comercial: 'Comercial',
   anrec: 'Recurso', organograma: 'Pessoas', usuarios: 'Acesso', rh: 'RH' };
 /* ==================== TRAVÔMETRO (22/08/2026) ====================
    João: "verifique minuciosamente o que está travando". A abertura já está
@@ -29022,6 +29022,9 @@ function _anoMesesFrescos(ano) {
    senão o setor escolhido no topo; senão a fábrica (com pílulas para trocar). */
 let _chaoCache = {};
 let _chaoSetor = null;
+let _chaoDados = {};          // por escopo: { MQ, dias7, nomes } — alimenta a lista por turno
+let _chaoNomes = null;        // cod -> nome (tabela maquinas)
+let _chaoTurnoAberto = '';
 function chaoEscolher(s) { _chaoSetor = s || ''; chaoAbrir(); }
 async function chaoAbrir(forcar) {
   const w = $('chaoWrap'); if (!w) return;
@@ -29066,9 +29069,13 @@ async function chaoAbrir(forcar) {
     const vazio = () => ({ prod: 0, perda: 0, par: 0, mot: {}, bl: { 'Manhã': { prod: 0, perda: 0, par: 0 }, 'Tarde': { prod: 0, perda: 0, par: 0 }, 'Noite': { prod: 0, perda: 0, par: 0 } } });
     const D = {};
     const dd = d => { const k = String(d).slice(0, 10); return D[k] || (D[k] = vazio()); };
-    P.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.prod += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].prod += p; });
-    X.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.perda += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].perda += p; });
+    /* por máquina × bloco, só do mês: alimenta a lista que abre ao tocar no turno */
+    const MQ = {};
+    const mq = (c, b) => { const k = String(parseInt(c, 10)); const m = MQ[k] || (MQ[k] = { 'Manhã': { prod: 0, perda: 0, par: null, dias: {} }, 'Tarde': { prod: 0, perda: 0, par: null, dias: {} }, 'Noite': { prod: 0, perda: 0, par: null, dias: {} } }); return m[b]; };
+    P.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const d = String(x.dia).slice(0, 10), v = dd(x.dia), p = +x.peso || 0; v.prod += p; const b = blocoTurno(x.turno, d); if (v.bl[b]) { v.bl[b].prod += p; if (d >= mes0) { const q = mq(x.recurso_cod, b); q.prod += p; q.dias[d] = (q.dias[d] || 0) + p; } } });
+    X.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const d = String(x.dia).slice(0, 10), v = dd(x.dia), p = +x.peso || 0; v.perda += p; const b = blocoTurno(x.turno, d); if (v.bl[b]) { v.bl[b].perda += p; if (d >= mes0) mq(x.recurso_cod, b).perda += p; } });
     R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; const v = dd(x.dia), h = +x.tempo_horas || 0; v.par += h; const m = x.motivo_desc || '?'; v.mot[m] = (v.mot[m] || 0) + h; });
+    if (!_chaoNomes) { try { const { data } = await sb.from('maquinas').select('codigo,modelo'); _chaoNomes = {}; (data || []).forEach(m => { _chaoNomes[String(parseInt(m.codigo, 10))] = m.modelo || ''; }); } catch (_) { _chaoNomes = {}; } }
     /* metas: por dia e por bloco, com a régua de dia do Painel */
     const fatorDia = d => { const t = tipoDia(d); return t === 'domingo' || t === 'folga' ? 0 : (t === 'sabado' || t === 'reduzido') ? EQ_DIA_REDUZIDO : 1; };
     const metaBloco = b => { let s = 0, ok = false; cods.forEach(c => { const m = metasData && metasData[c]; if (m && m[b]) { s += m[b]; ok = true; } }); return ok ? s : null; };
@@ -29113,13 +29120,13 @@ async function chaoAbrir(forcar) {
     /* 2) turnos do mês */
     html += '<div class="card" style="padding:14px 15px">' + tit('turnos · ' + nomeMes)
       + BL.map(b => { const o = M.bl[b], mb = metaBlMes(b), r = mb ? o.prod / mb : null, pp = pct(o.perda, o.prod + o.perda);
-        return '<div style="display:grid;grid-template-columns:78px 1fr 1fr 1fr;gap:6px;align-items:center;padding:8px 0;border-top:1px solid var(--linha)">'
-          + '<b style="font-size:13px">' + (b === 'Manhã' ? '🌅' : b === 'Tarde' ? '☀️' : '🌙') + ' ' + b + '</b>'
+        return '<div onclick="chaoTurno(\'' + b + '\')" style="cursor:pointer;display:grid;grid-template-columns:78px 1fr 1fr 1fr;gap:6px;align-items:center;padding:8px 0;border-top:1px solid var(--linha)">'
+          + '<b style="font-size:13px">' + (b === 'Manhã' ? '🌅' : b === 'Tarde' ? '☀️' : '🌙') + ' ' + b + ' <span style="font-size:10px;color:var(--fraco-2)">▾</span></b>'
           + '<div style="text-align:center"><div style="font-size:18px">' + face(r) + '</div><b style="color:' + corR(r) + '">' + fmtKg(o.prod) + '</b><div class="desc" style="font-size:10px">' + (mb ? 'meta ' + fmtKg(mb) : 'sem meta') + '</div></div>'
           + '<div style="text-align:center"><div style="font-size:18px">🗑️</div><b style="color:' + corP(pp) + '">' + fpct(pp) + '</b><div class="desc" style="font-size:10px">' + fmtKg(o.perda) + '</div></div>'
           + '<div style="text-align:center"><div style="font-size:18px">⏸️</div><b id="chaoParBl_' + b + '">…</b><div class="desc" style="font-size:10px">parada</div></div>'
-          + '</div>'; }).join('')
-      + '</div>';
+          + '</div><div id="chaoTurnoBox_' + b + '"></div>'; }).join('')
+      + '<p class="desc" style="font-size:10.5px;margin:6px 0 0">Toque num turno para ver máquina por máquina.</p></div>';
     /* 3) último dia */
     html += '<div class="card" style="padding:14px 15px">' + tit((ult === hoje ? 'Hoje' : 'Último dia') + ' · ' + dLabel(ult)) + trio(U, metaDia(ult)) + '</div>';
     /* 4) 7 dias em barras */
@@ -29141,6 +29148,8 @@ async function chaoAbrir(forcar) {
         + '<p class="desc" style="font-size:11px;margin:10px 0 0">Verde bateu a meta · amarelo chegou perto (90%) · vermelho ficou longe. Tracejado = meta do dia (sábado vale menos, domingo não tem). Perda é o quanto do que saiu da máquina foi para o lixo. Paradas em revisão não entram.</p></div>';
     }
     _chaoCache[S] = { t: Date.now(), html };
+    _chaoDados[S] = { MQ, dias7: dias.slice(), metaBloco, fatorDia, diasMes };
+    _chaoTurnoAberto = '';
     w.innerHTML = html;
     try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html })); } catch (_) { }
     _chaoParadasTurno(S, cods, mes0, ult, noEscopo);
@@ -29151,12 +29160,47 @@ async function chaoAbrir(forcar) {
 /* paradas por turno do mês: a única conta que precisa da hora de início de cada
    parada (régua minuto a minuto do app). Chega depois e preenche as três
    células, sem segurar o resto da tela. */
+/* 02/09/2026 (João): tocar no turno abre a lista de todas as máquinas daquele
+   bloco no mês — sparkline dos últimos 7 dias e produção, perda e parada de
+   cada uma. Ordenada por produção. Parada aparece "…" até a conta por turno
+   chegar. */
+function chaoTurno(b, manter) {
+  const S = _chaoSetor || '', dados = _chaoDados[S]; if (!dados) return;
+  ['Manhã', 'Tarde', 'Noite'].forEach(x => { const el = $('chaoTurnoBox_' + x); if (el && x !== b) el.innerHTML = ''; });
+  const box = $('chaoTurnoBox_' + b); if (!box) return;
+  if (!manter && _chaoTurnoAberto === b) { box.innerHTML = ''; _chaoTurnoAberto = ''; return; }
+  _chaoTurnoAberto = b;
+  const MQ = dados.MQ, dias7 = dados.dias7;
+  const mb = dados.metaBloco, fd = dados.fatorDia, dm = dados.diasMes;
+  const cods = Object.keys(MQ).filter(k => MQ[k][b].prod > 0 || MQ[k][b].perda > 0 || (MQ[k][b].par || 0) > 0).sort((p, q) => MQ[q][b].prod - MQ[p][b].prod);
+  if (!cods.length) { box.innerHTML = '<p class="desc" style="font-size:11.5px;margin:4px 0 8px">Nenhuma máquina rodou neste turno no mês.</p>'; return; }
+  const spark = vals => { const mx = Math.max(...vals, 1), W = 70, H = 22, n = vals.length; const pts = vals.map((v, i) => (n > 1 ? (i * W / (n - 1)) : W / 2).toFixed(1) + ',' + (H - 2 - (v / mx) * (H - 4)).toFixed(1)).join(' ');
+    return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" style="display:block"><polyline points="' + pts + '" fill="none" stroke="#2E5BA8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' + vals.map((v, i) => '<circle cx="' + (n > 1 ? (i * W / (n - 1)) : W / 2).toFixed(1) + '" cy="' + (H - 2 - (v / mx) * (H - 4)).toFixed(1) + '" r="1.6" fill="#2E5BA8"/>').join('') + '</svg>'; };
+  box.innerHTML = '<div style="background:var(--leve-2);border-radius:10px;padding:6px 8px;margin:2px 0 8px">'
+    + '<div style="display:grid;grid-template-columns:1fr 70px 52px 46px 46px;gap:6px;font-size:9.5px;color:var(--fraco-2);font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 0"><span>máquina · ' + b.toLowerCase() + ' no mês</span><span>7 dias</span><span style="text-align:right">prod.</span><span style="text-align:right">perda</span><span style="text-align:right">parada</span></div>'
+    + cods.map(k => { const q = MQ[k][b]; const vals = dias7.map(d => q.dias[d] || 0);
+      const pp = (q.prod + q.perda) > 0 ? 100 * q.perda / (q.prod + q.perda) : null;
+      const nome = (_chaoNomes && _chaoNomes[k]) ? _chaoNomes[k] : '';
+      return '<div style="display:grid;grid-template-columns:1fr 70px 52px 46px 46px;gap:6px;align-items:center;padding:5px 0;border-top:1px solid var(--linha)">'
+        + '<div style="min-width:0"><b style="font-size:12.5px">' + escapeHtml(k) + '</b>' + (nome ? '<div class="desc" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(nome) + '</div>' : '') + '</div>'
+        + spark(vals)
+        + '<b style="text-align:right;font-size:12px">' + fmtKg(q.prod) + '</b>'
+        + '<span style="text-align:right;font-size:11.5px;font-weight:800;color:' + (pp == null ? '#9AA5B1' : pp <= 2 ? '#2E7A4C' : pp <= 4 ? '#C98A00' : '#B3261E') + '">' + (pp == null ? '—' : pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%') + '</span>'
+        + '<span style="text-align:right;font-size:11.5px;font-weight:800">' + (q.par == null ? '…' : Math.round(q.par) + ' h') + '</span>'
+        + '</div>'; }).join('')
+    + '</div>';
+}
 async function _chaoParadasTurno(S, cods, mes0, ult, noEscopo) {
   try {
     const R = await _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,tempo_horas,inicio').gte('dia', mes0).lte('dia', ult).in('recurso_cod', cods).is('revisar', null).order('id'));
     const acc = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
-    R.forEach(x => { if (!noEscopo(x.recurso_cod)) return; try { const t = tempoParadaPorTurno(x.inicio, +x.tempo_horas || 0, String(x.dia).slice(0, 10)); Object.keys(acc).forEach(b => { acc[b] += (t[b] || 0); }); } catch (_) { } });
+    const dados = _chaoDados[S], MQ = dados ? dados.MQ : null;
+    R.forEach(x => { if (!noEscopo(x.recurso_cod)) return; try { const t = tempoParadaPorTurno(x.inicio, +x.tempo_horas || 0, String(x.dia).slice(0, 10));
+      const k = String(parseInt(x.recurso_cod, 10));
+      Object.keys(acc).forEach(b => { acc[b] += (t[b] || 0); if (MQ && MQ[k]) MQ[k][b].par = (MQ[k][b].par || 0) + (t[b] || 0); }); } catch (_) { } });
+    if (MQ) Object.keys(MQ).forEach(k => Object.keys(acc).forEach(b => { if (MQ[k][b].par == null) MQ[k][b].par = 0; }));
     if ((_chaoSetor || '') !== S) return;
+    if (_chaoTurnoAberto) { try { chaoTurno(_chaoTurnoAberto, true); } catch (_) { } }
     Object.keys(acc).forEach(b => { const el = document.getElementById('chaoParBl_' + b); if (el) el.textContent = Math.round(acc[b]) + ' h'; });
     const ck = _chaoCache[S]; const w = $('chaoWrap');
     if (ck && w) { ck.html = w.innerHTML; try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html: ck.html })); } catch (_) { } }
