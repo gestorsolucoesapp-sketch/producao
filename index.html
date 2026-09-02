@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.404.0';
+const APP_VER = '4.405.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -29031,7 +29031,16 @@ async function chaoAbrir(forcar) {
   const S = _chaoSetor || '';
   const ck = _chaoCache[S];
   if (ck && !forcar && (Date.now() - ck.t) < 5 * 60 * 1000) { w.innerHTML = ck.html; return; }
-  w.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Olhando ' + (S ? escapeHtml(S) : 'a fábrica') + '…</p>';
+  /* ===== 02/09/2026 — ABRE INSTANTÂNEO (João: "tem como fazer foto?") =====
+     Duas camadas: (1) o último desenho fica guardado no aparelho e aparece
+     na hora, sem esperar rede; (2) os números vêm da FOTO do banco
+     (mv_chao_dia / mv_chao_par: dia × máquina × turno já somados, 60 dias),
+     que é ~10× menos linhas que as tabelas cruas. Setor e bloco de turno
+     continuam sendo régua do app. A única conta que ainda lê parada crua é
+     o corte por turno das paradas — e ela chega depois, sem travar a tela. */
+  let _mostrouGuardado = false;
+  try { const g = JSON.parse(localStorage.getItem('chao_html_' + S) || 'null'); if (g && g.html && !forcar) { w.innerHTML = g.html; _mostrouGuardado = true; } } catch (_) { }
+  if (!_mostrouGuardado) w.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Olhando ' + (S ? escapeHtml(S) : 'a fábrica') + '…</p>';
   try {
     await getMetas();
     const hoje = hojeISO();
@@ -29046,19 +29055,20 @@ async function chaoAbrir(forcar) {
     const mes0 = ult.slice(0, 7) + '-01';
     const de7 = (() => { const d = new Date(ult + 'T12:00:00'); d.setDate(d.getDate() - 12); return d.toISOString().slice(0, 10); })();
     const de = de7 < mes0 ? de7 : mes0;
-    const [P, X, R] = await Promise.all([
-      _leTudoFlx(() => sb.from('producao_resumo').select('dia,turno,recurso_cod,peso').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id')),
-      _leTudoFlx(() => sb.from('perdas').select('dia,turno,recurso_cod,peso').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id')),
-      _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,motivo_desc,tempo_horas,inicio,revisar').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('id'))
+    const [PX, R] = await Promise.all([
+      _leTudoFlx(() => sb.from('mv_chao_dia').select('dia,turno,recurso_cod,prod,perda').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('dia').order('recurso_cod').order('turno')),
+      _leTudoFlx(() => sb.from('mv_chao_par').select('dia,recurso_cod,motivo_desc,horas').gte('dia', de).lte('dia', ult).in('recurso_cod', cods).order('dia').order('recurso_cod').order('motivo_desc'))
     ]);
+    const P = PX.map(x => ({ dia: x.dia, turno: x.turno, recurso_cod: x.recurso_cod, peso: x.prod }));
+    const X = PX.map(x => ({ dia: x.dia, turno: x.turno, recurso_cod: x.recurso_cod, peso: x.perda }));
+    R.forEach(x => { x.tempo_horas = x.horas; x.revisar = null; x.inicio = null; });
     const BL = ['Manhã', 'Tarde', 'Noite'];
     const vazio = () => ({ prod: 0, perda: 0, par: 0, mot: {}, bl: { 'Manhã': { prod: 0, perda: 0, par: 0 }, 'Tarde': { prod: 0, perda: 0, par: 0 }, 'Noite': { prod: 0, perda: 0, par: 0 } } });
     const D = {};
     const dd = d => { const k = String(d).slice(0, 10); return D[k] || (D[k] = vazio()); };
     P.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.prod += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].prod += p; });
     X.forEach(x => { if (!noEscopo(x.recurso_cod)) return; const v = dd(x.dia), p = +x.peso || 0; v.perda += p; const b = blocoTurno(x.turno, String(x.dia).slice(0, 10)); if (v.bl[b]) v.bl[b].perda += p; });
-    R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; const v = dd(x.dia), h = +x.tempo_horas || 0; v.par += h; const m = x.motivo_desc || '?'; v.mot[m] = (v.mot[m] || 0) + h;
-      try { const t = tempoParadaPorTurno(x.inicio, h, String(x.dia).slice(0, 10)); BL.forEach(b => { v.bl[b].par += (t[b] || 0); }); } catch (_) { } });
+    R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; const v = dd(x.dia), h = +x.tempo_horas || 0; v.par += h; const m = x.motivo_desc || '?'; v.mot[m] = (v.mot[m] || 0) + h; });
     /* metas: por dia e por bloco, com a régua de dia do Painel */
     const fatorDia = d => { const t = tipoDia(d); return t === 'domingo' || t === 'folga' ? 0 : (t === 'sabado' || t === 'reduzido') ? EQ_DIA_REDUZIDO : 1; };
     const metaBloco = b => { let s = 0, ok = false; cods.forEach(c => { const m = metasData && metasData[c]; if (m && m[b]) { s += m[b]; ok = true; } }); return ok ? s : null; };
@@ -29107,7 +29117,7 @@ async function chaoAbrir(forcar) {
           + '<b style="font-size:13px">' + (b === 'Manhã' ? '🌅' : b === 'Tarde' ? '☀️' : '🌙') + ' ' + b + '</b>'
           + '<div style="text-align:center"><div style="font-size:18px">' + face(r) + '</div><b style="color:' + corR(r) + '">' + fmtKg(o.prod) + '</b><div class="desc" style="font-size:10px">' + (mb ? 'meta ' + fmtKg(mb) : 'sem meta') + '</div></div>'
           + '<div style="text-align:center"><div style="font-size:18px">🗑️</div><b style="color:' + corP(pp) + '">' + fpct(pp) + '</b><div class="desc" style="font-size:10px">' + fmtKg(o.perda) + '</div></div>'
-          + '<div style="text-align:center"><div style="font-size:18px">⏸️</div><b>' + Math.round(o.par) + ' h</b><div class="desc" style="font-size:10px">parada</div></div>'
+          + '<div style="text-align:center"><div style="font-size:18px">⏸️</div><b id="chaoParBl_' + b + '">…</b><div class="desc" style="font-size:10px">parada</div></div>'
           + '</div>'; }).join('')
       + '</div>';
     /* 3) último dia */
@@ -29132,9 +29142,25 @@ async function chaoAbrir(forcar) {
     }
     _chaoCache[S] = { t: Date.now(), html };
     w.innerHTML = html;
+    try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html })); } catch (_) { }
+    _chaoParadasTurno(S, cods, mes0, ult, noEscopo);
   } catch (e) {
-    w.innerHTML = '<div class="card"><p class="desc">Não consegui montar o resumo: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
+    if (!_mostrouGuardado) w.innerHTML = '<div class="card"><p class="desc">Não consegui montar o resumo: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
   }
+}
+/* paradas por turno do mês: a única conta que precisa da hora de início de cada
+   parada (régua minuto a minuto do app). Chega depois e preenche as três
+   células, sem segurar o resto da tela. */
+async function _chaoParadasTurno(S, cods, mes0, ult, noEscopo) {
+  try {
+    const R = await _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,tempo_horas,inicio').gte('dia', mes0).lte('dia', ult).in('recurso_cod', cods).is('revisar', null).order('id'));
+    const acc = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+    R.forEach(x => { if (!noEscopo(x.recurso_cod)) return; try { const t = tempoParadaPorTurno(x.inicio, +x.tempo_horas || 0, String(x.dia).slice(0, 10)); Object.keys(acc).forEach(b => { acc[b] += (t[b] || 0); }); } catch (_) { } });
+    if ((_chaoSetor || '') !== S) return;
+    Object.keys(acc).forEach(b => { const el = document.getElementById('chaoParBl_' + b); if (el) el.textContent = Math.round(acc[b]) + ' h'; });
+    const ck = _chaoCache[S]; const w = $('chaoWrap');
+    if (ck && w) { ck.html = w.innerHTML; try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html: ck.html })); } catch (_) { } }
+  } catch (_) { Object.keys({ 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }).forEach(b => { const el = document.getElementById('chaoParBl_' + b); if (el && el.textContent === '…') el.textContent = '—'; }); }
 }
 async function anoAbrir(forcar) {
   const ano = _anoSel || new Date().getFullYear();
@@ -32218,6 +32244,11 @@ async function gravar(id, substituir = false) {
        e a importação seguia acumulando. O relatório é uma FOTO da carteira por
        região: o pedido novo manda. Removidas as 1.051 linhas velhas à mão, e
        daqui pra frente a substituição é por PEDIDO, depois de gravar. */
+    /* 02/09/2026: a foto do Resumo (mv_chao_*) acompanha o que acabou de entrar */
+    if (['producao_resumo', 'perdas', 'paradas'].includes(mapa.tabela)) {
+      try { await sb.rpc('refrescar_chao'); } catch (_) { }
+      try { _chaoCache = {}; Object.keys(localStorage).filter(k => k.indexOf('chao_html_') === 0).forEach(k => localStorage.removeItem(k)); } catch (_) { }
+    }
     if (r.rotina === 'RVEN002' && Array.isArray(linhas) && linhas.length) {
       try {
         const peds = [...new Set(linhas.map(x => String(x.pedido)).filter(Boolean))];
