@@ -3861,7 +3861,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.396.0';
+const APP_VER = '4.397.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -12825,17 +12825,27 @@ const OS_COLS = 'situacao,data_encerramento,id,os_num,data_abertura,data_parada,
 /* desde = piso de data_abertura (AAAA-MM-DD). Sem ele, traz a tabela inteira.
    Com o ano importado sao ~6 mil OS e ~2 MB por carga; o Painel e o sino nao
    precisam disso, so a aba Manutencao precisa do historico completo. */
+/* ===== 01/09/2026 — A ABA MANUTENÇÃO DEMORAVA A ABRIR (João) =====
+   São 6.234 OS e o PostgREST devolve no máximo 1.000 por vez: eram SETE idas ao
+   banco, uma esperando a outra, com ~2 MB no total antes de qualquer coisa
+   aparecer na tela. Agora as páginas vão de QUATRO em quatro, ao mesmo tempo —
+   a mesma quantidade de dado, um quarto do tempo de espera. */
 async function buscarTodasOS(cols, desde) {
-  const passo = 1000; let ini = 0, tudo = [];
-  while (ini < 20000) {
-    let q = sb.from('manutencao_os').select(cols || OS_COLS);
-    if (desde) q = q.gte('data_abertura', String(desde).slice(0, 10));
-    const { data, error } = await q
-      .order('data_abertura', { ascending: false }).range(ini, ini + passo - 1);
-    if (error) break;
-    tudo = tudo.concat(data || []);
-    if (!data || data.length < passo) break;
-    ini += passo;
+  const passo = 1000, lote = 4; let ini = 0, tudo = [], fim = false;
+  while (!fim && ini < 20000) {
+    const faixas = [];
+    for (let k = 0; k < lote; k++) faixas.push(ini + k * passo);
+    const res = await Promise.all(faixas.map(de => {
+      let q = sb.from('manutencao_os').select(cols || OS_COLS);
+      if (desde) q = q.gte('data_abertura', String(desde).slice(0, 10));
+      return q.order('data_abertura', { ascending: false }).range(de, de + passo - 1);
+    }));
+    for (const { data, error } of res) {
+      if (error) { fim = true; break; }
+      tudo = tudo.concat(data || []);
+      if (!data || data.length < passo) fim = true;
+    }
+    ini += passo * lote;
   }
   return tudo;
 }
@@ -12851,9 +12861,18 @@ async function carregarManut() {
   renderRoteamento();
   const sel = $('manutSetor');
   if (sel.options.length <= 1) sel.innerHTML = '<option value="">Todos</option>' + AREAS_OS.map(s => `<option value="${s}">${s}</option>`).join('');
+  /* ===== 01/09/2026 — MOSTRA O RECENTE PRIMEIRO =====
+     A tela esperava as 6.234 OS do histórico inteiro para desenhar qualquer
+     coisa. Agora desenha com os últimos 90 dias (uma ida ao banco, é o que o
+     João olha) e completa o histórico logo atrás, redesenhando quando chega.
+     Se a primeira carga falhar, a completa ainda tenta — não fica tela vazia. */
+  try {
+    const recente = await buscarTodasOS(null, _osPiso90());
+    if (recente && recente.length) { osLista = recente; renderManut(); }
+  } catch (_) { }
   try {
     osLista = await buscarTodasOS();
-  } catch (_) { osLista = []; }
+  } catch (_) { osLista = osLista || []; }
   renderManut();
   try { carregarManuais(); } catch (_) {}
 }
