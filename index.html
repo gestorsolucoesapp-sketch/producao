@@ -3853,7 +3853,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.391.0';
+const APP_VER = '4.392.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -13280,10 +13280,11 @@ async function mntFerrCarregar() {
   if (_mntFerrCache && _mntFerrCache.chave === chave) { mntFerrRender(); return; }
   host.innerHTML = '<div class="card"><p class="desc"><span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> carregando paradas de ferramental…</p></div>';
   try {
-    const { data, error } = await sb.from('paradas')
+    /* 01/09/2026 (revisao do importador/teto): sem paginar, um periodo longo
+       devolvia so as 1.000 primeiras paradas de ferramental, caladas. */
+    const data = await _leTudoFlx(() => sb.from('paradas')
       .select('dia,motivo_cod,motivo_desc,recurso_cod,recurso_nome,tempo_horas,op,item_desc,inicio,fim')
-      .gte('dia', de).lte('dia', ate).in('motivo_cod', MNT_FERR_COD);
-    if (error) throw error;
+      .gte('dia', de).lte('dia', ate).in('motivo_cod', MNT_FERR_COD).order('id'));
     _mntFerrCache = { chave: chave, rows: data || [] };
     mntFerrRender();
   } catch (e) {
@@ -27372,8 +27373,9 @@ async function _origemPorOP(rows) {
   const ops = [...new Set(alvo.map(r => String(r.op).trim()))];
   let data = [];
   try {
-    const q = await sb.from('producao').select('op,recurso_cod,recurso_nome').in('op', ops);
-    data = q.data || [];
+    /* 01/09/2026 — muitas OPs passam de 1.000 linhas e o mapa OP->maquina
+       vinha pela metade, sem aviso. Paginado. */
+    data = await _leTudoFlx(() => sb.from('producao').select('op,recurso_cod,recurso_nome').in('op', ops).order('id'));
   } catch (_) { return null; }
   const porOp = {};
   data.forEach(p => {
@@ -27493,7 +27495,7 @@ async function detPerdaApont(cod, bloco, setor, tipoEnc) {
   try {
     const ops = [...new Set(rows.map(r => r.op).filter(o => o != null && String(o).trim() !== '').map(o => String(o).trim()))];
     if (ops.length) {
-      const { data } = await sb.from('producao').select('op,dia,turno,data_inicio,data_fim').eq('recurso_cod', String(cod)).in('op', ops);
+      const data = await _leTudoFlx(() => sb.from('producao').select('op,dia,turno,data_inicio,data_fim').eq('recurso_cod', String(cod)).in('op', ops).order('id'));
       (data || []).forEach(p => {
         const k = String(p.op).trim() + '|' + String(p.dia).slice(0, 10) + '|' + p.turno;
         const o = (spanMap[k] = spanMap[k] || { ini: null, fim: null });
