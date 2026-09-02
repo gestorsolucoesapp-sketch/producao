@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.424.0';
+const APP_VER = '4.425.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41120,6 +41120,45 @@ async function _leTudoFlx(mkQuery) {
   }
   return out;
 }
+/* ===== 02/09/2026 (João: "faça um jeito de avisar") =====
+   O teto de 1.000 do PostgREST não dá erro: devolve menos e cala. Já mordeu
+   cinco vezes. Este vigia envolve o `fetch` do navegador e olha o cabeçalho
+   `content-range` que o próprio PostgREST manda em TODA resposta: quando o
+   pedaço devolvido tem exatamente 1.000 linhas e não houve `Range` pedindo
+   página, é corte silencioso — a consulta queria mais e levou mil.
+   Não conserta a consulta (isso é caso a caso); AVISA, e é isso que faltava.
+   Só liga para quem administra, para não assustar o chão de fábrica com uma
+   mensagem técnica. */
+let _teto1k = [];
+(function _vigiaTeto() {
+  try {
+    if (!window.fetch || window.__vigiaTeto) return; window.__vigiaTeto = true;
+    const orig = window.fetch.bind(window);
+    window.fetch = async function (rec, init) {
+      const r = await orig(rec, init);
+      try {
+        const url = String((rec && rec.url) || rec || '');
+        if (url.indexOf('/rest/v1/') > 0) {
+          const cr = r.headers.get('content-range');       // ex.: "0-999/*"
+          const pediuPagina = !!((init && init.headers && (init.headers.Range || init.headers.range))
+            || (rec && rec.headers && rec.headers.get && rec.headers.get('Range')));
+          if (cr && !pediuPagina) {
+            const m = /^(\d+)-(\d+)\//.exec(cr);
+            if (m && (+m[2] - +m[1] + 1) === 1000) {
+              const alvo = decodeURIComponent(url.split('/rest/v1/')[1] || '').split('?')[0];
+              if (_teto1k.indexOf(alvo) < 0) {
+                _teto1k.push(alvo);
+                console.warn('[TETO 1000] ' + alvo + ' devolveu exatamente 1.000 linhas — pode estar cortando. Falta paginar (_leTudoFlx).');
+                try { if (typeof _tintaVeDinheiro === 'function' ? _tintaVeDinheiro() : false) toast('⚠️ ' + alvo + ' bateu no teto de 1.000 linhas — pode estar faltando dado nesta tela'); } catch (_) { }
+              }
+            }
+          }
+        }
+      } catch (_) { }
+      return r;
+    };
+  } catch (_) { }
+})();
 /* ===== 25/08/2026 (João: "permita clicar e ver quais pedidos") =====
    O card dizia "214 pedidos passaram de 3 dias no COMERCIAL" e parava aí — o
    número acusava, mas não dava para agir. Agora abre a lista, do mais demorado
