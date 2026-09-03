@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.429.0';
+const APP_VER = '4.430.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8166,6 +8166,80 @@ function mtFaixaTurno(bl, extra) {
 }
 const MT_BG_T = b => (b === 'Manhã' ? '#FDF5E6' : b === 'Tarde' ? '#EDF7EF' : '#EDF3FA');
 
+let _amVista = 'cards';
+let _amArvAberto = {};
+async function amVista(v) { _amVista = v; if (v === 'arvore') { try { await getMtBlocos(); } catch (_) { } if (!_chaoNomes) { try { const { data } = await sb.from('maquinas').select('codigo,modelo'); _chaoNomes = {}; (data || []).forEach(m => { _chaoNomes[String(parseInt(m.codigo, 10))] = m.modelo || ''; }); } catch (_) { _chaoNomes = {}; } } } renderAnaliseMais(); }
+function amArvToggle(k) { _amArvAberto[k] = !_amArvAberto[k]; renderAnaliseMais(); }
+/* ===== 03/09/2026 — ÁRVORE SETOR → OPERADOR → MÁQUINA =====
+   Inspirada na árvore de decomposição que o João mandou: cada nó tem uma
+   barra que sai do meio (verde para a direita = acima da meta, vermelha para a
+   esquerda = abaixo), produção, perda %, horas paradas e sparkline do período.
+   Quem opera cada máquina em cada bloco vem do ORGANOGRAMA
+   (v_org_maquina_equipe, a mesma fonte do "máquina × turno"). Uma máquina sem
+   operador cadastrado cai em "sem operador". Meta = cadastro por máquina e
+   bloco × fator do dia (sábado reduzido, domingo zero), somada nos dias do
+   período. As mesmas réguas do resto do app; só o desenho é novo. */
+function _amArvore(E, setorLbl) {
+  const BL = ['Manhã', 'Tarde', 'Noite'];
+  const dias = [...new Set(E.prod.map(r => String(r.dia).slice(0, 10)))].sort();
+  if (!dias.length) return '<div class="card"><p class="desc">Sem produção no período.</p></div>';
+  const fator = d => { const t = tipoDia(d); return t === 'domingo' || t === 'folga' ? 0 : (t === 'sabado' || t === 'reduzido') ? EQ_DIA_REDUZIDO : 1; };
+  const somaF = dias.reduce((a, d) => a + fator(d), 0);
+  const nome = k => { const e = _mtEquipe && _mtEquipe[k]; if (!e) return null; if (e.operador_pendente) return 'a identificar'; return e.operador ? _mtCurto(e.operador) : null; };
+  /* acumula por máquina|bloco */
+  const MB = {};
+  const mb = (c, b) => { const k = String(parseInt(c, 10)) + '|' + b; return MB[k] || (MB[k] = { cod: String(parseInt(c, 10)), bl: b, prod: 0, perda: 0, par: 0, dias: {}, meta: null }); };
+  E.prod.forEach(r => { const d = String(r.dia).slice(0, 10), b = blocoTurno(r.turno, d); if (!BL.includes(b)) return; const q = mb(r.recurso_cod, b), p = +r.peso || 0; q.prod += p; q.dias[d] = (q.dias[d] || 0) + p; });
+  E.perd.forEach(r => { const d = String(r.dia).slice(0, 10), b = blocoTurno(r.turno, d); if (!BL.includes(b)) return; mb(r.recurso_cod, b).perda += (+r.peso || 0); });
+  E.par.forEach(r => { if (r.revisar) return; const d = String(r.dia).slice(0, 10); try { const t = tempoParadaPorTurno(r.inicio, +r.tempo_horas || 0, d); BL.forEach(b => { if (t[b] > 0) mb(r.recurso_cod, b).par += t[b]; }); } catch (_) { } });
+  Object.values(MB).forEach(q => { const m = metasData && metasData[q.cod]; q.meta = (m && m[q.bl]) ? m[q.bl] * somaF : null; });
+  /* agrupa por operador */
+  const OP = {};
+  Object.values(MB).forEach(q => {
+    const n = nome(q.cod + '|' + q.bl) || 'sem operador';
+    const o = OP[n] || (OP[n] = { nome: n, prod: 0, perda: 0, par: 0, meta: 0, temMeta: false, dias: {}, maqs: [] });
+    o.prod += q.prod; o.perda += q.perda; o.par += q.par; if (q.meta != null) { o.meta += q.meta; o.temMeta = true; }
+    Object.keys(q.dias).forEach(d => { o.dias[d] = (o.dias[d] || 0) + q.dias[d]; });
+    o.maqs.push(q);
+  });
+  const ops = Object.values(OP).sort((a, b) => (b.prod - (b.temMeta ? b.meta : 0)) - (a.prod - (a.temMeta ? a.meta : 0)));
+  const raiz = ops.reduce((a, o) => { a.prod += o.prod; a.perda += o.perda; a.par += o.par; if (o.temMeta) { a.meta += o.meta; a.temMeta = true; } Object.keys(o.dias).forEach(d => { a.dias[d] = (a.dias[d] || 0) + o.dias[d]; }); return a; }, { prod: 0, perda: 0, par: 0, meta: 0, temMeta: false, dias: {} });
+  const maxDesvio = Math.max(1, ...ops.map(o => Math.abs(o.prod - (o.temMeta ? o.meta : o.prod))), ...Object.values(MB).map(q => Math.abs(q.prod - (q.meta != null ? q.meta : q.prod))));
+  /* barra que sai do meio: verde à direita (acima), vermelho à esquerda (abaixo) */
+  const barra = (prod, meta, temMeta, w) => {
+    if (!temMeta) return '<div style="width:' + w + 'px;height:14px;border-radius:7px;background:var(--leve-2)" title="sem meta"></div>';
+    const d = prod - meta, f = Math.min(1, Math.abs(d) / maxDesvio), meio = w / 2, comp = Math.max(3, Math.round(f * meio));
+    return '<div style="position:relative;width:' + w + 'px;height:14px;border-radius:7px;background:var(--leve-2);overflow:hidden" title="' + (d >= 0 ? '+' : '') + fmtKg(d) + ' da meta">'
+      + '<div style="position:absolute;top:0;bottom:0;left:' + (d >= 0 ? meio : meio - comp) + 'px;width:' + comp + 'px;background:' + (d >= 0 ? '#2E7A4C' : '#B3261E') + '"></div>'
+      + '<div style="position:absolute;top:0;bottom:0;left:' + (meio - 1) + 'px;width:2px;background:#3A4856"></div></div>';
+  };
+  const pctP = (perda, prod) => (prod + perda) > 0 ? 100 * perda / (prod + perda) : null;
+  const linha = (rot, sub, o, temMeta, meta, aberto, k, nivel) => {
+    const r = temMeta && meta ? o.prod / meta : null, pp = pctP(o.perda, o.prod);
+    const cor = r == null ? '#3A4856' : r >= 1 ? '#2E7A4C' : r >= 0.9 ? '#C98A00' : '#B3261E';
+    const vals = dias.map(d => o.dias[d] || 0);
+    return '<div ' + (k ? 'onclick="amArvToggle(\'' + k + '\')" style="cursor:pointer;"' : 'style="') + 'display:grid;grid-template-columns:' + (nivel === 0 ? '1fr' : '1fr') + ' 120px 64px;gap:8px;align-items:center;padding:8px 10px;margin-left:' + (nivel * 16) + 'px;border-left:' + (nivel ? '2px solid var(--linha-2s)' : 'none') + ';border-bottom:1px solid var(--linha)">'
+      + '<div style="min-width:0"><div style="display:flex;align-items:baseline;gap:6px"><b style="font-size:' + (nivel === 0 ? 15 : nivel === 1 ? 13.5 : 12.5) + 'px">' + (k ? (aberto ? '▾ ' : '▸ ') : '') + escapeHtml(rot) + '</b>' + (sub ? '<span class="desc" style="font-size:10.5px">' + escapeHtml(sub) + '</span>' : '') + '</div>'
+      + '<div style="font-size:11.5px;margin-top:2px"><b style="color:' + cor + '">' + fmtKg(o.prod) + '</b>' + (temMeta && meta ? '<span class="desc"> · meta ' + fmtKg(meta) + ' · ' + Math.round(r * 100) + '%</span>' : '<span class="desc"> · sem meta</span>')
+      + ' <span style="color:' + (pp == null ? '#9AA5B1' : pp <= 2.5 ? '#2E7A4C' : pp <= 4 ? '#C98A00' : '#B3261E') + ';font-weight:800">🗑️ ' + (pp == null ? '—' : pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%') + '</span>'
+      + ' <span style="font-weight:800">⏸️ ' + Math.round(o.par) + ' h</span></div></div>'
+      + barra(o.prod, meta, temMeta, 120)
+      + sparkSVG(vals, cor, 64, 22)
+      + '</div>';
+  };
+  let html = '<div class="card" style="padding:6px 4px 10px">'
+    + linha(setorLbl, dias.length + ' dia(s) · ' + ops.length + ' operador(es)', raiz, raiz.temMeta, raiz.meta, true, '', 0);
+  ops.forEach(o => {
+    const k = 'op:' + o.nome, ab = !!_amArvAberto[k];
+    html += linha(o.nome, o.maqs.length + ' máquina' + (o.maqs.length > 1 ? 's' : '') + ' · ' + [...new Set(o.maqs.map(q => q.bl))].join('/'), o, o.temMeta, o.meta, ab, k, 1);
+    if (ab) o.maqs.sort((a, b) => b.prod - a.prod).forEach(q => {
+      const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
+      html += linha(q.cod + (nm ? ' ' + nm : ''), q.bl, q, q.meta != null, q.meta || 0, false, '', 2);
+    });
+  });
+  html += '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">Barra: sai do meio — verde à direita quando passou da meta, vermelha à esquerda quando faltou; o tamanho é relativo ao maior desvio da tela. Operador vem do organograma (máquina × turno). Toque no nome para abrir as máquinas.</p></div>';
+  return html;
+}
 function renderAnaliseMais(cache) {
   /* rede de segurança: são SETE lugares que chamam este desenho. Em vez de
      confiar que todos vão lembrar de checar a aba, quem checa é ele. */
@@ -8185,7 +8259,12 @@ function renderAnaliseMais(cache) {
   let setorLbl = _amSetor === 'extrusao' ? 'Extrusão (matéria-prima)' : _amSetor === 'transf' ? 'Todos, menos Extrusão/Injeção/Compressão' : _amSetor === 'todos' ? 'Todos os setores' : _amSetor;
   if (_amMaq) setorLbl = 'Máquina ' + _amMaq;
   const custoKg = _amCustoKg || 8;
-  let html = `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
+  /* 03/09/2026 (João: "quero um esquema assim — setor → operador → máquinas —
+     numa sub-aba da Análise+"). Duas vistas: os cards de sempre e a ÁRVORE. */
+  const _vistaBtn = (v, rot) => '<span onclick="amVista(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:6px 14px;border:1px solid ' + (_amVista === v ? 'var(--navy);background:var(--navy);color:#fff' : 'var(--linha-2s);background:var(--leve-2)') + '">' + rot + '</span>';
+  const _vistas = '<div style="display:flex;gap:6px;justify-content:center;margin:0 0 8px">' + _vistaBtn('cards', '📊 Cards') + _vistaBtn('arvore', '🌳 Setor → operador → máquina') + '</div>';
+  if (_amVista === 'arvore') { box.innerHTML = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` + _amArvore(E, setorLbl); return; }
+  let html = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
     ppBloco() +
     `<div style="background:var(--leve);border-radius:10px;padding:9px;margin-bottom:10px">` +
     `<div style="text-align:center;font-size:12px;font-weight:700;color:var(--txt-2);margin-bottom:7px">📤 Enviar por WhatsApp</div>` +
