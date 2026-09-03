@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.434.0';
+const APP_VER = '4.435.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8169,7 +8169,16 @@ const MT_BG_T = b => (b === 'Manhã' ? '#FDF5E6' : b === 'Tarde' ? '#EDF7EF' : '
 let _amVista = 'cards';
 let _amArvAberto = {};
 async function amVista(v) { _amVista = v; if (v === 'arvore') { try { await getMtBlocos(); } catch (_) { } if (!_chaoNomes) { try { const { data } = await sb.from('maquinas').select('codigo,modelo'); _chaoNomes = {}; (data || []).forEach(m => { _chaoNomes[String(parseInt(m.codigo, 10))] = m.modelo || ''; }); } catch (_) { _chaoNomes = {}; } } } renderAnaliseMais(); }
-function amArvToggle(k) { _amArvAberto[k] = !_amArvAberto[k]; renderAnaliseMais(); }
+/* 03/09/2026 (João: "você ligou o setor inteiro em toda a máquina — tem que
+   ligar o Rafael com as máquinas que ele opera, o Patrick com a dele").
+   O desenho já ligava operador → máquinas DELE, mas só um operador por
+   vez e o + estava caindo fora da área desenhada, então na prática nunca
+   aparecia a ligação. Agora TODOS nascem abertos: cada operador puxa as
+   próprias máquinas de uma vez. O estado guarda explicitamente `false`
+   quando alguém recolhe — por isso o teste é `!== false`. */
+function amArvToggle(k) { _amArvAberto[k] = (_amArvAberto[k] === false); renderAnaliseMais(); }
+function amArvTodos(abrir) { _amArvAberto = {}; if (!abrir) _amArvTodosFechado = true; else _amArvTodosFechado = false; renderAnaliseMais(); }
+let _amArvTodosFechado = false;
 /* ===== 03/09/2026 — ÁRVORE SETOR → OPERADOR → MÁQUINA =====
    Inspirada na árvore de decomposição que o João mandou: cada nó tem uma
    barra que sai do meio (verde para a direita = acima da meta, vermelha para a
@@ -8227,19 +8236,23 @@ function _amArvore(E, setorLbl) {
      um operador aberto (3 colunas) e o card ganha rolagem lateral, porque no
      celular três colunas não cabem sem espremer o texto. */
   const RH1 = 78, RH2 = 70;
-  const temAberto = ops.some(o => !!_amArvAberto['op:' + o.nome]);
+  const _ab = k => _amArvTodosFechado ? (_amArvAberto[k] === true) : (_amArvAberto[k] !== false);
+  const temAberto = ops.some(o => _ab('op:' + o.nome));
+  /* três colunas sempre que houver máquina aberta: setor | operador | máquinas.
+     O + fica ENTRE a coluna do operador e a das máquinas — antes ele estava em
+     x=416 num desenho de 414 de largura, ou seja, fora da tela. */
   const COL = temAberto
-    ? { 0: [8, 112], 1: [150, 300], 2: [340, 556] }
-    : { 0: [8, 128], 1: [176, 404] };
-  const VW = temAberto ? 566 : 414;
-  const PLUS = { 1: temAberto ? 312 : 416 };
+    ? { 0: [8, 112], 1: [150, 318], 2: [372, 596] }
+    : { 0: [8, 128], 1: [176, 380] };
+  const VW = temAberto ? 606 : 414;
+  const PLUS = { 1: temAberto ? 342 : 396 };
   const rows = []; let y = 0;
   const add = (nivel, label, sub, o, key, aberto, hasKids, parentIdx) => {
     const h = nivel === 1 ? RH1 : RH2, idx = rows.length;
     rows.push({ nivel, y, h, label, sub, o, key, aberto, hasKids, parentIdx }); y += h; return idx;
   };
   ops.forEach(o => {
-    const k = 'op:' + o.nome, ab = !!_amArvAberto[k];
+    const k = 'op:' + o.nome, ab = _ab(k);
     const idx = add(1, o.nome, o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/'), o, k, ab, true, -1);
     if (ab) o.maqs.sort((a, b) => b.prod - a.prod).forEach(q => {
       const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
@@ -8277,7 +8290,7 @@ function _amArvore(E, setorLbl) {
     s += '<rect x="' + bx0 + '" y="' + by + '" width="' + bw + '" height="' + BH + '" rx="6.5" fill="#E9EBEF"/>'
       + '<rect x="' + bx0 + '" y="' + by + '" width="' + fillW + '" height="' + BH + '" rx="6.5" fill="' + cor + '"/>';
     if (tickX != null) s += '<rect x="' + (tickX - 0.8) + '" y="' + (by - 3) + '" width="1.6" height="' + (BH + 6) + '" fill="#333"/>';
-    s += '<text x="' + bx0 + '" y="' + (by + BH + 14) + '" font-size="' + (nivel === 2 ? 9.3 : 10) + '" fill="#6B7280">' + fmtKg(o.prod)
+    s += '<text x="' + bx0 + '" y="' + (by + BH + 14) + '" font-size="' + (nivel === 2 ? 9.3 : nivel === 1 && temAberto ? 9.4 : 10) + '" fill="#6B7280">' + fmtKg(o.prod)
       + (o.temMeta ? ' · meta ' + fmtKg(o.meta) + ' · ' : ' · ')
       + (rr != null ? '<tspan font-weight="800" fill="' + cor + '">' + Math.round(rr * 100) + '%</tspan> · ' : '')
       + (pp != null ? '🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% · ' : '') + '⏸️' + Math.round(o.par) + 'h</text>';
@@ -8296,8 +8309,11 @@ function _amArvore(E, setorLbl) {
   });
   const svg = '<svg viewBox="0 0 ' + VW + ' ' + (totalH + 12) + '" width="' + (temAberto ? VW : VW * 0.92) + '" height="' + (totalH + 12) + '" style="display:block;max-width:none;font-family:inherit">'
     + paths + nodes + '</svg>';
-  return '<div class="card" style="padding:8px 4px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch">' + svg
-    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">O setor à esquerda abre em operadores; toque no <b>+</b> para abrir as máquinas daquele operador. Barra: preenchimento é a produção, o tracinho escuro é a meta (verde ≥ meta, laranja perto, vermelho abaixo); a escala compara só entre irmãos do mesmo nível. Operador vem do organograma (máquina × turno).</p></div>';
+  const btnTodos = '<div style="display:flex;justify-content:flex-end;margin:0 8px 6px">'
+    + '<span onclick="amArvTodos(' + (temAberto ? 'false' : 'true') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">'
+    + (temAberto ? '▴ recolher máquinas' : '▾ abrir máquinas de todos') + '</span></div>';
+  return '<div class="card" style="padding:8px 4px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch">' + btnTodos + svg
+    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">Cada operador está ligado às máquinas que ele opera; o <b>+</b> recolhe ou abre um operador. Barra: preenchimento é a produção, o tracinho escuro é a meta (verde ≥ meta, laranja perto, vermelho abaixo); a escala compara só entre irmãos do mesmo nível. Operador vem do organograma (máquina × turno).</p></div>';
 }
 function renderAnaliseMais(cache) {
   /* rede de segurança: são SETE lugares que chamam este desenho. Em vez de
