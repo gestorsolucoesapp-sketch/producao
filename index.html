@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.426.0';
+const APP_VER = '4.427.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -23539,7 +23539,7 @@ async function atrDetalhe(tipo, _mudo) {
         const p = String(x.pedido || '').split('/')[0];
         if (!p || !x.entrega || !(+x.peso_pendente > 0)) return;
         linhas.push({ ped: p, ent: String(x.entrega).slice(0, 10), item: x.item_cod, kg: +x.peso_pendente,
-          cx: _ehCx(x.un) ? (+x.qtd_pendente || 0) : 0 });
+          cx: _ehCx(x.un) ? (+x.qtd_pendente || 0) : 0, qtd: +x.qtd_pendente || 0, un: x.un || '', desc: x.item_desc || '' });
       });
       linhas.sort((a, b) => a.ent.localeCompare(b.ent) || a.ped.localeCompare(b.ped));
       /* 29/08/2026 (Joao: "mas essas 79 de 80 sao desse pedido?"). Nao sao, e
@@ -23565,12 +23565,20 @@ async function atrDetalhe(tipo, _mudo) {
         /* a caixa coberta sai da PROPORCAO da propria linha: o REST196 nao diz
            quantas caixas do estoque cobrem o pedido, so o peso */
         o.cx += l.cx; o.cxCob += (l.kg > 0 ? l.cx * (usa / l.kg) : 0);
+        /* 03/09/2026 (João: "mostre o que está faltando de cada item para
+           completar"). Guarda item a item: pendente, o que o estoque cobre
+           (na mesma proporção acima) e o que falta. A régua é a mesma da
+           fila por entrega — o item pode ter saldo no depósito e mesmo assim
+           faltar aqui, porque alguém na frente já levou. */
+        (o.itens = o.itens || []).push({ item: l.item, desc: l.desc, un: l.un, qtd: l.qtd, kg: l.kg, kgCob: usa,
+          qtdCob: (l.kg > 0 ? l.qtd * (usa / l.kg) : 0) });
       });
       L.forEach(x => {
         const c = cob[x.ped];
         if (!c || !c.kg) { x.parcial = false; x.semReserva = false; x.pctCob = null; return; }
         x.pctCob = c.cob / c.kg * 100;
         x.kgCob = c.cob; x.cxCob = c.cxCob; x.cxTot = c.cx;
+        x.itensFalta = (c.itens || []).filter(i => i.kg - i.kgCob > 0.001);
         x.filaItem = c.fila; x.nPedItem = c.nPed;
         x.parcial = c.cob > 0 && c.cob < c.kg * 0.999;
         x.semReserva = c.cob <= 0;
@@ -23762,6 +23770,14 @@ async function atrDetalhe(tipo, _mudo) {
                 + ' \u00b7 sem OP na fila</b> \u00b7 '
                            : '<b style="color:#1F7A46">\u2713 pronto \u00b7 aguardando sa\u00edda</b> \u00b7 '))
           + 'entrega ' + fmtData(x.ent) + ' · ' + escapeHtml(x.itens.join(', ')) + '</span>'
+          + (x.itensFalta && x.itensFalta.length
+            ? '<div style="margin-top:5px;font-size:11.5px;line-height:1.35">'
+              + x.itensFalta.map(i => { const un = (i.un || 'un').toLowerCase(); const falta = Math.max(0, Math.ceil(i.qtd - i.qtdCob)); const fkg = Math.max(0, i.kg - i.kgCob);
+                return '<div><span style="color:#B3261E;font-weight:800">faltam ' + falta.toLocaleString('pt-BR') + ' ' + escapeHtml(un) + '</span>'
+                  + ' <span class="desc">de ' + Math.round(i.qtd).toLocaleString('pt-BR') + ' · ' + fmtKg(fkg) + '</span>'
+                  + ' · <b>' + escapeHtml(String(i.item)) + '</b> <span class="desc">' + escapeHtml(String(i.desc || '').slice(0, 44)) + '</span></div>'; }).join('')
+              + '</div>'
+            : '')
           + _seloFluxo(x)
           + _seloProduzido(x)
           + '<span onclick="atrJustificar(\'' + x.ped + '\',\'' + tipo + '\')" style="cursor:pointer;font-size:15px;line-height:1" title="justificar">' + (j ? '💬' : '🗨️') + '</span></div>'
