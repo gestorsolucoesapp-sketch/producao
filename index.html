@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.436.0';
+const APP_VER = '4.437.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8180,6 +8180,35 @@ function amArvToggle(k) { _amArvAberto[k] = (_amArvAberto[k] === false); renderA
 function amArvTodos(abrir) { _amArvAberto = {}; if (!abrir) _amArvTodosFechado = true; else _amArvTodosFechado = false; renderAnaliseMais(); }
 let _amArvTodosFechado = false;
 let _amArvUlt = null;
+/* 03/09/2026 (João: "deixe as máquinas como semáforo de cor de atingimento da
+   meta e permita enviar assim pelo WhatsApp"). A árvore tinha régua PRÓPRIA
+   (verde 100 / laranja 90 / vermelho) e o Painel tem a OFICIAL do app. Duas
+   réguas na mesma fábrica é o começo de discussão de reunião: a mesma máquina
+   ficaria amarela numa tela e vermelha na outra. Passa a valer UMA só, a do
+   Painel: acima de 130% ROXO (meta a revisar, não é comemoração — a meta é que
+   está velha), >=100% VERDE, >=85% AMARELO, abaixo VERMELHO e sem meta
+   cadastrada AZUL (que é falta de cadastro, não desempenho ruim).
+   Em escopo GLOBAL de propósito: a tela, o texto e a imagem do WhatsApp
+   chamam as três, e função ancorada dentro de outra já derrubou o app antes
+   (`_seloParadaLonga`, v4.372). */
+const ARV_META_SUSPEITA = 1.30;
+const ARV_COR = { revisar: '#7A3E9D', ok: '#00964D', quase: '#EDB730', ruim: '#D64545', sem: '#3A6FB0' };
+function _arvNivel(r) { return (r == null || !isFinite(r)) ? 'sem' : r > ARV_META_SUSPEITA ? 'revisar' : r >= 1 ? 'ok' : r >= 0.85 ? 'quase' : 'ruim'; }
+const ARV_COR_TXT = { revisar: '#7A3E9D', ok: '#00964D', quase: '#B98900', ruim: '#D64545', sem: '#3A6FB0' };
+function _arvCor(r) { return ARV_COR[_arvNivel(r)]; }
+function _arvCorTxt(r) { return ARV_COR_TXT[_arvNivel(r)]; }
+/* selo da máquina: um lugar só decide o texto e as cores, para a tela e a foto
+   nunca divergirem. Devolve null quando a máquina bateu a meta (aí a bolinha
+   verde já diz tudo e o selo seria ruído). */
+function _arvSelo(r) {
+  const n = _arvNivel(r);
+  if (n === 'sem') return { t: 'sem meta', f: '#EDF2F9', b: '#C3D3E6', c: '#3A6FB0' };
+  if (r != null && r < 1) return { t: '⚠ fora da meta', f: '#FBE9E9', b: '#E0B4B4', c: '#9B2C2C' };
+  if (n === 'revisar') return { t: '⚠ meta a revisar', f: '#F3EAF9', b: '#D6C0E6', c: '#7A3E9D' };
+  return null;
+}
+function _arvLuz(r) { const n = _arvNivel(r); return n === 'sem' ? '\u{1F535}' : n === 'revisar' ? '\u{1F7E3}' : n === 'ok' ? '\u{1F7E2}' : n === 'quase' ? '\u{1F7E1}' : '\u{1F534}'; }
+function _arvRazao(o) { return (o && o.meta != null && o.meta > 0) ? (o.prod / o.meta) : null; }
 /* abre o seletor de período do Análise+ (o <select> existe e está oculto) */
 function amArvPeriodo() {
   const sel = $('amPeriodo'); if (!sel) { toast('Seletor de período indisponível.'); return; }
@@ -8214,13 +8243,13 @@ function amArvImagem() {
       linhas.push({ t: 'maq', o: q });
     });
   });
-  const H = TOPO + linhas.reduce((s, l) => s + (l.t === 'op' ? LINOP : LINMAQ), 0) + 34;
+  const H = TOPO + linhas.reduce((s, l) => s + (l.t === 'op' ? LINOP : LINMAQ), 0) + 62;   /* espaço para a legenda do semáforo e as duas linhas do rodapé */
   const cv = document.createElement('canvas');
   cv.width = W * S; cv.height = H * S;
   const c2 = cv.getContext('2d'); c2.scale(S, S);
   const F = (p, sz) => p + ' ' + sz + 'px -apple-system,Segoe UI,Roboto,sans-serif';
   const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
-  const corDe = (p, m) => (m == null || !(m > 0)) ? '#8B93A1' : (p / m) >= 1 ? '#2E7A46' : (p / m) >= 0.9 ? '#C98A00' : '#B3261E';
+  const corDe = (p, m) => _arvCor((m != null && m > 0) ? p / m : null);   /* mesma régua da tela e do Painel */
   c2.fillStyle = '#fff'; c2.fillRect(0, 0, W, H);
   c2.fillStyle = '#1B2430'; c2.font = F('800', 19);
   c2.fillText(String(A.setor).slice(0, 46), PAD, 28);
@@ -8240,11 +8269,15 @@ function amArvImagem() {
     const meta = ehOp ? (o.temMeta ? o.meta : null) : o.meta;
     const cor = corDe(o.prod, meta);
     const nm = ehOp ? o.nome : (o.cod + ((typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[o.cod]) ? ' ' + String(_chaoNomes[o.cod]).slice(0, 14) : ''));
+    /* a bolinha do semáforo entra também na FOTO — é ela que o pessoal olha no
+       WhatsApp; sem isso a imagem e a tela contariam histórias diferentes. */
+    const tx0 = ehOp ? x0 : x0 + 16;
+    if (!ehOp) { c2.beginPath(); c2.arc(x0 + 5.5, y + 8, 5.5, 0, Math.PI * 2); c2.fillStyle = cor; c2.fill(); }
     c2.fillStyle = '#1B2430'; c2.font = F(ehOp ? '700' : '600', ehOp ? 14 : 12);
-    c2.fillText(String(nm).slice(0, ehOp ? 24 : 22), x0, y + 12);
+    c2.fillText(String(nm).slice(0, ehOp ? 24 : 20), tx0, y + 12);
     c2.fillStyle = '#9AA0A8'; c2.font = F('400', 10);
     const sub = ehOp ? (o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/')) : o.bl;
-    c2.fillText(sub, x0, y + 25);
+    c2.fillText(sub, tx0, y + 25);
     if (ehOp && o.fora && o.fora.length) {
       c2.fillStyle = '#9B2C2C'; c2.font = F('800', 10);
       const ax = x0 + Math.max(90, c2.measureText(sub).width + 14);
@@ -8265,20 +8298,34 @@ function amArvImagem() {
     c2.fillStyle = '#6B7280'; c2.font = F('400', 10.5);
     c2.fillText(t(o.prod) + (meta != null && meta > 0 ? ' · meta ' + t(meta) : ' · sem meta'), bx0, by + bh + 12);
     if (meta != null && meta > 0) {
-      c2.fillStyle = cor; c2.font = F('800', 11); c2.textAlign = 'right';
+      c2.fillStyle = _arvCorTxt(o.prod / meta); c2.font = F('800', 11); c2.textAlign = 'right';
       c2.fillText(Math.round(o.prod / meta * 100) + '%', bx0 + bw, by + bh + 12);
       c2.textAlign = 'left';
     }
-    if (!ehOp && meta != null && meta > 0 && o.prod < meta) {
-      c2.fillStyle = '#9B2C2C'; c2.font = F('800', 9.5);
-      c2.fillText('⚠ fora da meta', x0 + 150, y + 12);
+    if (!ehOp) {
+      const _sl = _arvSelo((meta != null && meta > 0) ? o.prod / meta : null);
+      /* alinhado à DIREITA terminando 8px antes da barra: em x fixo, "meta a
+         revisar" encostava no trilho (visto no PNG de teste). */
+      if (_sl) { c2.fillStyle = _sl.c; c2.font = F('800', 9.5); c2.textAlign = 'right'; c2.fillText(_sl.t, bx0 - 8, y + 12); c2.textAlign = 'left'; }
     }
     if (ehOp) { c2.strokeStyle = '#F0F1F3'; c2.beginPath(); c2.moveTo(0, y - 4); c2.lineTo(W, y - 4); c2.stroke(); }
     y += ehOp ? LINOP : LINMAQ;
   });
+  /* legenda do semáforo desenhada com as bolinhas de verdade — no PNG não dá
+     para contar com o emoji do aparelho de quem recebe. */
+  let _lx = PAD;
+  c2.font = F('600', 10);
+  [['≥ meta', ARV_COR.ok], ['85–99%', ARV_COR.quase], ['< 85%', ARV_COR.ruim], ['> 130% revisar', ARV_COR.revisar], ['sem meta', ARV_COR.sem]].forEach(([rot, cr]) => {
+    c2.beginPath(); c2.arc(_lx + 4, H - 40, 4, 0, Math.PI * 2); c2.fillStyle = cr; c2.fill();
+    c2.fillStyle = '#6B7280'; c2.fillText(rot, _lx + 12, H - 37);
+    _lx += 12 + c2.measureText(rot).width + 14;
+  });
   c2.fillStyle = '#9AA7B2'; c2.font = F('400', 10.5);
-  c2.fillText('Barra: produção; tracinho escuro = meta. A escala compara operador com operador e máquina com máquina.'
-    + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no período ficaram de fora.' : ''), PAD, H - 14);
+  /* em UMA linha só, a frase saía pela direita da foto quando havia máquinas
+     omitidas — e o que saía era justamente o aviso do que ficou de fora. */
+  c2.fillText('Barra: produção; tracinho escuro = meta. A escala compara operador com operador e máquina com máquina.', PAD, H - 23);
+  c2.fillText('Máquina sem meta cadastrada não entra na conta de atingimento.'
+    + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no período ficaram de fora.' : ''), PAD, H - 10);
   const nome = 'arvore-' + String(A.setor).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '.png';
   cv.toBlob(async blob => {
     if (!blob) { toast('Não consegui gerar a imagem.'); return; }
@@ -8302,18 +8349,27 @@ function amArvTexto() {
   const L = ['*ANÁLISE+ · SETOR → OPERADOR → MÁQUINA*'];
   L.push('📅 ' + String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s)');
   L.push('');
-  L.push('*' + A.setor + '* — ' + t(A.raiz.prod) + (A.raiz.temMeta ? ' · meta ' + t(A.raiz.meta) + ' · ' + pc(A.raiz.prod, A.raiz.meta) : '') + ' · ⏸️ ' + Math.round(A.raiz.par) + ' h');
+  L.push(_arvLuz(_arvRazao(A.raiz.temMeta ? A.raiz : {})) + ' *' + A.setor + '* — ' + t(A.raiz.prod) + (A.raiz.temMeta ? ' · meta ' + t(A.raiz.meta) + ' · ' + pc(A.raiz.prod, A.raiz.meta) : '') + ' · ⏸️ ' + Math.round(A.raiz.par) + ' h');
   L.push('');
+  /* 03/09/2026 — no WhatsApp não existe cor de barra: o semáforo vai como
+     bolinha colorida no começo de cada linha, que é o que sobrevive à cópia
+     do texto. Mesma régua da tela, senão a foto e o texto discordariam. */
+  let _semMeta = 0;
   A.ops.forEach(o => {
-    L.push('*' + o.nome + '* · ' + t(o.prod) + (o.temMeta ? ' · meta ' + t(o.meta) + ' · ' + pc(o.prod, o.meta) : ' · sem meta') + ' · ⏸️ ' + Math.round(o.par) + ' h');
+    L.push(_arvLuz(_arvRazao(o.temMeta ? o : {})) + ' *' + o.nome + '* · ' + t(o.prod) + (o.temMeta ? ' · meta ' + t(o.meta) + ' · ' + pc(o.prod, o.meta) : ' · sem meta') + ' · ⏸️ ' + Math.round(o.par) + ' h');
     if (o.fora && o.fora.length) L.push('   ⚠ fora da meta: ' + o.fora.map(q => q.cod).join(', '));
     if (A.aberto('op:' + o.nome)) {
       o.maqs.slice().sort((a, b) => b.prod - a.prod).forEach(q => {
         const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
-        L.push('   • ' + q.cod + (nm ? ' ' + String(nm).slice(0, 18) : '') + ' (' + q.bl + ') — ' + t(q.prod) + (q.meta != null ? ' · ' + pc(q.prod, q.meta) : ''));
+        const rz = _arvRazao(q); if (rz == null) _semMeta++;
+        L.push('   ' + _arvLuz(rz) + ' ' + q.cod + (nm ? ' ' + String(nm).slice(0, 18) : '') + ' (' + q.bl + ') — ' + t(q.prod)
+          + (rz != null ? ' · meta ' + t(q.meta) + ' · ' + pc(q.prod, q.meta) : ' · sem meta'));
       });
     }
   });
+  L.push('');
+  L.push('🟢 bateu a meta · 🟡 85–99% · 🔴 abaixo de 85% · 🟣 acima de 130% (meta a revisar) · 🔵 sem meta cadastrada');
+  if (_semMeta) L.push('_' + _semMeta + ' máquina(s) sem meta cadastrada não entram na conta de atingimento._');
   L.push('', '_Gerado no app de Produção · Análise+._');
   return L.join('\n');
 }
@@ -8339,7 +8395,12 @@ function _amArvore(E, setorLbl) {
   E.prod.forEach(r => { const d = String(r.dia).slice(0, 10), b = blocoTurno(r.turno, d); if (!BL.includes(b)) return; const q = mb(r.recurso_cod, b), p = +r.peso || 0; q.prod += p; q.dias[d] = (q.dias[d] || 0) + p; });
   E.perd.forEach(r => { const d = String(r.dia).slice(0, 10), b = blocoTurno(r.turno, d); if (!BL.includes(b)) return; mb(r.recurso_cod, b).perda += (+r.peso || 0); });
   E.par.forEach(r => { if (r.revisar) return; const d = String(r.dia).slice(0, 10); try { const t = tempoParadaPorTurno(r.inicio, +r.tempo_horas || 0, d); BL.forEach(b => { if (t[b] > 0) mb(r.recurso_cod, b).par += t[b]; }); } catch (_) { } });
-  Object.values(MB).forEach(q => { const m = metasData && metasData[q.cod]; q.meta = (m && m[q.bl]) ? m[q.bl] * somaF : null; });
+  /* 03/09/2026 — AQUI ESTAVA O BURACO: a máquina recebia `meta`, mas o desenho
+     do nó testa `o.temMeta` (que só o operador e o setor tinham). Resultado: no
+     nível da máquina o `rr` saía sempre null, a barra ficava cinza-chumbo, o
+     tracinho da meta não aparecia e a legenda não trazia meta nem %. A meta
+     estava calculada e simplesmente não era usada. */
+  Object.values(MB).forEach(q => { const m = metasData && metasData[q.cod]; q.meta = (m && m[q.bl]) ? m[q.bl] * somaF : null; q.temMeta = (q.meta != null && q.meta > 0); });
   /* agrupa por operador */
   const OP = {};
   Object.values(MB).forEach(q => {
@@ -8351,7 +8412,7 @@ function _amArvore(E, setorLbl) {
   const ops = Object.values(OP).sort((a, b) => (b.prod - (b.temMeta ? b.meta : 0)) - (a.prod - (a.temMeta ? a.meta : 0)));
   const raiz = ops.reduce((a, o) => { a.prod += o.prod; a.perda += o.perda; a.par += o.par; if (o.temMeta) { a.meta += o.meta; a.temMeta = true; } return a; }, { prod: 0, perda: 0, par: 0, meta: 0, temMeta: false });
   const pctP = (perda, prod) => (prod + perda) > 0 ? 100 * perda / (prod + perda) : null;
-  const cxCor = r => r == null ? '#3A4856' : r >= 1 ? '#2E7A46' : r >= 0.9 ? '#C98A00' : '#B3261E';
+  const cxCor = r => _arvCor(r);   /* uma régua só, a do Painel */
   /* 03/09/2026 (João, prints: "vc não fez igual a foto da esquerda" — árvore de
      decomposição do Power BI). A lista com indentação virou uma ÁRVORE DE
      VERDADE: um SVG com curvas saindo de um ponto único (o "hub") em leque
@@ -8434,15 +8495,27 @@ function _amArvore(E, setorLbl) {
     const fillW = Math.max(4, Math.min(bw, bw * (o.prod / maxN[nivel])));
     const tickX = o.temMeta ? bx0 + Math.min(bw, bw * (o.meta / maxN[nivel])) : null;
     const lblSz = forte ? 15 : nivel === 1 ? 14 : 12.5;
-    const corta = nivel === 2 ? 22 : forte ? 26 : 20;
-    let s = '<text x="' + bx0 + '" y="' + (yTopo + 16) + '" font-size="' + lblSz + '" font-weight="' + (forte ? 800 : 700) + '" fill="#1B2430">' + escapeHtml(label.length > corta ? label.slice(0, corta - 1) + '…' : label) + '</text>';
-    if (sub) s += '<text x="' + bx0 + '" y="' + (yTopo + 30) + '" font-size="' + (nivel === 1 && sub.length > 26 ? 9.2 : 10.5) + '" fill="' + (sub.indexOf('fora da meta') >= 0 ? '#9B2C2C' : '#9AA0A8') + '">' + escapeHtml(sub) + '</text>';
+    /* a MÁQUINA ganha a bolinha do semáforo colada no código dela — é o que o
+       João pede quando fala "semáforo": ver a cor sem ler número nenhum. O
+       rótulo anda 15px para a direita para não passar por cima da bolinha, e
+       corta um caractere antes por causa disso. */
+    const luz = nivel === 2;
+    const lx = luz ? bx0 + 15 : bx0;
+    /* o selo ocupa os últimos 100px da coluna: se o nome não for cortado antes
+       disso, ele passa POR BAIXO do selo (foi o que o PNG de teste mostrou). */
+    const _sl = luz ? _arvSelo(rr) : null;
+    const corta = nivel === 2 ? (_sl ? 14 : 19) : forte ? 26 : 20;
+    let s = luz ? '<circle cx="' + (bx0 + 5.5) + '" cy="' + (yTopo + 11.5) + '" r="5.5" fill="' + cor + '" stroke="#fff" stroke-width="1"/>' : '';
+    s += '<text x="' + lx + '" y="' + (yTopo + 16) + '" font-size="' + lblSz + '" font-weight="' + (forte ? 800 : 700) + '" fill="#1B2430">' + escapeHtml(label.length > corta ? label.slice(0, corta - 1) + '…' : label) + '</text>';
+    if (sub) s += '<text x="' + lx + '" y="' + (yTopo + 30) + '" font-size="' + (nivel === 1 && sub.length > 26 ? 9.2 : 10.5) + '" fill="' + (sub.indexOf('fora da meta') >= 0 ? '#9B2C2C' : '#9AA0A8') + '">' + escapeHtml(sub) + '</text>';
     s += '<rect x="' + bx0 + '" y="' + by + '" width="' + bw + '" height="' + BH + '" rx="6.5" fill="#E9EBEF"/>'
       + '<rect x="' + bx0 + '" y="' + by + '" width="' + fillW + '" height="' + BH + '" rx="6.5" fill="' + cor + '"/>';
+    if (_sl) s += '<rect x="' + (bx1 - 100) + '" y="' + (yTopo + 4) + '" width="98" height="15" rx="7.5" fill="' + _sl.f + '" stroke="' + _sl.b + '" stroke-width="0.8"/>'
+      + '<text x="' + (bx1 - 51) + '" y="' + (yTopo + 15) + '" text-anchor="middle" font-size="9.5" font-weight="800" fill="' + _sl.c + '">' + _sl.t + '</text>';
     if (tickX != null) s += '<rect x="' + (tickX - 0.8) + '" y="' + (by - 3) + '" width="1.6" height="' + (BH + 6) + '" fill="#333"/>';
     s += '<text x="' + bx0 + '" y="' + (by + BH + 14) + '" font-size="' + (nivel === 2 ? 9.3 : nivel === 1 && temAberto ? 9.4 : 10) + '" fill="#6B7280">' + fmtKg(o.prod)
       + (o.temMeta ? ' · meta ' + fmtKg(o.meta) + ' · ' : ' · ')
-      + (rr != null ? '<tspan font-weight="800" fill="' + cor + '">' + Math.round(rr * 100) + '%</tspan> · ' : '')
+      + (rr != null ? '<tspan font-weight="800" fill="' + _arvCorTxt(rr) + '">' + Math.round(rr * 100) + '%</tspan> · ' : '')
       + (pp != null ? '🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% · ' : '') + '⏸️' + Math.round(o.par) + 'h</text>';
     return s;
   };
@@ -8453,11 +8526,6 @@ function _amArvore(E, setorLbl) {
   let nodes = noSVG(0, raizY, setorLbl, dias.length + ' dia(s) · ' + ops.length + ' operador(es)', raiz, true);
   rows.forEach(r => {
     nodes += noSVG(r.nivel, r.y, r.label, r.sub, r.o, false);
-    if (r.nivel === 2 && r.o.meta != null && r.o.meta > 0 && r.o.prod < r.o.meta) {
-      const [mx0, mx1] = COL[2];
-      nodes += '<rect x="' + (mx1 - 96) + '" y="' + (r.y + 4) + '" width="94" height="15" rx="7.5" fill="#FBE9E9" stroke="#E0B4B4" stroke-width="0.8"/>'
-        + '<text x="' + (mx1 - 49) + '" y="' + (r.y + 15) + '" text-anchor="middle" font-size="9.5" font-weight="800" fill="#9B2C2C">⚠ fora da meta</text>';
-    }
     if (r.hasKids) {
       const px = PLUS[r.nivel], py = r.y + 34 + BH / 2;
       nodes += '<g onclick="amArvToggle(\'' + escapeHtml(r.key) + '\')" style="cursor:pointer">'
@@ -8479,7 +8547,7 @@ function _amArvore(E, setorLbl) {
     + '<span onclick="amArvTodos(' + (temAberto ? 'false' : 'true') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">'
     + (temAberto ? '▴ recolher máquinas' : '▾ abrir máquinas de todos') + '</span></div>';
   return '<div class="card" style="padding:8px 4px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch">' + btnTodos + svg
-    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">Cada operador está ligado às máquinas que ele opera; o <b>+</b> recolhe ou abre um operador. Barra: preenchimento é a produção, o tracinho escuro é a meta (verde ≥ meta, laranja perto, vermelho abaixo); a escala compara só entre irmãos do mesmo nível. Operador vem do organograma (máquina × turno).</p></div>';
+    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">Cada operador está ligado às máquinas que ele opera; o <b>+</b> recolhe ou abre um operador. Barra: preenchimento é a produção, o tracinho escuro é a meta; a escala compara só entre irmãos do mesmo nível. <b>Semáforo da máquina</b> (mesma régua do Painel): 🟢 bateu a meta · 🟡 85% a 99% · 🔴 abaixo de 85% · 🟣 acima de 130% (a meta provavelmente está desatualizada) · 🔵 sem meta cadastrada. Operador vem do organograma (máquina × turno).</p></div>';
 }
 function renderAnaliseMais(cache) {
   /* rede de segurança: são SETE lugares que chamam este desenho. Em vez de
