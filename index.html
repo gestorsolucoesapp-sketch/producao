@@ -3865,7 +3865,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.425.0';
+const APP_VER = '4.426.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -41120,42 +41120,71 @@ async function _leTudoFlx(mkQuery) {
   }
   return out;
 }
-/* ===== 02/09/2026 (João: "faça um jeito de avisar") =====
-   O teto de 1.000 do PostgREST não dá erro: devolve menos e cala. Já mordeu
-   cinco vezes. Este vigia envolve o `fetch` do navegador e olha o cabeçalho
-   `content-range` que o próprio PostgREST manda em TODA resposta: quando o
-   pedaço devolvido tem exatamente 1.000 linhas e não houve `Range` pedindo
-   página, é corte silencioso — a consulta queria mais e levou mil.
-   Não conserta a consulta (isso é caso a caso); AVISA, e é isso que faltava.
-   Só liga para quem administra, para não assustar o chão de fábrica com uma
-   mensagem técnica. */
+/* ===== 03/09/2026 (João: "tem vários batendo nas 1.000 linhas, faça um
+   comando para aumentar automático cada vez que bater — em todo o app") =====
+   O teto de 1.000 é do servidor (PostgREST) e não sobe por pedido: `.limit()`
+   maior é ignorado. O que dá para fazer, e é o que este vigia faz agora, é
+   BUSCAR O RESTO SOZINHO: quando uma resposta volta com exatamente 1.000
+   linhas e a consulta não pediu página nem limite, ele pede as páginas
+   seguintes (1000-1999, 2000-2999…) com os mesmos cabeçalhos, cola tudo numa
+   lista só e devolve como se fosse uma resposta única. Vale para TODA leitura
+   do app, sem mexer consulta por consulta.
+   Regras para não estragar nada:
+   - só GET em /rest/v1/ (nunca rpc, insert, update, delete);
+   - só quando NÃO há cabeçalho Range (o _leTudoFlx e os .range() cuidam de si);
+   - só quando a URL NÃO tem limit= (limite pequeno é escolha da tela);
+   - nunca em resposta de objeto único (.single/.maybeSingle);
+   - teto de 40 páginas (40 mil linhas), igual ao _leTudoFlx.
+   Continua avisando no console e para o admin — para eu corrigir na fonte. */
 let _teto1k = [];
 (function _vigiaTeto() {
   try {
     if (!window.fetch || window.__vigiaTeto) return; window.__vigiaTeto = true;
     const orig = window.fetch.bind(window);
+    const lerHdr = (h, k) => { try { if (!h) return null; if (typeof h.get === 'function') return h.get(k); const kk = Object.keys(h).find(x => x.toLowerCase() === k.toLowerCase()); return kk ? h[kk] : null; } catch (_) { return null; } };
+    const comRange = (init, faixa) => {
+      const n = Object.assign({}, init || {});
+      const h = new Headers(init && init.headers ? init.headers : undefined);
+      h.set('Range', faixa); h.set('Range-Unit', 'items');
+      n.headers = h; return n;
+    };
     window.fetch = async function (rec, init) {
       const r = await orig(rec, init);
       try {
         const url = String((rec && rec.url) || rec || '');
-        if (url.indexOf('/rest/v1/') > 0) {
-          const cr = r.headers.get('content-range');       // ex.: "0-999/*"
-          const pediuPagina = !!((init && init.headers && (init.headers.Range || init.headers.range))
-            || (rec && rec.headers && rec.headers.get && rec.headers.get('Range')));
-          if (cr && !pediuPagina) {
-            const m = /^(\d+)-(\d+)\//.exec(cr);
-            if (m && (+m[2] - +m[1] + 1) === 1000) {
-              const alvo = decodeURIComponent(url.split('/rest/v1/')[1] || '').split('?')[0];
-              if (_teto1k.indexOf(alvo) < 0) {
-                _teto1k.push(alvo);
-                console.warn('[TETO 1000] ' + alvo + ' devolveu exatamente 1.000 linhas — pode estar cortando. Falta paginar (_leTudoFlx).');
-                try { if (typeof _tintaVeDinheiro === 'function' ? _tintaVeDinheiro() : false) toast('⚠️ ' + alvo + ' bateu no teto de 1.000 linhas — pode estar faltando dado nesta tela'); } catch (_) { }
-              }
-            }
-          }
+        if (url.indexOf('/rest/v1/') < 0 || url.indexOf('/rest/v1/rpc/') > 0) return r;
+        const metodo = String((init && init.method) || (rec && rec.method) || 'GET').toUpperCase();
+        if (metodo !== 'GET') return r;
+        const pediuPagina = !!(lerHdr(init && init.headers, 'Range') || (rec && rec.headers && lerHdr(rec.headers, 'Range')));
+        if (pediuPagina || /[?&]limit=/.test(url)) return r;
+        const accept = String(lerHdr(init && init.headers, 'Accept') || '');
+        if (accept.indexOf('object') >= 0) return r;
+        const cr = r.headers.get('content-range');            // "0-999/*"
+        const m = cr && /^(\d+)-(\d+)\//.exec(cr);
+        if (!m || (+m[2] - +m[1] + 1) !== 1000) return r;
+        /* bateu no teto: busca o resto */
+        const alvo = decodeURIComponent(url.split('/rest/v1/')[1] || '').split('?')[0];
+        const primeira = await r.clone().json();
+        if (!Array.isArray(primeira)) return r;
+        let tudo = primeira.slice(), pag = 1;
+        for (; pag < 40; pag++) {
+          const de = pag * 1000, ate = de + 999;
+          const rp = await orig(rec, comRange(init, de + '-' + ate));
+          if (!rp.ok) break;
+          const d = await rp.json();
+          if (!Array.isArray(d) || !d.length) break;
+          for (const x of d) tudo.push(x);
+          if (d.length < 1000) break;
         }
-      } catch (_) { }
-      return r;
+        if (_teto1k.indexOf(alvo) < 0) {
+          _teto1k.push(alvo);
+          console.warn('[TETO 1000] ' + alvo + ': a consulta bateu em 1.000 e o vigia buscou o resto sozinho (' + tudo.length + ' linhas em ' + (pag + 1) + ' páginas). Vale paginar na fonte com _leTudoFlx.');
+          try { if (typeof _tintaVeDinheiro === 'function' && _tintaVeDinheiro()) toast('⚠️ ' + alvo + ': ' + tudo.length.toLocaleString('pt-BR') + ' linhas — o app buscou o resto sozinho'); } catch (_) { }
+        }
+        const hs = new Headers(r.headers);
+        hs.set('content-range', '0-' + (tudo.length - 1) + '/' + (cr.split('/')[1] || '*'));
+        return new Response(JSON.stringify(tudo), { status: r.status, statusText: r.statusText, headers: hs });
+      } catch (_) { return r; }
     };
   } catch (_) { }
 })();
