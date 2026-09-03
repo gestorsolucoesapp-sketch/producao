@@ -8204,20 +8204,24 @@ function _arvSelo(r) {
   const n = _arvNivel(r);
   if (n === 'sem') return { t: 'sem meta', f: '#EDF2F9', b: '#C3D3E6', c: '#3A6FB0' };
   if (r != null && r < 1) return { t: '⚠ fora da meta', f: '#FBE9E9', b: '#E0B4B4', c: '#9B2C2C' };
-  if (n === 'revisar') return { t: '⚠ meta a revisar', f: '#F3EAF9', b: '#D6C0E6', c: '#7A3E9D' };
+  /* 03/09/2026 (João: "tire o revisar a meta se passou, deixe no semáforo").
+     Estava certo: em vários operadores a maioria das máquinas passava de 130%
+     e a linha virava uma fileira de selos roxos repetidos. A bolinha roxa já
+     diz a mesma coisa sem ocupar a largura do rótulo. */
   return null;
 }
 function _arvLuz(r) { const n = _arvNivel(r); return n === 'sem' ? '\u{1F535}' : n === 'revisar' ? '\u{1F7E3}' : n === 'ok' ? '\u{1F7E2}' : n === 'quase' ? '\u{1F7E1}' : '\u{1F534}'; }
 function _arvRazao(o) { return (o && o.meta != null && o.meta > 0) ? (o.prod / o.meta) : null; }
-/* abre o seletor de período do Análise+ (o <select> existe e está oculto) */
-function amArvPeriodo() {
-  const sel = $('amPeriodo'); if (!sel) { toast('Seletor de período indisponível.'); return; }
-  const w = sel.closest('.campo') || sel;
-  const escondido = sel.style.display === 'none' || getComputedStyle(sel).display === 'none';
-  sel.style.display = escondido ? '' : 'none';
-  sel.style.fontSize = '16px';   /* iOS dá zoom abaixo de 16px */
-  if (w && w !== sel) w.style.display = '';
-  if (escondido) { try { sel.focus(); } catch (_) { } }
+/* 03/09/2026 (João: "deixe o filtro de período na pílula padrão do app"). A
+   árvore tinha uma pílula 📅 só dela, que abria o <select> escondido — duas
+   maneiras de escolher período na mesma tela. Agora vale só a pílula PERÍODO
+   do topo, que é a do app inteiro. Ela já espelha o `amPeriodo` da Análise+,
+   mas aparecia "não se aplica" quando a aba desenhava antes do select se
+   montar (select vazio = pílula desligada). Esta função remonta o select e
+   manda a barra sincronizar de novo, logo depois do desenho. */
+function _amArvLigaPeriodo() {
+  try { if (typeof infoImports !== 'undefined' && infoImports) montarSeletorPeriodo(infoImports, 'amPeriodo'); } catch (_) { }
+  try { sincSetorGlobal(); } catch (_) { }
 }
 /* 03/09/2026 (João: "mandar a árvore em imagem"). Mesma decisão do Resumo
    Anual (v4.378): desenho num CANVAS a partir dos MESMOS dados da tela, em vez
@@ -8225,119 +8229,169 @@ function amArvPeriodo() {
    quero pendurar o app num script de fora. Resolução 2× para não sair borrada
    no celular. Vai pela folha de compartilhamento com o arquivo junto; onde não
    houver, baixa o PNG. */
-function amArvImagem() {
-  const A = _amArvUlt;
-  if (!A || !A.ops || !A.ops.length) { toast('Abra a árvore antes de enviar a imagem.'); return; }
+/* 03/09/2026 (João, olhando a foto da Termoformagem inteira: "do jeito que
+   mostra na árvore, mais agrupada, igual aos cards: manhã, tarde e noite").
+   A foto tinha largura fixa de 700 px e crescia 46 px por operador e 34 px por
+   máquina — com mais de vinte operadores virava uma tira altíssima que o
+   WhatsApp encolhe até o texto sumir. Não era resolução, era proporção.
+   Agora sai UMA FOTO POR TURNO, com o turno no cabeçalho e na faixa colorida
+   (as mesmas cores dos cards: Manhã, Tarde, Noite). Cada operador entra no
+   turno onde ele tem máquina, e no turno entram só as máquinas DELE naquele
+   turno — a soma é direta, sem régua nova. Se o recorte só tem um turno, sai
+   uma foto só, como antes.
+   Mesma decisão do Resumo Anual (v4.378): desenho num CANVAS a partir dos
+   MESMOS dados da tela, em vez de fotografar o HTML. */
+function _arvGruposTurno(A) {
+  const BL = ['Manhã', 'Tarde', 'Noite'];
+  const G = [];
+  BL.forEach(bl => {
+    const ops = [];
+    A.ops.forEach(o => {
+      const maqs = (o.maqs || []).filter(q => q.bl === bl);
+      if (!maqs.length) return;
+      const n = { nome: o.nome, bl: bl, prod: 0, perda: 0, par: 0, meta: 0, temMeta: false, maqs: maqs };
+      maqs.forEach(q => { n.prod += q.prod; n.perda += q.perda; n.par += q.par; if (q.meta != null && q.meta > 0) { n.meta += q.meta; n.temMeta = true; } });
+      n.fora = maqs.filter(q => q.meta != null && q.meta > 0 && q.prod < q.meta);
+      ops.push(n);
+    });
+    if (!ops.length) return;
+    ops.sort((a, b) => (b.prod - (b.temMeta ? b.meta : 0)) - (a.prod - (a.temMeta ? a.meta : 0)));
+    const raiz = ops.reduce((a, o) => { a.prod += o.prod; a.perda += o.perda; a.par += o.par; if (o.temMeta) { a.meta += o.meta; a.temMeta = true; } return a; },
+      { prod: 0, perda: 0, par: 0, meta: 0, temMeta: false });
+    G.push({ bl: bl, ops: ops, raiz: raiz });
+  });
+  return G;
+}
+function _arvFotoCanvas(A, g) {
   const E = window._amEscopoAtual;
-  const S = 2;                                  /* escala da resolução */
-  const W = 700, PAD = 16, LINOP = 46, LINMAQ = 34, TOPO = 84;
-  /* máquina que não produziu NADA no período não entra na imagem: não tem o
-     que mostrar e, num setor grande, são dezenas de linhas vazias que fazem a
-     foto passar de dois mil pixels — ninguém abre isso no WhatsApp. Fica
-     escrito no rodapé quantas ficaram de fora; na TELA continuam aparecendo. */
+  const S = 2;
+  const W = 700, PAD = 16, LINOP = 46, LINMAQ = 34, TOPO = 92;
+  const CORT = (typeof MT_COR_T === 'function') ? MT_COR_T(g.bl) : '#33415C';
+  /* máquina que não produziu NADA no período não entra na foto: num setor
+     grande são dezenas de linhas vazias. Fica escrito no rodapé quantas
+     ficaram de fora; na TELA continuam aparecendo. */
   const linhas = []; let omitidas = 0;
-  A.ops.forEach(o => {
+  g.ops.forEach(o => {
     linhas.push({ t: 'op', o: o });
-    if (A.aberto('op:' + o.nome)) o.maqs.slice().sort((a, b) => b.prod - a.prod).forEach(q => {
+    o.maqs.slice().sort((a, b) => b.prod - a.prod).forEach(q => {
       if (!(q.prod > 0)) { omitidas++; return; }
       linhas.push({ t: 'maq', o: q });
     });
   });
-  const H = TOPO + linhas.reduce((s, l) => s + (l.t === 'op' ? LINOP : LINMAQ), 0) + 62;   /* espaço para a legenda do semáforo e as duas linhas do rodapé */
+  const H = TOPO + linhas.reduce((s, l) => s + (l.t === 'op' ? LINOP : LINMAQ), 0) + 62;
   const cv = document.createElement('canvas');
   cv.width = W * S; cv.height = H * S;
   const c2 = cv.getContext('2d'); c2.scale(S, S);
   const F = (p, sz) => p + ' ' + sz + 'px -apple-system,Segoe UI,Roboto,sans-serif';
   const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
-  const corDe = (p, m) => _arvCor((m != null && m > 0) ? p / m : null);   /* mesma régua da tela e do Painel */
+  const corDe = (p, m) => _arvCor((m != null && m > 0) ? p / m : null);
   c2.fillStyle = '#fff'; c2.fillRect(0, 0, W, H);
+  /* faixa do turno, com a cor que o app já usa para ele */
+  c2.fillStyle = CORT; c2.fillRect(0, 0, W, 5);
   c2.fillStyle = '#1B2430'; c2.font = F('800', 19);
-  c2.fillText(String(A.setor).slice(0, 46), PAD, 28);
+  c2.fillText(String(A.setor).slice(0, 34), PAD, 33);
+  const wSet = c2.measureText(String(A.setor).slice(0, 34)).width;
+  c2.fillStyle = CORT; c2.font = F('800', 15);
+  c2.fillText('· ' + g.bl, PAD + wSet + 10, 33);
   c2.fillStyle = '#6B7280'; c2.font = F('400', 12.5);
-  c2.fillText(String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s) · ' + A.ops.length + ' operador(es)', PAD, 46);
+  c2.fillText(String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s) · ' + g.ops.length + ' operador(es)', PAD, 53);
   c2.fillStyle = '#1B2430'; c2.font = F('700', 13.5);
-  c2.fillText(t(A.raiz.prod) + (A.raiz.temMeta ? ' · meta ' + t(A.raiz.meta) + ' · ' + Math.round(A.raiz.prod / A.raiz.meta * 100) + '%' : ''), PAD, 66);
-  c2.strokeStyle = '#E3E5E9'; c2.beginPath(); c2.moveTo(0, 76); c2.lineTo(W, 76); c2.stroke();
-  const maxOp = Math.max(1, ...A.ops.map(o => Math.max(o.prod, o.temMeta ? o.meta : 0)));
-  const maxMq = Math.max(1, ...A.ops.reduce((a, o) => a.concat(o.maqs.map(q => Math.max(q.prod, q.meta || 0))), []));
+  c2.fillText(t(g.raiz.prod) + (g.raiz.temMeta ? ' · meta ' + t(g.raiz.meta) + ' · ' + Math.round(g.raiz.prod / g.raiz.meta * 100) + '%' : ''), PAD, 74);
+  c2.strokeStyle = '#E3E5E9'; c2.beginPath(); c2.moveTo(0, 84); c2.lineTo(W, 84); c2.stroke();
+  const maxOp = Math.max(1, ...g.ops.map(o => Math.max(o.prod, o.temMeta ? o.meta : 0)));
+  const maxMq = Math.max(1, ...g.ops.reduce((a, o) => a.concat(o.maqs.map(q => Math.max(q.prod, q.meta || 0))), []));
   let y = TOPO;
   linhas.forEach(l => {
     const ehOp = l.t === 'op', o = l.o;
     const x0 = ehOp ? PAD : PAD + 26;
     const bx0 = ehOp ? 250 : 276, bw = ehOp ? 250 : 224, bh = 11;
     const mx = ehOp ? maxOp : maxMq;
-    const meta = ehOp ? (o.temMeta ? o.meta : null) : o.meta;
+    const meta = (o.meta != null && o.meta > 0) ? o.meta : null;
     const cor = corDe(o.prod, meta);
     const nm = ehOp ? o.nome : (o.cod + ((typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[o.cod]) ? ' ' + String(_chaoNomes[o.cod]).slice(0, 14) : ''));
-    /* a bolinha do semáforo entra também na FOTO — é ela que o pessoal olha no
-       WhatsApp; sem isso a imagem e a tela contariam histórias diferentes. */
     const tx0 = ehOp ? x0 : x0 + 16;
     if (!ehOp) { c2.beginPath(); c2.arc(x0 + 5.5, y + 8, 5.5, 0, Math.PI * 2); c2.fillStyle = cor; c2.fill(); }
     c2.fillStyle = '#1B2430'; c2.font = F(ehOp ? '700' : '600', ehOp ? 14 : 12);
     c2.fillText(String(nm).slice(0, ehOp ? 24 : 20), tx0, y + 12);
     c2.fillStyle = '#9AA0A8'; c2.font = F('400', 10);
-    const sub = ehOp ? (o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/')) : o.bl;
-    c2.fillText(sub, tx0, y + 25);
+    if (ehOp) c2.fillText(o.maqs.length + ' máq', tx0, y + 25);
     if (ehOp && o.fora && o.fora.length) {
       c2.fillStyle = '#9B2C2C'; c2.font = F('800', 10);
-      const ax = x0 + Math.max(90, c2.measureText(sub).width + 14);
       const _cab = '⚠ ' + o.fora.length + ' fora da meta: ';
+      const ax = tx0 + 46;
       let av = _cab + o.fora.map(q => q.cod).join(', ');
       let cortou = false;
       while (av.length > _cab.length + 3 && ax + c2.measureText(av + (cortou ? '…' : '')).width > bx0 - 10) { av = av.slice(0, -1); cortou = true; }
       if (cortou) av = av.replace(/[\s,]+$/, '') + '…';
       if (ax < bx0 - 40) c2.fillText(av, ax, y + 25);
     }
+    if (!ehOp) {
+      const _sl = _arvSelo(meta != null ? o.prod / meta : null);
+      if (_sl) { c2.fillStyle = _sl.c; c2.font = F('800', 9.5); c2.textAlign = 'right'; c2.fillText(_sl.t, bx0 - 8, y + 12); c2.textAlign = 'left'; }
+    }
     const by = y + 6;
     c2.fillStyle = '#E9EBEF'; c2.fillRect(bx0, by, bw, bh);
     c2.fillStyle = cor; c2.fillRect(bx0, by, Math.max(3, Math.min(bw, bw * (o.prod / mx))), bh);
-    if (meta != null && meta > 0) {
-      const tx = bx0 + Math.min(bw, bw * (meta / mx));
-      c2.fillStyle = '#333'; c2.fillRect(tx - 1, by - 3, 2, bh + 6);
+    if (meta != null) {
+      const tk = bx0 + Math.min(bw, bw * (meta / mx));
+      c2.fillStyle = '#333'; c2.fillRect(tk - 1, by - 3, 2, bh + 6);
     }
     c2.fillStyle = '#6B7280'; c2.font = F('400', 10.5);
-    c2.fillText(t(o.prod) + (meta != null && meta > 0 ? ' · meta ' + t(meta) : ' · sem meta'), bx0, by + bh + 12);
-    if (meta != null && meta > 0) {
+    c2.fillText(t(o.prod) + (meta != null ? ' · meta ' + t(meta) : ' · sem meta'), bx0, by + bh + 12);
+    if (meta != null) {
       c2.fillStyle = _arvCorTxt(o.prod / meta); c2.font = F('800', 11); c2.textAlign = 'right';
       c2.fillText(Math.round(o.prod / meta * 100) + '%', bx0 + bw, by + bh + 12);
       c2.textAlign = 'left';
     }
-    if (!ehOp) {
-      const _sl = _arvSelo((meta != null && meta > 0) ? o.prod / meta : null);
-      /* alinhado à DIREITA terminando 8px antes da barra: em x fixo, "meta a
-         revisar" encostava no trilho (visto no PNG de teste). */
-      if (_sl) { c2.fillStyle = _sl.c; c2.font = F('800', 9.5); c2.textAlign = 'right'; c2.fillText(_sl.t, bx0 - 8, y + 12); c2.textAlign = 'left'; }
-    }
     if (ehOp) { c2.strokeStyle = '#F0F1F3'; c2.beginPath(); c2.moveTo(0, y - 4); c2.lineTo(W, y - 4); c2.stroke(); }
     y += ehOp ? LINOP : LINMAQ;
   });
-  /* legenda do semáforo desenhada com as bolinhas de verdade — no PNG não dá
-     para contar com o emoji do aparelho de quem recebe. */
+  /* legenda do semáforo com as bolinhas de verdade — no PNG não dá para contar
+     com o emoji do aparelho de quem recebe. */
   let _lx = PAD;
   c2.font = F('600', 10);
-  [['≥ meta', ARV_COR.ok], ['85–99%', ARV_COR.quase], ['< 85%', ARV_COR.ruim], ['> 130% revisar', ARV_COR.revisar], ['sem meta', ARV_COR.sem]].forEach(([rot, cr]) => {
-    c2.beginPath(); c2.arc(_lx + 4, H - 40, 4, 0, Math.PI * 2); c2.fillStyle = cr; c2.fill();
-    c2.fillStyle = '#6B7280'; c2.fillText(rot, _lx + 12, H - 37);
-    _lx += 12 + c2.measureText(rot).width + 14;
+  [['≥ meta', ARV_COR.ok], ['85–99%', ARV_COR.quase], ['< 85%', ARV_COR.ruim], ['> 130%', ARV_COR.revisar], ['sem meta', ARV_COR.sem]].forEach(function (par) {
+    c2.beginPath(); c2.arc(_lx + 4, H - 40, 4, 0, Math.PI * 2); c2.fillStyle = par[1]; c2.fill();
+    c2.fillStyle = '#6B7280'; c2.fillText(par[0], _lx + 12, H - 37);
+    _lx += 12 + c2.measureText(par[0]).width + 14;
   });
   c2.fillStyle = '#9AA7B2'; c2.font = F('400', 10.5);
-  /* em UMA linha só, a frase saía pela direita da foto quando havia máquinas
-     omitidas — e o que saía era justamente o aviso do que ficou de fora. */
   c2.fillText('Barra: produção; tracinho escuro = meta. A escala compara operador com operador e máquina com máquina.', PAD, H - 23);
   c2.fillText('Máquina sem meta cadastrada não entra na conta de atingimento.'
-    + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no período ficaram de fora.' : ''), PAD, H - 10);
-  const nome = 'arvore-' + String(A.setor).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '.png';
-  cv.toBlob(async blob => {
-    if (!blob) { toast('Não consegui gerar a imagem.'); return; }
-    const arq = new File([blob], nome, { type: 'image/png' });
+    + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no turno ficaram de fora.' : ''), PAD, H - 10);
+  return cv;
+}
+function amArvImagem() {
+  const A = _amArvUlt;
+  if (!A || !A.ops || !A.ops.length) { toast('Abra a árvore antes de enviar a imagem.'); return; }
+  const G = _arvGruposTurno(A);
+  if (!G.length) { toast('Sem produção por turno no período.'); return; }
+  const base = 'arvore-' + String(A.setor).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20);
+  const paraBlob = cv => new Promise(res => cv.toBlob(res, 'image/png'));
+  (async () => {
+    const arqs = [];
+    for (const g of G) {
+      const blob = await paraBlob(_arvFotoCanvas(A, g));
+      if (!blob) continue;
+      arqs.push(new File([blob], base + '-' + g.bl.toLowerCase().replace(/[^a-z]/g, '') + '.png', { type: 'image/png' }));
+    }
+    if (!arqs.length) { toast('Não consegui gerar a imagem.'); return; }
     try {
-      if (navigator.canShare && navigator.canShare({ files: [arq] })) { await navigator.share({ files: [arq], title: 'Análise+ · ' + A.setor }); return; }
+      if (navigator.canShare && navigator.canShare({ files: arqs })) { await navigator.share({ files: arqs, title: 'Análise+ · ' + A.setor }); return; }
+      /* alguns aparelhos aceitam UM arquivo mas não vários: manda um a um em vez
+         de cair direto no download. */
+      if (navigator.canShare && navigator.canShare({ files: [arqs[0]] })) {
+        for (const f of arqs) { await navigator.share({ files: [f], title: 'Análise+ · ' + A.setor }); }
+        return;
+      }
     } catch (e) { if (e && e.name === 'AbortError') return; }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = nome; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    toast('Imagem baixada — anexe no WhatsApp.');
-  }, 'image/png');
+    arqs.forEach(f => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(f); a.download = f.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    });
+    toast(arqs.length + ' imagem(ns) baixada(s) — anexe no WhatsApp.');
+  })();
 }
 /* texto da árvore para o WhatsApp — sai o mesmo recorte que está na tela */
 function amArvTexto() {
@@ -8541,7 +8595,6 @@ function _amArvore(E, setorLbl) {
      subir até o filtro do topo do app. Aqui ele aparece na própria árvore;
      é o MESMO controle, então não há duas réguas de período no app. */
   const btnTodos = '<div style="display:flex;gap:6px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin:0 8px 6px">'
-    + '<span onclick="amArvPeriodo()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">📅 ' + escapeHtml(String((E && E.rotulo) || 'período')) + '</span>'
     + '<span onclick="enviarTexto(amArvTexto())" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">📝 texto</span>'
     + '<span onclick="amArvImagem()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:#25D366;color:#fff">🖼️ imagem</span>'
     + '<span onclick="amArvTodos(' + (temAberto ? 'false' : 'true') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">'
@@ -8572,7 +8625,7 @@ function renderAnaliseMais(cache) {
      numa sub-aba da Análise+"). Duas vistas: os cards de sempre e a ÁRVORE. */
   const _vistaBtn = (v, rot) => '<span onclick="amVista(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:6px 14px;border:1px solid ' + (_amVista === v ? 'var(--navy);background:var(--navy);color:#fff' : 'var(--linha-2s);background:var(--leve-2)') + '">' + rot + '</span>';
   const _vistas = '<div style="display:flex;gap:6px;justify-content:center;margin:0 0 8px">' + _vistaBtn('cards', '📊 Cards') + _vistaBtn('arvore', '🌳 Setor → operador → máquina') + '</div>';
-  if (_amVista === 'arvore') { box.innerHTML = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` + _amArvore(E, setorLbl); return; }
+  if (_amVista === 'arvore') { box.innerHTML = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` + _amArvore(E, setorLbl); setTimeout(_amArvLigaPeriodo, 0); return; }
   let html = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
     ppBloco() +
     `<div style="background:var(--leve);border-radius:10px;padding:9px;margin-bottom:10px">` +
