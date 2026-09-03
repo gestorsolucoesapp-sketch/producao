@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.445.0';
+const APP_VER = '4.446.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8382,6 +8382,101 @@ function _arvFotoCanvas(A, g) {
     + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no turno ficaram de fora.' : ''), PAD, H - 10);
   return cv;
 }
+/* ===== 03/09/2026 (João, print do card de comparação: "na hora do envio quero
+   assim") — FOTO DAS CÉLULAS =====
+   A regra que já vale no app é que a foto sai IGUAL à tela (`_amArvUlt`). Como
+   agora há duas telas, a foto passa a seguir a VISTA aberta: na vista Turnos ela
+   sai neste formato — uma célula por bloco, com as três colunas de turno lado a
+   lado, cada uma com o operador na caixa e os ramos para as máquinas dele. Na
+   vista Árvore continua saindo uma foto por turno, como antes.
+   Célula com mais de três turnos não existe (são três), então três colunas de
+   238 px cabem numa foto de 760 — largura que o WhatsApp ainda mostra legível. */
+function _arvFotoCelulas(A) {
+  const cels = _amTurCelulas(A);
+  if (!cels.length) return null;
+  const BLO = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2 };
+  const S = 2, W = 760, PAD = 16, COLW = 238, GAP = 8, LINH = 30;
+  const E = window._amEscopoAtual;
+  const F = (pe, sz) => pe + ' ' + sz + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+  const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  /* altura: cada célula é o título + o card mais alto (o de mais máquinas) */
+  const alturaCel = c => 22 + (34 + c.cods.length * LINH + 26) + 14;
+  const H = 76 + cels.reduce((a, c) => a + alturaCel(c), 0) + 40;   /* duas linhas de rodapé */
+  const cv = document.createElement('canvas');
+  cv.width = W * S; cv.height = H * S;
+  const c2 = cv.getContext('2d'); c2.scale(S, S);
+  c2.fillStyle = '#fff'; c2.fillRect(0, 0, W, H);
+  c2.fillStyle = '#1B2430'; c2.font = F('800', 19);
+  c2.fillText('Mesmo equipamento, turnos diferentes', PAD, 26);
+  c2.fillStyle = '#6B7280'; c2.font = F('400', 12.5);
+  c2.fillText(String(A.setor) + ' · ' + String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s) · o mesmo operador e as mesmas máquinas, turno a turno', PAD, 46);
+  c2.strokeStyle = '#E3E5E9'; c2.beginPath(); c2.moveTo(0, 60); c2.lineTo(W, 60); c2.stroke();
+  let y = 76;
+  cels.forEach(cel => {
+    const linhas = cel.linhas.slice().sort((a, b) => (BLO[a.bl] || 0) - (BLO[b.bl] || 0));
+    const comMeta = linhas.filter(l => l.temMeta && l.meta > 0);
+    let melhor = null;
+    if (comMeta.length >= 2) {
+      const lid = comMeta.reduce((a, l) => (l.prod / l.meta) > (a.prod / a.meta) ? l : a);
+      if ((lid.prod / lid.meta) <= ARV_META_SUSPEITA) melhor = lid;
+    }
+    c2.fillStyle = '#9AA0A8'; c2.font = F('800', 12);
+    c2.fillText('\u{1F527} ' + cel.cods.join(' · '), PAD, y + 12);
+    const cardY = y + 22, cardH = 34 + cel.cods.length * LINH + 26;
+    linhas.forEach((l, ci) => {
+      const x = PAD + ci * (COLW + GAP), cor = MT_COR_T(l.bl), rz = _arvRazao(l);
+      /* moldura do card na cor do turno */
+      c2.fillStyle = '#F5F7FA';
+      c2.fillRect(x, cardY, COLW, cardH);
+      c2.fillStyle = cor; c2.fillRect(x, cardY, COLW, 3);
+      c2.fillStyle = cor; c2.font = F('800', 12);
+      c2.fillText(l.bl + (melhor === l ? ' \u25B2' : ''), x + 9, cardY + 22);
+      c2.fillStyle = rz != null ? _arvCorTxt(rz) : '#9AA0A8'; c2.font = F('800', 17); c2.textAlign = 'right';
+      c2.fillText(rz != null ? Math.round(rz * 100) + '%' : '—', x + COLW - 9, cardY + 23);
+      c2.textAlign = 'left';
+      /* caixa do operador e os ramos até as máquinas — o desenho da folha */
+      const topo = cardY + 34, bxW = 84, bxH = 20;
+      const cy = topo + (cel.cods.length * LINH) / 2 - 4;
+      const bx0 = x + 8, bx1 = bx0 + bxW, mqx = x + 118;
+      c2.strokeStyle = '#C3C9D1'; c2.lineWidth = 1.3;
+      cel.cods.forEach((cod, i) => {
+        const my = topo + 14 + i * LINH, mid = (bx1 + mqx) / 2;
+        c2.beginPath(); c2.moveTo(bx1, cy); c2.bezierCurveTo(mid, cy, mid, my - 4, mqx - 6, my - 4); c2.stroke();
+      });
+      c2.strokeStyle = cor; c2.lineWidth = 1.6;
+      c2.fillStyle = '#fff';
+      c2.beginPath(); c2.rect(bx0, cy - bxH / 2, bxW, bxH); c2.fill(); c2.stroke();
+      c2.fillStyle = '#1B2430'; c2.font = F('800', 10.5); c2.textAlign = 'center';
+      let nm = String(l.nome); while (nm.length > 3 && c2.measureText(nm).width > bxW - 8) nm = nm.slice(0, -1);
+      if (nm !== String(l.nome)) nm = nm.slice(0, -1) + '…';
+      c2.fillText(nm, bx0 + bxW / 2, cy + 4);
+      c2.textAlign = 'left';
+      cel.cods.forEach((cod, i) => {
+        const my = topo + 14 + i * LINH;
+        const q = l.maqs.find(z => z.cod === cod), rq = q ? _arvRazao(q) : null;
+        c2.beginPath(); c2.arc(mqx, my - 4, 4.5, 0, Math.PI * 2); c2.fillStyle = q ? _arvCor(rq) : '#C3C9D1'; c2.fill();
+        c2.fillStyle = '#1B2430'; c2.font = F('800', 11.5);
+        c2.fillText(String(cod), mqx + 9, my);
+        if (q) { c2.fillStyle = '#9AA0A8'; c2.font = F('400', 9); c2.fillText(t(q.prod), mqx + 9, my + 11); }
+        c2.fillStyle = rq != null ? _arvCorTxt(rq) : '#9AA0A8'; c2.font = F('800', 11.5); c2.textAlign = 'right';
+        c2.fillText(rq != null ? Math.round(rq * 100) + '%' : '—', x + COLW - 9, my);
+        c2.textAlign = 'left';
+      });
+      const pp = (l.prod + l.perda) > 0 ? 100 * l.perda / (l.prod + l.perda) : null;
+      c2.fillStyle = '#9AA0A8'; c2.font = F('400', 9.5);
+      c2.fillText(t(l.prod) + (rz != null ? ' de ' + t(l.meta) : '') + '  \u{1F5D1}' + (pp != null ? pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—')
+        + '  \u23F8' + Math.round(l.par) + 'h', x + 9, cardY + cardH - 9);
+    });
+    y += alturaCel(cel);
+  });
+  /* em uma linha só o texto saía pela direita da foto (760 px) e o aviso do
+     130% — que é o que evita ler meta velha como desempenho — era justamente a
+     parte que sumia. Duas linhas. */
+  c2.fillStyle = '#9AA7B2'; c2.font = F('400', 10.5);
+  c2.fillText('Só entram operadores que rodaram exatamente as mesmas máquinas no período.', PAD, H - 24);
+  c2.fillText('\u25B2 marca o melhor da célula — não é dado acima de 130%: ali o número é meta desatualizada, não desempenho.', PAD, H - 10);
+  return cv;
+}
 function amArvImagem() {
   const A = _amArvUlt;
   if (!A || !A.ops || !A.ops.length) { toast('Abra a árvore antes de enviar a imagem.'); return; }
@@ -8389,9 +8484,16 @@ function amArvImagem() {
   if (!G.length) { toast('Sem produção por turno no período.'); return; }
   const base = 'arvore-' + String(A.setor).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20);
   const paraBlob = cv => new Promise(res => cv.toBlob(res, 'image/png'));
+  /* a foto segue a VISTA aberta, para sair igual ao que está na tela */
+  const _porCelula = (typeof _amVista !== 'undefined' && _amVista === 'turnos');
   (async () => {
     const arqs = [];
-    for (const g of G) {
+    if (_porCelula) {
+      const cv = _arvFotoCelulas(A);
+      if (cv) { const bl = await paraBlob(cv); if (bl) arqs.push(new File([bl], base + '-turnos.png', { type: 'image/png' })); }
+      if (!arqs.length) toast('Nenhuma célula com dois turnos para comparar — mandando por turno.');
+    }
+    if (!arqs.length) for (const g of G) {
       const blob = await paraBlob(_arvFotoCanvas(A, g));
       if (!blob) continue;
       arqs.push(new File([blob], base + '-' + g.bl.toLowerCase().replace(/[^a-z]/g, '') + '.png', { type: 'image/png' }));
