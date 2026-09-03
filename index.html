@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.440.0';
+const APP_VER = '4.441.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8179,7 +8179,7 @@ const MT_BG_T = b => (b === 'Manhã' ? '#FDF5E6' : b === 'Tarde' ? '#EDF7EF' : '
 
 let _amVista = 'cards';
 let _amArvAberto = {};
-async function amVista(v) { _amVista = v; if (v === 'arvore') { try { await getMtBlocos(); } catch (_) { } if (!_chaoNomes) { try { const { data } = await sb.from('maquinas').select('codigo,modelo'); _chaoNomes = {}; (data || []).forEach(m => { _chaoNomes[String(parseInt(m.codigo, 10))] = m.modelo || ''; }); } catch (_) { _chaoNomes = {}; } } } renderAnaliseMais(); }
+async function amVista(v) { _amVista = v; if (v === 'arvore' || v === 'turnos') { try { await getMtBlocos(); } catch (_) { } if (!_chaoNomes) { try { const { data } = await sb.from('maquinas').select('codigo,modelo'); _chaoNomes = {}; (data || []).forEach(m => { _chaoNomes[String(parseInt(m.codigo, 10))] = m.modelo || ''; }); } catch (_) { _chaoNomes = {}; } } } renderAnaliseMais(); }
 /* 03/09/2026 (João: "você ligou o setor inteiro em toda a máquina — tem que
    ligar o Rafael com as máquinas que ele opera, o Patrick com a dele").
    O desenho já ligava operador → máquinas DELE, mas só um operador por
@@ -8450,10 +8450,15 @@ function amArvTexto() {
    operador cadastrado cai em "sem operador". Meta = cadastro por máquina e
    bloco × fator do dia (sábado reduzido, domingo zero), somada nos dias do
    período. As mesmas réguas do resto do app; só o desenho é novo. */
-function _amArvore(E, setorLbl) {
+/* 03/09/2026 (João: "usando a base da esquerda, comparar entre turnos — manhã,
+   tarde e noite — operador e suas máquinas"). A conta que a árvore fazia saiu de
+   dentro dela: as duas vistas (árvore e turnos) leem a MESMA apuração, senão
+   seriam duas réguas para o mesmo número e elas divergiriam na primeira mudança.
+   Devolve null quando não há dia com produção no período. */
+function _amArvDados(E) {
   const BL = ['Manhã', 'Tarde', 'Noite'];
   const dias = [...new Set(E.prod.map(r => String(r.dia).slice(0, 10)))].sort();
-  if (!dias.length) return '<div class="card"><p class="desc">Sem produção no período.</p></div>';
+  if (!dias.length) return null;
   const fator = d => { const t = tipoDia(d); return t === 'domingo' || t === 'folga' ? 0 : (t === 'sabado' || t === 'reduzido') ? EQ_DIA_REDUZIDO : 1; };
   const somaF = dias.reduce((a, d) => a + fator(d), 0);
   const nome = k => { const e = _mtEquipe && _mtEquipe[k]; if (!e) return null; if (e.operador_pendente) return 'a identificar'; return e.operador ? _mtCurto(e.operador) : null; };
@@ -8479,6 +8484,114 @@ function _amArvore(E, setorLbl) {
   });
   const ops = Object.values(OP).sort((a, b) => (b.prod - (b.temMeta ? b.meta : 0)) - (a.prod - (a.temMeta ? a.meta : 0)));
   const raiz = ops.reduce((a, o) => { a.prod += o.prod; a.perda += o.perda; a.par += o.par; if (o.temMeta) { a.meta += o.meta; a.temMeta = true; } return a; }, { prod: 0, perda: 0, par: 0, meta: 0, temMeta: false });
+  return { dias: dias, ops: ops, raiz: raiz };
+}
+/* ===== 03/09/2026 — VISTA TURNOS (João, print da Célula A à esquerda: "faz
+   usando a base da esquerda para comparar entre turnos manhã tarde e noite,
+   operador e suas máquinas") =====
+   A árvore mostra cada operador uma vez, já colado no turno dele — dá para ver
+   quem produziu, mas NÃO dá para responder "qual turno vai melhor", porque os
+   três ficam embaralhados na mesma coluna. Aqui o TURNO é quem manda: um bloco
+   por turno, na cor que o app já usa para turno (Manhã âmbar, Tarde verde,
+   Noite azul), com os operadores daquele turno e as máquinas que cada um rodou
+   NAQUELE turno. Mesma apuração da árvore (`_amArvDados` + `_arvGruposTurno`) e
+   mesmo semáforo do Painel — muda o agrupamento, não a régua.
+   A ESCALA das barras compara só dentro do turno (irmão com irmão): comparar a
+   barra da Noite com a da Manhã seria injusto, a jornada da noite é 9,13 h
+   contra 7,55 h da manhã, e a meta já entra proporcional a isso. Quem compara
+   turno com turno é o % de atingimento da faixa de cima, que já é adimensional. */
+/* os mesmos botões de envio das duas vistas — a foto já sai uma por turno
+   desde a v4.438, então serve igual aqui. */
+function _amArvBotoes(E) {
+  return '<div style="display:flex;gap:6px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
+    + '<span onclick="enviarTexto(amArvTexto())" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">📝 texto</span>'
+    + '<span onclick="amArvImagem()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:#25D366;color:#fff">🖼️ imagem</span></div>';
+}
+function _amTurBarra(o, mx) {
+  const rz = _arvRazao(o), cor = _arvCor(rz), M = mx > 0 ? mx : 1;
+  const w = Math.max(3, Math.min(100, 100 * (o.prod / M)));
+  const tk = (o.meta != null && o.meta > 0) ? Math.min(100, 100 * (o.meta / M)) : null;
+  return '<div style="position:relative;height:11px;background:#E9EBEF;border-radius:6px;margin:3px 0 2px">'
+    + '<div style="position:absolute;left:0;top:0;bottom:0;width:' + w.toFixed(1) + '%;background:' + cor + ';border-radius:6px"></div>'
+    + (tk != null ? '<div style="position:absolute;left:' + tk.toFixed(1) + '%;top:-3px;bottom:-3px;width:2px;background:#333"></div>' : '')
+    + '</div>';
+}
+function _amTurNums(o) {
+  const rz = _arvRazao(o);
+  const pp = (o.prod + o.perda) > 0 ? 100 * o.perda / (o.prod + o.perda) : null;
+  return '<span style="font-size:10.5px;color:var(--fraco)">' + fmtKg(o.prod)
+    + (rz != null ? ' · meta ' + fmtKg(o.meta) + ' · <b style="color:' + _arvCorTxt(rz) + '">' + Math.round(rz * 100) + '%</b>' : ' · sem meta')
+    + (pp != null ? ' · 🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '')
+    + ' · ⏸️' + Math.round(o.par) + 'h</span>';
+}
+function _amTurnos(E, setorLbl) {
+  const _D = _amArvDados(E);
+  if (!_D) return '<div class="card"><p class="desc">Sem produção no período.</p></div>';
+  const A = { setor: setorLbl, dias: _D.dias.length, raiz: _D.raiz, ops: _D.ops, aberto: () => true };
+  _amArvUlt = A;   /* os botões de texto e imagem saem iguais ao que está na tela */
+  const G = _arvGruposTurno(A);
+  if (!G.length) return '<div class="card"><p class="desc">Sem produção por turno no período.</p></div>';
+  /* faixa de comparação: é ela que responde "qual turno foi melhor". Só marco o
+     melhor quando há PELO MENOS DOIS turnos com meta cadastrada — com um só não
+     existe comparação, e marcar campeão de um participante seria enganoso. */
+  const comMeta = G.filter(g => g.raiz.temMeta && g.raiz.meta > 0);
+  let melhor = null;
+  if (comMeta.length >= 2) {
+    const lider = comMeta.reduce((a, g) => (g.raiz.prod / g.raiz.meta) > (a.raiz.prod / a.raiz.meta) ? g : a);
+    /* coroa só quem está DENTRO da régua. Acima de 130% o número não diz que o
+       turno foi melhor, diz que a meta daquelas máquinas está velha (é o mesmo
+       roxo do semáforo) — pôr ▲ ali seria eleger campeão por cadastro
+       desatualizado, exatamente o que o app já se recusa a comemorar no Painel. */
+    if ((lider.raiz.prod / lider.raiz.meta) <= ARV_META_SUSPEITA) melhor = lider.bl;
+  }
+  let topo = '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:0 0 10px">';
+  G.forEach(g => {
+    const rz = _arvRazao(g.raiz), c = MT_COR_T(g.bl);
+    topo += '<div style="flex:1;min-width:96px;border:2px solid ' + c + ';background:' + MT_BG_T(g.bl) + ';border-radius:11px;padding:7px 8px;text-align:center">'
+      + '<div style="font-size:11px;font-weight:800;color:' + c + '">' + escapeHtml(g.bl) + (melhor === g.bl ? ' ▲' : '') + '</div>'
+      + '<div style="font-size:19px;font-weight:800;color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</div>'
+      + '<div style="font-size:10px;color:var(--fraco)">' + fmtKg(g.raiz.prod) + ' · ' + g.ops.length + ' oper.</div></div>';
+  });
+  topo += '</div>';
+  let corpo = '';
+  G.forEach(g => {
+    const c = MT_COR_T(g.bl);
+    const maxOp = Math.max(1, ...g.ops.map(o => Math.max(o.prod, o.temMeta ? o.meta : 0)));
+    const maxMq = Math.max(1, ...g.ops.reduce((a, o) => a.concat(o.maqs.map(q => Math.max(q.prod, q.meta || 0))), []));
+    corpo += '<div style="border:2px solid ' + c + ';background:' + MT_BG_T(g.bl) + ';border-radius:12px;padding:9px 10px;margin-bottom:10px">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:7px">'
+      + '<b style="font-size:13.5px;color:' + c + ';margin-right:8px">' + escapeHtml(g.bl) + '</b>'
+      + '<span style="margin-left:auto">' + _amTurNums(g.raiz) + '</span></div>';
+    g.ops.forEach(o => {
+      corpo += '<div style="background:#fff;border-radius:9px;padding:7px 9px;margin-bottom:6px">'
+        + '<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">'
+        + '<b style="font-size:12.5px;margin-right:7px">' + escapeHtml(o.nome) + '</b>'
+        + '<span style="font-size:10px;color:var(--fraco-2);margin-right:7px">' + o.maqs.length + ' máq</span>'
+        + (o.fora && o.fora.length ? '<span style="font-size:10px;font-weight:800;color:#9B2C2C">⚠ ' + o.fora.length + ' fora da meta</span>' : '')
+        + '</div>' + _amTurBarra(o, maxOp) + _amTurNums(o);
+      o.maqs.slice().sort((x, y) => y.prod - x.prod).forEach(q => {
+        const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
+        const selo = _arvSelo(_arvRazao(q));
+        corpo += '<div style="margin:6px 0 0 12px;padding-left:9px;border-left:2px solid var(--linha-2s)">'
+          + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+          + '<span style="width:9px;height:9px;border-radius:50%;background:' + _arvCor(_arvRazao(q)) + ';display:inline-block;flex:none;margin-right:6px"></span>'
+          + '<b style="font-size:11.5px;margin-right:7px">' + escapeHtml(q.cod) + (nm ? ' ' + escapeHtml(String(nm)) : '') + '</b>'
+          + (selo ? '<span style="font-size:9.5px;font-weight:800;border-radius:7px;padding:1px 6px;background:' + selo.f + ';border:1px solid ' + selo.b + ';color:' + selo.c + '">' + selo.t + '</span>' : '')
+          + '</div>' + _amTurBarra(q, maxMq) + _amTurNums(q) + '</div>';
+      });
+      corpo += '</div>';
+    });
+    corpo += '</div>';
+  });
+  return '<div class="card" style="padding:10px">' + _amArvBotoes(E) + topo + corpo
+    + '<p class="desc" style="font-size:10.5px;margin:2px 2px 0">Um bloco por turno, com os operadores daquele turno e as máquinas que cada um rodou <b>nele</b>. '
+    + 'A barra compara só dentro do turno — a jornada da noite (9,13 h) é maior que a da manhã (7,55 h) e a meta já entra proporcional. '
+    + 'Quem compara turno com turno é o <b>%</b> da faixa de cima. Semáforo: 🟢 bateu a meta · 🟡 85–99% · 🔴 abaixo de 85% · 🟣 acima de 130% (meta a revisar) · 🔵 sem meta cadastrada.</p></div>';
+}
+function _amArvore(E, setorLbl) {
+  const _D = _amArvDados(E);
+  if (!_D) return '<div class="card"><p class="desc">Sem produção no período.</p></div>';
+  const dias = _D.dias, ops = _D.ops, raiz = _D.raiz;
   const pctP = (perda, prod) => (prod + perda) > 0 ? 100 * perda / (prod + perda) : null;
   const cxCor = r => _arvCor(r);   /* uma régua só, a do Painel */
   /* 03/09/2026 (João, prints: "vc não fez igual a foto da esquerda" — árvore de
@@ -8638,8 +8751,12 @@ function renderAnaliseMais(cache) {
   /* 03/09/2026 (João: "quero um esquema assim — setor → operador → máquinas —
      numa sub-aba da Análise+"). Duas vistas: os cards de sempre e a ÁRVORE. */
   const _vistaBtn = (v, rot) => '<span onclick="amVista(\'' + v + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:6px 14px;border:1px solid ' + (_amVista === v ? 'var(--navy);background:var(--navy);color:#fff' : 'var(--linha-2s);background:var(--leve-2)') + '">' + rot + '</span>';
-  const _vistas = '<div style="display:flex;gap:6px;justify-content:center;margin:0 0 8px">' + _vistaBtn('cards', '📊 Cards') + _vistaBtn('arvore', '🌳 Setor → operador → máquina') + '</div>';
-  if (_amVista === 'arvore') { box.innerHTML = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` + _amArvore(E, setorLbl); setTimeout(_amArvLigaPeriodo, 0); return; }
+  const _vistas = '<div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:0 0 8px">' + _vistaBtn('cards', '📊 Cards') + _vistaBtn('arvore', '🌳 Setor → operador → máquina') + _vistaBtn('turnos', '🕐 Turnos') + '</div>';
+  if (_amVista === 'arvore' || _amVista === 'turnos') {
+    const _cab = `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>`;
+    box.innerHTML = _vistas + _cab + (_amVista === 'turnos' ? _amTurnos(E, setorLbl) : _amArvore(E, setorLbl));
+    setTimeout(_amArvLigaPeriodo, 0); return;
+  }
   let html = _vistas + `<div style="text-align:center;color:var(--fraco);font-size:12px;margin:2px 0 8px">${E.rotulo} · <b>${setorLbl}</b> · até ${fmtData(E.ate)}</div>` +
     ppBloco() +
     `<div style="background:var(--leve);border-radius:10px;padding:9px;margin-bottom:10px">` +
