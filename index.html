@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.441.0';
+const APP_VER = '4.442.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8524,6 +8524,92 @@ function _amTurNums(o) {
     + (pp != null ? ' · 🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '')
     + ' · ⏸️' + Math.round(o.par) + 'h</span>';
 }
+/* ===== 03/09/2026 (João: "põe a comparação de um operador da manhã ou da tarde
+   e um da noite com as mesmas máquinas, igual aos cards da Análise+") =====
+   Comparar operador com operador só é honesto quando os dois rodaram O MESMO
+   EQUIPAMENTO: máquina diferente tem meta diferente, molde diferente e ritmo
+   diferente, e o % de um não diz nada sobre o outro. Então agrupo os operadores
+   pelo CONJUNTO DE MÁQUINAS que cada um rodou no período — é a "célula" que a
+   fábrica já enxerga (1704-1705-1706) — e só entram no card os conjuntos com
+   DOIS OU MAIS TURNOS. Operador cujo conjunto não se repete em outro turno fica
+   de fora e o rodapé diz quantos são: sem par não existe comparação, e forçar
+   uma seria inventar equivalência que não existe.
+   O conjunto tem que ser IGUAL, não parecido: comparar quem roda 3 máquinas com
+   quem roda 2 delas mediria o tamanho do posto, não o desempenho. */
+function _amTurCelulas(A) {
+  const G = _arvGruposTurno(A);
+  const cel = {};
+  G.forEach(g => g.ops.forEach(o => {
+    const cods = o.maqs.map(q => q.cod).sort((x, y) => (+x || 0) - (+y || 0));
+    const k = cods.join('-');
+    (cel[k] = cel[k] || { cods: cods, linhas: [] }).linhas.push(o);
+  }));
+  return Object.values(cel)
+    .filter(c => new Set(c.linhas.map(l => l.bl)).size >= 2)
+    .sort((a, b) => b.linhas.reduce((x, l) => x + l.prod, 0) - a.linhas.reduce((x, l) => x + l.prod, 0));
+}
+function _amTurCompara(A) {
+  const cels = _amTurCelulas(A);
+  const total = _arvGruposTurno(A).reduce((a, g) => a + g.ops.length, 0);
+  const dentro = cels.reduce((a, c) => a + c.linhas.length, 0);
+  if (!cels.length) return '';
+  const BLO = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2 };
+  let h = '';
+  cels.forEach(c => {
+    const linhas = c.linhas.slice().sort((a, b) => (BLO[a.bl] || 0) - (BLO[b.bl] || 0));
+    /* mesma régua do ▲ da faixa de turnos: acima de 130% o número é meta velha,
+       não desempenho — não coroo ninguém nesse caso. */
+    const comMeta = linhas.filter(l => l.temMeta && l.meta > 0);
+    let melhor = null;
+    if (comMeta.length >= 2) {
+      const lid = comMeta.reduce((a, l) => (l.prod / l.meta) > (a.prod / a.meta) ? l : a);
+      if ((lid.prod / lid.meta) <= ARV_META_SUSPEITA) melhor = lid;
+    }
+    h += '<div style="margin-bottom:14px">'
+      + '<div style="font-size:11.5px;font-weight:800;color:var(--fraco-2);margin-bottom:6px">🔧 '
+      + c.cods.map(x => escapeHtml(x)).join(' · ') + '</div>'
+      /* LADO A LADO, sempre. Com grid auto-fit os três blocos empilhavam numa
+         coluna quando a largura apertava — e comparação empilhada não compara:
+         o olho precisa dos números na mesma linha. Três de 112 px cabem na tela
+         do iPhone; se não couberem, o card rola de lado em vez de quebrar. */
+      + '<div style="display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch">';
+    linhas.forEach(l => {
+      const rz = _arvRazao(l), cor = MT_COR_T(l.bl);
+      const pp = (l.prod + l.perda) > 0 ? 100 * l.perda / (l.prod + l.perda) : null;
+      h += '<div style="flex:1 0 112px;min-width:112px;background:var(--leve-4);border-radius:10px;padding:9px;border-top:3px solid ' + cor + '">'
+        + '<div style="font-size:11px;font-weight:800;color:' + cor + '">' + escapeHtml(l.bl) + (melhor === l ? ' ▲' : '') + '</div>'
+        + '<div title="' + escapeHtml(l.nome) + '" style="font-size:11.5px;font-weight:800;color:var(--navy);margin:1px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(l.nome) + '</div>'
+        + '<div style="font-size:19px;font-weight:800;line-height:1.15;color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</div>'
+        + '<div style="font-size:10px;color:var(--fraco)">' + fmtKg(l.prod) + (rz != null ? ' de ' + fmtKg(l.meta) : ' · sem meta') + '</div>'
+        + '<div style="font-size:10px;color:var(--fraco-2)">🗑️' + (pp != null ? pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—') + ' · ⏸️' + Math.round(l.par) + 'h</div></div>';
+    });
+    h += '</div>';
+    /* onde a diferença acontece: a MESMA máquina, turno a turno. É esta linha
+       que transforma "a noite foi melhor" em algo em que dá para agir. */
+    h += '<div style="margin-top:7px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">'
+      + '<tr><th style="text-align:left;padding:3px 4px;color:var(--fraco-2);font-size:10px">máquina</th>'
+      + linhas.map(l => '<th style="padding:3px 4px;color:' + MT_COR_T(l.bl) + ';font-size:10px">' + escapeHtml(l.bl) + '</th>').join('') + '</tr>';
+    c.cods.forEach(cod => {
+      const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[cod]) ? _chaoNomes[cod] : '';
+      h += '<tr><td style="padding:3px 4px;border-top:1px solid var(--linha-2s)"><b>' + escapeHtml(cod) + '</b>'
+        + (nm ? ' <span style="color:var(--fraco-2);font-size:10px">' + escapeHtml(String(nm)) + '</span>' : '') + '</td>'
+        + linhas.map(l => {
+          const q = l.maqs.find(x => x.cod === cod), rz = q ? _arvRazao(q) : null;
+          return '<td style="padding:3px 4px;text-align:center;border-top:1px solid var(--linha-2s)">'
+            + (q ? '<span style="width:8px;height:8px;border-radius:50%;background:' + _arvCor(rz) + ';display:inline-block;margin-right:4px"></span>'
+              + '<b style="color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</b>' : '—') + '</td>';
+        }).join('') + '</tr>';
+    });
+    h += '</table></div></div>';
+  });
+  const fora = total - dentro;
+  return card('⚖️ Mesmo equipamento, turnos diferentes',
+    'operadores que rodaram exatamente as mesmas máquinas no período · ▲ marca o melhor da célula',
+    h + '<p class="desc" style="font-size:10.5px;margin:2px 0 0">Só entram conjuntos de máquinas que aparecem em <b>dois ou mais turnos</b> — sem par não há comparação. '
+    + (fora > 0 ? '<b>' + fora + '</b> operador(es) ficaram de fora por rodar um conjunto de máquinas que não se repete em outro turno. ' : '')
+    + 'O ▲ não é dado a quem passa de 130%: ali o número é meta desatualizada, não desempenho.</p>',
+    'amTurCompara');
+}
 function _amTurnos(E, setorLbl) {
   const _D = _amArvDados(E);
   if (!_D) return '<div class="card"><p class="desc">Sem produção no período.</p></div>';
@@ -8583,7 +8669,8 @@ function _amTurnos(E, setorLbl) {
     });
     corpo += '</div>';
   });
-  return '<div class="card" style="padding:10px">' + _amArvBotoes(E) + topo + corpo
+  const compara = _amTurCompara(A);
+  return '<div class="card" style="padding:10px">' + _amArvBotoes(E) + topo + '</div>' + compara + '<div class="card" style="padding:10px">' + corpo
     + '<p class="desc" style="font-size:10.5px;margin:2px 2px 0">Um bloco por turno, com os operadores daquele turno e as máquinas que cada um rodou <b>nele</b>. '
     + 'A barra compara só dentro do turno — a jornada da noite (9,13 h) é maior que a da manhã (7,55 h) e a meta já entra proporcional. '
     + 'Quem compara turno com turno é o <b>%</b> da faixa de cima. Semáforo: 🟢 bateu a meta · 🟡 85–99% · 🔴 abaixo de 85% · 🟣 acima de 130% (meta a revisar) · 🔵 sem meta cadastrada.</p></div>';
