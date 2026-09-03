@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.433.0';
+const APP_VER = '4.434.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8217,9 +8217,22 @@ function _amArvore(E, setorLbl) {
      Método (armadilha antiga): gerei o SVG num script Node, converti com
      cairosvg e OLHEI o PNG antes de colar aqui — três rodadas até o texto
      parar de sobrepor a barra. */
-  const VW = 420, RH1 = 78, RH2 = 70, HEADH = 54;
-  const BARX = { 1: [104, 226], 2: [258, VW - 12] };
-  const PLUSX = 234, LBLX = { 1: 104, 2: 258 };
+  /* 03/09/2026 (João: "está ligando tudo a nada, tem que ligar o operador às
+     máquinas que ele é responsável"). Estava certo: as curvas nasciam de um
+     PONTO SOLTO no meio do branco, e o setor era só um cabeçalho lá em cima,
+     sem ligação com nada. Agora é árvore de três colunas de verdade, como na
+     referência: o SETOR é um nó com barra própria à esquerda, centralizado na
+     vertical; dele saem as curvas para cada OPERADOR; e de cada operador
+     aberto saem as curvas para AS MÁQUINAS DELE. A largura cresce quando há
+     um operador aberto (3 colunas) e o card ganha rolagem lateral, porque no
+     celular três colunas não cabem sem espremer o texto. */
+  const RH1 = 78, RH2 = 70;
+  const temAberto = ops.some(o => !!_amArvAberto['op:' + o.nome]);
+  const COL = temAberto
+    ? { 0: [8, 112], 1: [150, 300], 2: [340, 556] }
+    : { 0: [8, 128], 1: [176, 404] };
+  const VW = temAberto ? 566 : 414;
+  const PLUS = { 1: temAberto ? 312 : 416 };
   const rows = []; let y = 0;
   const add = (nivel, label, sub, o, key, aberto, hasKids, parentIdx) => {
     const h = nivel === 1 ? RH1 : RH2, idx = rows.length;
@@ -8235,52 +8248,56 @@ function _amArvore(E, setorLbl) {
   });
   const totalH = y;
   const nivel1 = rows.filter(r => r.nivel === 1);
-  const hubY = nivel1.length ? (nivel1[0].y + nivel1[0].h / 2 + nivel1[nivel1.length - 1].y + nivel1[nivel1.length - 1].h / 2) / 2 : 0;
-  const hubX = 8;
+  /* o nó do setor fica na altura MÉDIA dos operadores — é de lá que o leque abre */
+  const raizY = nivel1.length ? (nivel1[0].y + nivel1[0].h / 2 + nivel1[nivel1.length - 1].y + nivel1[nivel1.length - 1].h / 2) / 2 - 20 : 0;
   const maxNivel = n => Math.max(1, ...rows.filter(r => r.nivel === n).map(r => Math.max(r.o.prod, r.o.temMeta ? r.o.meta : 0)));
-  const maxN = { 1: maxNivel(1), 2: maxNivel(2) };
+  const maxN = { 0: Math.max(raiz.prod, raiz.temMeta ? raiz.meta : 0) || 1, 1: maxNivel(1), 2: maxNivel(2) };
+  const BH = 13;
+  /* onde a curva SAI de um nó (direita da barra) e onde ela CHEGA (esquerda do rótulo) */
+  const saiX = n => COL[n][1], saiY = (yTopo) => yTopo + 34 + BH / 2;
+  const chegaX = n => COL[n][0] - 10, chegaY = (yTopo) => yTopo + 34 + BH / 2;
   let paths = '';
   rows.forEach(r => {
     let sx, sy;
-    if (r.parentIdx < 0) { sx = hubX; sy = hubY; } else { const p = rows[r.parentIdx]; sx = BARX[p.nivel][1]; sy = p.y + p.h / 2 + 4; }
-    const dx = LBLX[r.nivel] - 10, dy = r.y + r.h / 2 + 4, mx = (sx + dx) / 2;
-    paths += '<path d="M ' + sx + ',' + sy + ' C ' + mx + ',' + sy + ' ' + mx + ',' + dy + ' ' + dx + ',' + dy + '" fill="none" stroke="#C9CED6" stroke-width="1.4"/>';
+    if (r.parentIdx < 0) { sx = saiX(0); sy = saiY(raizY); }
+    else { const p = rows[r.parentIdx]; sx = saiX(p.nivel); sy = saiY(p.y); }
+    const dx = chegaX(r.nivel), dy = chegaY(r.y), mx = (sx + dx) / 2;
+    paths += '<path d="M ' + sx + ',' + sy + ' C ' + mx + ',' + sy + ' ' + mx + ',' + dy + ' ' + dx + ',' + dy + '" fill="none" stroke="' + (r.nivel === 2 ? '#A9B0BA' : '#C9CED6') + '" stroke-width="' + (r.nivel === 2 ? 1.6 : 1.4) + '"/>';
   });
-  if (nivel1.length) paths += '<circle cx="' + hubX + '" cy="' + hubY + '" r="3" fill="#8A93A1"/>';
-  let nodes = '';
-  rows.forEach(r => {
-    const [bx0, bx1] = BARX[r.nivel], bw = bx1 - bx0, bh = 13, by = r.y + 34;
-    const rr = r.o.temMeta && r.o.meta ? r.o.prod / r.o.meta : null, cor = cxCor(rr), pp = pctP(r.o.perda, r.o.prod);
-    const fillW = Math.max(4, Math.min(bw, bw * (r.o.prod / maxN[r.nivel])));
-    const tickX = r.o.temMeta ? bx0 + Math.min(bw, bw * (r.o.meta / maxN[r.nivel])) : null;
-    const lblSz = r.nivel === 1 ? 14.5 : 13;
-    const lbl = escapeHtml(r.label.length > 20 ? r.label.slice(0, 19) + '…' : r.label);
-    nodes += '<text x="' + LBLX[r.nivel] + '" y="' + (r.y + 16) + '" font-size="' + lblSz + '" font-weight="700" fill="#1B2430">' + lbl + '</text>';
-    if (r.sub) nodes += '<text x="' + LBLX[r.nivel] + '" y="' + (r.y + 30) + '" font-size="10.5" fill="#9AA0A8">' + escapeHtml(r.sub) + '</text>';
-    nodes += '<rect x="' + bx0 + '" y="' + by + '" width="' + bw + '" height="' + bh + '" rx="6.5" fill="#E9EBEF"/>';
-    nodes += '<rect x="' + bx0 + '" y="' + by + '" width="' + fillW + '" height="' + bh + '" rx="6.5" fill="' + cor + '"/>';
-    if (tickX != null) nodes += '<rect x="' + (tickX - 0.8) + '" y="' + (by - 3) + '" width="1.6" height="' + (bh + 6) + '" fill="#333"/>';
-    const stFs = r.nivel === 1 ? 10 : 9.3;
-    nodes += '<text x="' + bx0 + '" y="' + (by + bh + 14) + '" font-size="' + stFs + '" fill="#6B7280">' + fmtKg(r.o.prod)
-      + (r.o.temMeta ? ' · meta ' + fmtKg(r.o.meta) + ' · ' : ' · ')
+  /* desenha um nó (rótulo + subtítulo + barra bullet + status) */
+  const noSVG = (nivel, yTopo, label, sub, o, forte) => {
+    const [bx0, bx1] = COL[nivel], bw = bx1 - bx0, by = yTopo + 34;
+    const rr = o.temMeta && o.meta ? o.prod / o.meta : null, cor = cxCor(rr), pp = pctP(o.perda, o.prod);
+    const fillW = Math.max(4, Math.min(bw, bw * (o.prod / maxN[nivel])));
+    const tickX = o.temMeta ? bx0 + Math.min(bw, bw * (o.meta / maxN[nivel])) : null;
+    const lblSz = forte ? 15 : nivel === 1 ? 14 : 12.5;
+    const corta = nivel === 2 ? 22 : forte ? 26 : 20;
+    let s = '<text x="' + bx0 + '" y="' + (yTopo + 16) + '" font-size="' + lblSz + '" font-weight="' + (forte ? 800 : 700) + '" fill="#1B2430">' + escapeHtml(label.length > corta ? label.slice(0, corta - 1) + '…' : label) + '</text>';
+    if (sub) s += '<text x="' + bx0 + '" y="' + (yTopo + 30) + '" font-size="10.5" fill="#9AA0A8">' + escapeHtml(sub) + '</text>';
+    s += '<rect x="' + bx0 + '" y="' + by + '" width="' + bw + '" height="' + BH + '" rx="6.5" fill="#E9EBEF"/>'
+      + '<rect x="' + bx0 + '" y="' + by + '" width="' + fillW + '" height="' + BH + '" rx="6.5" fill="' + cor + '"/>';
+    if (tickX != null) s += '<rect x="' + (tickX - 0.8) + '" y="' + (by - 3) + '" width="1.6" height="' + (BH + 6) + '" fill="#333"/>';
+    s += '<text x="' + bx0 + '" y="' + (by + BH + 14) + '" font-size="' + (nivel === 2 ? 9.3 : 10) + '" fill="#6B7280">' + fmtKg(o.prod)
+      + (o.temMeta ? ' · meta ' + fmtKg(o.meta) + ' · ' : ' · ')
       + (rr != null ? '<tspan font-weight="800" fill="' + cor + '">' + Math.round(rr * 100) + '%</tspan> · ' : '')
-      + (pp != null ? '🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% · ' : '') + '⏸️' + Math.round(r.o.par) + 'h</text>';
+      + (pp != null ? '🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% · ' : '') + '⏸️' + Math.round(o.par) + 'h</text>';
+    return s;
+  };
+  let nodes = noSVG(0, raizY, setorLbl, dias.length + ' dia(s) · ' + ops.length + ' operador(es)', raiz, true);
+  rows.forEach(r => {
+    nodes += noSVG(r.nivel, r.y, r.label, r.sub, r.o, false);
     if (r.hasKids) {
-      const px = PLUSX, py = by + bh / 2;
-      nodes += '<g onclick="amArvToggle(\'' + r.key + '\')" style="cursor:pointer">'
+      const px = PLUS[r.nivel], py = r.y + 34 + BH / 2;
+      nodes += '<g onclick="amArvToggle(\'' + escapeHtml(r.key) + '\')" style="cursor:pointer">'
         + '<circle cx="' + px + '" cy="' + py + '" r="11" fill="' + (r.aberto ? '#33415C' : '#F3F5F8') + '" stroke="#C3C9D1" stroke-width="1"/>'
         + '<text x="' + px + '" y="' + (py + 4.5) + '" text-anchor="middle" font-size="15" font-weight="800" fill="' + (r.aberto ? '#fff' : '#33415C') + '" style="pointer-events:none">' + (r.aberto ? '−' : '+') + '</text></g>';
     }
-    if (r.nivel === 1) nodes += '<line x1="0" y1="' + (r.y + r.h - 2) + '" x2="' + VW + '" y2="' + (r.y + r.h - 2) + '" stroke="#F0F1F3" stroke-width="1"/>';
+    if (r.nivel === 1) nodes += '<line x1="' + COL[1][0] + '" y1="' + (r.y + r.h - 2) + '" x2="' + VW + '" y2="' + (r.y + r.h - 2) + '" stroke="#F2F3F5" stroke-width="1"/>';
   });
-  const raizR = raiz.temMeta && raiz.meta ? raiz.prod / raiz.meta : null;
-  const svg = '<svg viewBox="0 0 ' + VW + ' ' + (totalH + HEADH) + '" width="100%" height="' + (totalH + HEADH) + '" style="display:block;font-family:inherit">'
-    + '<text x="8" y="20" font-size="14.5" font-weight="800" fill="#1B2430">' + escapeHtml(setorLbl.length > 40 ? setorLbl.slice(0, 39) + '…' : setorLbl) + '</text>'
-    + '<text x="8" y="38" font-size="12" fill="#6B7280">' + fmtKg(raiz.prod) + (raiz.temMeta ? ' · meta ' + fmtKg(raiz.meta) : '') + (raizR != null ? ' · <tspan font-weight="800" fill="' + cxCor(raizR) + '">' + Math.round(raizR * 100) + '%</tspan>' : '') + ' · ' + dias.length + ' dia(s) · ' + ops.length + ' operador(es)</text>'
-    + '<line x1="0" y1="' + (HEADH - 4) + '" x2="' + VW + '" y2="' + (HEADH - 4) + '" stroke="#E3E5E9" stroke-width="1.4"/>'
-    + '<g transform="translate(0,' + HEADH + ')">' + paths + nodes + '</g></svg>';
-  return '<div class="card" style="padding:8px 2px 10px;overflow-x:hidden">' + svg
-    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">Barra: preenchimento é a produção, o tracinho escuro é a meta (verde ≥ meta, laranja perto, vermelho abaixo) — escala comparando só entre irmãos do mesmo nível. Operador vem do organograma (máquina × turno). Toque no + para abrir as máquinas.</p></div>';
+  const svg = '<svg viewBox="0 0 ' + VW + ' ' + (totalH + 12) + '" width="' + (temAberto ? VW : VW * 0.92) + '" height="' + (totalH + 12) + '" style="display:block;max-width:none;font-family:inherit">'
+    + paths + nodes + '</svg>';
+  return '<div class="card" style="padding:8px 4px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch">' + svg
+    + '<p class="desc" style="font-size:10.5px;margin:8px 10px 0">O setor à esquerda abre em operadores; toque no <b>+</b> para abrir as máquinas daquele operador. Barra: preenchimento é a produção, o tracinho escuro é a meta (verde ≥ meta, laranja perto, vermelho abaixo); a escala compara só entre irmãos do mesmo nível. Operador vem do organograma (máquina × turno).</p></div>';
 }
 function renderAnaliseMais(cache) {
   /* rede de segurança: são SETE lugares que chamam este desenho. Em vez de
