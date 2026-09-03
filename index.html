@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.443.0';
+const APP_VER = '4.444.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8555,6 +8555,37 @@ function _amTurCelulas(A) {
     .filter(c => new Set(c.linhas.map(l => l.bl)).size >= 2)
     .sort((a, b) => b.linhas.reduce((x, l) => x + l.prod, 0) - a.linhas.reduce((x, l) => x + l.prod, 0));
 }
+/* 03/09/2026 — REFEITO conforme a FOLHA que o João desenhou: três árvores lado
+   a lado, uma por turno, cada uma com o operador numa CAIXA e os ramos saindo
+   dela para as máquinas dele. A primeira versão tinha virado uma tabela cruzada
+   máquina × turno; a tabela até cruzava os números, mas não é o que ele pediu e
+   perdia a ideia central do desenho — ver de relance que é a MESMA amarração de
+   operador e máquinas se repetindo nos três turnos.
+   As máquinas saem na MESMA ORDEM nas três colunas (por código), então a leitura
+   horizontal continua valendo: a linha da 1704 fica na mesma altura nos três. */
+function _amTurMiniArv(l, cods) {
+  const W = 182, LH = 32, BOXH = 22;
+  const H = Math.max(cods.length * LH, 46) + 10;
+  const cy = H / 2 - 2;                       /* a caixa nasce no meio, como no desenho */
+  const bx1 = 74;                             /* borda direita da caixa do operador */
+  let paths = '', nos = '';
+  cods.forEach((cod, i) => {
+    const y = 12 + i * LH, dx = 92;
+    const mx = (bx1 + dx) / 2;
+    paths += '<path d="M ' + bx1 + ',' + cy + ' C ' + mx + ',' + cy + ' ' + mx + ',' + y + ' ' + dx + ',' + y + '" fill="none" stroke="#C3C9D1" stroke-width="1.3"/>';
+    const q = l.maqs.find(x => x.cod === cod), rz = q ? _arvRazao(q) : null;
+    nos += '<circle cx="' + (dx + 6) + '" cy="' + (y - 3) + '" r="4.5" fill="' + (q ? _arvCor(rz) : '#C3C9D1') + '"/>'
+      + '<text x="' + (dx + 15) + '" y="' + y + '" font-size="11" font-weight="800" fill="#1B2430">' + escapeHtml(String(cod)) + '</text>'
+      + '<text x="' + (W - 3) + '" y="' + y + '" text-anchor="end" font-size="11" font-weight="800" fill="' + (rz != null ? _arvCorTxt(rz) : '#9AA0A8') + '">'
+      + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</text>';
+    if (q) nos += '<text x="' + (dx + 15) + '" y="' + (y + 11) + '" font-size="8.5" fill="#9AA0A8">' + escapeHtml(fmtKg(q.prod)) + '</text>';
+  });
+  const nm = String(l.nome).length > 13 ? String(l.nome).slice(0, 12) + '…' : String(l.nome);
+  const cx = _arvCor(_arvRazao(l));
+  const cxa = '<rect x="2" y="' + (cy - BOXH / 2) + '" width="72" height="' + BOXH + '" rx="5" fill="#fff" stroke="' + cx + '" stroke-width="1.6"/>'
+    + '<text x="38" y="' + (cy + 4) + '" text-anchor="middle" font-size="9.5" font-weight="800" fill="#1B2430">' + escapeHtml(nm) + '</text>';
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" style="display:block;font-family:inherit">' + paths + cxa + nos + '</svg>';
+}
 function _amTurCompara(A) {
   const cels = _amTurCelulas(A);
   const total = _arvGruposTurno(A).reduce((a, g) => a + g.ops.length, 0);
@@ -8572,47 +8603,28 @@ function _amTurCompara(A) {
       const lid = comMeta.reduce((a, l) => (l.prod / l.meta) > (a.prod / a.meta) ? l : a);
       if ((lid.prod / lid.meta) <= ARV_META_SUSPEITA) melhor = lid;
     }
-    h += '<div style="margin-bottom:14px">'
+    h += '<div style="margin-bottom:16px">'
       + '<div style="font-size:11.5px;font-weight:800;color:var(--fraco-2);margin-bottom:6px">🔧 '
       + c.cods.map(x => escapeHtml(x)).join(' · ') + '</div>'
-      /* LADO A LADO, sempre. Com grid auto-fit os três blocos empilhavam numa
-         coluna quando a largura apertava — e comparação empilhada não compara:
-         o olho precisa dos números na mesma linha. Três de 112 px cabem na tela
-         do iPhone; se não couberem, o card rola de lado em vez de quebrar. */
       + '<div style="display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch">';
     linhas.forEach(l => {
       const rz = _arvRazao(l), cor = MT_COR_T(l.bl);
       const pp = (l.prod + l.perda) > 0 ? 100 * l.perda / (l.prod + l.perda) : null;
-      h += '<div style="flex:1 0 112px;min-width:112px;background:var(--leve-4);border-radius:10px;padding:9px;border-top:3px solid ' + cor + '">'
-        + '<div style="font-size:11px;font-weight:800;color:' + cor + '">' + escapeHtml(l.bl) + (melhor === l ? ' ▲' : '') + '</div>'
-        + '<div title="' + escapeHtml(l.nome) + '" style="font-size:11.5px;font-weight:800;color:var(--navy);margin:1px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(l.nome) + '</div>'
-        + '<div style="font-size:19px;font-weight:800;line-height:1.15;color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</div>'
-        + '<div style="font-size:10px;color:var(--fraco)">' + fmtKg(l.prod) + (rz != null ? ' de ' + fmtKg(l.meta) : ' · sem meta') + '</div>'
-        + '<div style="font-size:10px;color:var(--fraco-2)">🗑️' + (pp != null ? pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—') + ' · ⏸️' + Math.round(l.par) + 'h</div></div>';
+      h += '<div style="flex:0 0 auto;background:var(--leve-4);border-radius:10px;padding:8px 7px;border-top:3px solid ' + cor + '">'
+        + '<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:2px">'
+        + '<span style="font-size:11px;font-weight:800;color:' + cor + '">' + escapeHtml(l.bl) + (melhor === l ? ' ▲' : '') + '</span>'
+        + '<span style="margin-left:auto;font-size:15px;font-weight:800;color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</span></div>'
+        + _amTurMiniArv(l, c.cods)
+        + '<div style="font-size:9.5px;color:var(--fraco-2);margin-top:3px">' + fmtKg(l.prod) + (rz != null ? ' de ' + fmtKg(l.meta) : '')
+        + ' · 🗑️' + (pp != null ? pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—') + ' · ⏸️' + Math.round(l.par) + 'h</div></div>';
     });
-    h += '</div>';
-    /* onde a diferença acontece: a MESMA máquina, turno a turno. É esta linha
-       que transforma "a noite foi melhor" em algo em que dá para agir. */
-    h += '<div style="margin-top:7px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">'
-      + '<tr><th style="text-align:left;padding:3px 4px;color:var(--fraco-2);font-size:10px">máquina</th>'
-      + linhas.map(l => '<th style="padding:3px 4px;color:' + MT_COR_T(l.bl) + ';font-size:10px">' + escapeHtml(l.bl) + '</th>').join('') + '</tr>';
-    c.cods.forEach(cod => {
-      const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[cod]) ? _chaoNomes[cod] : '';
-      h += '<tr><td style="padding:3px 4px;border-top:1px solid var(--linha-2s)"><b>' + escapeHtml(cod) + '</b>'
-        + (nm ? ' <span style="color:var(--fraco-2);font-size:10px">' + escapeHtml(String(nm)) + '</span>' : '') + '</td>'
-        + linhas.map(l => {
-          const q = l.maqs.find(x => x.cod === cod), rz = q ? _arvRazao(q) : null;
-          return '<td style="padding:3px 4px;text-align:center;border-top:1px solid var(--linha-2s)">'
-            + (q ? '<span style="width:8px;height:8px;border-radius:50%;background:' + _arvCor(rz) + ';display:inline-block;margin-right:4px"></span>'
-              + '<b style="color:' + (rz != null ? _arvCorTxt(rz) : 'var(--fraco-2)') + '">' + (rz != null ? Math.round(rz * 100) + '%' : '—') + '</b>' : '—') + '</td>';
-        }).join('') + '</tr>';
-    });
-    h += '</table></div></div>';
+    h += '</div></div>';
   });
   const fora = total - dentro;
   return card('⚖️ Mesmo equipamento, turnos diferentes',
-    'operadores que rodaram exatamente as mesmas máquinas no período · ▲ marca o melhor da célula',
-    h + '<p class="desc" style="font-size:10.5px;margin:2px 0 0">Só entram conjuntos de máquinas que aparecem em <b>dois ou mais turnos</b> — sem par não há comparação. '
+    'o mesmo operador e as mesmas máquinas, turno a turno · ▲ marca o melhor da célula',
+    h + '<p class="desc" style="font-size:10.5px;margin:2px 0 0">As máquinas saem na mesma ordem nas três colunas, então a linha de cada uma fica na mesma altura e dá para ler de lado. '
+    + 'Só entram conjuntos de máquinas que aparecem em <b>dois ou mais turnos</b> — sem par não há comparação. '
     + (fora > 0 ? '<b>' + fora + '</b> operador(es) ficaram de fora por rodar um conjunto de máquinas que não se repete em outro turno. ' : '')
     + 'O ▲ não é dado a quem passa de 130%: ali o número é meta desatualizada, não desempenho.</p>',
     'amTurCompara');
