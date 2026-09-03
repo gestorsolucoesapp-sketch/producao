@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.435.0';
+const APP_VER = '4.436.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8179,6 +8179,144 @@ async function amVista(v) { _amVista = v; if (v === 'arvore') { try { await getM
 function amArvToggle(k) { _amArvAberto[k] = (_amArvAberto[k] === false); renderAnaliseMais(); }
 function amArvTodos(abrir) { _amArvAberto = {}; if (!abrir) _amArvTodosFechado = true; else _amArvTodosFechado = false; renderAnaliseMais(); }
 let _amArvTodosFechado = false;
+let _amArvUlt = null;
+/* abre o seletor de período do Análise+ (o <select> existe e está oculto) */
+function amArvPeriodo() {
+  const sel = $('amPeriodo'); if (!sel) { toast('Seletor de período indisponível.'); return; }
+  const w = sel.closest('.campo') || sel;
+  const escondido = sel.style.display === 'none' || getComputedStyle(sel).display === 'none';
+  sel.style.display = escondido ? '' : 'none';
+  sel.style.fontSize = '16px';   /* iOS dá zoom abaixo de 16px */
+  if (w && w !== sel) w.style.display = '';
+  if (escondido) { try { sel.focus(); } catch (_) { } }
+}
+/* 03/09/2026 (João: "mandar a árvore em imagem"). Mesma decisão do Resumo
+   Anual (v4.378): desenho num CANVAS a partir dos MESMOS dados da tela, em vez
+   de fotografar o HTML — printar página exige biblioteca de terceiro e eu não
+   quero pendurar o app num script de fora. Resolução 2× para não sair borrada
+   no celular. Vai pela folha de compartilhamento com o arquivo junto; onde não
+   houver, baixa o PNG. */
+function amArvImagem() {
+  const A = _amArvUlt;
+  if (!A || !A.ops || !A.ops.length) { toast('Abra a árvore antes de enviar a imagem.'); return; }
+  const E = window._amEscopoAtual;
+  const S = 2;                                  /* escala da resolução */
+  const W = 700, PAD = 16, LINOP = 46, LINMAQ = 34, TOPO = 84;
+  /* máquina que não produziu NADA no período não entra na imagem: não tem o
+     que mostrar e, num setor grande, são dezenas de linhas vazias que fazem a
+     foto passar de dois mil pixels — ninguém abre isso no WhatsApp. Fica
+     escrito no rodapé quantas ficaram de fora; na TELA continuam aparecendo. */
+  const linhas = []; let omitidas = 0;
+  A.ops.forEach(o => {
+    linhas.push({ t: 'op', o: o });
+    if (A.aberto('op:' + o.nome)) o.maqs.slice().sort((a, b) => b.prod - a.prod).forEach(q => {
+      if (!(q.prod > 0)) { omitidas++; return; }
+      linhas.push({ t: 'maq', o: q });
+    });
+  });
+  const H = TOPO + linhas.reduce((s, l) => s + (l.t === 'op' ? LINOP : LINMAQ), 0) + 34;
+  const cv = document.createElement('canvas');
+  cv.width = W * S; cv.height = H * S;
+  const c2 = cv.getContext('2d'); c2.scale(S, S);
+  const F = (p, sz) => p + ' ' + sz + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+  const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  const corDe = (p, m) => (m == null || !(m > 0)) ? '#8B93A1' : (p / m) >= 1 ? '#2E7A46' : (p / m) >= 0.9 ? '#C98A00' : '#B3261E';
+  c2.fillStyle = '#fff'; c2.fillRect(0, 0, W, H);
+  c2.fillStyle = '#1B2430'; c2.font = F('800', 19);
+  c2.fillText(String(A.setor).slice(0, 46), PAD, 28);
+  c2.fillStyle = '#6B7280'; c2.font = F('400', 12.5);
+  c2.fillText(String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s) · ' + A.ops.length + ' operador(es)', PAD, 46);
+  c2.fillStyle = '#1B2430'; c2.font = F('700', 13.5);
+  c2.fillText(t(A.raiz.prod) + (A.raiz.temMeta ? ' · meta ' + t(A.raiz.meta) + ' · ' + Math.round(A.raiz.prod / A.raiz.meta * 100) + '%' : ''), PAD, 66);
+  c2.strokeStyle = '#E3E5E9'; c2.beginPath(); c2.moveTo(0, 76); c2.lineTo(W, 76); c2.stroke();
+  const maxOp = Math.max(1, ...A.ops.map(o => Math.max(o.prod, o.temMeta ? o.meta : 0)));
+  const maxMq = Math.max(1, ...A.ops.reduce((a, o) => a.concat(o.maqs.map(q => Math.max(q.prod, q.meta || 0))), []));
+  let y = TOPO;
+  linhas.forEach(l => {
+    const ehOp = l.t === 'op', o = l.o;
+    const x0 = ehOp ? PAD : PAD + 26;
+    const bx0 = ehOp ? 250 : 276, bw = ehOp ? 250 : 224, bh = 11;
+    const mx = ehOp ? maxOp : maxMq;
+    const meta = ehOp ? (o.temMeta ? o.meta : null) : o.meta;
+    const cor = corDe(o.prod, meta);
+    const nm = ehOp ? o.nome : (o.cod + ((typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[o.cod]) ? ' ' + String(_chaoNomes[o.cod]).slice(0, 14) : ''));
+    c2.fillStyle = '#1B2430'; c2.font = F(ehOp ? '700' : '600', ehOp ? 14 : 12);
+    c2.fillText(String(nm).slice(0, ehOp ? 24 : 22), x0, y + 12);
+    c2.fillStyle = '#9AA0A8'; c2.font = F('400', 10);
+    const sub = ehOp ? (o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/')) : o.bl;
+    c2.fillText(sub, x0, y + 25);
+    if (ehOp && o.fora && o.fora.length) {
+      c2.fillStyle = '#9B2C2C'; c2.font = F('800', 10);
+      const ax = x0 + Math.max(90, c2.measureText(sub).width + 14);
+      const _cab = '⚠ ' + o.fora.length + ' fora da meta: ';
+      let av = _cab + o.fora.map(q => q.cod).join(', ');
+      let cortou = false;
+      while (av.length > _cab.length + 3 && ax + c2.measureText(av + (cortou ? '…' : '')).width > bx0 - 10) { av = av.slice(0, -1); cortou = true; }
+      if (cortou) av = av.replace(/[\s,]+$/, '') + '…';
+      if (ax < bx0 - 40) c2.fillText(av, ax, y + 25);
+    }
+    const by = y + 6;
+    c2.fillStyle = '#E9EBEF'; c2.fillRect(bx0, by, bw, bh);
+    c2.fillStyle = cor; c2.fillRect(bx0, by, Math.max(3, Math.min(bw, bw * (o.prod / mx))), bh);
+    if (meta != null && meta > 0) {
+      const tx = bx0 + Math.min(bw, bw * (meta / mx));
+      c2.fillStyle = '#333'; c2.fillRect(tx - 1, by - 3, 2, bh + 6);
+    }
+    c2.fillStyle = '#6B7280'; c2.font = F('400', 10.5);
+    c2.fillText(t(o.prod) + (meta != null && meta > 0 ? ' · meta ' + t(meta) : ' · sem meta'), bx0, by + bh + 12);
+    if (meta != null && meta > 0) {
+      c2.fillStyle = cor; c2.font = F('800', 11); c2.textAlign = 'right';
+      c2.fillText(Math.round(o.prod / meta * 100) + '%', bx0 + bw, by + bh + 12);
+      c2.textAlign = 'left';
+    }
+    if (!ehOp && meta != null && meta > 0 && o.prod < meta) {
+      c2.fillStyle = '#9B2C2C'; c2.font = F('800', 9.5);
+      c2.fillText('⚠ fora da meta', x0 + 150, y + 12);
+    }
+    if (ehOp) { c2.strokeStyle = '#F0F1F3'; c2.beginPath(); c2.moveTo(0, y - 4); c2.lineTo(W, y - 4); c2.stroke(); }
+    y += ehOp ? LINOP : LINMAQ;
+  });
+  c2.fillStyle = '#9AA7B2'; c2.font = F('400', 10.5);
+  c2.fillText('Barra: produção; tracinho escuro = meta. A escala compara operador com operador e máquina com máquina.'
+    + (omitidas ? ' · ' + omitidas + ' máquina(s) sem produção no período ficaram de fora.' : ''), PAD, H - 14);
+  const nome = 'arvore-' + String(A.setor).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24) + '.png';
+  cv.toBlob(async blob => {
+    if (!blob) { toast('Não consegui gerar a imagem.'); return; }
+    const arq = new File([blob], nome, { type: 'image/png' });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [arq] })) { await navigator.share({ files: [arq], title: 'Análise+ · ' + A.setor }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nome; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Imagem baixada — anexe no WhatsApp.');
+  }, 'image/png');
+}
+/* texto da árvore para o WhatsApp — sai o mesmo recorte que está na tela */
+function amArvTexto() {
+  const A = _amArvUlt;
+  if (!A) return '';
+  const t = v => (+v || 0) >= 1000 ? ((+v) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t' : Math.round(+v || 0).toLocaleString('pt-BR') + ' kg';
+  const pc = (p, m) => (m > 0 ? Math.round(p / m * 100) + '%' : '—');
+  const E = window._amEscopoAtual;
+  const L = ['*ANÁLISE+ · SETOR → OPERADOR → MÁQUINA*'];
+  L.push('📅 ' + String((E && E.rotulo) || '') + ' · ' + A.dias + ' dia(s)');
+  L.push('');
+  L.push('*' + A.setor + '* — ' + t(A.raiz.prod) + (A.raiz.temMeta ? ' · meta ' + t(A.raiz.meta) + ' · ' + pc(A.raiz.prod, A.raiz.meta) : '') + ' · ⏸️ ' + Math.round(A.raiz.par) + ' h');
+  L.push('');
+  A.ops.forEach(o => {
+    L.push('*' + o.nome + '* · ' + t(o.prod) + (o.temMeta ? ' · meta ' + t(o.meta) + ' · ' + pc(o.prod, o.meta) : ' · sem meta') + ' · ⏸️ ' + Math.round(o.par) + ' h');
+    if (o.fora && o.fora.length) L.push('   ⚠ fora da meta: ' + o.fora.map(q => q.cod).join(', '));
+    if (A.aberto('op:' + o.nome)) {
+      o.maqs.slice().sort((a, b) => b.prod - a.prod).forEach(q => {
+        const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
+        L.push('   • ' + q.cod + (nm ? ' ' + String(nm).slice(0, 18) : '') + ' (' + q.bl + ') — ' + t(q.prod) + (q.meta != null ? ' · ' + pc(q.prod, q.meta) : ''));
+      });
+    }
+  });
+  L.push('', '_Gerado no app de Produção · Análise+._');
+  return L.join('\n');
+}
 /* ===== 03/09/2026 — ÁRVORE SETOR → OPERADOR → MÁQUINA =====
    Inspirada na árvore de decomposição que o João mandou: cada nó tem uma
    barra que sai do meio (verde para a direita = acima da meta, vermelha para a
@@ -8251,9 +8389,21 @@ function _amArvore(E, setorLbl) {
     const h = nivel === 1 ? RH1 : RH2, idx = rows.length;
     rows.push({ nivel, y, h, label, sub, o, key, aberto, hasKids, parentIdx }); y += h; return idx;
   };
+  /* 03/09/2026 (João: "mostrar qual máquina está fora da meta"). A cor da barra
+     já dizia, mas só depois de abrir o operador e olhar uma por uma. Agora o
+     próprio operador diz QUANTAS e QUAIS das máquinas dele ficaram abaixo —
+     fora da meta = tem meta cadastrada e produziu menos que ela. Máquina SEM
+     meta não entra na conta (não dá para dizer que está fora de uma meta que
+     não existe); ela aparece como "sem meta", que é outro problema. */
+  ops.forEach(o => {
+    o.fora = o.maqs.filter(q => q.meta != null && q.meta > 0 && q.prod < q.meta);
+    o.semMeta = o.maqs.filter(q => q.meta == null || !(q.meta > 0));
+  });
   ops.forEach(o => {
     const k = 'op:' + o.nome, ab = _ab(k);
-    const idx = add(1, o.nome, o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/'), o, k, ab, true, -1);
+    const _sub = o.maqs.length + ' máq · ' + [...new Set(o.maqs.map(q => q.bl))].join('/')
+      + (o.fora.length ? ' · ⚠ ' + o.fora.length + ' fora da meta: ' + o.fora.slice(0, 3).map(q => q.cod).join(', ') + (o.fora.length > 3 ? '…' : '') : '');
+    const idx = add(1, o.nome, _sub, o, k, ab, true, -1);
     if (ab) o.maqs.sort((a, b) => b.prod - a.prod).forEach(q => {
       const nm = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[q.cod]) ? _chaoNomes[q.cod] : '';
       add(2, q.cod + (nm ? ' ' + nm : ''), q.bl, q, '', false, false, idx);
@@ -8286,7 +8436,7 @@ function _amArvore(E, setorLbl) {
     const lblSz = forte ? 15 : nivel === 1 ? 14 : 12.5;
     const corta = nivel === 2 ? 22 : forte ? 26 : 20;
     let s = '<text x="' + bx0 + '" y="' + (yTopo + 16) + '" font-size="' + lblSz + '" font-weight="' + (forte ? 800 : 700) + '" fill="#1B2430">' + escapeHtml(label.length > corta ? label.slice(0, corta - 1) + '…' : label) + '</text>';
-    if (sub) s += '<text x="' + bx0 + '" y="' + (yTopo + 30) + '" font-size="10.5" fill="#9AA0A8">' + escapeHtml(sub) + '</text>';
+    if (sub) s += '<text x="' + bx0 + '" y="' + (yTopo + 30) + '" font-size="' + (nivel === 1 && sub.length > 26 ? 9.2 : 10.5) + '" fill="' + (sub.indexOf('fora da meta') >= 0 ? '#9B2C2C' : '#9AA0A8') + '">' + escapeHtml(sub) + '</text>';
     s += '<rect x="' + bx0 + '" y="' + by + '" width="' + bw + '" height="' + BH + '" rx="6.5" fill="#E9EBEF"/>'
       + '<rect x="' + bx0 + '" y="' + by + '" width="' + fillW + '" height="' + BH + '" rx="6.5" fill="' + cor + '"/>';
     if (tickX != null) s += '<rect x="' + (tickX - 0.8) + '" y="' + (by - 3) + '" width="1.6" height="' + (BH + 6) + '" fill="#333"/>';
@@ -8296,9 +8446,18 @@ function _amArvore(E, setorLbl) {
       + (pp != null ? '🗑️' + pp.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% · ' : '') + '⏸️' + Math.round(o.par) + 'h</text>';
     return s;
   };
+  /* 03/09/2026 (João: "permita enviar pelo WhatsApp"). Guarda o que a tela
+     desenhou para o texto sair IGUAL à árvore — mesma régua do `_dtGrupoUlt`
+     dos atrasados; recalcular por fora divergiria na primeira mudança. */
+  _amArvUlt = { setor: setorLbl, dias: dias.length, raiz: raiz, ops: ops, aberto: _ab };
   let nodes = noSVG(0, raizY, setorLbl, dias.length + ' dia(s) · ' + ops.length + ' operador(es)', raiz, true);
   rows.forEach(r => {
     nodes += noSVG(r.nivel, r.y, r.label, r.sub, r.o, false);
+    if (r.nivel === 2 && r.o.meta != null && r.o.meta > 0 && r.o.prod < r.o.meta) {
+      const [mx0, mx1] = COL[2];
+      nodes += '<rect x="' + (mx1 - 96) + '" y="' + (r.y + 4) + '" width="94" height="15" rx="7.5" fill="#FBE9E9" stroke="#E0B4B4" stroke-width="0.8"/>'
+        + '<text x="' + (mx1 - 49) + '" y="' + (r.y + 15) + '" text-anchor="middle" font-size="9.5" font-weight="800" fill="#9B2C2C">⚠ fora da meta</text>';
+    }
     if (r.hasKids) {
       const px = PLUS[r.nivel], py = r.y + 34 + BH / 2;
       nodes += '<g onclick="amArvToggle(\'' + escapeHtml(r.key) + '\')" style="cursor:pointer">'
@@ -8309,7 +8468,14 @@ function _amArvore(E, setorLbl) {
   });
   const svg = '<svg viewBox="0 0 ' + VW + ' ' + (totalH + 12) + '" width="' + (temAberto ? VW : VW * 0.92) + '" height="' + (totalH + 12) + '" style="display:block;max-width:none;font-family:inherit">'
     + paths + nodes + '</svg>';
-  const btnTodos = '<div style="display:flex;justify-content:flex-end;margin:0 8px 6px">'
+  /* 03/09/2026 (João: "filtrar por período"). O seletor de período do Análise+
+     (`amPeriodo`) já existia e já funciona — só estava escondido, obrigando a
+     subir até o filtro do topo do app. Aqui ele aparece na própria árvore;
+     é o MESMO controle, então não há duas réguas de período no app. */
+  const btnTodos = '<div style="display:flex;gap:6px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin:0 8px 6px">'
+    + '<span onclick="amArvPeriodo()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">📅 ' + escapeHtml(String((E && E.rotulo) || 'período')) + '</span>'
+    + '<span onclick="enviarTexto(amArvTexto())" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">📝 texto</span>'
+    + '<span onclick="amArvImagem()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:#25D366;color:#fff">🖼️ imagem</span>'
     + '<span onclick="amArvTodos(' + (temAberto ? 'false' : 'true') + ')" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 11px;background:var(--leve-2);border:1px solid var(--linha-2s)">'
     + (temAberto ? '▴ recolher máquinas' : '▾ abrir máquinas de todos') + '</span></div>';
   return '<div class="card" style="padding:8px 4px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch">' + btnTodos + svg
