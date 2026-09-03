@@ -3866,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.439.0';
+const APP_VER = '4.440.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14932,7 +14932,13 @@ async function getOeeBocaPerfil() {
   if (_oeeBocaPerfil) return _oeeBocaPerfil;
   _oeeBocaPerfil = {};
   try {
-    const { data, error } = await sb.from('v_maq_boca_perfil').select('*');
+    /* 03/09/2026 — a view CALCULADA leva 2,0 s (roda 3 expressões regulares
+       sobre 109 mil linhas de `producao` a cada chamada) e o papel authenticator
+       corta em 8 s. Num celular em rede móvel isso morre calado no `catch` e a
+       boca some da tela SEM mensagem — a mesma armadilha do card de SKUs
+       (v4.384). Materializada: 0,8 ms. A view antiga fica de reserva. */
+    let { data, error } = await sb.from('mv_maq_boca_perfil').select('*');
+    if (error) ({ data, error } = await sb.from('v_maq_boca_perfil').select('*'));
     if (error) throw error;
     (data || []).forEach(r => {
       const c = String(r.recurso_cod || ''); if (!c) return;
@@ -14942,6 +14948,20 @@ async function getOeeBocaPerfil() {
       _oeeBocaPerfil[c].sort((a, b) => (+b.kg_dia || 0) - (+a.kg_dia || 0)));
   } catch (_) { _oeeBocaPerfil = {}; }
   return _oeeBocaPerfil;
+}
+/* 03/09/2026 (João: "coloque a boca predominante na frente do nome da máquina").
+   Predominante = a boca com maior kg POR DIA RODADO no ano — a mesma régua do
+   ★ que já existia na linha de baixo, só que agora antes do nome, onde o olho
+   bate primeiro. Máquina sem boca conhecida não ganha selo nenhum (em vez de um
+   traço, que pareceria dado). Só o número da boca vai aqui; o kg/dia e as outras
+   bocas continuam nos chips de baixo. */
+function oeeBocaSelo(cod) {
+  const arr = (_oeeBocaPerfil || {})[String(cod)] || [];
+  const b = arr.length ? arr[0].boca : null;
+  if (b == null || b === '') return '';
+  return '<span title="boca predominante — a que mais rende nesta máquina (kg por dia rodado, no ano)" '
+    + 'style="display:inline-block;background:#1F7A46;color:#fff;border-radius:6px;padding:1px 6px;'
+    + 'font-size:10.5px;font-weight:800;margin-right:5px;vertical-align:middle">b' + escapeHtml(String(b)) + '</span>';
 }
 function oeeLinhaBocas(cod) {
   const arr = (_oeeBocaPerfil || {})[String(cod)] || [];
@@ -14993,12 +15013,12 @@ function renderOEE() {
   { const _turOEE = ($('turnoGlobal') && $('turnoGlobal').value) || '';
     html += `<div style="display:flex;gap:8px;margin-bottom:12px">${(_turOEE ? [_turOEE] : ['Manhã', 'Tarde', 'Noite']).map(b => oeeChip(b, R.blocos[b].oee)).join('')}</div>`; }
   html += `<p class="desc" style="margin:0 0 5px;font-size:11px">🔎 toque na linha da máquina para ver turno a turno de onde vem cada número<br>` +
-    `<span style="color:#1F7A46;font-weight:700">★ boca que mais rende</span> na máquina (kg por dia rodado, no ano) · média = peso de uma peça</p>`;
+    `<span style="color:#1F7A46;font-weight:700">b… antes do nome = boca predominante</span> · <span style="color:#1F7A46;font-weight:700">★ boca que mais rende</span> na máquina (kg por dia rodado, no ano) · média = peso de uma peça</p>`;
   html += `<div style="overflow-x:auto"><table class="aprov-tab" style="width:100%;min-width:390px"><thead><tr><th style="text-align:left">Máquina</th><th>Disp. 🔎</th><th>Perf. 🔎</th><th>Qual. 🔎</th><th>OEE 🔎</th></tr></thead><tbody>`;
   R.porMaq.forEach(m => {
     const v = _turG ? oeeDoBloco(m, _turG, R) : m;          // respeita o turno da barra
     if (_turG && v.vazio) return;                            // maquina que nao rodou neste turno some da lista
-    html += `<tr onclick="detOeeMaq('${m.cod}')" style="cursor:pointer"><td class="nome" style="text-align:left"><span class="cod">${m.cod}</span> <span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(m.nome)}</span> 🔎${oeeLinhaBocas(m.cod)}</td>` +
+    html += `<tr onclick="detOeeMaq('${m.cod}')" style="cursor:pointer"><td class="nome" style="text-align:left"><span class="cod">${m.cod}</span> ${oeeBocaSelo(m.cod)}<span style="text-decoration:underline dotted;text-underline-offset:3px">${escapeHtml(m.nome)}</span> 🔎${oeeLinhaBocas(m.cod)}</td>` +
       [v.disp, v.perf, v.qual].map(x => `<td style="text-align:center"><span style="color:${oeeCor(x)};font-weight:600;text-decoration:underline dotted;text-underline-offset:3px">${oeePct(x)}</span></td>`).join('') +
       `<td style="text-align:center"><span style="background:${oeeCor(v.oee)};color:#fff;border-radius:10px;padding:3px 8px;font-weight:700;text-decoration:underline dotted;text-underline-offset:2px">${v.temMeta ? oeePct(v.oee) : 'sem meta'}</span></td></tr>`;
   });
