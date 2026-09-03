@@ -1470,6 +1470,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       </div>
     </section>
     <section id="abaChao" class="oculto">
+      <select id="chaoSetorSel" onchange="chaoAbrir(true)" style="display:none"></select>
       <div id="chaoWrap"><p class="desc" style="padding:20px;text-align:center">Carregando…</p></div>
     </section>
     <section id="abaAno" class="oculto">
@@ -3865,7 +3866,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.427.0';
+const APP_VER = '4.428.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -8315,6 +8316,7 @@ function renderAnaliseMais(cache) {
    o topo pulando de altura; filtro que aparece sem filtrar mente. */
 const FILTROS_ABA = {
   painel:      { per: 1, set: 1, tur: 1, maq: 1, met: 1 },
+  chao:        { per: 1, set: 1, tur: 0, maq: 0, met: 0 },   // 03/09 (João): Gestão à Vista usa período e setor do topo
   analise:     { per: 1, set: 1, tur: 1, maq: 1, met: 1 },
   analisemais: { per: 1, set: 1, tur: 1, maq: 1, met: 0 },
   estrategia:  { per: 1, set: 1, tur: 1, maq: 0, met: 1 },   // histórico por boca: período/setor/turno/métrica
@@ -8351,7 +8353,7 @@ function _pilLiga(sel, html) {
 let _turnoOrigHTML = null;
 
 // ===== seletor GLOBAL de setor (tarja azul) — espelha o seletor da aba ativa =====
-const _SETOR_SEL_ABA = { painel: 'fSetor', analise: 'anSetor', analisemais: 'amSetorSel', estrategia: 'estratSetor', oee: 'oeeSetor', manut: 'manutSetor', programacao: 'progSetor', metas: 'metaSetor', conf: 'cfSetor', organograma: 'orgSetor' };
+const _SETOR_SEL_ABA = { chao: 'chaoSetorSel', painel: 'fSetor', analise: 'anSetor', analisemais: 'amSetorSel', estrategia: 'estratSetor', oee: 'oeeSetor', manut: 'manutSetor', programacao: 'progSetor', metas: 'metaSetor', conf: 'cfSetor', organograma: 'orgSetor' };
 /* Gestao de Pessoas tinha Setor e Turno DENTRO do card, enquanto todas as
    outras abas usam as pilulas do topo. Agora ela entra no mesmo espelhamento:
    os selects originais continuam no DOM (a logica do organograma depende
@@ -8613,7 +8615,8 @@ function recarregarAbaAtual() {
     estrategia: carregarEstrategia,
     oee: carregarOEE, manut: carregarManut, tarefas: carregarTarefas,
     organograma: carregarOrganograma, conf: carregarConf, metas: carregarMetas,
-    historico: carregarHistorico, programacao: carregarProgramacao
+    historico: carregarHistorico, programacao: carregarProgramacao,
+    chao: () => chaoAbrir(true)
   }[_abaAtual];
   if (typeof f === 'function') { try { f(); } catch (_) {} }
 }
@@ -29125,13 +29128,24 @@ async function chaoZap(chave) {
 async function chaoAbrir(forcar) {
   const w = $('chaoWrap'); if (!w) return;
   const preso = (perfil && perfil.resumo_setor && perfil.setor && SETOR_MAQ[perfil.setor]) ? perfil.setor : (typeof setorTravado === 'function' ? setorTravado() : null);
-  if (preso) _chaoSetor = preso;
-  /* 02/09/2026 (João: "deixa a Termo como primeiro a ver"): sem setor preso e
-     sem escolha no topo, a aba abre na TERMOFORMAGEM. A fábrica inteira
-     continua a um toque no título. */
-  else if (_chaoSetor === null) { const f = $('fSetor'); _chaoSetor = (f && f.value && SETOR_MAQ[f.value]) ? f.value : 'Termoformagem'; }
+  /* ===== 03/09/2026 (João: "passa o filtro de setor e período dessa tela para
+     o padrão em cima"). As pílulas próprias saíram: o setor vem da pílula
+     SETOR do topo (select escondido `chaoSetorSel`, espelhado pelo mecanismo
+     das outras abas) e o período da pílula PERÍODO (`periodoSel`). Setor preso
+     no perfil continua mandando. "Todos" = fábrica inteira. */
+  { const sel = $('chaoSetorSel');
+    if (sel && !sel.options.length) sel.innerHTML = '<option value="Todos">Todos</option>' + Object.keys(SETOR_MAQ).map(s => '<option value="' + s + '">' + s + '</option>').join('');
+    if (preso) { _chaoSetor = preso; if (sel) sel.value = preso; }
+    else if (sel) {
+      if (_chaoSetor === null) { const f = $('fSetor'); const v0 = (f && f.value && SETOR_MAQ[f.value]) ? f.value : 'Termoformagem'; sel.value = v0; }
+      _chaoSetor = (sel.value && SETOR_MAQ[sel.value]) ? sel.value : '';
+    } else if (_chaoSetor === null) _chaoSetor = 'Termoformagem'; }
   const S = _chaoSetor || '';
-  const ck = _chaoCache[S];
+  /* período do topo: mês → aquele mês; dia → aquele dia; ano/tudo → mês do último dia */
+  const per = (typeof periodoSel === 'object' && periodoSel && (periodoSel.tipo === 'mes' || periodoSel.tipo === 'dia' || periodoSel.tipo === 'custom') && periodoSel.de && periodoSel.ate)
+    ? { de: String(periodoSel.de).slice(0, 10), ate: String(periodoSel.ate).slice(0, 10), label: periodoSel.label || '' } : null;
+  const chaveCache = S + '|' + (per ? per.de + '_' + per.ate : '');
+  const ck = _chaoCache[chaveCache];
   if (ck && !forcar && (Date.now() - ck.t) < 5 * 60 * 1000) { w.innerHTML = ck.html; return; }
   /* ===== 02/09/2026 — ABRE INSTANTÂNEO (João: "tem como fazer foto?") =====
      Duas camadas: (1) o último desenho fica guardado no aparelho e aparece
@@ -29141,7 +29155,7 @@ async function chaoAbrir(forcar) {
      continuam sendo régua do app. A única conta que ainda lê parada crua é
      o corte por turno das paradas — e ela chega depois, sem travar a tela. */
   let _mostrouGuardado = false;
-  try { const g = JSON.parse(localStorage.getItem('chao_html_' + S) || 'null'); if (g && g.html && !forcar) { w.innerHTML = g.html; _mostrouGuardado = true; } } catch (_) { }
+  try { const g = JSON.parse(localStorage.getItem('chao_html_' + chaveCache) || 'null'); if (g && g.html && !forcar) { w.innerHTML = g.html; _mostrouGuardado = true; } } catch (_) { }
   if (!_mostrouGuardado) w.innerHTML = '<p class="desc" style="padding:20px;text-align:center">Olhando ' + (S ? escapeHtml(S) : 'a fábrica') + '…</p>';
   try {
     await getMetas();
@@ -29151,10 +29165,12 @@ async function chaoAbrir(forcar) {
     const setoresEscopo = S ? [S] : Object.keys(SETOR_MAQ).filter(s => !foraDoAgregado(s));
     const cods = setoresEscopo.flatMap(s => (SETOR_MAQ[s] || []).map(String));
     const noEscopo = c => cods.includes(String(parseInt(c, 10)));
-    const qU = await sb.from('producao_resumo').select('dia').in('recurso_cod', cods).gt('peso', 0).order('dia', { ascending: false }).limit(1);
+    let qU0 = sb.from('producao_resumo').select('dia').in('recurso_cod', cods).gt('peso', 0);
+    if (per) qU0 = qU0.gte('dia', per.de).lte('dia', per.ate);
+    const qU = await qU0.order('dia', { ascending: false }).limit(1);
     const ult = qU.data && qU.data[0] ? String(qU.data[0].dia).slice(0, 10) : null;
-    if (!ult) { w.innerHTML = '<div class="card"><p class="desc">Ainda não tem produção para ' + (S ? escapeHtml(S) : 'a fábrica') + '.</p></div>'; return; }
-    const mes0 = ult.slice(0, 7) + '-01';
+    if (!ult) { w.innerHTML = '<div class="card"><p class="desc">Sem produção ' + (per ? 'em ' + escapeHtml(per.label || (per.de + ' a ' + per.ate)) : '') + ' para ' + (S ? escapeHtml(S) : 'a fábrica') + '.</p></div>'; return; }
+    const mes0 = per ? per.de : (ult.slice(0, 7) + '-01');
     const de7 = (() => { const d = new Date(ult + 'T12:00:00'); d.setDate(d.getDate() - 12); return d.toISOString().slice(0, 10); })();
     const de = de7 < mes0 ? de7 : mes0;
     const [PX, R] = await Promise.all([
@@ -29240,15 +29256,14 @@ async function chaoAbrir(forcar) {
        cada toque. Agora são duas linhas — o título em cima, as pílulas embaixo,
        sempre no mesmo lugar. */
     html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:nowrap;margin:2px 2px 8px">'
-      + '<b style="font-size:16px"><span onclick="chaoEscolher(\'\')" style="' + (S ? 'cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px' : '') + '" title="' + (S ? 'voltar para a fábrica inteira' : '') + '">' + (S ? '🏭 ' + escapeHtml(S) : '🏭 Fábrica') + '</span> <span onclick="chaoZap(\'setor\')" title="Enviar pelo WhatsApp" style="cursor:pointer;font-size:12px;font-weight:800;background:#25D366;color:#fff;border-radius:999px;padding:4px 10px;margin-left:6px;vertical-align:middle">📲 WhatsApp</span></b>'
+      + '<b style="font-size:16px"><span>' + (S ? '🏭 ' + escapeHtml(S) : '🏭 Fábrica') + (per && per.label ? ' <span class="desc" style="font-size:11.5px;font-weight:600">· ' + escapeHtml(per.label) + '</span>' : '') + '</span> <span onclick="chaoZap(\'setor\')" title="Enviar pelo WhatsApp" style="cursor:pointer;font-size:12px;font-weight:800;background:#25D366;color:#fff;border-radius:999px;padding:4px 10px;margin-left:6px;vertical-align:middle">📲 WhatsApp</span></b>'
       + '</div>'
-      + (preso ? '' : '<div style="display:flex;gap:4px;flex-wrap:wrap;margin:0 2px 8px">'
-        + Object.keys(SETOR_MAQ).map(s => '<span onclick="chaoEscolher(' + JSON.stringify(s).replace(/"/g, '&quot;') + ')" title="' + (s === S ? 'tocar de novo volta para a fábrica inteira' : '') + '" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;border:1px solid ' + (s === S ? 'var(--navy);background:var(--navy);color:#fff' : 'var(--linha-2s);background:var(--leve-2)') + '">' + s + '</span>').join('') + '</div>');
+      + (preso ? '' : '<p class="desc" style="font-size:11px;margin:0 2px 8px">Setor e período vêm das pílulas do topo.</p>');
     /* 1) mês acumulado */
-    html += '<div class="card" style="padding:14px 15px">' + tit(nomeMes + ' até ' + dLabel(ult) + ' · acumulado do mês') + trio(M, metaMes) + '</div>';
+    html += '<div class="card" style="padding:14px 15px">' + tit((per && per.de !== ult.slice(0, 7) + '-01' ? escapeHtml(per.label || 'período') + ' · até ' + dLabel(ult) : nomeMes + ' até ' + dLabel(ult)) + ' · acumulado') + trio(M, metaMes) + '</div>';
     /* 2) turnos do mês */
     const corBl = {};
-    html += '<div class="card" style="padding:14px 15px">' + tit('turnos · ' + nomeMes)
+    html += '<div class="card" style="padding:14px 15px">' + tit('turnos · ' + (per && per.de !== ult.slice(0, 7) + '-01' ? 'período' : nomeMes))
       + BL.map(b => { const o = M.bl[b], mb = metaBlMes(b), r = mb ? o.prod / mb : null, pp = pct(o.perda, o.prod + o.perda); corBl[b] = corR(r);
         /* 02/09 (João): a linha do turno tem o fundo da carinha dele, e a lista de
            máquinas que abre embaixo usa o mesmo fundo — fica claro a quem pertence */
@@ -29279,11 +29294,11 @@ async function chaoAbrir(forcar) {
         + '<div style="margin-top:8px;font-size:12.5px"><span style="background:var(--leve-2);border-radius:999px;padding:3px 10px">' + frase + '</span></div>'
         + '<p class="desc" style="font-size:11px;margin:10px 0 0">Verde bateu a meta · amarelo chegou perto (90%) · vermelho ficou longe. Tracejado = meta do dia (sábado vale menos, domingo não tem). Perda é o quanto do que saiu da máquina foi para o lixo. Paradas em revisão não entram.</p></div>';
     }
-    _chaoCache[S] = { t: Date.now(), html };
+    _chaoCache[chaveCache] = { t: Date.now(), html };
     _chaoDados[S] = { MQ, dias7: dias.slice(), fatorDia, diasMes, ult, corBl, emCx, fmtV };
     _chaoTurnoAberto = '';
     w.innerHTML = html;
-    try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html })); } catch (_) { }
+    try { localStorage.setItem('chao_html_' + chaveCache, JSON.stringify({ t: Date.now(), html })); } catch (_) { }
     _chaoParadasTurno(S, cods, mes0, ult, noEscopo);
   } catch (e) {
     if (!_mostrouGuardado) w.innerHTML = '<div class="card"><p class="desc">Não consegui montar o resumo: ' + escapeHtml((e && e.message) || String(e)) + '</p></div>';
@@ -29365,8 +29380,8 @@ async function _chaoParadasTurno(S, cods, mes0, ult, noEscopo) {
     if (_chaoTurnoAberto) { try { chaoTurno(_chaoTurnoAberto, true); } catch (_) { } }
     Object.keys(acc).forEach(b => { const el = document.getElementById('chaoParBl_' + b); if (el) el.textContent = Math.round(acc[b]) + ' h'; });
     try { if (_chaoZapMonta) _chaoZapTxt['setor'] = _chaoZapMonta(acc); } catch (_) { }
-    const ck = _chaoCache[S]; const w = $('chaoWrap');
-    if (ck && w) { ck.html = w.innerHTML; try { localStorage.setItem('chao_html_' + S, JSON.stringify({ t: Date.now(), html: ck.html })); } catch (_) { } }
+    const w = $('chaoWrap');
+    Object.keys(_chaoCache).forEach(k => { if (k.split('|')[0] === S && w) { _chaoCache[k].html = w.innerHTML; try { localStorage.setItem('chao_html_' + k, JSON.stringify({ t: Date.now(), html: w.innerHTML })); } catch (_) { } } });
   } catch (_) { Object.keys({ 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }).forEach(b => { const el = document.getElementById('chaoParBl_' + b); if (el && el.textContent === '…') el.textContent = '—'; }); }
 }
 async function anoAbrir(forcar) {
