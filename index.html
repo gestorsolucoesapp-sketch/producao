@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.463.0';
+const APP_VER = '4.464.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24720,7 +24720,10 @@ async function atrDetalhe(tipo, _mudo) {
            cor do recorte à esquerda. As OPs ficam dentro do cartão do seu pedido. */
         return '<div style="margin:10px 0;padding:9px 11px 9px 12px;background:#fff;border:1px solid var(--linha-2s);border-left:4px solid ' + cor + ';border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
-          + '<span><b style="font-size:14px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span>'
+          /* 04/09 (João: "quero clicar e ver os dados do pedido") — o número
+             era só texto neste cartão, embora a ficha já existisse e fosse
+             chamada de outras seis telas. */
+          + '<span><b onclick="event.stopPropagation();detPedido(' + JSON.stringify(String(x.ped)).replace(/"/g, '&quot;') + ')" title="abrir a ficha do pedido" style="font-size:14px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span>'
           + (x.uf ? ' <span onclick="atrVerNoMapa(&quot;' + escapeHtml(x.uf) + '&quot;)" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
             + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
           + '</span>'
@@ -36192,9 +36195,15 @@ function detPedido(num, voltar) {
     + _avisoDep
     + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas)
+    + '<div id="pedReserva"></div>'
     + '<div id="fluxoPed"></div>'
+    + '<div id="pedHist"></div>'
     + '<div id="opsPed"></div>');
   _fluxoCarrega(num);
+  /* reserva e histórico entram DEPOIS do desenho, cada um no seu container:
+     a ficha abre na hora e os dois preenchem quando chegam */
+  try { _pedReserva([...new Set(L.map(l => String(l.item_cod)).filter(Boolean))]); } catch (_) { }
+  try { _pedHistCliente(num, L[0] && L[0].cliente); } catch (_) { }
 }
 
 /* ===== FLUXO DO PEDIDO DENTRO DO MODAL — 25/08/2026 (João: "quero ver o
@@ -42972,6 +42981,69 @@ async function uvImagem() {
   a.href = URL.createObjectURL(arq); a.download = arq.name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('Imagem baixada — anexe no WhatsApp.');
+}
+
+/* ===== 04/09/2026 (João: "quero clicar e ver os dados do pedido, as reservas e
+   histórico de pedidos") =====
+   A ficha do pedido já trazia itens, estoque e fluxo. Faltavam duas coisas que
+   ele pediu e que respondem perguntas diferentes:
+   RESERVA = depósito 6 (PRODUTOS RESERVADOS), o único lugar do ERP onde
+   "reservado" tem significado exato. Já errei essa palavra antes chamando de
+   reserva o estoque total do item, então aqui vai o depósito 6 e nada mais.
+   HISTÓRICO = os outros pedidos DO MESMO CLIENTE (`pedido_hist`, do RVEN304),
+   com a etapa em que cada um parou. Serve para ver se o cliente sempre trava
+   no mesmo lugar — este pedido parado no Comercial há 9 dias diz pouco; três
+   pedidos seguidos parados no Comercial dizem muito. */
+async function _pedReserva(itens) {
+  const el = $('pedReserva'); if (!el) return;
+  const cods = [...new Set((itens || []).map(i => String(i)).filter(Boolean))];
+  if (!cods.length) { el.innerHTML = ''; return; }
+  try {
+    const { data } = await sb.from('estoque_deposito')
+      .select('item_cod,item_desc,quantidade,unidade,peso,deposito_cod,deposito_nome,dia_foto')
+      .eq('deposito_cod', '6').in('item_cod', cods.slice(0, 200));
+    const L = data || [];
+    if (!L.length) {
+      el.innerHTML = '<div style="margin-top:10px;padding:8px 10px;background:var(--leve-4);border-radius:9px;font-size:11.5px;color:var(--fraco)">'
+        + '📦 <b>Nenhum item deste pedido está no depósito 6</b> (produtos reservados). Isso não quer dizer que falta material — quer dizer que nada foi separado ainda.</div>';
+      return;
+    }
+    const somaQ = L.reduce((a, r) => a + (+r.quantidade || 0), 0);
+    el.innerHTML = '<div style="margin-top:11px"><div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">📦 Reservado · depósito 6 · foto de ' + fmtData(L[0].dia_foto) + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
+      + L.map(r => '<tr style="border-top:1px solid var(--linha-2s)">'
+        + '<td style="padding:4px 5px"><b>' + escapeHtml(String(r.item_cod)) + '</b> <span style="color:var(--fraco-2)">' + escapeHtml(String(r.item_desc || '').slice(0, 40)) + '</span></td>'
+        + '<td style="padding:4px 5px;text-align:right;font-weight:800">' + fmtNum(Math.round(+r.quantidade || 0)) + ' ' + escapeHtml(String(r.unidade || '')) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">' + fmtKg(+r.peso || 0) + '</td></tr>').join('')
+      + '</table>'
+      + '<p class="desc" style="font-size:10.5px;margin:4px 0 0">' + L.length + ' item(ns) separados, ' + fmtNum(Math.round(somaQ)) + ' no total. '
+      + 'O depósito 6 é do ERP e <b>não amarra a pedido</b>: o material está separado, mas quem leva é quem tiver a entrega mais próxima.</p></div>';
+  } catch (e) { el.innerHTML = '<p class="desc" style="font-size:11px;margin-top:8px">Não consegui ler o reservado.</p>'; }
+}
+async function _pedHistCliente(num, cliente) {
+  const el = $('pedHist'); if (!el) return;
+  const cli = String(cliente || '').replace(/\s*\(.*$/, '').trim();
+  if (!cli) { el.innerHTML = ''; return; }
+  try {
+    const { data } = await sb.from('pedido_hist')
+      .select('documento,cliente_nome,primeira_inclusao,ultima_etapa,ultima_etapa_em,etapas,total_min')
+      .ilike('cliente_nome', cli.slice(0, 18) + '%').order('documento', { ascending: false }).limit(15);
+    const L = (data || []).filter(x => String(x.documento) !== String(num).split('/')[0]);
+    if (!L.length) { el.innerHTML = ''; return; }
+    const dias = m => (m == null ? null : Math.round((+m) / 1440));
+    el.innerHTML = '<div style="margin-top:11px"><div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">📚 Outros pedidos deste cliente</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
+      + L.slice(0, 10).map(x => {
+        const d = dias(x.total_min);
+        return '<tr onclick="detPedido(' + JSON.stringify(String(x.documento)).replace(/"/g, '&quot;') + ')" style="cursor:pointer;border-top:1px solid var(--linha-2s)">'
+          + '<td style="padding:4px 5px"><b>' + escapeHtml(String(x.documento)) + '</b>'
+          + (x.primeira_inclusao ? ' <span style="color:var(--fraco-2);font-size:10px">de ' + fmtData(x.primeira_inclusao) + '</span>' : '') + '</td>'
+          + '<td style="padding:4px 5px;color:var(--fraco)">' + escapeHtml(String(x.ultima_etapa || '—').slice(0, 26)) + '</td>'
+          + '<td style="padding:4px 5px;text-align:right;color:var(--fraco-2)">' + (x.etapas || 0) + ' etapa(s)' + (d != null ? ' · ' + d + 'd' : '') + '</td></tr>';
+      }).join('')
+      + '</table>'
+      + '<p class="desc" style="font-size:10.5px;margin:4px 0 0">Toque para abrir. A etapa é a ÚLTIMA registrada no RVEN304 — se vários pedidos do mesmo cliente param no mesmo setor, o gargalo é lá, não neste pedido.</p></div>';
+  } catch (e) { el.innerHTML = ''; }
 }
 
 (function _vigiaTeto() {
