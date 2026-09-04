@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.455.0';
+const APP_VER = '4.456.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42453,7 +42453,7 @@ async function uvAbrir(forcar) {
       const [a, b, c] = await Promise.all([
         sb.from('v_uv_estado').select('*'),
         sb.from('v_uv_estoque').select('*').order('item_desc'),
-        sb.from('uv_item').select('item_cod,item_desc').eq('ativo', true).order('item_desc')
+        sb.from('uv_item').select('item_cod,item_desc,sem_cadastro').eq('ativo', true).order('item_desc')
       ]);
       _uvEstado = a.data || []; _uvEstoque = b.data || []; _uvItens = c.data || [];
     } catch (e) { box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>'; return; }
@@ -42509,7 +42509,8 @@ function uvRender() {
       + (r.horas_restantes != null ? ' · <b style="color:' + cor.c + '">' + (+r.horas_restantes < 0 ? fmtNum(Math.abs(Math.round(r.horas_restantes))) + ' h passadas' : fmtNum(Math.round(r.horas_restantes)) + ' h restantes') + '</b>' : '')
       + ' · desde ' + fmtData(r.instalada_em)
       + (+r.horas_iniciais > 0 ? ' <span style="color:var(--fraco-2)">(+' + fmtNum(Math.round(r.horas_iniciais)) + ' h de antes)</span>' : '') + '</div>'
-      + (r.item_desc ? '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(r.item_desc)) + '</div>' : '')
+      + (r.item_desc ? '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(r.item_desc))
+          + (r.sem_cadastro ? ' <span style="font-weight:800;color:#B98900">⚠ sem cadastro no almoxarifado</span>' : '') + '</div>' : '')
       + '<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">'
       + '<span onclick="uvTrocar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:#1F7A46;color:#fff">registrar troca</span>'
       + '<span onclick="uvCadastrar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">corrigir cadastro</span>'
@@ -42541,11 +42542,19 @@ function _uvModal(titulo, corpo, acao, rotulo) {
   const d = document.createElement('div'); d.id = 'uvModalWrap'; d.innerHTML = h; document.body.appendChild(d);
 }
 function uvFechar() { const d = $('uvModalWrap'); if (d) d.remove(); }
+/* 03/09/2026 (João: "acrescente essa, mas informe que não tem cadastro, e deixe
+   apontar nas máquinas"). A ULTRA LIGHT 150 ATY2/DF aparece no controle de papel
+   da manutenção (702 e 703) e NÃO existe no almoxarifado. Ela entra na lista
+   para poder ser apontada — o que o pessoal põe na máquina tem que caber no
+   registro — mas sempre marcada, para ninguém procurar saldo dela e não achar.
+   O código começa com "S/CAD-" justamente para não passar por código do ERP. */
 function _uvSelItem(sel) {
   return '<select id="uvFItem" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px">'
     + '<option value="">(não sei qual modelo)</option>'
-    + (_uvItens || []).map(i => '<option value="' + escapeHtml(i.item_cod) + '"' + (sel === i.item_cod ? ' selected' : '') + '>' + escapeHtml(i.item_desc) + '</option>').join('')
-    + '</select>';
+    + (_uvItens || []).map(i => '<option value="' + escapeHtml(i.item_cod) + '"' + (sel === i.item_cod ? ' selected' : '') + '>'
+        + escapeHtml(i.item_desc) + (i.sem_cadastro ? ' ⚠' : '') + '</option>').join('')
+    + '</select>'
+    + '<div style="font-size:10px;color:var(--fraco-2);margin-top:3px">⚠ = usada na máquina mas <b>sem cadastro no almoxarifado</b>: dá para apontar, mas não tem saldo para controlar.</div>';
 }
 function uvCadastrar(cod) {
   const r = (_uvEstado || []).find(x => String(x.recurso_cod) === String(cod));
@@ -42659,7 +42668,7 @@ function uvTexto() {
     out.push(luz(p) + ' *' + x.cod + '* ' + x.nome + ' — ' + fmtNum(Math.round(+r.horas_rodadas || 0)) + ' h de ' + fmtNum(Math.round(+r.vida_horas || 0)) + ' h'
       + (p != null ? ' · *' + p + '%*' : '')
       + (r.horas_restantes != null ? (+r.horas_restantes < 0 ? ' · ' + fmtNum(Math.abs(Math.round(r.horas_restantes))) + ' h passadas' : ' · faltam ' + fmtNum(Math.round(r.horas_restantes)) + ' h') : '')
-      + ' · desde ' + fmtData(r.instalada_em));
+      + ' · desde ' + fmtData(r.instalada_em) + (r.sem_cadastro ? ' ⚠ lâmpada sem cadastro no almoxarifado' : ''));
   });
   if (sem.length) { out.push(''); out.push('⚪ *Sem lâmpada cadastrada:* ' + sem.map(x => x.cod).join(', ')); }
   const est = (_uvEstoque || []);
@@ -42682,7 +42691,7 @@ function uvImprimir() {
       + '<td style="text-align:right;font-weight:bold;color:' + cor(p) + '">' + (p == null ? '—' : p + '%') + '</td>'
       + '<td style="text-align:right">' + (r.horas_restantes == null ? '—' : (+r.horas_restantes < 0 ? '−' + fmtNum(Math.abs(Math.round(r.horas_restantes))) : fmtNum(Math.round(r.horas_restantes)))) + ' h</td>'
       + '<td>' + fmtData(r.instalada_em) + '</td>'
-      + '<td style="font-size:10px">' + escapeHtml(String(r.item_desc || '')) + '</td>'
+      + '<td style="font-size:10px">' + escapeHtml(String(r.item_desc || '')) + (r.sem_cadastro ? ' <b>(sem cadastro)</b>' : '') + '</td>'
       + '<td style="width:90px;border-bottom:1px solid #999"></td></tr>';
   }).join('');
   const est = (_uvEstoque || []).map(r => '<tr><td>' + escapeHtml(String(r.item_desc)) + '</td><td style="text-align:right">' + fmtNum(Math.round(+r.quantidade || 0)) + '</td></tr>').join('');
