@@ -1334,6 +1334,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     <button class="aba oculto" id="abaBtnRH" data-aba="rh" onclick="trocarAba('rh')">Diagnóstico RH</button>
     <button class="aba oculto" id="abaBtnAno" data-aba="ano" onclick="trocarAba('ano')">Resumo Anual</button>
     <button class="aba oculto" id="abaBtnTintas" data-aba="tintas" onclick="trocarAba('tintas')">Casa de Tintas</button>
+    <button class="aba oculto" id="abaBtnRotulos" data-aba="rotulos" onclick="trocarAba('rotulos')">Rótulos</button>
     <!-- 28/08/2026 (João: "põe nas abas o atalho, como se fizesse parte do app").
          Os atalhos para outros sistemas entram aqui, no fim da fila de abas, com
          a mesma aparência das outras — quem usa não precisa saber que aquilo
@@ -1664,6 +1665,13 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn btn-borda" style="width:auto;padding:8px 14px;font-size:13px" onclick="carregarEstoque(true)">🔄 Atualizar</button>
         </div>
         <div id="estoqueBox"></div>
+      </div>
+    </section>
+    <section id="abaRotulos" class="oculto">
+      <div class="card">
+        <div class="titulo-sec">🏷️ Estoque de Rótulos</div>
+        <p class="desc" style="margin:-2px 0 10px">Bobinas de rótulo (sleeve) por cliente. Lançamento manual.</p>
+        <div id="rotBox"></div>
       </div>
     </section>
     <section id="abaTintas" class="oculto">
@@ -3866,7 +3874,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.447.0';
+const APP_VER = '4.448.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -4782,7 +4790,10 @@ const ABAS = [
   { id: 'organograma', nome: 'Gestão de Pessoas' },
   /* 28/08/2026: Casa de Tintas. Nasce SEM ninguém liberado — o João marca quem
      entra no cartão da pessoa, em Config./Acesso. */
-  { id: 'tintas', nome: 'Casa de Tintas' }
+  { id: 'tintas', nome: 'Casa de Tintas' },
+  /* 03/09/2026: Estoque de Rótulos. Nasce SEM ninguém liberado, como a Casa de
+     Tintas — é estoque de terceiro (rótulo do cliente na nossa mão). */
+  { id: 'rotulos', nome: 'Rótulos' }
 ];
 const SETORES_PADRAO = ['Termoformagem', 'Impressão', 'Extrusão', 'Rotulagem', 'Sleeve', 'Embaladeiras', 'Manutenção', 'KIT', 'Qualidade', 'PCP / Programação', 'Almoxarifado', 'Administrativo', 'Outro'];
 let setoresLista = null;   // categorias (setores) — editáveis pelo admin
@@ -11979,6 +11990,7 @@ function _trocarAbaReal(qual) {
   { const _an = $('abaAno'); if (_an) { _an.classList.toggle('oculto', qual !== 'ano'); if (qual === 'ano') { try { anoAbrir(); } catch (_) { } } } }
   { const _ch = $('abaChao'); if (_ch) { _ch.classList.toggle('oculto', qual !== 'chao'); if (qual === 'chao') { try { chaoAbrir(); } catch (_) { } } } }
   { const _t = $('abaTintas'); if (_t) { _t.classList.toggle('oculto', qual !== 'tintas'); if (qual === 'tintas') { try { tintaAbrir(); } catch (_) { } } } }
+  { const _r = $('abaRotulos'); if (_r) { _r.classList.toggle('oculto', qual !== 'rotulos'); if (qual === 'rotulos') { try { rotAbrir(); } catch (_) { } } } }
   { const _ar = $('abaAnRec'); if (_ar) { _ar.classList.toggle('oculto', qual !== 'anrec'); if (qual === 'anrec') { try { arAbrir(); } catch (_) {} try { csMeses(); } catch (_) {} try { arOrigem(window._arOrigem, true); } catch (_) {} 
       try { const a1 = $('anrecIco'); if (a1 && !a1.innerHTML) a1.innerHTML = ico('anrec');
             const a2 = $('anrecImpIco'); if (a2 && !a2.innerHTML) a2.innerHTML = ico('anrecimp'); } catch (_) {} } } }
@@ -42107,6 +42119,144 @@ async function _leTudoFlx(mkQuery) {
    - teto de 40 páginas (40 mil linhas), igual ao _leTudoFlx.
    Continua avisando no console e para o admin — para eu corrigir na fonte. */
 let _teto1k = [];
+/* ===== 03/09/2026 — ESTOQUE DE RÓTULOS (sleeve) =====
+   João: "quero criar uma aba de estoque de rótulos" + 9 planilhas, uma por
+   cliente. O controle vivia em arquivos separados: não existia soma, nem
+   comparação entre clientes, e cada arquivo tinha nome de coluna diferente
+   ("Estoque em Bobina" num, "Estoque Armazenado" no outro, e o segregado com
+   três nomes). Aqui é uma tabela só, `rotulo_item`.
+   TOTAL e DIFERENÇA vêm da view `v_rotulo_estoque` e NUNCA são gravados —
+   mesma regra do carteira_dia: o app guarda o que é lançado, o banco calcula o
+   resto. Na planilha o Total era fórmula e virava #VALUE! quando alguém
+   escrevia "EM PRODUÇÃO" na coluna de bobina; aqui texto vai para OBS e o
+   valor fica VAZIO, que é diferente de zero: zero é "acabou", vazio é "não sei".
+   João em 03/09: "deixe para lançar manual por enquanto" — o importador de NF
+   fica para depois (o de-para `rotulo_depara` e o fator MI já estão no banco). */
+let _rotDados = null, _rotCli = '', _rotBusca = '', _rotEdit = null;
+async function rotAbrir(forcar) {
+  const box = $('rotBox'); if (!box) return;
+  if (!_rotDados || forcar) {
+    box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando…</p>';
+    try {
+      const { data, error } = await sb.from('v_rotulo_estoque').select('*').order('cliente').order('sleeve_cod');
+      if (error) throw error;
+      _rotDados = data || [];
+    } catch (e) { box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>'; return; }
+  }
+  rotRender();
+}
+function _rotN(v) { return (v === null || v === undefined || v === '') ? null : (+v || 0); }
+function _rotFmt(v) { return v === null || v === undefined ? '<span style="color:var(--fraco-2)">—</span>' : fmtNum(Math.round(+v)); }
+function rotRender() {
+  const box = $('rotBox'); if (!box) return;
+  const D = _rotDados || [];
+  if (!D.length) { box.innerHTML = '<p class="desc">Nenhum rótulo cadastrado ainda.</p>'; return; }
+  const q = _rotBusca.trim().toLowerCase();
+  const vis = D.filter(r => (!_rotCli || (r.cliente || '(sem cliente)') === _rotCli)
+    && (!q || [r.sleeve_cod, r.acabado_cod, r.item_desc, r.cliente].some(x => String(x || '').toLowerCase().indexOf(q) >= 0)));
+  /* o resumo conta SEMPRE o conjunto todo, não o filtrado: um número de topo que
+     muda quando você filtra deixa de ser o total da fábrica e vira armadilha. */
+  const somaT = D.reduce((a, r) => a + (+r.total || 0), 0);
+  const cli = {};
+  D.forEach(r => { const k = r.cliente || '(sem cliente)'; cli[k] = (cli[k] || 0) + (+r.total || 0); });
+  const divg = D.filter(r => r.diferenca !== null && +r.diferenca !== 0);
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Rótulos</div>'
+    + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + fmtNum(Math.round(somaT)) + '</div></div>'
+    + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Itens</div>'
+    + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + D.length + '</div></div>'
+    + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Clientes</div>'
+    + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + Object.keys(cli).length + '</div></div>'
+    + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Difere do fiscal</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (divg.length ? '#B98900' : 'var(--navy)') + '">' + divg.length + '</div>'
+    + '<div style="font-size:10px;color:var(--fraco-2)">de ' + D.filter(r => r.fiscal !== null).length + ' com fiscal</div></div></div>';
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">'
+    + '<input id="rotBusca" value="' + escapeHtml(_rotBusca) + '" oninput="_rotBusca=this.value;rotRender();setTimeout(()=>{const e=$(\'rotBusca\');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},0)" placeholder="buscar sleeve, item ou cliente" style="flex:1;min-width:150px;padding:7px 11px;border-radius:999px;border:1px solid var(--linha-2s);font-size:13px">'
+    + '<span onclick="rotNovo()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:7px 13px;background:var(--verde,#1F7A46);color:#fff">+ item</span></div>';
+  h += '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<span onclick="_rotCli=\'\';rotRender()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:' + (_rotCli ? 'var(--leve-2)' : 'var(--navy)') + ';color:' + (_rotCli ? 'var(--navy)' : '#fff') + '">todos</span>'
+    + Object.keys(cli).sort((a, b) => cli[b] - cli[a]).map(k => '<span onclick="_rotCli=' + JSON.stringify(k).replace(/"/g, '&quot;') + ';rotRender()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:' + (_rotCli === k ? 'var(--navy)' : 'var(--leve-2)') + ';color:' + (_rotCli === k ? '#fff' : 'var(--navy)') + '">' + escapeHtml(k) + ' <b style="opacity:.75">' + fmtNum(Math.round(cli[k])) + '</b></span>').join('') + '</div>';
+  if (!vis.length) { box.innerHTML = h + '<p class="desc">Nada encontrado com esse filtro.</p>'; return; }
+  h += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:right;color:var(--fraco);font-size:10px;text-transform:uppercase;letter-spacing:.4px">'
+    + '<th style="text-align:left;padding:5px 6px">sleeve · item</th><th style="padding:5px 6px">bobina</th><th style="padding:5px 6px">aplicado</th>'
+    + '<th style="padding:5px 6px">segregado</th><th style="padding:5px 6px">total</th><th style="padding:5px 6px">fiscal</th><th style="padding:5px 6px">difer.</th></tr>';
+  vis.forEach(r => {
+    const dif = r.diferenca === null ? null : +r.diferenca;
+    h += '<tr onclick="rotEditar(' + JSON.stringify(String(r.sleeve_cod)) + ')" style="cursor:pointer;border-top:1px solid var(--linha-2s)">'
+      + '<td style="padding:6px"><b>' + escapeHtml(String(r.sleeve_cod)) + '</b>'
+      + (r.acabado_cod ? ' <span style="color:var(--fraco-2);font-size:10px">' + escapeHtml(String(r.acabado_cod)) + '</span>' : '')
+      + '<div style="color:var(--fraco);font-size:10.5px;max-width:270px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(String(r.item_desc || '')) + '</div>'
+      + (r.obs ? '<div style="color:#B98900;font-size:10px;font-weight:700">⚠ ' + escapeHtml(String(r.obs)) + '</div>' : '')
+      + '</td>'
+      + '<td style="padding:6px;text-align:right">' + _rotFmt(r.bobina) + '</td>'
+      + '<td style="padding:6px;text-align:right">' + _rotFmt(r.aplicado) + '</td>'
+      + '<td style="padding:6px;text-align:right">' + _rotFmt(r.segregado) + '</td>'
+      + '<td style="padding:6px;text-align:right;font-weight:800">' + fmtNum(Math.round(+r.total || 0)) + '</td>'
+      + '<td style="padding:6px;text-align:right;color:var(--fraco)">' + _rotFmt(r.fiscal) + '</td>'
+      + '<td style="padding:6px;text-align:right;font-weight:800;color:' + (dif === null ? 'var(--fraco-2)' : dif === 0 ? '#00964D' : '#B98900') + '">'
+      + (dif === null ? '—' : (dif > 0 ? '+' : '') + fmtNum(Math.round(dif))) + '</td></tr>';
+  });
+  h += '</table></div>'
+    + '<p class="desc" style="font-size:10.5px;margin-top:8px">Toque numa linha para lançar. <b>Total</b> = bobina + aplicado + segregado e <b>diferença</b> = fiscal − total: os dois são calculados, não digitados. '
+    + 'Campo em branco é diferente de zero — zero é "acabou", branco é "não sei".</p>';
+  box.innerHTML = h;
+}
+function rotNovo() { _rotEdit = { novo: true, sleeve_cod: '', acabado_cod: '', item_desc: '', cliente: _rotCli && _rotCli !== '(sem cliente)' ? _rotCli : '', bobina: null, aplicado: null, segregado: null, fiscal: null, obs: '' }; _rotForm(); }
+function rotEditar(cod) {
+  const r = (_rotDados || []).find(x => String(x.sleeve_cod) === String(cod)); if (!r) return;
+  _rotEdit = Object.assign({ novo: false }, r); _rotForm();
+}
+function _rotForm() {
+  const e = _rotEdit; if (!e) return;
+  const cp = (rot, campo, tipo) => '<label style="display:block;margin-bottom:7px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px">' + rot + '</span>'
+    + '<input id="rotF_' + campo + '" ' + (tipo === 'n' ? 'type="number" inputmode="numeric"' : '') + ' value="' + escapeHtml(e[campo] === null || e[campo] === undefined ? '' : String(e[campo])) + '"'
+    + ' style="width:100%;padding:7px 10px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>';
+  const h = '<div id="rotModal" style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow:auto" onclick="if(event.target===this)rotFechar()">'
+    + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:430px;width:100%">'
+    + '<div style="font-size:15px;font-weight:800;color:var(--navy);margin-bottom:10px">' + (e.novo ? 'Novo rótulo' : 'Lançar · ' + escapeHtml(String(e.sleeve_cod))) + '</div>'
+    + (e.novo ? cp('Código do sleeve', 'sleeve_cod', '') : '')
+    + cp('Código do acabado', 'acabado_cod', '') + cp('Item', 'item_desc', '') + cp('Cliente', 'cliente', '')
+    + '<div style="display:flex;gap:7px">' + cp('Bobina', 'bobina', 'n') + cp('Aplicado', 'aplicado', 'n') + '</div>'
+    + '<div style="display:flex;gap:7px">' + cp('Segregado', 'segregado', 'n') + cp('Fiscal', 'fiscal', 'n') + '</div>'
+    + cp('Observação', 'obs', '')
+    + '<p class="desc" style="font-size:10.5px;margin:2px 0 10px">Deixe em branco o que você não sabe — em branco não é zero, e o total só soma o que foi preenchido.</p>'
+    + '<div style="display:flex;gap:7px;justify-content:flex-end">'
+    + '<span onclick="rotFechar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
+    + (e.novo ? '' : '<span onclick="rotApagar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:#FBE9E9;color:#9B2C2C">apagar</span>')
+    + '<span onclick="rotSalvar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">salvar</span></div></div></div>';
+  const d = document.createElement('div'); d.id = 'rotModalWrap'; d.innerHTML = h; document.body.appendChild(d);
+}
+function rotFechar() { const d = $('rotModalWrap'); if (d) d.remove(); _rotEdit = null; }
+async function rotSalvar() {
+  const e = _rotEdit; if (!e) return;
+  const v = c => { const el = $('rotF_' + c); return el ? el.value.trim() : ''; };
+  const sleeve = e.novo ? v('sleeve_cod') : String(e.sleeve_cod);
+  if (!sleeve) { toast('Informe o código do sleeve.'); return; }
+  const reg = {
+    sleeve_cod: sleeve, acabado_cod: v('acabado_cod') || null, item_desc: v('item_desc') || null,
+    cliente: v('cliente') || null, bobina: _rotN(v('bobina')), aplicado: _rotN(v('aplicado')),
+    segregado: _rotN(v('segregado')), fiscal: _rotN(v('fiscal')), obs: v('obs') || null,
+    atualizado_em: new Date().toISOString()
+  };
+  try {
+    const { error } = await sb.from('rotulo_item').upsert(reg, { onConflict: 'sleeve_cod' });
+    if (error) throw error;
+    toast('✅ ' + sleeve + ' salvo.');
+    rotFechar(); await rotAbrir(true);
+  } catch (err) { toast('❌ ' + ((err && err.message) || err)); }
+}
+async function rotApagar() {
+  const e = _rotEdit; if (!e || e.novo) return;
+  if (!confirm('Apagar o rótulo ' + e.sleeve_cod + '? Isso não volta.')) return;
+  try {
+    const { error } = await sb.from('rotulo_item').delete().eq('sleeve_cod', String(e.sleeve_cod));
+    if (error) throw error;
+    toast('🗑 ' + e.sleeve_cod + ' apagado.');
+    rotFechar(); await rotAbrir(true);
+  } catch (err) { toast('❌ ' + ((err && err.message) || err)); }
+}
+
 (function _vigiaTeto() {
   try {
     if (!window.fetch || window.__vigiaTeto) return; window.__vigiaTeto = true;
