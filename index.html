@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.453.0';
+const APP_VER = '4.454.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42453,7 +42453,11 @@ function uvRender() {
   const perto = (_uvEstado || []).filter(r => r.pct_vida != null && +r.pct_vida >= 85 && +r.pct_vida < 100);
   const pecas = (_uvEstoque || []).reduce((a, r) => a + (+r.quantidade || 0), 0);
   const valor = (_uvEstoque || []).reduce((a, r) => a + (+r.valor || 0), 0);
-  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+  let h = '';
+  h += '<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;margin:0 0 9px">'
+    + '<span onclick="enviarTexto(uvTexto())" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">📝 texto</span>'
+    + '<span onclick="uvImprimir()" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">🖨️ imprimir</span></div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div style="flex:1;min-width:100px;background:' + (vencidas.length ? '#FBE9E9' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Passaram de 2.000 h</div>'
     + '<div style="font-size:20px;font-weight:800;color:' + (vencidas.length ? '#9B2C2C' : 'var(--navy)') + '">' + vencidas.length + '</div></div>'
     + '<div style="flex:1;min-width:100px;background:' + (perto.length ? '#FDF6E3' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Acima de 85%</div>'
@@ -42608,6 +42612,75 @@ async function uvHistorico(cod) {
         + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">' + (+x.tempo_horas || 0).toFixed(1) + ' h</td></tr>').join('') + '</table>'
         : '<p class="desc" style="font-size:11px">Nenhuma parada de UV apontada.</p>');
   } catch (e) { const el = $('uvHistBox'); if (el) el.innerHTML = '<p class="desc" style="font-size:11px">Não consegui ler o histórico.</p>'; }
+}
+
+/* ===== 03/09/2026 (João: "permita tirar um relatório") =====
+   Três saídas para o mesmo conteúdo: TEXTO (WhatsApp, que é como a manutenção
+   conversa), IMAGEM (para o grupo ver sem abrir o app) e IMPRIMIR (para pregar
+   na parede da manutenção, que foi o pedido implícito de "tirar" relatório).
+   O relatório repete o aviso da estimativa e diz quantas máquinas estão SEM
+   CADASTRO — sem isso alguém lê "0 passaram de 2.000 h" como se as nove
+   estivessem em dia, quando na verdade nenhuma foi cadastrada ainda. */
+function _uvLinhas() {
+  const E = {}; (_uvEstado || []).forEach(r => E[String(r.recurso_cod)] = r);
+  return UV_MAQ.map(m => ({ cod: m, nome: (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[m]) ? String(_chaoNomes[m]) : '', r: E[m] || null }));
+}
+function uvTexto() {
+  const L = _uvLinhas(), com = L.filter(x => x.r), sem = L.filter(x => !x.r);
+  const venc = com.filter(x => +x.r.pct_vida >= 100), pert = com.filter(x => +x.r.pct_vida >= 85 && +x.r.pct_vida < 100);
+  const luz = p => p == null ? '⚪' : p >= 100 ? '🔴' : p >= 85 ? '🟡' : '🟢';
+  const out = ['💡 *Lâmpadas UV · Van Dam*', '_' + fmtData(hojeISO()) + '_', ''];
+  if (venc.length) out.push('🔴 *' + venc.length + ' passaram de 2.000 h*');
+  if (pert.length) out.push('🟡 *' + pert.length + ' acima de 85%*');
+  if (venc.length || pert.length) out.push('');
+  com.slice().sort((a, b) => (+b.r.pct_vida || 0) - (+a.r.pct_vida || 0)).forEach(x => {
+    const r = x.r, p = r.pct_vida == null ? null : Math.round(+r.pct_vida);
+    out.push(luz(p) + ' *' + x.cod + '* ' + x.nome + ' — ' + fmtNum(Math.round(+r.horas_rodadas || 0)) + ' h de ' + fmtNum(Math.round(+r.vida_horas || 0)) + ' h'
+      + (p != null ? ' · *' + p + '%*' : '')
+      + (r.horas_restantes != null ? (+r.horas_restantes < 0 ? ' · ' + fmtNum(Math.abs(Math.round(r.horas_restantes))) + ' h passadas' : ' · faltam ' + fmtNum(Math.round(r.horas_restantes)) + ' h') : '')
+      + ' · desde ' + fmtData(r.instalada_em));
+  });
+  if (sem.length) { out.push(''); out.push('⚪ *Sem lâmpada cadastrada:* ' + sem.map(x => x.cod).join(', ')); }
+  const est = (_uvEstoque || []);
+  if (est.length) {
+    out.push('', '📦 *No almoxarifado*');
+    est.forEach(r => out.push('   • ' + String(r.item_desc) + ' — ' + fmtNum(Math.round(+r.quantidade || 0))));
+    out.push('   _' + est.reduce((a, r) => a + (+r.quantidade || 0), 0) + ' peça(s) · R$ ' + fmtNum(Math.round(est.reduce((a, r) => a + (+r.valor || 0), 0))) + '_');
+  }
+  out.push('', '_Horas estimadas: o ERP não tem horímetro. Contam os turnos em que a máquina produziu, menos as paradas apontadas._');
+  return out.join('\n');
+}
+function uvImprimir() {
+  const L = _uvLinhas(), com = L.filter(x => x.r), sem = L.filter(x => !x.r);
+  const cor = p => p == null ? '#9AA0A8' : p >= 100 ? '#9B2C2C' : p >= 85 ? '#B98900' : '#1F7A46';
+  const linhas = com.slice().sort((a, b) => (+b.r.pct_vida || 0) - (+a.r.pct_vida || 0)).map(x => {
+    const r = x.r, p = r.pct_vida == null ? null : Math.round(+r.pct_vida);
+    return '<tr><td><b>' + escapeHtml(x.cod) + '</b> ' + escapeHtml(x.nome) + '</td>'
+      + '<td style="text-align:right">' + fmtNum(Math.round(+r.horas_rodadas || 0)) + ' h</td>'
+      + '<td style="text-align:right">' + fmtNum(Math.round(+r.vida_horas || 0)) + ' h</td>'
+      + '<td style="text-align:right;font-weight:bold;color:' + cor(p) + '">' + (p == null ? '—' : p + '%') + '</td>'
+      + '<td style="text-align:right">' + (r.horas_restantes == null ? '—' : (+r.horas_restantes < 0 ? '−' + fmtNum(Math.abs(Math.round(r.horas_restantes))) : fmtNum(Math.round(r.horas_restantes)))) + ' h</td>'
+      + '<td>' + fmtData(r.instalada_em) + '</td>'
+      + '<td style="font-size:10px">' + escapeHtml(String(r.item_desc || '')) + '</td>'
+      + '<td style="width:90px;border-bottom:1px solid #999"></td></tr>';
+  }).join('');
+  const est = (_uvEstoque || []).map(r => '<tr><td>' + escapeHtml(String(r.item_desc)) + '</td><td style="text-align:right">' + fmtNum(Math.round(+r.quantidade || 0)) + '</td></tr>').join('');
+  const w = window.open('', '_blank'); if (!w) { toast('O navegador bloqueou a janela de impressão.'); return; }
+  w.document.write('<html><head><meta charset="utf-8"><title>Lâmpadas UV</title><style>'
+    + '@page{size:A4 landscape;margin:12mm}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111}'
+    + 'h1{font-size:17px;margin:0 0 2px}p.sub{color:#555;margin:0 0 12px;font-size:11px}'
+    + 'table{width:100%;border-collapse:collapse;margin-bottom:14px}th{text-align:left;font-size:10px;text-transform:uppercase;color:#555;border-bottom:1px solid #999;padding:4px}'
+    + 'td{padding:5px 4px;border-bottom:1px solid #ddd}h2{font-size:13px;margin:14px 0 4px}'
+    + 'p.nota{font-size:10px;color:#555;margin-top:10px;line-height:1.4}</style></head><body>'
+    + '<h1>Lâmpadas UV · Van Dam</h1><p class="sub">' + fmtData(hojeISO()) + ' · vida útil 2.000 h · uma lâmpada por máquina</p>'
+    + '<table><tr><th>máquina</th><th style="text-align:right">rodou</th><th style="text-align:right">vida</th><th style="text-align:right">%</th><th style="text-align:right">restam</th><th>desde</th><th>modelo</th><th>conferido</th></tr>'
+    + (linhas || '<tr><td colspan="8">Nenhuma lâmpada cadastrada ainda.</td></tr>') + '</table>'
+    + (sem.length ? '<p class="sub"><b>Sem lâmpada cadastrada:</b> ' + sem.map(x => escapeHtml(x.cod)).join(', ') + '</p>' : '')
+    + (est ? '<h2>No almoxarifado</h2><table><tr><th>item</th><th style="text-align:right">saldo</th></tr>' + est + '</table>' : '')
+    + '<p class="nota">As horas são <b>estimadas</b>: o ERP não tem horímetro. Contam as horas dos turnos em que a máquina produziu, descontadas as paradas apontadas (parada marcada como apontamento aberto fica de fora). Sábado conta 46% e domingo não conta. '
+    + 'A data de instalação vem do cadastro no app, não da parada — o motivo "TROCA DE LAMPADA UV" do ERP está subregistrado. A coluna <b>conferido</b> é para assinar na hora da ronda.</p>'
+    + '</body></html>');
+  w.document.close(); setTimeout(() => { try { w.print(); } catch (_) { } }, 350);
 }
 
 (function _vigiaTeto() {
