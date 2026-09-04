@@ -3874,7 +3874,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.449.0';
+const APP_VER = '4.450.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42138,7 +42138,7 @@ async function rotAbrir(forcar) {
   if (!_rotDados || forcar) {
     box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando…</p>';
     try {
-      const { data, error } = await sb.from('v_rotulo_estoque').select('*').order('cliente').order('sleeve_cod');
+      const { data, error } = await sb.from('v_rotulo_fila').select('*').order('cliente').order('sleeve_cod');
       if (error) throw error;
       _rotDados = data || [];
     } catch (e) { box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>'; return; }
@@ -42161,6 +42161,16 @@ function rotRender() {
   const cli = {};
   D.forEach(r => { const k = r.cliente || '(sem cliente)'; cli[k] = (cli[k] || 0) + (+r.total || 0); });
   const divg = D.filter(r => r.diferenca !== null && +r.diferenca !== 0);
+  /* 03/09/2026 (João: "pela fila da Programação, se tem a quantidade e quanto
+     vão sobrar após a produção do pedido"). A fila vem em CAIXAS e o rótulo é
+     por PEÇA — o fator "- N UNID" sai da descrição do item e foi conferido
+     contra a produção real (512 UNID = 6,144 kg/caixa em 106 amostras). Item sem
+     esse fator fica SEM cálculo, mostrado como "—": tratar caixa como peça
+     erraria por centenas de vezes, e um número errado aqui manda comprar rótulo
+     à toa ou deixa a máquina parar. */
+  const faltam = D.filter(r => r.sobra !== null && +r.sobra < 0);
+  const urgente = faltam.slice().sort((a, b) => String(a.primeira_entrega || '9') < String(b.primeira_entrega || '9') ? -1 : 1)[0];
+  const semFator = D.filter(r => r.caixas !== null && r.unid_cx === null);
   let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Rótulos</div>'
     + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + fmtNum(Math.round(somaT)) + '</div></div>'
@@ -42168,6 +42178,9 @@ function rotRender() {
     + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + D.length + '</div></div>'
     + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Clientes</div>'
     + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + Object.keys(cli).length + '</div></div>'
+    + '<div style="flex:1;min-width:104px;background:' + (faltam.length ? '#FBE9E9' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Vão faltar</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (faltam.length ? '#9B2C2C' : 'var(--navy)') + '">' + faltam.length + '</div>'
+    + '<div style="font-size:10px;color:var(--fraco-2)">' + (urgente ? '1ª entrega ' + (urgente.primeira_entrega ? fmtData(urgente.primeira_entrega) : '—') : 'pela fila de hoje') + '</div></div>'
     + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Difere do fiscal</div>'
     + '<div style="font-size:20px;font-weight:800;color:' + (divg.length ? '#B98900' : 'var(--navy)') + '">' + divg.length + '</div>'
     + '<div style="font-size:10px;color:var(--fraco-2)">de ' + D.filter(r => r.fiscal !== null).length + ' com fiscal</div></div></div>';
@@ -42184,7 +42197,8 @@ function rotRender() {
   h += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
     + '<tr style="text-align:right;color:var(--fraco);font-size:10px;text-transform:uppercase;letter-spacing:.4px">'
     + '<th style="text-align:left;padding:5px 6px">sleeve · item</th><th style="padding:5px 6px">bobina</th><th style="padding:5px 6px">aplicado</th>'
-    + '<th style="padding:5px 6px">segregado</th><th style="padding:5px 6px">total</th><th style="padding:5px 6px">fiscal</th><th style="padding:5px 6px">difer.</th></tr>';
+    + '<th style="padding:5px 6px">segregado</th><th style="padding:5px 6px">total</th><th style="padding:5px 6px">fiscal</th><th style="padding:5px 6px">difer.</th>'
+    + '<th style="padding:5px 6px">na fila</th><th style="padding:5px 6px">sobra</th>'    + '</tr>';
   vis.forEach(r => {
     const dif = r.diferenca === null ? null : +r.diferenca;
     h += '<tr onclick="rotEditar(' + JSON.stringify(String(r.sleeve_cod)) + ')" style="cursor:pointer;border-top:1px solid var(--linha-2s)">'
@@ -42200,11 +42214,18 @@ function rotRender() {
       + '<td style="padding:6px;text-align:right;font-weight:800">' + fmtNum(Math.round(+r.total || 0)) + '</td>'
       + '<td style="padding:6px;text-align:right;color:var(--fraco)">' + _rotFmt(r.fiscal) + '</td>'
       + '<td style="padding:6px;text-align:right;font-weight:800;color:' + (dif === null ? 'var(--fraco-2)' : dif === 0 ? '#00964D' : '#B98900') + '">'
-      + (dif === null ? '—' : (dif > 0 ? '+' : '') + fmtNum(Math.round(dif))) + '</td></tr>';
+      + (dif === null ? '—' : (dif > 0 ? '+' : '') + fmtNum(Math.round(dif))) + '</td>'
+      + '<td style="padding:6px;text-align:right;color:var(--fraco)" title="' + (r.caixas ? r.caixas + ' cx × ' + (r.unid_cx || '?') + ' un' + (r.ops ? ' · ' + r.ops + ' OP' : '') : 'sem OP na fila') + '">'
+      + (r.precisa === null ? '<span style="color:var(--fraco-2)">' + (r.caixas ? 'sem fator' : '—') + '</span>' : fmtNum(Math.round(+r.precisa))) + '</td>'
+      + '<td style="padding:6px;text-align:right;font-weight:800;color:' + (r.sobra === null ? 'var(--fraco-2)' : (+r.sobra < 0 ? '#9B2C2C' : '#00964D')) + '">'
+      + (r.sobra === null ? '—' : fmtNum(Math.round(+r.sobra)))
+      + (r.sobra !== null && +r.sobra < 0 && r.primeira_entrega ? '<div style="font-weight:700;font-size:9.5px;color:#9B2C2C">entrega ' + fmtData(r.primeira_entrega) + '</div>' : '') + '</td>'      + '</tr>';
   });
   h += '</table></div>'
     + '<p class="desc" style="font-size:10.5px;margin-top:8px">Toque numa linha para lançar. <b>Total</b> = bobina + aplicado + segregado e <b>diferença</b> = fiscal − total: os dois são calculados, não digitados. '
-    + 'Campo em branco é diferente de zero — zero é "acabou", branco é "não sei".</p>';
+    + 'Campo em branco é diferente de zero — zero é "acabou", branco é "não sei". '
+    + '<b>Na fila</b> é o que as OP programadas em Sleeve e Rotulagem vão consumir (caixas × peças por caixa) e <b>sobra</b> é a bobina menos isso. '
+    + (semFator.length ? '<b>' + semFator.length + '</b> item(ns) estão na fila mas não têm o "N UNID" na descrição, então não dá para converter caixa em rótulo — aparecem como <i>sem fator</i>.' : '') + '</p>';
   box.innerHTML = h;
 }
 function rotNovo() { _rotEdit = { novo: true, sleeve_cod: '', acabado_cod: '', item_desc: '', cliente: _rotCli && _rotCli !== '(sem cliente)' ? _rotCli : '', bobina: null, aplicado: null, segregado: null, fiscal: null, obs: '' }; _rotForm(); }
