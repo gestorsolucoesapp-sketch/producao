@@ -3874,7 +3874,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.448.0';
+const APP_VER = '4.449.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42153,6 +42153,7 @@ function rotRender() {
   if (!D.length) { box.innerHTML = '<p class="desc">Nenhum rótulo cadastrado ainda.</p>'; return; }
   const q = _rotBusca.trim().toLowerCase();
   const vis = D.filter(r => (!_rotCli || (r.cliente || '(sem cliente)') === _rotCli)
+    && (!_rotSetor || r.setor === _rotSetor)
     && (!q || [r.sleeve_cod, r.acabado_cod, r.item_desc, r.cliente].some(x => String(x || '').toLowerCase().indexOf(q) >= 0)));
   /* o resumo conta SEMPRE o conjunto todo, não o filtrado: um número de topo que
      muda quando você filtra deixa de ser o total da fábrica e vira armadilha. */
@@ -42173,6 +42174,9 @@ function rotRender() {
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">'
     + '<input id="rotBusca" value="' + escapeHtml(_rotBusca) + '" oninput="_rotBusca=this.value;rotRender();setTimeout(()=>{const e=$(\'rotBusca\');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},0)" placeholder="buscar sleeve, item ou cliente" style="flex:1;min-width:150px;padding:7px 11px;border-radius:999px;border:1px solid var(--linha-2s);font-size:13px">'
     + '<span onclick="rotNovo()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:7px 13px;background:var(--verde,#1F7A46);color:#fff">+ item</span></div>';
+  h += '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">'
+    + ['', 'Sleeve', 'Rotulagem'].map(st => '<span onclick="_rotSetor=' + JSON.stringify(st).replace(/"/g, '&quot;') + ';rotRender()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:' + (_rotSetor === st ? 'var(--navy)' : 'var(--leve-2)') + ';color:' + (_rotSetor === st ? '#fff' : 'var(--navy)') + '">' + (st || 'os dois setores') + ' <b style="opacity:.75">' + D.filter(r => !st || r.setor === st).length + '</b></span>').join('')
+    + '</div>';
   h += '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">'
     + '<span onclick="_rotCli=\'\';rotRender()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:' + (_rotCli ? 'var(--leve-2)' : 'var(--navy)') + ';color:' + (_rotCli ? 'var(--navy)' : '#fff') + '">todos</span>'
     + Object.keys(cli).sort((a, b) => cli[b] - cli[a]).map(k => '<span onclick="_rotCli=' + JSON.stringify(k).replace(/"/g, '&quot;') + ';rotRender()" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:' + (_rotCli === k ? 'var(--navy)' : 'var(--leve-2)') + ';color:' + (_rotCli === k ? '#fff' : 'var(--navy)') + '">' + escapeHtml(k) + ' <b style="opacity:.75">' + fmtNum(Math.round(cli[k])) + '</b></span>').join('') + '</div>';
@@ -42184,8 +42188,9 @@ function rotRender() {
   vis.forEach(r => {
     const dif = r.diferenca === null ? null : +r.diferenca;
     h += '<tr onclick="rotEditar(' + JSON.stringify(String(r.sleeve_cod)) + ')" style="cursor:pointer;border-top:1px solid var(--linha-2s)">'
-      + '<td style="padding:6px"><b>' + escapeHtml(String(r.sleeve_cod)) + '</b>'
+      + '<td style="padding:6px"><span onclick="event.stopPropagation();rotNota(' + JSON.stringify(String(r.sleeve_cod)) + ')" title="lançar nota" style="cursor:pointer;font-size:11px;border-radius:999px;padding:2px 7px;margin-right:5px;background:var(--leve-2);border:1px solid var(--linha-2s)">📄</span><b>' + escapeHtml(String(r.sleeve_cod)) + '</b>'
       + (r.acabado_cod ? ' <span style="color:var(--fraco-2);font-size:10px">' + escapeHtml(String(r.acabado_cod)) + '</span>' : '')
+      + (r.setor ? ' <span style="font-size:9.5px;font-weight:800;border-radius:6px;padding:1px 6px;background:' + (r.setor === 'Sleeve' ? '#F0E9F6' : '#FBEAE7') + ';color:' + (r.setor === 'Sleeve' ? '#7A3E9D' : '#C0392B') + '">' + escapeHtml(r.setor) + '</span>' : '')
       + '<div style="color:var(--fraco);font-size:10.5px;max-width:270px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(String(r.item_desc || '')) + '</div>'
       + (r.obs ? '<div style="color:#B98900;font-size:10px;font-weight:700">⚠ ' + escapeHtml(String(r.obs)) + '</div>' : '')
       + '</td>'
@@ -42220,12 +42225,14 @@ function _rotForm() {
     + '<div style="display:flex;gap:7px">' + cp('Bobina', 'bobina', 'n') + cp('Aplicado', 'aplicado', 'n') + '</div>'
     + '<div style="display:flex;gap:7px">' + cp('Segregado', 'segregado', 'n') + cp('Fiscal', 'fiscal', 'n') + '</div>'
     + cp('Observação', 'obs', '')
-    + '<p class="desc" style="font-size:10.5px;margin:2px 0 10px">Deixe em branco o que você não sabe — em branco não é zero, e o total só soma o que foi preenchido.</p>'
+    + '<p class="desc" style="font-size:10.5px;margin:2px 0 8px">Deixe em branco o que você não sabe — em branco não é zero, e o total só soma o que foi preenchido. Para movimentar por <b>nota</b>, use o 📄 da lista: aí fica histórico.</p>'
+    + (e.novo ? '' : '<div style="border-top:1px solid var(--linha-2s);padding-top:8px;margin-bottom:10px"><div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Histórico de notas</div><div id="rotHist_' + escapeHtml(String(e.sleeve_cod)) + '"></div></div>')
     + '<div style="display:flex;gap:7px;justify-content:flex-end">'
     + '<span onclick="rotFechar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
     + (e.novo ? '' : '<span onclick="rotApagar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:#FBE9E9;color:#9B2C2C">apagar</span>')
     + '<span onclick="rotSalvar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">salvar</span></div></div></div>';
   const d = document.createElement('div'); d.id = 'rotModalWrap'; d.innerHTML = h; document.body.appendChild(d);
+  if (!e.novo) { try { rotHistorico(String(e.sleeve_cod)); } catch (_) { } }
 }
 function rotFechar() { const d = $('rotModalWrap'); if (d) d.remove(); _rotEdit = null; }
 async function rotSalvar() {
@@ -42255,6 +42262,117 @@ async function rotApagar() {
     toast('🗑 ' + e.sleeve_cod + ' apagado.');
     rotFechar(); await rotAbrir(true);
   } catch (err) { toast('❌ ' + ((err && err.message) || err)); }
+}
+
+/* ===== 03/09/2026 (João: "cadastrar de acordo com a nota, aí vai criando
+   histórico" + "atrele o item ao setor Sleeve e Rotulagem para cadastrar") =====
+   Duas mudanças que andam juntas:
+   1) SALDO DEIXA DE SER DIGITADO SOZINHO. O lançamento é a NOTA, e o saldo é
+      consequência dela — cada nota fica gravada em `rotulo_movimento`, então
+      existe histórico: dá para responder "de onde veio esse número". Digitar o
+      saldo direto continua possível (inventário, correção), mas é a exceção.
+   2) O ITEM VEM DE LISTA, NÃO DA MÃO. `v_rotulo_itens_setor` traz só o que
+      realmente rodou nas máquinas de Sleeve (1901/1902/1903) e Rotulagem
+      (1302/1303/1304) — conferido no banco: os 79 itens do controle só
+      apareceram nessas seis máquinas, em nenhuma outra. Código de item digitado
+      errado é como o rótulo de um cliente vai parar no estoque de outro.
+   A UNIDADE fica à vista: a NF da Contratil vem em MI (milheiro), e a tela
+   mostra "151,41 MI = 151.410 rótulos" ANTES de salvar. Assim quem lança
+   confere o fator em vez de o app multiplicar por mil escondido. */
+let _rotMov = null, _rotCat = null, _rotNota = null, _rotSetor = '';
+const ROT_UNID = { MI: 1000, UN: 1, PC: 1 };
+async function _rotCatalogo() {
+  if (_rotCat) return _rotCat;
+  try {
+    const { data } = await sb.from('v_rotulo_itens_setor').select('item_cod,item_desc,setor,maquinas').order('item_desc');
+    _rotCat = data || [];
+  } catch (_) { _rotCat = []; }
+  return _rotCat;
+}
+function rotNota(cod) {
+  const r = (_rotDados || []).find(x => String(x.sleeve_cod) === String(cod)); if (!r) return;
+  _rotNota = { sleeve_cod: String(r.sleeve_cod), item_desc: r.item_desc, cliente: r.cliente, setor: r.setor };
+  const h = '<div id="rotModal" style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow:auto" onclick="if(event.target===this)rotFechar()">'
+    + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:430px;width:100%">'
+    + '<div style="font-size:15px;font-weight:800;color:var(--navy)">📄 Lançar nota</div>'
+    + '<div style="font-size:11.5px;color:var(--fraco);margin-bottom:11px"><b>' + escapeHtml(_rotNota.sleeve_cod) + '</b> · ' + escapeHtml(String(r.item_desc || '')) + '</div>'
+    + '<div style="display:flex;gap:7px;margin-bottom:9px">'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Tipo</span>'
+    + '<select id="rotNTipo" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"><option value="entrada">entrada (chegou)</option><option value="saida">saída (consumiu)</option></select></label>'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Onde</span>'
+    + '<select id="rotNDest" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"><option value="bobina">bobina</option><option value="aplicado">aplicado</option><option value="segregado">segregado</option></select></label></div>'
+    + '<div style="display:flex;gap:7px;margin-bottom:9px">'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Nota fiscal</span>'
+    + '<input id="rotNNF" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Emissão</span>'
+    + '<input id="rotNEm" type="date" value="' + hojeISO() + '" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label></div>'
+    + '<div style="display:flex;gap:7px;margin-bottom:4px">'
+    + '<label style="flex:2"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Quantidade</span>'
+    + '<input id="rotNQtd" inputmode="decimal" oninput="_rotPrev()" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Unidade</span>'
+    + '<select id="rotNUn" onchange="_rotPrev()" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"><option value="UN">UN</option><option value="MI">MI (milheiro)</option></select></label></div>'
+    + '<div id="rotNPrev" style="font-size:12px;font-weight:800;color:var(--fraco);min-height:18px;margin-bottom:8px"></div>'
+    + '<label style="display:block;margin-bottom:9px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Observação</span>'
+    + '<input id="rotNObs" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<p class="desc" style="font-size:10.5px;margin:0 0 10px">A nota fica no histórico e o saldo é atualizado por ela. <b>Confira a unidade</b>: em MI cada 1 vale 1.000 rótulos.</p>'
+    + '<div style="display:flex;gap:7px;justify-content:flex-end">'
+    + '<span onclick="rotFechar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
+    + '<span onclick="rotNotaSalvar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">lançar</span></div></div></div>';
+  const d = document.createElement('div'); d.id = 'rotModalWrap'; d.innerHTML = h; document.body.appendChild(d);
+}
+function _rotPrev() {
+  const el = $('rotNPrev'); if (!el) return;
+  const q = parseFloat(String(($('rotNQtd') || {}).value || '').replace(/\./g, '').replace(',', '.'));
+  const un = ($('rotNUn') || {}).value || 'UN', f = ROT_UNID[un] || 1;
+  if (!isFinite(q) || !q) { el.innerHTML = ''; return; }
+  el.innerHTML = un === 'MI'
+    ? '= <span style="color:var(--navy)">' + fmtNum(Math.round(q * f)) + '</span> rótulos <span style="font-weight:400;color:var(--fraco-2)">(' + q.toLocaleString('pt-BR') + ' × 1.000)</span>'
+    : '= <span style="color:var(--navy)">' + fmtNum(Math.round(q)) + '</span> rótulos';
+}
+async function rotNotaSalvar() {
+  const N = _rotNota; if (!N) return;
+  const v = id => { const e = $(id); return e ? String(e.value || '').trim() : ''; };
+  const qi = parseFloat(v('rotNQtd').replace(/\./g, '').replace(',', '.'));
+  if (!isFinite(qi) || qi <= 0) { toast('Informe a quantidade.'); return; }
+  const un = v('rotNUn') || 'UN', qtd = Math.round(qi * (ROT_UNID[un] || 1));
+  const tipo = v('rotNTipo'), dest = v('rotNDest');
+  const r = (_rotDados || []).find(x => String(x.sleeve_cod) === N.sleeve_cod);
+  const atual = r ? (r[dest] === null || r[dest] === undefined ? 0 : +r[dest]) : 0;
+  const novo = tipo === 'entrada' ? atual + qtd : atual - qtd;
+  if (novo < 0 && !confirm('Isso deixa ' + dest + ' negativo (' + fmtNum(novo) + '). Lançar assim mesmo?')) return;
+  try {
+    const reg = {
+      sleeve_cod: N.sleeve_cod, tipo: tipo, destino: dest, nota_fiscal: v('rotNNF') || null,
+      quantidade: qtd, qtd_informada: qi, unidade: un, emissao: v('rotNEm') || null,
+      cliente: N.cliente || null, obs: v('rotNObs') || null,
+      lancado_por: (typeof perfil === 'object' && perfil && perfil.nome) ? perfil.nome : null
+    };
+    const { error } = await sb.from('rotulo_movimento').insert(reg);
+    if (error) throw error;
+    const upd = { atualizado_em: new Date().toISOString() }; upd[dest] = novo;
+    const { error: e2 } = await sb.from('rotulo_item').update(upd).eq('sleeve_cod', N.sleeve_cod);
+    if (e2) throw e2;
+    toast('✅ Nota lançada · ' + dest + ': ' + fmtNum(atual) + ' → ' + fmtNum(novo));
+    rotFechar(); _rotMov = null; await rotAbrir(true);
+  } catch (err) { toast('❌ ' + ((err && err.message) || err)); }
+}
+async function rotHistorico(cod) {
+  const el = $('rotHist_' + cod); if (!el) return;
+  el.innerHTML = '<span class="spin"></span>';
+  try {
+    const { data } = await sb.from('v_rotulo_movimento').select('*').eq('sleeve_cod', String(cod)).order('criado_em', { ascending: false }).limit(50);
+    const L = data || [];
+    if (!L.length) { el.innerHTML = '<p class="desc" style="font-size:11px">Nenhuma nota lançada ainda para este item.</p>'; return; }
+    el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:11px">'
+      + L.map(m => '<tr style="border-top:1px solid var(--linha-2s)">'
+        + '<td style="padding:4px 5px;white-space:nowrap">' + (m.emissao ? fmtData(m.emissao) : '—') + '</td>'
+        + '<td style="padding:4px 5px">' + (m.nota_fiscal ? 'NF ' + escapeHtml(String(m.nota_fiscal)) : '<span style="color:var(--fraco-2)">sem NF</span>') + '</td>'
+        + '<td style="padding:4px 5px;color:var(--fraco)">' + escapeHtml(String(m.destino || '')) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;font-weight:800;color:' + (m.tipo === 'entrada' ? '#1F7A46' : '#9B2C2C') + '">'
+        + (m.tipo === 'entrada' ? '+' : '−') + fmtNum(Math.round(+m.quantidade || 0))
+        + (m.unidade === 'MI' ? '<div style="font-weight:400;font-size:9.5px;color:var(--fraco-2)">' + (+m.qtd_informada).toLocaleString('pt-BR') + ' MI</div>' : '') + '</td></tr>').join('')
+      + '</table>';
+  } catch (e) { el.innerHTML = '<p class="desc" style="font-size:11px">Não consegui ler o histórico.</p>'; }
 }
 
 (function _vigiaTeto() {
