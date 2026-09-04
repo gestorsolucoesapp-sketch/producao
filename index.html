@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.456.0';
+const APP_VER = '4.457.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -42510,7 +42510,8 @@ function uvRender() {
       + ' · desde ' + fmtData(r.instalada_em)
       + (+r.horas_iniciais > 0 ? ' <span style="color:var(--fraco-2)">(+' + fmtNum(Math.round(r.horas_iniciais)) + ' h de antes)</span>' : '') + '</div>'
       + (r.item_desc ? '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(r.item_desc))
-          + (r.sem_cadastro ? ' <span style="font-weight:800;color:#B98900">⚠ sem cadastro no almoxarifado</span>' : '') + '</div>' : '')
+          + (r.sem_cadastro ? ' <span style="font-weight:800;color:#B98900">⚠ sem cadastro no almoxarifado</span>' : '')
+          + (r.serie ? ' · série ' + escapeHtml(String(r.serie)) : '') + (r.lote ? ' · lote ' + escapeHtml(String(r.lote)) : '') + '</div>' : '')
       + '<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">'
       + '<span onclick="uvTrocar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:#1F7A46;color:#fff">registrar troca</span>'
       + '<span onclick="uvCadastrar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">corrigir cadastro</span>'
@@ -42526,9 +42527,11 @@ function uvRender() {
         + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">R$ ' + fmtNum(Math.round(+r.unitario || 0)) + '</td></tr>').join('')
       + '</table></div>';
   }
+  h += '<div id="uvGraf" style="border-top:1px solid var(--linha-2s);margin-top:12px;padding-top:4px"></div>';
   h += '<p class="desc" style="font-size:10.5px;margin-top:9px">As horas são <b>estimadas</b>: o ERP não tem horímetro. Conto as horas dos turnos em que a máquina <b>produziu</b> e desconto as paradas apontadas — parada marcada como apontamento aberto fica de fora. '
     + 'Sábado conta 46% e domingo não conta, igual ao resto do app. A data de instalação vem do cadastro, não da parada: pelo 643, a 705 e a 710 não têm <i>nenhuma</i> troca apontada em 20 meses, então esse motivo de parada está subregistrado.</p>';
   box.innerHTML = h;
+  try { uvGraficos(); } catch (_) { }
 }
 function _uvArg(v) { return JSON.stringify(String(v)).replace(/"/g, '&quot;'); }
 function _uvModal(titulo, corpo, acao, rotulo) {
@@ -42592,6 +42595,11 @@ function uvTrocar(cod) {
     + '<select id="uvTMot" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px">'
     + '<option value="preventiva">preventiva (chegou na hora)</option><option value="queimou">queimou</option><option value="falha">falha de cura</option><option value="outro">outro</option></select></label>'
     + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Modelo que entrou</span>' + _uvSelItem(r && r.item_cod) + '</label>'
+    + '<div style="display:flex;gap:7px;margin-bottom:8px">'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Nº de série</span>'
+    + '<input id="uvTSerie" placeholder="ex.: 12608596" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="flex:1"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Lote</span>'
+    + '<input id="uvTLote" placeholder="ex.: 28429" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label></div>'
     + '<label style="display:block"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Observação</span>'
     + '<input id="uvTObs" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>';
   _uvModal('Registrar troca · ' + escapeHtml(String(cod)), c, 'uvSalvarTroca(' + _uvArg(cod) + ')', 'registrar');
@@ -42606,11 +42614,13 @@ async function uvSalvarTroca(cod) {
       horas_rodadas: r ? Math.round(+r.horas_rodadas || 0) : null,
       vida_horas: r ? (+r.vida_horas || 2000) : 2000,
       motivo: v('uvTMot') || 'outro', obs: v('uvTObs') || null,
+      serie: v('uvTSerie') || null, lote: v('uvTLote') || null,
       registrado_por: (typeof perfil === 'object' && perfil && perfil.nome) ? perfil.nome : null
     });
     if (error) throw error;
     const { error: e2 } = await sb.from('uv_lampada').upsert({
       recurso_cod: String(cod), instalada_em: dia, horas_iniciais: 0,
+      serie: v('uvTSerie') || null, lote: v('uvTLote') || null,
       vida_horas: r ? (+r.vida_horas || 2000) : 2000,
       item_cod: v('uvFItem') || (r && r.item_cod) || null, atualizado_em: new Date().toISOString()
     }, { onConflict: 'recurso_cod' });
@@ -42711,6 +42721,74 @@ function uvImprimir() {
     + 'A data de instalação vem do cadastro no app, não da parada — o motivo "TROCA DE LAMPADA UV" do ERP está subregistrado. A coluna <b>conferido</b> é para assinar na hora da ronda.</p>'
     + '</body></html>');
   w.document.close(); setTimeout(() => { try { w.print(); } catch (_) { } }, 350);
+}
+
+/* ===== 03/09/2026 (João: "cria um histórico e gráfico de trocas, horas por
+   máquina, vida útil e qual marca troca mais") =====
+   Três barras, todas na MESMA régua de 2.000 h onde faz sentido comparar.
+   As duas primeiras respondem coisas diferentes e é fácil confundir:
+   HORAS AGORA é a lâmpada que está na máquina neste momento (para saber quem
+   trocar primeiro); VIDA MÉDIA é quanto as lâmpadas já trocadas duraram (para
+   saber que marca aguenta mais). Uma olha para frente, a outra para trás.
+   Barra some quando não há dado — gráfico vazio com eixo bonito dá a impressão
+   de que o número é zero, quando na verdade ninguém registrou nada ainda. */
+function _uvBarra(rot, val, max, cor, sub) {
+  const w = max > 0 ? Math.max(1.5, Math.min(100, 100 * val / max)) : 0;
+  return '<div style="margin-bottom:7px">'
+    + '<div style="display:flex;font-size:11px;margin-bottom:2px"><span style="font-weight:800;margin-right:7px">' + rot + '</span>'
+    + '<span style="margin-left:auto;font-weight:800;color:' + cor + '">' + fmtNum(Math.round(val)) + (sub ? ' <span style="font-weight:400;color:var(--fraco-2)">' + sub + '</span>' : '') + '</span></div>'
+    + '<div style="height:9px;background:#E9EBEF;border-radius:5px"><div style="height:9px;width:' + w.toFixed(1) + '%;background:' + cor + ';border-radius:5px"></div></div></div>';
+}
+async function uvGraficos() {
+  const box = $('uvGraf'); if (!box) return;
+  box.innerHTML = '<span class="spin"></span>';
+  let mod = [], maq = [];
+  try {
+    const [a, b] = await Promise.all([
+      sb.from('v_uv_por_modelo').select('*').order('trocas', { ascending: false }),
+      sb.from('v_uv_por_maquina').select('*').order('trocas', { ascending: false })
+    ]);
+    mod = a.data || []; maq = b.data || [];
+  } catch (_) { box.innerHTML = '<p class="desc" style="font-size:11px">Não consegui ler os gráficos.</p>'; return; }
+  const est = (_uvEstado || []).slice().sort((x, y) => (+y.horas_rodadas || 0) - (+x.horas_rodadas || 0));
+  let h = '';
+  /* 1) horas da lâmpada que está na máquina AGORA */
+  if (est.length) {
+    const mx = Math.max(2000, ...est.map(r => +r.horas_rodadas || 0));
+    h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 5px">Horas da lâmpada que está na máquina</div>'
+      + est.map(r => _uvBarra(String(r.recurso_cod), +r.horas_rodadas || 0, mx,
+        (+r.pct_vida >= 100 ? '#9B2C2C' : +r.pct_vida >= 85 ? '#B98900' : '#1F7A46'),
+        'h · ' + Math.round(+r.pct_vida || 0) + '%')).join('')
+      + '<div style="font-size:10px;color:var(--fraco-2);margin:-2px 0 4px">régua até ' + fmtNum(mx) + ' h · a meta é 2.000 h</div>';
+  }
+  /* 2) quanto as lâmpadas JÁ TROCADAS duraram, por modelo */
+  const comH = mod.filter(m => m.horas_media != null);
+  if (comH.length) {
+    const mx = Math.max(2000, ...comH.map(m => +m.horas_media || 0));
+    h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 5px">Vida média por modelo (o que já foi trocado)</div>'
+      + comH.slice().sort((a, b) => (+b.horas_media || 0) - (+a.horas_media || 0)).map(m =>
+        _uvBarra(escapeHtml(String(m.item_desc).slice(0, 34)) + (m.sem_cadastro ? ' ⚠' : ''), +m.horas_media || 0, mx, '#3A6FB0',
+          'h · ' + m.trocas_com_horas + ' troca(s)' + (m.horas_min !== m.horas_max ? ' · de ' + fmtNum(m.horas_min) + ' a ' + fmtNum(m.horas_max) : ''))).join('');
+  }
+  /* 3) qual marca troca mais */
+  if (mod.length) {
+    const mx = Math.max(1, ...mod.map(m => +m.trocas || 0));
+    h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 5px">Qual modelo troca mais</div>'
+      + mod.map(m => _uvBarra(escapeHtml(String(m.item_desc).slice(0, 34)) + (m.sem_cadastro ? ' ⚠' : ''), +m.trocas || 0, mx, '#7A5C9E',
+        'troca(s)' + (+m.queimou > 0 ? ' · ' + m.queimou + ' queimou' : ''))).join('');
+  }
+  if (maq.length) {
+    const mx = Math.max(1, ...maq.map(m => +m.trocas || 0));
+    h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 5px">Qual máquina troca mais</div>'
+      + maq.map(m => _uvBarra(String(m.recurso_cod), +m.trocas || 0, mx, '#C0392B',
+        'troca(s)' + (m.horas_media ? ' · média ' + fmtNum(m.horas_media) + ' h' : ''))).join('');
+  }
+  if (!mod.length) {
+    h += '<p class="desc" style="font-size:11px;margin-top:10px">Ainda não há troca registrada, então os gráficos de vida útil e de marca ficam de fora — '
+      + 'gráfico vazio dá a impressão de que o número é zero, e aqui o certo é dizer que ninguém registrou ainda. '
+      + 'Cada troca que você registrar entra aqui automaticamente.</p>';
+  }
+  box.innerHTML = h;
 }
 
 (function _vigiaTeto() {
