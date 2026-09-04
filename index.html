@@ -1895,8 +1895,10 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <div style="display:flex;gap:8px;margin:8px 0 10px;flex-wrap:wrap">
           <button class="btn org-vbtn ativa" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-mv="mapa" onclick="manutVer('mapa')">🌡️ Mapa da máquina</button>
           <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-mv="os" onclick="manutVer('os')">📋 Ordens</button>
+          <button class="btn org-vbtn" style="display:inline-block;width:auto;padding:7px 14px;font-size:13px" data-mv="uv" onclick="manutVer('uv')">💡 Lâmpadas UV</button>
         </div>
         <div id="manutMapa"></div>
+        <div id="manutUV" class="oculto"></div>
         <!-- ===== 27/08/2026 (João: "tire essa região inteira, estamos usando os
              relatórios 005 e 010") =====
              Aqui ficavam foto da OS, leitura por IA, digitação manual, arrastar
@@ -3874,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.452.0';
+const APP_VER = '4.453.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14466,10 +14468,12 @@ function manutAoAbrir() {
 function manutVer(v) {
   _mqVista = v;
   document.querySelectorAll('[data-mv]').forEach(b => b.classList.toggle('ativa', b.getAttribute('data-mv') === v));
-  const c = $('manutConteudo'), m = $('manutMapa');
+  const c = $('manutConteudo'), m = $('manutMapa'), u = $('manutUV');
   if (c) c.classList.toggle('oculto', v !== 'os');
   if (m) m.classList.toggle('oculto', v !== 'mapa');
+  if (u) u.classList.toggle('oculto', v !== 'uv');
   if (v === 'mapa') renderMqMapa();
+  if (v === 'uv') { try { uvAbrir(); } catch (_) { } }
 }
 function _mqCor(q, max) {
   if (!max || !q) return { f: '#F2F5F8', s: '#AEBDCB', t: '#5C7186' };
@@ -42402,6 +42406,208 @@ async function rotHistorico(cod) {
         + (m.unidade === 'MI' ? '<div style="font-weight:400;font-size:9.5px;color:var(--fraco-2)">' + (+m.qtd_informada).toLocaleString('pt-BR') + ' MI</div>' : '') + '</td></tr>').join('')
       + '</table>';
   } catch (e) { el.innerHTML = '<p class="desc" style="font-size:11px">Não consegui ler o histórico.</p>'; }
+}
+
+/* ===== 03/09/2026 — TROCA DE LÂMPADA UV (sub-aba da Manutenção) =====
+   João: "controle de trocas de lâmpadas UV; vida útil 2.000 horas; 1 lâmpada por
+   máquina". As nove Van Dam (702–710) são as que têm cura UV.
+   O QUE O ERP JÁ TINHA e não bastava: motivo de parada "TROCA DE LAMPADA UV"
+   (28 em 20 meses) e "FALHA UV" (314). Só que a 705 tem 80 falhas e ZERO troca
+   apontada, e a 710 tem 25 falhas e zero troca — pelas horas rodadas essas
+   lâmpadas já passaram de três vidas. Ou seja: a troca acontece e não é
+   apontada. Por isso a data da última troca NÃO pode sair da parada; quem diz
+   quando a lâmpada atual entrou é o cadastro em `uv_lampada`, e daí para a
+   frente o app conta sozinho.
+   HORAS: não existe horímetro no ERP. Conto as horas dos TURNOS EM QUE A MÁQUINA
+   PRODUZIU e desconto as paradas apontadas — parada marcada como apontamento
+   aberto fica de fora, senão a Van Dam Tampa, com 2.549 h de apontamento furado,
+   teria lâmpada nova para sempre. É ESTIMATIVA e está escrito na tela. */
+let _uvEstado = null, _uvEstoque = null, _uvHist = null, _uvItens = null;
+const UV_MAQ = ['702', '703', '704', '705', '706', '707', '708', '709', '710'];
+async function uvAbrir(forcar) {
+  const box = $('manutUV'); if (!box) return;
+  if (!_uvEstado || forcar) {
+    box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando…</p>';
+    try {
+      const [a, b, c] = await Promise.all([
+        sb.from('v_uv_estado').select('*'),
+        sb.from('v_uv_estoque').select('*').order('item_desc'),
+        sb.from('uv_item').select('item_cod,item_desc').eq('ativo', true).order('item_desc')
+      ]);
+      _uvEstado = a.data || []; _uvEstoque = b.data || []; _uvItens = c.data || [];
+    } catch (e) { box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>'; return; }
+  }
+  uvRender();
+}
+function _uvCor(p) {
+  if (p == null) return { c: '#9AA0A8', f: '#F2F5F8' };
+  if (p >= 100) return { c: '#9B2C2C', f: '#FBE9E9' };
+  if (p >= 85) return { c: '#B98900', f: '#FDF6E3' };
+  return { c: '#1F7A46', f: '#E8F4EC' };
+}
+function uvRender() {
+  const box = $('manutUV'); if (!box) return;
+  const E = {}; (_uvEstado || []).forEach(r => E[String(r.recurso_cod)] = r);
+  const semCad = UV_MAQ.filter(m => !E[m]);
+  const vencidas = (_uvEstado || []).filter(r => r.pct_vida != null && +r.pct_vida >= 100);
+  const perto = (_uvEstado || []).filter(r => r.pct_vida != null && +r.pct_vida >= 85 && +r.pct_vida < 100);
+  const pecas = (_uvEstoque || []).reduce((a, r) => a + (+r.quantidade || 0), 0);
+  const valor = (_uvEstoque || []).reduce((a, r) => a + (+r.valor || 0), 0);
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div style="flex:1;min-width:100px;background:' + (vencidas.length ? '#FBE9E9' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Passaram de 2.000 h</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (vencidas.length ? '#9B2C2C' : 'var(--navy)') + '">' + vencidas.length + '</div></div>'
+    + '<div style="flex:1;min-width:100px;background:' + (perto.length ? '#FDF6E3' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Acima de 85%</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (perto.length ? '#B98900' : 'var(--navy)') + '">' + perto.length + '</div></div>'
+    + '<div style="flex:1;min-width:100px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">No almoxarifado</div>'
+    + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + pecas + '</div>'
+    + '<div style="font-size:10px;color:var(--fraco-2)">R$ ' + fmtNum(Math.round(valor)) + '</div></div>'
+    + '<div style="flex:1;min-width:100px;background:' + (semCad.length ? '#EDF2F9' : 'var(--leve-4)') + ';border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Sem cadastro</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + (semCad.length ? '#3A6FB0' : 'var(--navy)') + '">' + semCad.length + '</div>'
+    + '<div style="font-size:10px;color:var(--fraco-2)">de ' + UV_MAQ.length + ' máquinas</div></div></div>';
+  h += UV_MAQ.map(m => {
+    const r = E[m], nome = (typeof _chaoNomes === 'object' && _chaoNomes && _chaoNomes[m]) ? _chaoNomes[m] : '';
+    if (!r) {
+      return '<div style="border:1px dashed var(--linha-2s);border-radius:11px;padding:10px;margin-bottom:7px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        + '<b style="font-size:13px;margin-right:7px">' + m + '</b><span style="font-size:11.5px;color:var(--fraco);margin-right:7px">' + escapeHtml(String(nome)) + '</span>'
+        + '<span style="font-size:11px;color:var(--fraco-2)">lâmpada não cadastrada</span>'
+        + '<span onclick="uvCadastrar(' + _uvArg(m) + ')" style="margin-left:auto;cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:#1F7A46;color:#fff">cadastrar</span></div>';
+    }
+    const p = r.pct_vida == null ? null : +r.pct_vida, cor = _uvCor(p);
+    const larg = Math.max(2, Math.min(100, p || 0));
+    return '<div style="border:1px solid var(--linha-2s);border-radius:11px;padding:10px;margin-bottom:7px;background:' + cor.f + '">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px">'
+      + '<b style="font-size:13px;margin-right:7px">' + m + '</b><span style="font-size:11.5px;color:var(--fraco);margin-right:7px">' + escapeHtml(String(nome)) + '</span>'
+      + '<b style="margin-left:auto;font-size:17px;color:' + cor.c + '">' + (p == null ? '—' : p + '%') + '</b></div>'
+      + '<div style="position:relative;height:10px;background:#E9EBEF;border-radius:6px;margin-bottom:5px">'
+      + '<div style="position:absolute;left:0;top:0;bottom:0;width:' + larg + '%;background:' + cor.c + ';border-radius:6px"></div></div>'
+      + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum(Math.round(+r.horas_rodadas || 0)) + ' h de ' + fmtNum(Math.round(+r.vida_horas || 0)) + ' h'
+      + (r.horas_restantes != null ? ' · <b style="color:' + cor.c + '">' + (+r.horas_restantes < 0 ? fmtNum(Math.abs(Math.round(r.horas_restantes))) + ' h passadas' : fmtNum(Math.round(r.horas_restantes)) + ' h restantes') + '</b>' : '')
+      + ' · desde ' + fmtData(r.instalada_em)
+      + (+r.horas_iniciais > 0 ? ' <span style="color:var(--fraco-2)">(+' + fmtNum(Math.round(r.horas_iniciais)) + ' h de antes)</span>' : '') + '</div>'
+      + (r.item_desc ? '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(r.item_desc)) + '</div>' : '')
+      + '<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">'
+      + '<span onclick="uvTrocar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:#1F7A46;color:#fff">registrar troca</span>'
+      + '<span onclick="uvCadastrar(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">corrigir cadastro</span>'
+      + '<span onclick="uvHistorico(' + _uvArg(m) + ')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:6px 13px;background:var(--leve-2);border:1px solid var(--linha-2s)">histórico</span></div></div>';
+  }).join('');
+  if (_uvEstoque && _uvEstoque.length) {
+    h += '<div style="border-top:1px solid var(--linha-2s);margin-top:12px;padding-top:9px">'
+      + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">No almoxarifado · foto de ' + fmtData(_uvEstoque[0].dia_foto) + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
+      + _uvEstoque.map(r => '<tr style="border-top:1px solid var(--linha-2s)">'
+        + '<td style="padding:4px 5px">' + escapeHtml(String(r.item_desc)) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;font-weight:800">' + fmtNum(Math.round(+r.quantidade || 0)) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">R$ ' + fmtNum(Math.round(+r.unitario || 0)) + '</td></tr>').join('')
+      + '</table></div>';
+  }
+  h += '<p class="desc" style="font-size:10.5px;margin-top:9px">As horas são <b>estimadas</b>: o ERP não tem horímetro. Conto as horas dos turnos em que a máquina <b>produziu</b> e desconto as paradas apontadas — parada marcada como apontamento aberto fica de fora. '
+    + 'Sábado conta 46% e domingo não conta, igual ao resto do app. A data de instalação vem do cadastro, não da parada: pelo 643, a 705 e a 710 não têm <i>nenhuma</i> troca apontada em 20 meses, então esse motivo de parada está subregistrado.</p>';
+  box.innerHTML = h;
+}
+function _uvArg(v) { return JSON.stringify(String(v)).replace(/"/g, '&quot;'); }
+function _uvModal(titulo, corpo, acao, rotulo) {
+  const h = '<div style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow:auto" onclick="if(event.target===this)uvFechar()">'
+    + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:420px;width:100%">'
+    + '<div style="font-size:15px;font-weight:800;color:var(--navy);margin-bottom:10px">' + titulo + '</div>' + corpo
+    + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:11px">'
+    + '<span onclick="uvFechar()" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
+    + (acao ? '<span onclick="' + acao + '" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">' + rotulo + '</span>' : '')
+    + '</div></div></div>';
+  const d = document.createElement('div'); d.id = 'uvModalWrap'; d.innerHTML = h; document.body.appendChild(d);
+}
+function uvFechar() { const d = $('uvModalWrap'); if (d) d.remove(); }
+function _uvSelItem(sel) {
+  return '<select id="uvFItem" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px">'
+    + '<option value="">(não sei qual modelo)</option>'
+    + (_uvItens || []).map(i => '<option value="' + escapeHtml(i.item_cod) + '"' + (sel === i.item_cod ? ' selected' : '') + '>' + escapeHtml(i.item_desc) + '</option>').join('')
+    + '</select>';
+}
+function uvCadastrar(cod) {
+  const r = (_uvEstado || []).find(x => String(x.recurso_cod) === String(cod));
+  const c = '<p class="desc" style="font-size:11px;margin:0 0 9px">Máquina <b>' + escapeHtml(String(cod)) + '</b>. Informe quando a lâmpada que está lá HOJE foi instalada. Se ela já tinha horas antes disso e você sabe quantas, ponha em "horas já rodadas" — senão deixe zero.</p>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Instalada em</span>'
+    + '<input id="uvFData" type="date" value="' + (r && r.instalada_em ? String(r.instalada_em).slice(0, 10) : hojeISO()) + '" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Horas já rodadas antes disso</span>'
+    + '<input id="uvFHi" type="number" inputmode="numeric" value="' + (r ? (+r.horas_iniciais || 0) : 0) + '" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Vida útil (h)</span>'
+    + '<input id="uvFVida" type="number" inputmode="numeric" value="' + (r ? (+r.vida_horas || 2000) : 2000) + '" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="display:block"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Modelo da lâmpada</span>' + _uvSelItem(r && r.item_cod) + '</label>';
+  _uvModal('Cadastrar lâmpada · ' + escapeHtml(String(cod)), c, 'uvSalvarCad(' + _uvArg(cod) + ')', 'salvar');
+}
+async function uvSalvarCad(cod) {
+  const v = id => { const e = $(id); return e ? String(e.value || '').trim() : ''; };
+  if (!v('uvFData')) { toast('Informe a data de instalação.'); return; }
+  try {
+    const { error } = await sb.from('uv_lampada').upsert({
+      recurso_cod: String(cod), instalada_em: v('uvFData'),
+      horas_iniciais: +v('uvFHi') || 0, vida_horas: +v('uvFVida') || 2000,
+      item_cod: v('uvFItem') || null, atualizado_em: new Date().toISOString()
+    }, { onConflict: 'recurso_cod' });
+    if (error) throw error;
+    toast('✅ Lâmpada da ' + cod + ' cadastrada.');
+    uvFechar(); await uvAbrir(true);
+  } catch (e) { toast('❌ ' + ((e && e.message) || e)); }
+}
+function uvTrocar(cod) {
+  const r = (_uvEstado || []).find(x => String(x.recurso_cod) === String(cod));
+  const hr = r ? Math.round(+r.horas_rodadas || 0) : 0;
+  const c = '<p class="desc" style="font-size:11px;margin:0 0 9px">A lâmpada que sai rodou <b>' + fmtNum(hr) + ' h</b> (estimadas). Isso fica gravado no histórico, e a contagem recomeça do zero na data da troca.</p>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Dia da troca</span>'
+    + '<input id="uvTData" type="date" value="' + hojeISO() + '" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Por quê</span>'
+    + '<select id="uvTMot" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px">'
+    + '<option value="preventiva">preventiva (chegou na hora)</option><option value="queimou">queimou</option><option value="falha">falha de cura</option><option value="outro">outro</option></select></label>'
+    + '<label style="display:block;margin-bottom:8px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Modelo que entrou</span>' + _uvSelItem(r && r.item_cod) + '</label>'
+    + '<label style="display:block"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">Observação</span>'
+    + '<input id="uvTObs" style="width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px"></label>';
+  _uvModal('Registrar troca · ' + escapeHtml(String(cod)), c, 'uvSalvarTroca(' + _uvArg(cod) + ')', 'registrar');
+}
+async function uvSalvarTroca(cod) {
+  const v = id => { const e = $(id); return e ? String(e.value || '').trim() : ''; };
+  const r = (_uvEstado || []).find(x => String(x.recurso_cod) === String(cod));
+  const dia = v('uvTData'); if (!dia) { toast('Informe o dia da troca.'); return; }
+  try {
+    const { error } = await sb.from('uv_troca').insert({
+      recurso_cod: String(cod), dia: dia, item_cod: v('uvFItem') || (r && r.item_cod) || null,
+      horas_rodadas: r ? Math.round(+r.horas_rodadas || 0) : null,
+      vida_horas: r ? (+r.vida_horas || 2000) : 2000,
+      motivo: v('uvTMot') || 'outro', obs: v('uvTObs') || null,
+      registrado_por: (typeof perfil === 'object' && perfil && perfil.nome) ? perfil.nome : null
+    });
+    if (error) throw error;
+    const { error: e2 } = await sb.from('uv_lampada').upsert({
+      recurso_cod: String(cod), instalada_em: dia, horas_iniciais: 0,
+      vida_horas: r ? (+r.vida_horas || 2000) : 2000,
+      item_cod: v('uvFItem') || (r && r.item_cod) || null, atualizado_em: new Date().toISOString()
+    }, { onConflict: 'recurso_cod' });
+    if (e2) throw e2;
+    toast('✅ Troca registrada na ' + cod + '.');
+    uvFechar(); await uvAbrir(true);
+  } catch (e) { toast('❌ ' + ((e && e.message) || e)); }
+}
+async function uvHistorico(cod) {
+  _uvModal('Histórico · ' + escapeHtml(String(cod)), '<div id="uvHistBox"><span class="spin"></span></div>', null, null);
+  try {
+    const [t, p] = await Promise.all([
+      sb.from('uv_troca').select('*').eq('recurso_cod', String(cod)).order('dia', { ascending: false }).limit(30),
+      sb.from('paradas').select('dia,motivo_desc,tempo_horas').eq('recurso_cod', String(cod))
+        .in('motivo_desc', ['TROCA DE LAMPADA UV', 'FALHA UV']).order('dia', { ascending: false }).limit(30)
+    ]);
+    const el = $('uvHistBox'); if (!el) return;
+    const L = t.data || [], P = p.data || [];
+    el.innerHTML = '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Trocas registradas aqui</div>'
+      + (L.length ? '<table style="width:100%;border-collapse:collapse;font-size:11.5px">' + L.map(x =>
+        '<tr style="border-top:1px solid var(--linha-2s)"><td style="padding:4px 5px">' + fmtData(x.dia) + '</td>'
+        + '<td style="padding:4px 5px;color:var(--fraco)">' + escapeHtml(String(x.motivo || '')) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;font-weight:800">' + fmtNum(Math.round(+x.horas_rodadas || 0)) + ' h</td></tr>').join('') + '</table>'
+        : '<p class="desc" style="font-size:11px">Nenhuma troca registrada ainda.</p>')
+      + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px">O que o ERP aponta (643)</div>'
+      + (P.length ? '<table style="width:100%;border-collapse:collapse;font-size:11.5px">' + P.map(x =>
+        '<tr style="border-top:1px solid var(--linha-2s)"><td style="padding:4px 5px">' + fmtData(x.dia) + '</td>'
+        + '<td style="padding:4px 5px;color:' + (x.motivo_desc === 'TROCA DE LAMPADA UV' ? '#1F7A46' : '#9B2C2C') + '">' + escapeHtml(String(x.motivo_desc)) + '</td>'
+        + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">' + (+x.tempo_horas || 0).toFixed(1) + ' h</td></tr>').join('') + '</table>'
+        : '<p class="desc" style="font-size:11px">Nenhuma parada de UV apontada.</p>');
+  } catch (e) { const el = $('uvHistBox'); if (el) el.innerHTML = '<p class="desc" style="font-size:11px">Não consegui ler o histórico.</p>'; }
 }
 
 (function _vigiaTeto() {
