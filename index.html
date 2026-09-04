@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.464.0';
+const APP_VER = '4.465.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24630,6 +24630,7 @@ async function atrDetalhe(tipo, _mudo) {
       const ks = Object.keys(base);
       x.setor = ks.length ? ks.sort((p, q) => base[q] - base[p])[0] : '';
       x.multi = ks.length > 1;
+      x.setoresLista = ks;   /* todos os setores que o pedido toca, para o filtro do topo */
     });
     /* 29/08/2026 (Joao: "quando tiver completo nao mostre OP, so mostre quando
        for atraso na producao"). A OP casa pelo ITEM, nao pelo pedido: das
@@ -24652,6 +24653,25 @@ async function atrDetalhe(tipo, _mudo) {
        O setor aqui deixou de significar "onde o pedido esta" para significar
        "onde o item roda", entao o filtro global nao cabe mais nesta lista: quem
        recorta e so a pilula que a pessoa toca. */
+    /* ===== 04/09/2026 (João: "quando eu filtrar o setor quero que a tela filtre
+       só os dados desse setor, e o que for misto igual a pedido mostre a
+       informação") =====
+       Este card IGNORAVA o filtro de setor do topo desde 29/08, e por um motivo
+       real: naquela versão o setor do pedido era UM só (o dominante), o pedido
+       pronto não tem setor nenhum, e com o filtro global ligado a lista zerava
+       enquanto as pílulas mostravam 93. Agora dá para fazer certo, porque o
+       pedido guarda TODOS os setores dele: o filtro passa a ser "tem item deste
+       setor" — um pedido misto entra em qualquer um dos setores que ele toca, e
+       o cartão diz quais são os outros. Os prontos, que não têm setor, não somem
+       calados: aparecem contados no aviso. */
+    const _sTopo = _mudo ? '' : (() => { try { return ($('fSetor') && $('fSetor').value) || ''; } catch (_) { return ''; } })();
+    let _foraSetor = 0, _prontosSemSetor = 0;
+    if (_sTopo) {
+      const _antes = L.length;
+      _prontosSemSetor = L.filter(x => !(x.setoresLista || []).length).length;
+      L = L.filter(x => (x.setoresLista || []).indexOf(_sTopo) >= 0);
+      _foraSetor = _antes - L.length - _prontosSemSetor;
+    }
     const alvo = _mudo ? '' : _atrSetor;
     const porSetor = {};
     const _semOp = x => (!x.cheio && x.faltaProd) ? '(sem OP na fila \u00b7 falta produzir)' : '(pronto \u00b7 aguardando sa\u00edda)';
@@ -24711,6 +24731,13 @@ async function atrDetalhe(tipo, _mudo) {
         + '" title="' + porSetor[s] + ' pedido(s) em ' + escapeHtml(s) + '">' + escapeHtml(s) + ' <b>' + porSetor[s] + '</b> ped</span>').join('')
       + (alvo ? '<span onclick="atrFiltraSetor(\'\')" style="cursor:pointer;font-size:11px;padding:4px 8px;color:var(--fraco-2)">✕ todos</span>' : '')
       + '</div>'
+      + (_sTopo
+        ? '<div style="margin:6px 0 2px;padding:7px 10px;background:#EEF3FA;border-left:3px solid #33506E;border-radius:0 8px 8px 0;font-size:11.5px;line-height:1.5">'
+          + '🔎 Filtrado por <b>' + escapeHtml(_sTopo) + '</b>: <b>' + L.length + '</b> pedido(s) com item deste setor.'
+          + (_foraSetor ? ' <span style="color:var(--fraco)">' + _foraSetor + ' ficaram de fora por não ter item aqui.</span>' : '')
+          + (_prontosSemSetor ? ' <b style="color:#B36B00">' + _prontosSemSetor + ' pronto(s) sem setor</b> <span style="color:var(--fraco)">também ficaram de fora — pedido pronto espera caminhão, não fábrica.</span>' : '')
+          + '</div>'
+        : '')
       + L.slice(0, 60).map(x => {
         const j = _atrJust[x.ped];
         const dias = Math.round((new Date(d) - new Date(x.ent)) / 86400000);
@@ -24724,6 +24751,8 @@ async function atrDetalhe(tipo, _mudo) {
              era só texto neste cartão, embora a ficha já existisse e fosse
              chamada de outras seis telas. */
           + '<span><b onclick="event.stopPropagation();detPedido(' + JSON.stringify(String(x.ped)).replace(/"/g, '&quot;') + ')" title="abrir a ficha do pedido" style="font-size:14px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px">' + escapeHtml(x.ped) + '</b> <span class="desc" style="font-size:11.5px">' + escapeHtml((x.cli || '').slice(0, 26)) + '</span>'
+          + (x.multi && x.setoresLista && x.setoresLista.length > 1
+            ? ' <span title="este pedido tem item em mais de um setor" style="font-size:10px;font-weight:800;background:#EEF3FA;color:#33506E;border-radius:6px;padding:1px 6px">misto · ' + x.setoresLista.map(z => escapeHtml(z)).join(' + ') + '</span>' : '')
           + (x.uf ? ' <span onclick="atrVerNoMapa(&quot;' + escapeHtml(x.uf) + '&quot;)" title="ver ' + escapeHtml(x.uf) + ' no mapa comercial" style="cursor:pointer;font-size:10.5px;font-weight:800;background:var(--leve-2);border:1px solid var(--linha-2s);border-radius:6px;padding:1px 6px;white-space:nowrap">📍 '
             + escapeHtml((x.cidade || '').slice(0, 18)) + (x.cidade ? '/' : '') + escapeHtml(x.uf) + '</span>' : '')
           + '</span>'
