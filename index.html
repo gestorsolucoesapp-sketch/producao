@@ -3876,7 +3876,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.462.0';
+const APP_VER = '4.463.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14551,6 +14551,30 @@ const MQ_MAPAS = {
   'Injeção':       { img: 'maq-injecao.png',  w: 1200, h: 600 }
 };
 let _mqMapa = null;   /* vista dentro do setor; null = principal */
+/* 03/09/2026 (João: "permita filtrar por máquina"; "embaladeira tenho somente
+   na 703 e 702, então quando filtrar mostre somente nessas duas máquinas").
+   O mapa era do SETOR inteiro; agora dá para olhar uma máquina só. E a
+   embaladeira NÃO existe em todas as Van Dam — só na 702 e na 703 —, por isso
+   ela é uma vista CONDICIONADA: com a 704 na tela, oferecer o desenho dela
+   seria mostrar peça que aquela máquina não tem. */
+let _mqMaq = '';                      /* '' = todas as máquinas do setor */
+const MQ_VISTA_MAQ = { 'embaladeira': ['702', '703'] };
+function _mqMaqsDoSetor() {
+  try { return (SETOR_MAQ[_mqSetor] || []).map(String); } catch (_) { return []; }
+}
+function _mqVistaVale(v) {
+  const so = MQ_VISTA_MAQ[v.id];
+  if (!so) return true;                       /* vista principal vale sempre */
+  if (!_mqMaq) return true;                   /* "todas" mostra a opção */
+  return so.indexOf(String(_mqMaq)) >= 0;
+}
+function mqTrocaMaq(m) {
+  _mqMaq = (m === '' ? null : m) || '';
+  /* se a vista aberta não existe na máquina escolhida, volta para a principal:
+     deixar o desenho da embaladeira na tela com a 704 selecionada seria mentira */
+  try { if (!_mqVistaVale(_mqVistaAtual())) _mqMapa = null; } catch (_) { }
+  _mqSel = ''; renderMqMapa();
+}
 function _mqVistas(s) {
   const M = MQ_MAPAS[s] || MQ_MAPAS['Impressão'];
   return M.vistas || [{ id: null, nome: '', img: M.img, w: M.w, h: M.h }];
@@ -14573,7 +14597,7 @@ function _mqPodeEditar() {
   try { return /l[ií]der/i.test(String((perfil && perfil.setor) || '')); } catch (_) { return false; }
 }
 let _mqSetor = 'Impressão';
-function mqTrocaSetor(s) { _mqSetor = s; _mqMapa = null; _mqPartes = []; _mqSel = ''; _mqEdit = false; renderMqMapa(); }
+function mqTrocaSetor(s) { _mqSetor = s; _mqMapa = null; _mqMaq = ''; _mqPartes = []; _mqSel = ''; _mqEdit = false; renderMqMapa(); }
 function _mqDesenho(cont, nome) {
   /* a posição do marcador vem do banco quando o João já arrastou; o valor do
      código é só o ponto de partida de cada parte nova */
@@ -14633,6 +14657,7 @@ async function renderMqMapa() {
       _mqPartes = (data || []).filter(p => (p.mapa || null) === _mqMapa);
     }
     let L = (osLista || []).filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === _mqSetor);
+    if (_mqMaq) L = L.filter(o => String(o.recurso_cod) === String(_mqMaq));
     if (!_mqTudo && typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de && periodoSel.ate) {
       const de = String(periodoSel.de).slice(0, 10), ate = String(periodoSel.ate).slice(0, 10);
       L = L.filter(o => { const d = String(o.data_abertura || '').slice(0, 10); return d && d >= de && d <= ate; });
@@ -14644,7 +14669,10 @@ async function renderMqMapa() {
        está em memória — melhor um mapa dos últimos 90 dias do que mapa nenhum,
        e nesse caso a tela avisa. */
     let _daFoto = false;
-    if (_mqTudo) {
+    /* a foto `mv_os_parte` é agregada POR SETOR e não sabe de máquina — com
+       filtro de máquina ligado ela devolveria o setor inteiro. Nesse caso a
+       conta sai da memória mesmo, que é o único jeito de ser fiel. */
+    if (_mqTudo && !_mqMaq) {
       try {
         const { data, error } = await sb.from('mv_os_parte').select('parte_chave,ordens,horas').eq('setor', _mqSetor);
         if (error) throw error;
@@ -14667,7 +14695,7 @@ async function renderMqMapa() {
        grudava. Passa a ter chave FIXA ('mapa-maquina'), e o card nasce aberto
        para todo mundo: o recolher continua disponível, mas ninguém precisa
        abrir na mão para ver. */
-    box.innerHTML = card('🌡️ Mapa da máquina · ' + _mqSetor + (_mqVistas(_mqSetor).length > 1 ? ' · ' + _mqVistaAtual().nome.replace(/^\S+\s/, '') : ''),
+    box.innerHTML = card('🌡️ Mapa da máquina · ' + _mqSetor + (_mqVistas(_mqSetor).length > 1 ? ' · ' + _mqVistaAtual().nome.replace(/^\S+\s/, '') : '') + (_mqMaq ? ' · máquina ' + _mqMaq : ''),
       'toque no número (no desenho ou na lista) para ver as ordens daquela parte',
       /* ===== 27/08/2026 (João: "põe o botão de acesso aos setores em cima") =====
          A escolha do setor é a primeira decisão de quem chega — vinha depois do
@@ -14681,10 +14709,28 @@ async function renderMqMapa() {
       /* fileira das VISTAS: só aparece quando o setor tem mais de uma figura.
          Fica logo abaixo do setor porque é o mesmo tipo de escolha — que
          máquina estou olhando — e não um ajuste fino como métrica e período. */
-      + (_mqVistas(_mqSetor).length > 1
+      /* 03/09 — "não existe setor Impressora": as pílulas de VISTA tinham a
+         mesma cara das de SETOR, logo abaixo delas, e liam-se como se
+         Impressora fosse um setor. Agora a fileira leva um rótulo e as pílulas
+         são menores, para ficar claro que é a peça da linha, não o setor. */
+      + (_mqVistas(_mqSetor).filter(_mqVistaVale).length > 1
         ? '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
-          + _mqVistas(_mqSetor).map(v => '<span onclick="mqTrocaMapa(\'' + (v.id || '') + '\')" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:5px 13px;'
+          + '<span style="font-size:10px;font-weight:800;color:var(--fraco-2);text-transform:uppercase;letter-spacing:.4px">peça da linha</span>'
+          + _mqVistas(_mqSetor).filter(_mqVistaVale).map(v => '<span onclick="mqTrocaMapa(\'' + (v.id || '') + '\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
             + ((v.id || null) === _mqMapa ? 'background:#2E5C8A;color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + v.nome + '</span>').join('')
+          + '</div>'
+        : '')
+      /* filtro por MÁQUINA: o mapa era do setor inteiro e não dava para
+         perguntar "e só na 702?". Fica na linha da peça, com o mesmo peso. */
+      + (_mqMaqsDoSetor().length > 1
+        ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 9px">'
+          + '<span style="font-size:10px;font-weight:800;color:var(--fraco-2);text-transform:uppercase;letter-spacing:.4px">máquina</span>'
+          + '<span onclick="mqTrocaMaq(\'\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
+          + (!_mqMaq ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">todas</span>'
+          + _mqMaqsDoSetor().map(m => '<span onclick="mqTrocaMaq(\'' + m + '\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
+            + (String(_mqMaq) === m ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)')
+            + (MQ_VISTA_MAQ.embaladeira.indexOf(m) >= 0 ? ';box-shadow:inset 0 -3px 0 #2E5C8A' : '') + '">' + m + '</span>').join('')
+          + '<span style="font-size:10px;color:var(--fraco-2)">traço azul = tem embaladeira</span>'
           + '</div>'
         : '')
       + '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:0 0 9px">'
