@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.484.0';
+const APP_VER = '4.485.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14936,7 +14936,17 @@ function mqLigaDrag() {
       if (!_mqArr || _mqArr.gn !== gn) return;
       gn.style.opacity = ''; const a = _mqArr; _mqArr = null;
       if (!a.moveu) { mqRenomear(a.k); return; }        /* toque sem arrastar = renomear */
-      mqSalvaPos(a.k, Math.round(a.x0 + (a.tx || 0)), Math.round(a.y0 + (a.ty || 0)));
+      /* ===== 05/09/2026 (João: "arrasta mas não fica no lugar") =====
+         A posição era salva crua. Um arrasto que passasse da borda gravava
+         coordenada FORA do desenho, e o pino sumia — não tem como pegá-lo de
+         volta, porque ele está onde não se pode tocar. Levantei no banco: 15
+         pinos fora (Injeção 7, Extrusão 6, Impressão 1, Termoformagem 1).
+         Agora a posição é presa dentro da figura, com 12px de margem para o
+         pino não ficar metade para fora. */
+      const _M = _mqVistaAtual();
+      const _cx = Math.min(Math.max(Math.round(a.x0 + (a.tx || 0)), 12), (_M.w || 1200) - 12);
+      const _cy = Math.min(Math.max(Math.round(a.y0 + (a.ty || 0)), 12), (_M.h || 600) - 12);
+      mqSalvaPos(a.k, _cx, _cy);
     };
     gn.addEventListener('pointerup', solta);
     gn.addEventListener('pointercancel', solta);
@@ -14944,23 +14954,52 @@ function mqLigaDrag() {
 }
 async function mqSalvaPos(k, x, y) {
   try {
-    const { error } = await sb.from('maquina_parte').update({ pos_x: x, pos_y: y })
-      .eq('setor', _mqSetor).eq('chave', k);
+    /* 05/09 — o filtro precisa da VISTA também: depois que o setor passou a ter
+       mais de uma figura, setor+chave pode existir em duas e o update pegaria a
+       errada. */
+    let _q = sb.from('maquina_parte').update({ pos_x: x, pos_y: y }).eq('setor', _mqSetor).eq('chave', k);
+    _q = _mqMapa ? _q.eq('mapa', _mqMapa) : _q.is('mapa', null);
+    const { error } = await _q;
     if (error) throw error;
     const p = (_mqPartes || []).find(z => z.chave === k); if (p) { p.pos_x = x; p.pos_y = y; }
     renderMqMapa();
   } catch (e) { toast('Não consegui salvar a posição: ' + ((e && e.message) || e)); }
 }
+/* caixinha de texto do próprio app: o prompt do navegador não existe em PWA
+   instalado no iPhone, e era por isso que renomear não funcionava no celular */
+function _mqPedeNome(atual) {
+  return new Promise(res => {
+    const d = document.createElement('div');
+    d.innerHTML = '<div style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px">'
+      + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:380px;width:100%">'
+      + '<div style="font-size:14px;font-weight:800;color:var(--navy);margin-bottom:9px">Nome desta parte da máquina</div>'
+      + '<input id="mqNomeIn" value="' + escapeHtml(String(atual || '')) + '" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--linha-2s);font-size:16px">'
+      + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:11px">'
+      + '<span id="mqNomeX" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
+      + '<span id="mqNomeOk" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">salvar</span>'
+      + '</div></div></div>';
+    document.body.appendChild(d);
+    const fim = v => { try { d.remove(); } catch (_) { } res(v); };
+    d.querySelector('#mqNomeX').onclick = () => fim(null);
+    d.querySelector('#mqNomeOk').onclick = () => fim(String((d.querySelector('#mqNomeIn') || {}).value || '').trim());
+    const inp = d.querySelector('#mqNomeIn');
+    if (inp) { inp.focus(); inp.select(); inp.onkeydown = ev => { if (ev.key === 'Enter') fim(String(inp.value || '').trim()); if (ev.key === 'Escape') fim(null); }; }
+  });
+}
 async function mqRenomear(k) {
   const p = (_mqPartes || []).find(z => z.chave === k); if (!p) return;
-  let novo = null;
-  try { novo = prompt('Nome desta parte da máquina:', p.nome); } catch (_) { }
+  /* ===== 05/09/2026 (João: "não está conseguindo editar e mudar o nome dos
+     motivos nas bolinhas") ===== era `prompt()`, que o iPhone NÃO mostra quando
+     o app roda instalado na tela de início (PWA em modo standalone): a função
+     devolve null na hora e o toque parecia não fazer nada. Trocado por um
+     campo do próprio app, que funciona nos dois. */
+  const novo = await _mqPedeNome(p.nome);
   if (novo === null) return;
-  novo = String(novo).trim();
   if (!novo) { toast('O nome não pode ficar vazio.'); return; }
   try {
-    const { error } = await sb.from('maquina_parte').update({ nome: novo })
-      .eq('setor', _mqSetor).eq('chave', k);
+    let _qn = sb.from('maquina_parte').update({ nome: novo }).eq('setor', _mqSetor).eq('chave', k);
+    _qn = _mqMapa ? _qn.eq('mapa', _mqMapa) : _qn.is('mapa', null);
+    const { error } = await _qn;
     if (error) throw error;
     p.nome = novo; renderMqMapa();
     toast('Agora é "' + novo + '". As ordens continuam ligadas a esta parte.');
