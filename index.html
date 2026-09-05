@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.489.0';
+const APP_VER = '4.490.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14761,7 +14761,10 @@ async function renderMqMapa() {
     /* a foto `mv_os_parte` é agregada POR SETOR e não sabe de máquina — com
        filtro de máquina ligado ela devolveria o setor inteiro. Nesse caso a
        conta sai da memória mesmo, que é o único jeito de ser fiel. */
-    if (_mqTudo && !_mqMaq) {
+    /* 05/09 — a foto `mv_os_parte` foi montada com o `parte_chave` antigo, que
+       agora está vazio: usá-la mostraria a régua velha ao lado da nova. Fica
+       desligada até ser refeita sobre a palavra. */
+    if (false && _mqTudo && !_mqMaq) {
       try {
         const { data, error } = await sb.from('mv_os_parte').select('parte_chave,ordens,horas').eq('setor', _mqSetor);
         if (error) throw error;
@@ -14769,12 +14772,29 @@ async function renderMqMapa() {
         _daFoto = true;
       } catch (e) { try { console.warn('mv_os_parte:', e && e.message); } catch (_) { } }
     }
-    if (!_daFoto) L.forEach(o => {
-      const k = o.parte_chave;
-      if (!k) { semParte++; return; }
-      const v = (_mqMetrica === 'h') ? (+o.horas_parada || 0) : 1;
-      _mqCont[k] = (_mqCont[k] || 0) + v;
-    });
+    /* ===== 05/09/2026 (João: "ligar as ordens de manutenção que tiverem a
+       palavra chave que colocarmos — bolinha 'alimentação' relaciona todas as
+       ordens que tiverem a palavra 'alimentação'") =====
+       A ligação era o campo `parte_chave`, preenchido por uma regra minha no
+       banco. Agora quem manda é o NOME que ele escreve na bolinha: a ordem
+       entra se a palavra aparecer no texto dela (atividade, motivo, submotivo,
+       detalhes ou conclusão), sem acento e sem ligar para maiúscula.
+       UMA ORDEM PODE CAIR EM MAIS DE UMA BOLINHA — se o texto cita alimentação
+       e secagem, ela conta nas duas. É o que a regra dele diz, e é o correto:
+       o serviço mexeu nas duas peças. Por isso a soma das bolinhas pode passar
+       do total de ordens, e a tela avisa. */
+    if (!_daFoto) {
+      const _pal = (_mqPartes || []).map(p => ({ k: p.chave, w: _mqNorm(p.nome) })).filter(p => p.w.length >= 3);
+      const _casou = new Set();
+      L.forEach(o => {
+        const t = _mqNorm([o.atividade, o.motivo, o.submotivo, o.detalhes, o.conclusao].join(' '));
+        const v = (_mqMetrica === 'h') ? (+o.horas_parada || 0) : 1;
+        let achou = false;
+        _pal.forEach(pp => { if (t.indexOf(pp.w) >= 0) { _mqCont[pp.k] = (_mqCont[pp.k] || 0) + v; achou = true; } });
+        if (achou) _casou.add(o.id); else semParte++;
+      });
+      _mqCasou = _casou.size;
+    }
     if (_daFoto) semParte = L.filter(o => !o.parte_chave).length;
     if (_mqMetrica === 'h') Object.keys(_mqCont).forEach(k => { _mqCont[k] = Math.round(_mqCont[k]); });
     const nome = {}; _mqPartes.forEach(p => { nome[p.chave] = p.nome; });
@@ -14830,7 +14850,16 @@ async function renderMqMapa() {
         + _mqBtn('t', _mqTudo, 'todo o histórico', 'mqPeriodoTudo()')
         + '</div>'
       + _mqDesenho(_mqCont, nome)
-      + (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) ainda sem parte.</b> Escreva a parte entre parênteses no fim da conclusão — ex.: <b>(EXTRAÇÃO)</b> — e ela entra no mapa sozinha ao salvar.</div>' : '')
+      /* 05/09 — o aviso falava da regra ANTIGA (parte entre parênteses na conclusão).
+         Agora quem liga é a palavra do nome da bolinha, então o aviso conta o que
+         nenhuma palavra pegou e diz o que fazer: criar bolinha com a palavra que
+         aparece nessas ordens. */
+      + (!(_mqPartes || []).length
+        ? '<div style="background:#EEF3FA;border:1px solid #C9D9EC;color:#33506E;border-radius:10px;padding:10px 12px;font-size:12px;margin-top:10px">'
+          + '🎯 <b>Mapa em branco.</b> Toque em <b>✏️ editar mapa</b> e depois em <b>+ novo ponto</b> para criar a primeira bolinha. '
+          + 'O <b>nome</b> que você escrever é a <b>palavra-chave</b>: a bolinha “Alimentação” recolhe todas as ordens cujo texto tem “alimentação”.</div>'
+        : (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) sem bolinha.</b> Nenhuma das palavras do mapa aparece no texto delas — crie uma bolinha com a palavra que essas ordens usam.'
+          + (_mqCasou ? ' <span style="opacity:.8">' + _mqCasou + ' ordem(ns) casaram; uma ordem pode entrar em mais de uma bolinha, então a soma das bolinhas pode passar do total.</span>' : '') + '</div>' : ''))
       + (_mqSel ? (_daFoto ? '<div id="mqListaParte"><p class="desc" style="margin-top:10px">Buscando as ordens…</p></div>' : _mqListaOS(L, _mqSel, nome)) : '')
       + (_mqPodeEditar()
         ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
@@ -14838,7 +14867,7 @@ async function renderMqMapa() {
           + (_mqEdit ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">'
           + (_mqEdit ? '✅ concluir edição' : '✏️ editar mapa') + '</span>'
           + (_mqEdit ? '<span onclick="mqAddPonto()" style="cursor:pointer;font-size:12px;font-weight:800;background:var(--verde);color:#fff;border-radius:999px;padding:6px 13px">+ novo ponto</span>' : '')
-          + (_mqEdit ? '<span class="desc" style="font-size:11px">arraste o número para reposicionar · toque sem arrastar para renomear · ✕ na lista exclui</span>' : '')
+          + (_mqEdit ? '<span class="desc" style="font-size:11px">arraste o número para reposicionar · toque sem arrastar para renomear · ✕ na lista exclui · o NOME é a palavra-chave que puxa as ordens</span>' : '')
           + '</div>'
         : ''), 'mapa-maquina');
     if (_mqEdit) { try { mqLigaDrag(); } catch (_) { } }
@@ -14987,6 +15016,12 @@ function mqEditar() {
   _mqEdit = !_mqEdit; _mqSel = ''; renderMqMapa();
   try { toast(_mqEdit ? '✏️ Modo edição: arraste os números e toque para renomear' : '✅ Edição encerrada'); } catch (_) { }
 }
+/* mesma normalização da view `v_os_texto` no banco: minúsculas e sem acento,
+   para "Alimentação" achar "ALIMENTACAO" e "alimentaçao" */
+function _mqNorm(t) {
+  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+let _mqCasou = 0;
 function _mqPt(svg, e) {
   const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
   const m = svg.getScreenCTM();
