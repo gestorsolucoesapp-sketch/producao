@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.490.0';
+const APP_VER = '4.491.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14959,8 +14959,26 @@ async function mqAddPonto() {
       const { data: _tn } = await _qn2;
       (_tn || []).forEach(r => { _numMax = Math.max(_numMax, +r.num || 0); });
     } catch (_) { _numMax = (_mqPartes || []).reduce((a, p) => Math.max(a, +p.num || 0), 0); }
-    const { error } = await sb.from('maquina_parte')
-      .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqMapa, num: _numMax + 1 });
+    /* ===== 05/09/2026 — "duplicate key ... maquina_parte_setor_chave_key" =====
+       As partes antigas foram DESATIVADAS, não apagadas: a chave continua
+       ocupada e o insert batia na restrição, mesmo com o mapa em branco na
+       tela. Se já existe uma parte com essa chave nesta vista, ela é
+       REAPROVEITADA — volta a ficar ativa com o nome e a posição novos. Isso é
+       melhor que apagar: as ordens antigas que já apontavam para ela seguem
+       fazendo sentido. */
+    let _achou = null;
+    try {
+      let _qe = sb.from('maquina_parte').select('id,num').eq('setor', _mqSetor).eq('chave', chave);
+      _qe = _mqMapa ? _qe.eq('mapa', _mqMapa) : _qe.is('mapa', null);
+      const { data: _ex } = await _qe.limit(1);
+      _achou = (_ex && _ex[0]) || null;
+    } catch (_) { }
+    const { error } = _achou
+      ? await sb.from('maquina_parte')
+          .update({ nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, ativo: true, num: (_achou.num != null ? _achou.num : _numMax + 1) })
+          .eq('id', _achou.id)
+      : await sb.from('maquina_parte')
+          .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqMapa, num: _numMax + 1 });
     if (error) throw error;
     _mqPartes = []; _mqEdit = true;
     await renderMqMapa();
