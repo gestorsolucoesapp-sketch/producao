@@ -158,7 +158,13 @@ header{background:var(--topo);color:#fff;padding:calc(env(safe-area-inset-top) +
      Estas regras valem SÓ no celular e SÓ para estilo inline, via seletor de
      atributo: no computador nada muda. Quem já declarou flex-wrap continua
      mandando; quem já é nowrap de propósito em botão (.btn) continua inteiro. */
-  [style*="display:flex"]:not([style*="flex-wrap"]){flex-wrap:wrap !important}
+  /* 04/09 à noite, print do João: o gráfico "Saiu da carteira por dia" apareceu
+     DESENHADO EM CIMA do texto. Era a regra abaixo: as barras são um flex de
+     ALTURA FIXA com align-items:flex-end (16 gráficos assim no app), e com
+     flex-wrap forçado as barras que não cabiam quebravam para uma segunda
+     linha dentro de uma caixa que não cresce — e vazavam por cima do rodapé.
+     Gráfico de barras fica de fora da regra; ele já se ajusta pela largura. */
+  [style*="display:flex"]:not([style*="flex-wrap"]):not([style*="align-items:flex-end"]){flex-wrap:wrap !important}
   [style*="display:flex"] > span[style*="white-space:nowrap"],
   [style*="display:flex"] > div[style*="white-space:nowrap"]{white-space:normal !important}
   /* duas linhas: título inteiro em cima, controles embaixo */
@@ -3893,7 +3899,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.476.0';
+const APP_VER = '4.477.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -24466,8 +24472,25 @@ async function atrDetalhe(tipo, _mudo) {
     });
     const geo = {};
     (rg || []).forEach(g => { if (g.pedido && !geo[g.pedido]) geo[g.pedido] = g; });
+    /* 04/09/2026 (João: "setor de compressão não tem?"). O setor do item vinha
+       SÓ da fila de OPs: item sem OP na fila ficava sem setor e caía em "(sem
+       OP na fila · falta produzir)" — era ali que Compressão (38 pedidos na
+       carteira, 6 com prazo vencido) e Embaladeiras estavam escondidas. A fila
+       continua mandando quando existe (é a máquina de verdade programada);
+       quando não existe, vale `v_item_setor`, a mesma régua que o banco usa na
+       Evolução da carteira — um item não pode ter setor numa tela e não ter
+       na outra. */
     const setorDoItem = {};
     Object.keys(opDoItem).forEach(k => { setorDoItem[k] = opDoItem[k].setor; });
+    try {
+      /* só os itens que a fila NÃO resolveu, em fatias de 250: `.in()` vai na
+         URL e 650 códigos de uma vez passa do tamanho seguro */
+      const _falta = [...new Set((rp || []).map(x => String(x.item_cod || '')).filter(c => c && !setorDoItem[c]))];
+      for (let i = 0; i < _falta.length; i += 250) {
+        const { data: _vs } = await sb.from('v_item_setor').select('item_cod,setor').in('item_cod', _falta.slice(i, i + 250));
+        (_vs || []).forEach(v => { if (v.item_cod && !setorDoItem[v.item_cod] && v.setor && v.setor !== 'Outros') setorDoItem[v.item_cod] = v.setor; });
+      }
+    } catch (e) { try { console.warn('v_item_setor:', e && e.message); } catch (_) { } }
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
     _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
     const lim7 = new Date(d + 'T12:00:00'); lim7.setDate(lim7.getDate() + 7);
@@ -30066,9 +30089,12 @@ async function _atrSetores() {
         + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(K.kg) + ' · prazo do pedido −7 dias</div></div>' : '')
       + '<div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase;margin-top:5px">por setor</div>'
       + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;justify-content:flex-end">'
+      /* 04/09 (João: "os setores não estão clicáveis") — eram, mas nenhuma
+         pílula mostrava que estava ativa, então o toque parecia não fazer nada.
+         A escolhida agora fica roxa, como as do detalhe logo abaixo. */
       + ord.map(k => '<span onclick="atrPorSetor(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')"'
-        + ' style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:3px 9px;background:var(--leve-2);border:1px solid var(--linha-2s);color:var(--navy)">'
-        + escapeHtml(k) + ' <b style="color:#6A1B9A">' + r.porSetor[k] + '</b></span>').join('')
+        + ' style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:3px 9px;' + (_atrSetor === k ? 'background:#6A1B9A;border:1px solid #6A1B9A;color:#fff' : 'background:var(--leve-2);border:1px solid var(--linha-2s);color:var(--navy)') + '">'
+        + escapeHtml(k) + ' <b style="color:' + (_atrSetor === k ? '#fff' : '#6A1B9A') + '">' + r.porSetor[k] + '</b></span>').join('')
       + '</div>';
   } catch (e) { el.innerHTML = ''; try { console.warn('setores:', e && e.message); } catch (_) { } }
 }
