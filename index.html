@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.482.0';
+const APP_VER = '4.483.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -49941,7 +49941,7 @@ function orgTrocaSetor() {
   orgSetorSel = $('orgSetor').value;
   renderOrgVista();
 }
-function orgTrocaTurno() { orgTurnoSel = $('orgTurno').value; renderOrgVista(); window.scrollTo(0, 0); }
+function orgTrocaTurno() { orgTurnoSel = $('orgTurno').value; _orgIgnoraScroll = true; renderOrgVista(); window.scrollTo(0, 0); }
 const ORG_VISTAS_RH = ['faltas', 'semaforo'];
 function orgVer(v) {
   /* Promoções carrega salário — é a vista mais restrita do app. Só a flag
@@ -49956,11 +49956,38 @@ function orgVer(v) {
 }
 
 // guarda a posição da página antes de repintar, para não jogar o usuário pro topo
+/* ===== 05/09/2026 (João: "não está rolando a tela — só quando filtra por
+   turno dá isso") =====
+   `orgGuardaScroll` AGENDA a restauração da rolagem para dois quadros à frente.
+   Quem troca o turno chama `renderOrgVista()` (que agenda) e logo depois
+   `window.scrollTo(0,0)`: o scrollTo executa na hora e a restauração chega
+   atrasada, devolvendo a página para onde ela estava. Pior — se o usuário
+   rolasse nesse intervalo, a restauração desfazia o gesto, e como o filtro
+   redesenha a cada mexida a tela parecia travada.
+   Três consertos: (1) quem quiser ir ao topo AVISA, e a restauração é
+   descartada; (2) rAF anterior é cancelado, para não empilhar restaurações;
+   (3) se o usuário rolar depois do agendamento, a restauração desiste — gesto
+   de gente sempre ganha de reposicionamento automático. */
+let _orgScrollRaf = null, _orgIgnoraScroll = false, _orgUsuarioRolou = false;
+function _orgMarcaRolagem() { _orgUsuarioRolou = true; }
 function orgGuardaScroll() {
   const y = window.pageYOffset || document.documentElement.scrollTop || 0;
   const alto = document.documentElement.scrollHeight;
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
+  if (_orgScrollRaf) { cancelAnimationFrame(_orgScrollRaf); _orgScrollRaf = null; }
+  _orgUsuarioRolou = false;
+  try {
+    window.addEventListener('wheel', _orgMarcaRolagem, { passive: true, once: true });
+    window.addEventListener('touchmove', _orgMarcaRolagem, { passive: true, once: true });
+  } catch (_) { }
+  _orgScrollRaf = requestAnimationFrame(() => {
+    _orgScrollRaf = requestAnimationFrame(() => {
+      _orgScrollRaf = null;
+      try {
+        window.removeEventListener('wheel', _orgMarcaRolagem);
+        window.removeEventListener('touchmove', _orgMarcaRolagem);
+      } catch (_) { }
+      if (_orgIgnoraScroll) { _orgIgnoraScroll = false; return; }
+      if (_orgUsuarioRolou) return;
       const novoAlto = document.documentElement.scrollHeight;
       // se a página encolheu/cresceu, mantém a proporção; senão volta exatamente ao mesmo ponto
       const alvo = (alto > 0 && Math.abs(novoAlto - alto) > 40) ? Math.round(y * (novoAlto / alto)) : y;
