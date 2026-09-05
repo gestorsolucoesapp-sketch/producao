@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.486.0';
+const APP_VER = '4.487.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14660,11 +14660,19 @@ function _mqDesenho(cont, nome) {
       + '<text x="' + p.x + '" y="' + (p.y + 6) + '" text-anchor="middle" font-size="17" font-weight="800" fill="' + c.t + '">' + p.n + '</text>'
       + '<title>' + escapeHtml(nome[p.k] || p.k) + ' — ' + q + ' ordem(ns)</title></g>';
   });
+  /* ===== 05/09/2026 (João: "não está excluindo nem editando os motivos") =====
+     A legenda — que é onde ficam o ✕ e o toque — era montada a partir de
+     MQ_PINOS, a lista FIXA da Impressão antiga, enquanto os pinos do desenho
+     vêm de `pins` (as partes reais do setor, do banco). Em Extrusão, Injeção,
+     Termoformagem e na embaladeira a legenda listava chaves que NÃO existem
+     naquele setor: `mqExcluiPonto`/`mqRenomear` não achavam a parte e saíam
+     caladas no `if (!p) return`. Por isso "não exclui e não edita".
+     Agora a legenda usa a MESMA lista do desenho. */
   let leg = '';
-  MQ_PINOS.forEach((p, i) => {
+  pins.forEach((p, i) => {
     const q = cont[p.k] || 0, c = _mqCor(q, max), on = (_mqSel === p.k);
     const lx = 24 + (i % 3) * 392, ly = M.h + 36 + Math.floor(i / 3) * 30;
-    leg += '<g onclick="mqFiltra(\'' + p.k + '\')" style="cursor:pointer">'
+    leg += '<g onclick="' + (_mqEdit ? 'mqRenomear(&quot;' + p.k + '&quot;)' : 'mqFiltra(&quot;' + p.k + '&quot;)') + '" style="cursor:pointer">'
       + (on ? '<rect x="' + (lx - 6) + '" y="' + (ly - 22) + '" width="380" height="28" rx="7" fill="#EEF3F8"/>' : '')
       + '<circle cx="' + (lx + 11) + '" cy="' + (ly - 5) + '" r="11" fill="' + c.f + '" stroke="' + c.s + '" stroke-width="2"/>'
       + '<text x="' + (lx + 11) + '" y="' + (ly - 0.5) + '" text-anchor="middle" font-size="11" font-weight="800" fill="' + c.t + '">' + p.n + '</text>'
@@ -14888,15 +14896,39 @@ function _mp_slug(s) {
   return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
 }
+/* confirmação do próprio app — mesmo motivo do _mqPedeNome */
+function _mqConfirma(titulo, texto) {
+  return new Promise(res => {
+    const d = document.createElement('div');
+    d.innerHTML = '<div style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px">'
+      + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:380px;width:100%">'
+      + '<div style="font-size:14px;font-weight:800;color:var(--navy);margin-bottom:6px">' + escapeHtml(titulo) + '</div>'
+      + '<p class="desc" style="font-size:12px;margin:0">' + escapeHtml(texto || '') + '</p>'
+      + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:12px">'
+      + '<span id="mqCfX" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">cancelar</span>'
+      + '<span id="mqCfOk" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#9B2C2C;color:#fff">tirar do mapa</span>'
+      + '</div></div></div>';
+    document.body.appendChild(d);
+    const fim = v => { try { d.remove(); } catch (_) { } res(v); };
+    d.querySelector('#mqCfX').onclick = () => fim(false);
+    d.querySelector('#mqCfOk').onclick = () => fim(true);
+  });
+}
 async function mqExcluiPonto(k) {
   if (!_mqPodeEditar()) return;
   const p = (_mqPartes || []).find(z => z.chave === k); if (!p) return;
   const n = (_mqCont && _mqCont[k]) || 0;
-  if (!confirm('Tirar "' + p.nome + '" do mapa?\n\nAs ordens NÃO são apagadas — as que estavam nesta parte voltam para "sem parte" e você pode reclassificar depois.')) return;
+  /* 05/09 — `confirm()` é da mesma família do `prompt()`: em PWA no iPhone o
+     app não mostra e a exclusão morria aqui, sem aviso nenhum. */
+  const _ok = await _mqConfirma('Tirar "' + p.nome + '" do mapa?',
+    'As ordens NÃO são apagadas — as que estavam nesta parte voltam para "sem parte" e você pode reclassificar depois.');
+  if (!_ok) return;
   try {
     let r = await sb.from('manutencao_os').update({ parte_chave: null }).eq('setor', _mqSetor).eq('parte_chave', k);
     if (r.error) throw r.error;
-    r = await sb.from('maquina_parte').update({ ativo: false }).eq('setor', _mqSetor).eq('chave', k);
+    let _qd = sb.from('maquina_parte').update({ ativo: false }).eq('setor', _mqSetor).eq('chave', k);
+    _qd = _mqMapa ? _qd.eq('mapa', _mqMapa) : _qd.is('mapa', null);
+    r = await _qd;
     if (r.error) throw r.error;
     try { (osLista || []).forEach(o => { if (o.parte_chave === k) o.parte_chave = null; }); } catch (_) { }
     _mqPartes = []; _mqSel = '';
