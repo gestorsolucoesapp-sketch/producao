@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.492.0';
+const APP_VER = '4.493.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14594,7 +14594,14 @@ const MQ_MAPAS = {
   'Extrusão':      { img: 'maq-extrusao.png', w: 1200, h: 600 },
   'Injeção':       { img: 'maq-injecao.png',  w: 1200, h: 600 }
 };
-let _mqMapa = null;   /* vista dentro do setor; null = principal */
+/* ===== 05/09/2026 (João: "a análise deve ser feita por máquina — coloquei
+   alimentação na 705 e apagou das outras") =====
+   `_mqMapa` era a VISTA (impressora/embaladeira) e as bolinhas eram do SETOR:
+   o que ele nomeava numa máquina valia para as nove, e trocar de vista parecia
+   apagar. Agora a chave é a MÁQUINA — cada uma tem as suas bolinhas — e a
+   vista, quando existe, entra como sufixo: '704', '702:embaladeira'. */
+let _mqVistaSuf = null;   /* 'embaladeira' ou null; a figura dentro da máquina */
+function _mqChave() { return _mqMaq ? (_mqMaq + (_mqVistaSuf ? ':' + _mqVistaSuf : '')) : null; }
 /* 03/09/2026 (João: "permita filtrar por máquina"; "embaladeira tenho somente
    na 703 e 702, então quando filtrar mostre somente nessas duas máquinas").
    O mapa era do SETOR inteiro; agora dá para olhar uma máquina só. E a
@@ -14614,6 +14621,12 @@ const MQ_IMG_MAQ = {
   '705': { id: 'm705', nome: '🖨️ Van Dam 705', img: 'maq-705.png', w: 1200, h: 800 }
 };
 const MQ_VISTA_MAQ = { 'embaladeira': ['702', '703'] };
+/* 05/09 (João: "tire a aba todas pq tem muita máquina diferente") — com as
+   bolinhas por máquina, "todas" misturaria mapas de nove equipamentos
+   diferentes no mesmo desenho. A máquina passou a ser obrigatória. */
+function _mqPrimeiraMaq(setor) {
+  try { const L = (SETOR_MAQ[setor] || []).map(String); return L[0] || ''; } catch (_) { return ''; }
+}
 function _mqMaqsDoSetor() {
   try { return (SETOR_MAQ[_mqSetor] || []).map(String); } catch (_) { return []; }
 }
@@ -14629,11 +14642,9 @@ function mqTrocaMaq(m) {
   /* 05/09 — escolher uma máquina que tem desenho próprio abre o desenho dela;
      sair dela volta para a figura do setor, senão ficaria mostrando a 705 com
      a 704 selecionada */
-  try {
-    const dm = _mqMaq && MQ_IMG_MAQ[String(_mqMaq)];
-    if (dm) _mqMapa = dm.id;
-    else if (_antes && MQ_IMG_MAQ[String(_antes)] && _mqMapa === MQ_IMG_MAQ[String(_antes)].id) _mqMapa = null;
-  } catch (_) { }
+  /* 05/09 — trocar de máquina volta para a figura principal dela: a vista
+     'embaladeira' da 702 não faz sentido com a 704 na tela */
+  try { if (!_mqVistaVale(_mqVistaAtual())) _mqVistaSuf = null; } catch (_) { }
   /* se a vista aberta não existe na máquina escolhida, volta para a principal:
      deixar o desenho da embaladeira na tela com a 704 selecionada seria mentira */
   try { if (!_mqVistaVale(_mqVistaAtual())) _mqMapa = null; } catch (_) { }
@@ -14641,17 +14652,20 @@ function mqTrocaMaq(m) {
 }
 function _mqVistas(s) {
   const M = MQ_MAPAS[s] || MQ_MAPAS['Impressão'];
-  const base = M.vistas || [{ id: null, nome: '', img: M.img, w: M.w, h: M.h }];
-  /* desenho próprio da máquina escolhida entra na FRENTE: com a 705 na tela, é
-     ela que a pessoa quer ver, não a figura genérica do setor */
   const dm = _mqMaq && MQ_IMG_MAQ[String(_mqMaq)];
-  return dm ? [{ id: dm.id, nome: dm.nome, img: dm.img, w: dm.w, h: dm.h }].concat(base) : base;
+  /* a PRINCIPAL da máquina é o desenho dela quando existe; senão a figura do
+     setor. A embaladeira entra como segunda vista só onde ela existe. */
+  const principal = dm
+    ? { id: null, nome: dm.nome, img: dm.img, w: dm.w, h: dm.h }
+    : { id: null, nome: '🖨️ Máquina', img: M.img || (M.vistas && M.vistas[0].img), w: M.w || 1200, h: M.h || 600 };
+  const outras = (M.vistas || []).filter(v => v.id).map(v => ({ id: v.id, nome: v.nome, img: v.img, w: v.w, h: v.h }));
+  return [principal].concat(outras);
 }
 function _mqVistaAtual() {
   const V = _mqVistas(_mqSetor);
-  return V.find(v => v.id === _mqMapa) || V[0];
+  return V.find(v => (v.id || null) === (_mqVistaSuf || null)) || V[0];
 }
-function mqTrocaMapa(id) { _mqMapa = (id === '' ? null : id); _mqPartes = []; _mqSel = ''; renderMqMapa(); }
+function mqTrocaMapa(id) { _mqVistaSuf = (id === '' ? null : id); _mqPartes = []; _mqSel = ''; renderMqMapa(); }
 /* líder também edita o mapa (03/09): quem convive com a máquina é quem sabe
    onde fica cada parte — o administrador não está no chão de fábrica.
    CORRIGIDO no mesmo dia ("líder não está conseguindo arrastar a bolinha"): eu
@@ -14665,7 +14679,7 @@ function _mqPodeEditar() {
   try { return /l[ií]der/i.test(String((perfil && perfil.setor) || '')); } catch (_) { return false; }
 }
 let _mqSetor = 'Impressão';
-function mqTrocaSetor(s) { _mqSetor = s; _mqMapa = null; _mqMaq = ''; _mqPartes = []; _mqSel = ''; _mqEdit = false; renderMqMapa(); }
+function mqTrocaSetor(s) { _mqSetor = s; _mqVistaSuf = null; _mqMaq = _mqPrimeiraMaq(s); _mqPartes = []; _mqSel = ''; _mqEdit = false; renderMqMapa(); }
 function _mqDesenho(cont, nome) {
   /* a posição do marcador vem do banco quando o João já arrastou; o valor do
      código é só o ponto de partida de cada parte nova */
@@ -14743,7 +14757,7 @@ async function renderMqMapa() {
       if (error) throw error;
       /* a vista filtra aqui, não no banco: `.is('mapa', null)` e `.eq` exigiriam
          duas consultas, e a lista de partes de um setor é pequena. */
-      _mqPartes = (data || []).filter(p => (p.mapa || null) === _mqMapa);
+      _mqPartes = (data || []).filter(p => String(p.mapa || '') === String(_mqChave() || ''));
     }
     let L = (osLista || []).filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === _mqSetor);
     if (_mqMaq) L = L.filter(o => String(o.recurso_cod) === String(_mqMaq));
@@ -14828,7 +14842,7 @@ async function renderMqMapa() {
         ? '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
           + '<span style="font-size:10px;font-weight:800;color:var(--fraco-2);text-transform:uppercase;letter-spacing:.4px">peça da linha</span>'
           + _mqVistas(_mqSetor).filter(_mqVistaVale).map(v => '<span onclick="mqTrocaMapa(\'' + (v.id || '') + '\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
-            + ((v.id || null) === _mqMapa ? 'background:#2E5C8A;color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + v.nome + '</span>').join('')
+            + ((v.id || null) === (_mqVistaSuf || null) ? 'background:#2E5C8A;color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + v.nome + '</span>').join('')
           + '</div>'
         : '')
       /* filtro por MÁQUINA: o mapa era do setor inteiro e não dava para
@@ -14836,8 +14850,7 @@ async function renderMqMapa() {
       + (_mqMaqsDoSetor().length > 1
         ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 9px">'
           + '<span style="font-size:10px;font-weight:800;color:var(--fraco-2);text-transform:uppercase;letter-spacing:.4px">máquina</span>'
-          + '<span onclick="mqTrocaMaq(\'\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
-          + (!_mqMaq ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">todas</span>'
+          /* sem 'todas': ver nove máquinas no mesmo mapa não diz nada */
           + _mqMaqsDoSetor().map(m => '<span onclick="mqTrocaMaq(\'' + m + '\')" style="cursor:pointer;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px;'
             + (String(_mqMaq) === m ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)')
             + (MQ_VISTA_MAQ.embaladeira.indexOf(m) >= 0 ? ';box-shadow:inset 0 -3px 0 #2E5C8A' : '') + '">' + m + (MQ_IMG_MAQ[m] ? ' 🖼️' : '') + '</span>').join('')
@@ -14860,8 +14873,7 @@ async function renderMqMapa() {
         ? '<div style="background:#EEF3FA;border:1px solid #C9D9EC;color:#33506E;border-radius:10px;padding:10px 12px;font-size:12px;margin-top:10px">'
           + '🎯 <b>Mapa em branco.</b> Toque em <b>✏️ editar mapa</b> e depois em <b>+ novo ponto</b> para criar a primeira bolinha. '
           + 'O <b>nome</b> que você escrever é a <b>palavra-chave</b>: a bolinha “Alimentação” recolhe todas as ordens cujo texto tem “alimentação”.</div>'
-        : (semParte ? '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:11.5px;margin-top:10px">⚠️ <b>' + semParte + ' ordem(ns) sem bolinha.</b> Nenhuma das palavras do mapa aparece no texto delas — crie uma bolinha com a palavra que essas ordens usam.'
-          + (_mqCasou ? ' <span style="opacity:.8">' + _mqCasou + ' ordem(ns) casaram; uma ordem pode entrar em mais de uma bolinha, então a soma das bolinhas pode passar do total.</span>' : '') + '</div>' : ''))
+        : _mqPainelSoltas(L))
       + (_mqSel ? (_daFoto ? '<div id="mqListaParte"><p class="desc" style="margin-top:10px">Buscando as ordens…</p></div>' : _mqListaOS(L, _mqSel, nome)) : '')
       + (_mqPodeEditar()
         ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
@@ -14957,6 +14969,11 @@ async function mqAddPonto() {
   const nome = await _mqPedeNome('');
   if (nome === null) return;
   if (!nome) { toast('O nome não pode ficar vazio.'); return; }
+  return mqAddPontoCom(nome);
+}
+/* separada para o atalho "criar bolinha a partir da palavra" reusar a mesma
+   gravação — duas telas criando parte de jeitos diferentes viraria duas regras */
+async function mqAddPontoCom(nome) {
   const chave = _mp_slug(nome);
   if (!chave) { toast('Nome inválido.'); return; }
   try {
@@ -14966,7 +14983,7 @@ async function mqAddPonto() {
     let _numMax = 0;
     try {
       let _qn2 = sb.from('maquina_parte').select('num').eq('setor', _mqSetor);
-      _qn2 = _mqMapa ? _qn2.eq('mapa', _mqMapa) : _qn2.is('mapa', null);
+      _qn2 = _qn2.eq('mapa', _mqChave() || '');
       const { data: _tn } = await _qn2;
       (_tn || []).forEach(r => { _numMax = Math.max(_numMax, +r.num || 0); });
     } catch (_) { _numMax = (_mqPartes || []).reduce((a, p) => Math.max(a, +p.num || 0), 0); }
@@ -14980,7 +14997,7 @@ async function mqAddPonto() {
     let _achou = null;
     try {
       let _qe = sb.from('maquina_parte').select('id,num').eq('setor', _mqSetor).eq('chave', chave);
-      _qe = _mqMapa ? _qe.eq('mapa', _mqMapa) : _qe.is('mapa', null);
+      _qe = _qe.eq('mapa', _mqChave() || '');
       const { data: _ex } = await _qe.limit(1);
       _achou = (_ex && _ex[0]) || null;
     } catch (_) { }
@@ -14989,7 +15006,7 @@ async function mqAddPonto() {
           .update({ nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, ativo: true, num: (_achou.num != null ? _achou.num : _numMax + 1) })
           .eq('id', _achou.id)
       : await sb.from('maquina_parte')
-          .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqMapa, num: _numMax + 1 });
+          .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqChave(), num: _numMax + 1 });
     if (error) throw error;
     _mqPartes = []; _mqEdit = true;
     await renderMqMapa();
@@ -15031,7 +15048,7 @@ async function mqExcluiPonto(k) {
     let r = await sb.from('manutencao_os').update({ parte_chave: null }).eq('setor', _mqSetor).eq('parte_chave', k);
     if (r.error) throw r.error;
     let _qd = sb.from('maquina_parte').update({ ativo: false }).eq('setor', _mqSetor).eq('chave', k);
-    _qd = _mqMapa ? _qd.eq('mapa', _mqMapa) : _qd.is('mapa', null);
+    _qd = _qd.eq('mapa', _mqChave() || '');
     r = await _qd;
     if (r.error) throw r.error;
     try { (osLista || []).forEach(o => { if (o.parte_chave === k) o.parte_chave = null; }); } catch (_) { }
@@ -15118,7 +15135,7 @@ async function mqSalvaPos(k, x, y) {
        mais de uma figura, setor+chave pode existir em duas e o update pegaria a
        errada. */
     let _q = sb.from('maquina_parte').update({ pos_x: x, pos_y: y }).eq('setor', _mqSetor).eq('chave', k);
-    _q = _mqMapa ? _q.eq('mapa', _mqMapa) : _q.is('mapa', null);
+    _q = _q.eq('mapa', _mqChave() || '');
     const { error } = await _q;
     if (error) throw error;
     const p = (_mqPartes || []).find(z => z.chave === k); if (p) { p.pos_x = x; p.pos_y = y; }
@@ -15172,7 +15189,7 @@ async function mqRenomear(k) {
   if (!novo) { toast('O nome não pode ficar vazio.'); return; }
   try {
     let _qn = sb.from('maquina_parte').update({ nome: novo }).eq('setor', _mqSetor).eq('chave', k);
-    _qn = _mqMapa ? _qn.eq('mapa', _mqMapa) : _qn.is('mapa', null);
+    _qn = _qn.eq('mapa', _mqChave() || '');
     const { error } = await _qn;
     if (error) throw error;
     p.nome = novo; renderMqMapa();
@@ -43554,6 +43571,82 @@ function _setorFiltroAtivo() {
   try { const g = $('setorGlobal'); if (g && g.value) return String(g.value); } catch (_) { }
   return '';
 }
+/* ===== 05/09/2026 (João: "informe quantas ordens tem no histórico total que
+   não tem relação e permita eu avaliar e direcionar ou criar bolinhas para ela
+   que vc não conseguiu identificar") =====
+   O aviso dizia só o número. Agora abre a lista das ordens que nenhuma palavra
+   pegou E as PALAVRAS que mais aparecem nelas — que é o atalho para criar a
+   bolinha certa: em vez de ele adivinhar o nome, a tela mostra o vocabulário
+   que a manutenção realmente usa naquela máquina. Um toque na palavra já cria
+   a bolinha com ela. */
+let _mqSemLista = null;
+function mqVerSemBolinha() { _mqSemLista = !_mqSemLista; renderMqMapa(); }
+function _mqPalavrasSoltas(L) {
+  const _pal = (_mqPartes || []).map(p => ({ r: _mqRadicais(p.nome) })).filter(p => p.r.length);
+  const soltas = L.filter(o => {
+    const t = _mqNorm([o.atividade, o.motivo, o.submotivo, o.detalhes, o.conclusao].join(' '));
+    return !_pal.some(pp => pp.r.every(w => t.indexOf(w) >= 0));
+  });
+  /* conta em quantas ORDENS cada palavra aparece (não quantas vezes no total):
+     palavra repetida dentro de uma ordem não vale mais que outra */
+  const cont = {};
+  soltas.forEach(o => {
+    const t = _mqNorm([o.atividade, o.motivo, o.submotivo, o.detalhes, o.conclusao].join(' '));
+    const vistas = new Set();
+    t.split(/[^a-z0-9]+/).forEach(w => {
+      if (w.length < 4 || _MQ_STOP.indexOf(w) >= 0 || _MQ_IGN.indexOf(w) >= 0 || /^\d+$/.test(w)) return;
+      const r = (w.length > 4 && /s$/.test(w)) ? w.slice(0, -1) : w;
+      vistas.add(r);
+    });
+    vistas.forEach(r => { cont[r] = (cont[r] || 0) + 1; });
+  });
+  const top = Object.keys(cont).sort((a, b) => cont[b] - cont[a]).slice(0, 14);
+  return { soltas: soltas, top: top, cont: cont };
+}
+/* palavras que aparecem em quase toda ordem e não dizem que peça é */
+const _MQ_IGN = ['maquina', 'realizado', 'realizada', 'feito', 'feita', 'troca', 'trocado', 'trocada',
+  'servico', 'ordem', 'manutencao', 'preventiva', 'corretiva', 'verificar', 'verificado', 'ajuste',
+  'ajustado', 'problema', 'peca', 'pecas', 'mesmo', 'sendo', 'para', 'onde', 'mais', 'esta', 'foram',
+  'apos', 'pelo', 'pela', 'todo', 'toda', 'segue', 'ficou', 'aguardando', 'necessario', 'conforme',
+  /* 05/09 — medido na 704: as duas palavras mais frequentes eram "mecanica" (39)
+     e "eletrica" (22). São o TIPO da ordem, que já é campo próprio, não a peça
+     que quebrou — sugerir bolinha com elas encheria o mapa sem dizer nada.
+     Tirando esse ruído sobram tambor, pistao, mangueira, sensor, empilhador,
+     que é o que a manutenção de fato chama pelo nome. */
+  'mecanica', 'mecanico', 'eletrica', 'eletrico', 'hidraulica', 'ferramentaria',
+  'predial', 'instalacao', 'outras', 'urgente', 'parada', 'parado'];
+function _mqPainelSoltas(L) {
+  const r = _mqPalavrasSoltas(L);
+  if (!r.soltas.length) return '';
+  let h = '<div style="background:#FFF6E9;border:1px solid #F0D9B0;color:#7A5A1E;border-radius:10px;padding:10px 12px;font-size:11.5px;margin-top:10px">'
+    + '⚠️ <b>' + r.soltas.length + ' ordem(ns) sem bolinha</b> nesta máquina — nenhuma palavra do mapa aparece no texto delas.'
+    + ' <span onclick="mqVerSemBolinha()" style="cursor:pointer;text-decoration:underline;font-weight:800">'
+    + (_mqSemLista ? 'esconder' : 'ver e resolver') + '</span>';
+  if (_mqSemLista) {
+    h += '<div style="margin-top:9px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;opacity:.75">palavras que mais aparecem nelas — toque para criar a bolinha</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">'
+      + r.top.map(w => '<span onclick="mqCriaDaPalavra(' + JSON.stringify(w).replace(/"/g, '&quot;') + ')" style="cursor:pointer;background:#fff;border:1px solid #E0CDA8;border-radius:999px;padding:4px 10px;font-weight:700">'
+        + escapeHtml(w) + ' <b style="opacity:.7">' + r.cont[w] + '</b></span>').join('')
+      + '</div>'
+      + '<div style="margin-top:10px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;opacity:.75">as ordens</div>'
+      + '<div style="max-height:280px;overflow:auto;margin-top:4px">'
+      + r.soltas.slice(0, 60).map(o => '<div onclick="verOS(' + JSON.stringify(String(o.id)).replace(/"/g, '&quot;') + ')" style="cursor:pointer;background:#fff;border-radius:8px;padding:6px 8px;margin-bottom:4px">'
+        + '<b>' + escapeHtml(o.os_num || '—') + '</b> <span style="opacity:.7">' + (o.data_abertura ? fmtData(o.data_abertura) : '') + '</span>'
+        + '<div style="opacity:.85">' + escapeHtml(String([o.atividade, o.motivo, o.submotivo, o.detalhes].filter(Boolean).join(' · ')).slice(0, 150)) + '</div></div>').join('')
+      + (r.soltas.length > 60 ? '<div style="opacity:.7">…e mais ' + (r.soltas.length - 60) + '</div>' : '')
+      + '</div>';
+  }
+  return h + '</div>';
+}
+async function mqCriaDaPalavra(w) {
+  if (!_mqPodeEditar()) { toast('Só o administrador e os líderes editam o mapa.'); return; }
+  const nome = await _mqPedeNome(String(w || '').toUpperCase());
+  if (nome === null) return;
+  if (!nome) { toast('O nome não pode ficar vazio.'); return; }
+  _mqEdit = true;
+  await mqAddPontoCom(nome);
+}
+
 (function _vigiaTeto() {
   try {
     if (!window.fetch || window.__vigiaTeto) return; window.__vigiaTeto = true;
