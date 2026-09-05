@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.481.0';
+const APP_VER = '4.482.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -11971,6 +11971,9 @@ function trocarAba(qual) {
 }
 
 function _trocarAbaReal(qual) {
+  /* 05/09 — se algum gesto ou modal deixou a rolagem travada, trocar de aba
+     desfaz: a tela nova não pode nascer presa por causa da anterior. */
+  try { _orgDestrava(); } catch (_) { }
   /* anima só na troca de TELA. Salvar apontamento não passa por aqui, então
      gravação não faz a tela piscar — que era o requisito.
      O disparo é feito AQUI com atraso, e não no fim de cada render: só o Painel
@@ -54303,11 +54306,31 @@ function orgLigaArrasto() {
       if (box && orgArrasto) orgMoverPara(orgArrasto, box.dataset.maq);
       orgArrasto = null;
     };
+    /* ===== 05/09/2026 (João: "não está rolando a tela") =====
+       O arrastar do organograma trava a rolagem do corpo depois de 380 ms de
+       pressão e só destravava no pointerup DO PRÓPRIO CHIP. Se o dedo soltasse
+       fora dele — ou se a lista fosse redesenhada no meio do gesto, o que
+       remove o elemento e mata o listener — `body.style.overflow` ficava
+       'hidden' para sempre e a página inteira parava de rolar, em qualquer aba,
+       até recarregar. Agora quem escuta o soltar é o DOCUMENTO: acabou o gesto,
+       a rolagem volta, não importa onde o dedo estava. */
     ch.addEventListener('pointerup', solta);
+    document.addEventListener('pointerup', _orgDestrava, true);
+    document.addEventListener('pointercancel', _orgDestrava, true);
     ch.addEventListener('pointercancel', () => { clearTimeout(timer); ativo = false; document.body.style.overflow = ''; if (ghost) { ghost.remove(); ghost = null; } });
   });
 }
 
+/* rede de segurança do arrastar: solta a rolagem e limpa o fantasma, seja qual
+   for o elemento onde o gesto terminou. Idempotente — pode rodar à toa. */
+function _orgDestrava() {
+  try {
+    if (document.body.style.overflow === 'hidden' && !document.getElementById('orgApres')) {
+      document.body.style.overflow = '';
+    }
+    document.querySelectorAll('#orgWrap .org-maq').forEach(m => { m.style.outline = ''; });
+  } catch (_) { }
+}
 let orgUndo = null;
 async function orgMoverPara(id, maq) {
   const a = orgDados.aloc.find(x => x.id === id); if (!a || a.maquina_codigo === maq) return;
