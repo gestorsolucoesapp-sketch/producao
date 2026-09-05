@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.488.0';
+const APP_VER = '4.489.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14671,9 +14671,22 @@ function _mqDesenho(cont, nome) {
      código é só o ponto de partida de cada parte nova */
   /* a lista de pinos sai do banco: cada setor tem as suas partes, e a posição
      também. MQ_PINOS só serve de fallback para a Impressão antiga. */
-  const pins = (_mqPartes && _mqPartes.length)
-    ? _mqPartes.map((p, i) => ({ k: p.chave, n: i + 1, x: (p.pos_x != null ? +p.pos_x : 600), y: (p.pos_y != null ? +p.pos_y : 300) }))
-    : MQ_PINOS;
+  /* ===== 05/09/2026 (João: "quando eu excluo uma bolinha ela muda o número e
+     muda o nome, não pode — excluo a bolinha 3 e aí embaixo o 3 virou torre e
+     era bateria") =====
+     DOIS erros somados. (1) o número era a POSIÇÃO na lista (`i + 1`): tirar
+     uma parte renumerava todas as seguintes, e quem tinha 85 OS na bolinha 3
+     passava a ler outra peça no mesmo número. Agora o número é do PONTO, vem
+     da coluna `num` do banco, e some junto com ele — fica um buraco na
+     sequência, que é o certo: o 3 era das Baterias e não vira de mais ninguém.
+     (2) quando `_mqPartes` estava vazio (é o que acontece logo depois de
+     excluir, antes de recarregar) o mapa caía em MQ_PINOS, a lista velha da
+     Impressão — daí a legenda mostrar "torre" e "mandril", que são CHAVES
+     internas de partes que nem existem mais. Vazio agora é vazio. */
+  const pins = (_mqPartes || []).map((p, i) => ({
+    k: p.chave, n: (p.num != null ? +p.num : i + 1),
+    x: (p.pos_x != null ? +p.pos_x : 600), y: (p.pos_y != null ? +p.pos_y : 300)
+  }));
   const max = Math.max(0, ...pins.map(p => cont[p.k] || 0));
   const M = _mqVistaAtual();
   let g = '<image href="' + M.img + '" x="0" y="0" width="' + M.w + '" height="' + M.h + '" preserveAspectRatio="xMidYMid meet"/>';
@@ -14725,7 +14738,7 @@ async function renderMqMapa() {
   box.innerHTML = '<p class="desc">Carregando o mapa…</p>';
   try {
     if (!_mqPartes.length) {
-      const { data, error } = await sb.from('maquina_parte').select('chave,nome,ordem,pos_x,pos_y,mapa')
+      const { data, error } = await sb.from('maquina_parte').select('chave,nome,ordem,pos_x,pos_y,mapa,num')
         .eq('setor', _mqSetor).eq('ativo', true).order('ordem');
       if (error) throw error;
       /* a vista filtra aqui, não no banco: `.is('mapa', null)` e `.eq` exigiriam
@@ -14908,8 +14921,17 @@ async function mqAddPonto() {
   if (!chave) { toast('Nome inválido.'); return; }
   try {
     const ordem = 10 + (_mqPartes || []).reduce((a, p) => Math.max(a, +p.ordem || 0), 0);
+    /* número novo continua de onde parou, sem reaproveitar o de quem saiu:
+       reaproveitar faria a bolinha 3 nova herdar a leitura da 3 antiga */
+    let _numMax = 0;
+    try {
+      let _qn2 = sb.from('maquina_parte').select('num').eq('setor', _mqSetor);
+      _qn2 = _mqMapa ? _qn2.eq('mapa', _mqMapa) : _qn2.is('mapa', null);
+      const { data: _tn } = await _qn2;
+      (_tn || []).forEach(r => { _numMax = Math.max(_numMax, +r.num || 0); });
+    } catch (_) { _numMax = (_mqPartes || []).reduce((a, p) => Math.max(a, +p.num || 0), 0); }
     const { error } = await sb.from('maquina_parte')
-      .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqMapa });
+      .insert({ setor: _mqSetor, chave: chave, nome: nome, ordem: ordem, pos_x: 600, pos_y: 300, mapa: _mqMapa, num: _numMax + 1 });
     if (error) throw error;
     _mqPartes = []; _mqEdit = true;
     await renderMqMapa();
