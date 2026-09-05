@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.483.0';
+const APP_VER = '4.484.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6275,6 +6275,7 @@ function modoLeve(on) {
    são descartadas. Nenhuma delas teria medido altura diferente — o layout não
    muda entre duas leituras do mesmo quadro. */
 let _topoFrame = -1;
+let _topoPen = -1, _topoPenT = 0, _topoTrava = 0;
 function medirTopoApp(forcar) {
   const fr = (window.performance && performance.now) ? Math.floor(performance.now() / 16) : 0;
   if (!forcar && fr === _topoFrame) return;
@@ -6310,7 +6311,26 @@ function medirTopoApp(forcar) {
   } catch (_) { }
   const h = Math.min(Math.ceil(t.getBoundingClientRect().height) + 2,
     Math.round((window.innerHeight || 800) * 0.6));
-  if (Math.abs(h - _topoAppUlt) < 0.25) return;
+  /* ===== 05/09/2026 (João: "não rola, só pisca — só quando filtra por turno") =====
+     LAÇO DE LAYOUT: medirTopoApp escreve --topo-app, que muda o padding do
+     main, que muda a altura da página, que dispara scroll, que chama
+     medirTopoApp de novo. A tolerância de 0,25px não segurava: com o filtro
+     ligado o cabeçalho fica instável (a pílula mostra o nome do turno e a linha
+     de abas quebra diferente) e a medida passava a alternar entre dois valores
+     vizinhos, 60 vezes por segundo. Isso é o piscar, e é por isso que a rolagem
+     não anda: o navegador refaz o layout inteiro a cada quadro.
+     Duas defesas: (1) só aceita mudança de 2px para cima — abaixo disso é
+     ruído de arredondamento, não barra mudando de tamanho; (2) se o valor
+     ficar indo e voltando entre dois números, congela por 1,5 s e deixa a tela
+     em paz. O cabeçalho não muda de altura sozinho nesse intervalo. */
+  if (Math.abs(h - _topoAppUlt) < 2) return;
+  const _ag = Date.now();
+  if (_topoTrava > _ag) return;
+  if (h === _topoPen && _ag - _topoPenT < 900) {
+    /* já vimos este valor há pouco e voltamos ao outro: está oscilando */
+    _topoTrava = _ag + 1500; _topoPen = -1; return;
+  }
+  _topoPen = _topoAppUlt; _topoPenT = _ag;
   _topoAppUlt = h;
   document.documentElement.style.setProperty('--topo-app', h + 'px');
   /* 20/08/2026 - a pílula de período é position:fixed em top:var(--topo-app).
@@ -6370,7 +6390,15 @@ window.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && ['+', 
 try {
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', _remedirTopo);
-    window.visualViewport.addEventListener('scroll', medirTopoApp);
+    /* 05/09 — este era o gatilho do laço: CADA evento de rolagem do
+       visualViewport remedia o topo. Rolar não muda a altura da barra (ela é
+       fixa); o que muda é o teclado abrindo, e para isso o `resize` acima já
+       basta. Fica um remedir bem espaçado, só como rede. */
+    let _vvT = 0;
+    window.visualViewport.addEventListener('scroll', () => {
+      const n = Date.now(); if (n - _vvT < 800) return; _vvT = n;
+      try { medirTopoApp(); } catch (_) { }
+    }, { passive: true });
   }
 } catch (_) {}
 try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(_remedirTopo); } catch (_) {}
