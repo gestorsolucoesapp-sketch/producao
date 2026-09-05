@@ -3899,7 +3899,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.478.0';
+const APP_VER = '4.479.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -31141,6 +31141,17 @@ async function cardSaidaDia(forcar) {
   } catch (e) { box.innerHTML = ''; try { console.warn('saidaDia:', e && e.message); } catch (_) { } }
 }
 function _saidaDiaRender(box) {
+  /* ===== 05/09/2026 (João: "continua ridículo isso") =====
+     O gráfico misturava DUAS RÉGUAS no mesmo eixo: barra colorida em TONELADAS
+     e barra hachurada em QUANTIDADE DE PEDIDOS. Eu escrevi na legenda que era
+     "outra régua" e mesmo assim desenhei as duas na mesma altura — o olho lê
+     altura, não legenda, então a hachura passava por tonelada. Pior: as
+     hachuradas ocupavam 17 das 30 colunas e empurravam as barras de verdade
+     para um canto espremido.
+     Agora são DOIS gráficos empilhados, cada um com sua escala e seu rótulo:
+     em cima as toneladas (que é o que tem meta), embaixo uma tira fina com a
+     contagem de pedidos. Sem foto do 196 = coluna vazia em cima, não barra.
+     Só os dias com peso entram na escala de tonelada. */
   const L = (_saidaDia || []).slice(-30);
   if (!L.length) { box.innerHTML = ''; return; }
   const hoje = hojeISO();
@@ -31151,52 +31162,69 @@ function _saidaDiaRender(box) {
   const mx = Math.max(META_SAIDA_T, ...L.map(x => (+x.saiu_kg || 0) / 1000));
   const mxP = Math.max(1, ...L.map(x => +x.ped || 0));
   const comT = L.filter(x => x.saiu_kg != null).length;
-  const comMeta = L.filter(x => metaDe(x.dia) > 0 && String(x.dia).slice(0, 10) !== hoje);
+  const comMeta = L.filter(x => metaDe(x.dia) > 0 && String(x.dia).slice(0, 10) !== hoje && x.saiu_kg != null);
   const bateu = comMeta.filter(x => (+x.saiu_kg || 0) / 1000 >= metaDe(x.dia)).length;
   const somaT = L.reduce((a, x) => a + (+x.saiu_kg || 0), 0) / 1000;
   const mediaUtil = comMeta.length ? comMeta.reduce((a, x) => a + (+x.saiu_kg || 0), 0) / 1000 / comMeta.length : 0;
-  const yMeta = h => Math.round(h * (META_SAIDA_T / mx));
-  const ALT = 132;
+  const ALT = 150, ALTP = 34;
+  /* rótulo de data a cada N colunas: 30 datas de 5 caracteres não cabem em
+     390px e viravam aquele borrão sobreposto */
+  const passo = L.length > 16 ? Math.ceil(L.length / 8) : 1;
   box.innerHTML = '<div class="card">'
     + '<div class="titulo-sec">🚚 Saiu da carteira por dia' + seloMisto('misto', 'A saída sai da comparação entre fotos da carteira INTEIRA, que não guarda setor: não dá para separar o que saiu de cada um. O número é da fábrica toda.') + '</div>'
     + '<p class="desc" style="margin:0 0 6px;font-size:12px">O que estava pendente na foto anterior e não está mais na de hoje — <b>proxy de faturamento</b>. '
     + 'Meta de <b>' + META_SAIDA_T + ' t</b> por dia útil, proporcional no sábado e nenhuma no domingo.</p>'
     + '<div class="idet-grid">'
     + '<div><b>' + fmt(mediaUtil, 1) + ' t</b><span>média por dia útil</span></div>'
-    + '<div><b style="color:' + (bateu >= comMeta.length / 2 ? 'var(--verde)' : 'var(--critico)') + '">' + bateu + ' de ' + comMeta.length + '</b><span>dias na meta</span></div>'
+    + '<div><b style="color:' + (comMeta.length && bateu >= comMeta.length / 2 ? 'var(--verde)' : 'var(--critico)') + '">' + bateu + ' de ' + comMeta.length + '</b><span>dias na meta</span></div>'
     + '<div><b>' + fmt(somaT, 1) + ' t</b><span>no período</span></div>'
     + '<div><b>' + comT + ' de ' + L.length + '</b><span>dias com peso</span></div>'
     + '</div>'
-    + '<div style="position:relative;margin-top:10px">'
-    /* a linha da meta atravessa o gráfico: o olho compara com ela, não com o eixo */
-    + '<div style="position:absolute;left:0;right:0;bottom:' + (18 + yMeta(ALT)) + 'px;border-top:2px dashed var(--laranja);pointer-events:none">'
-    + '<span style="position:absolute;right:0;top:-15px;font-size:10px;font-weight:800;color:var(--laranja);background:#fff;padding:0 4px">meta ' + META_SAIDA_T + ' t</span></div>'
-    + '<div style="display:flex;align-items:flex-end;gap:4px;height:' + (ALT + 18) + 'px">'
+    /* ===== 1) TONELADAS ===== */
+    + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 3px">toneladas que saíram</div>'
+    + '<div style="position:relative">'
+    + '<div style="position:absolute;left:0;right:0;bottom:' + Math.round(META_SAIDA_T / mx * ALT) + 'px;border-top:2px dashed #B36B00;pointer-events:none">'
+    /* rótulo à ESQUERDA: as barras com peso ficam à direita (só há foto desde
+       22/08) e o rótulo tapava justamente os valores das maiores */
+    + '<span style="position:absolute;left:0;top:-15px;font-size:9.5px;font-weight:800;color:#B36B00;background:#fff;padding:0 4px">meta ' + META_SAIDA_T + ' t</span></div>'
+    + '<div style="display:flex;align-items:flex-end;gap:3px;height:' + ALT + 'px">'
     + L.map(x => {
       const t = (+x.saiu_kg || 0) / 1000, m = metaDe(x.dia), d = String(x.dia).slice(0, 10);
       const parcial = d === hoje;
-      const h = Math.max(2, Math.round(t / mx * ALT));
+      if (x.saiu_kg == null) {
+        /* sem foto do 196: NÃO desenho barra. Barra pequena leria como "saiu
+           pouco"; coluna vazia lê como "não sei", que é a verdade. */
+        return '<div style="flex:1;min-width:7px;height:100%;border-left:1px dashed var(--linha-2s);opacity:.55" title="' + fmtData(d) + ' · sem foto da carteira neste dia"></div>';
+      }
+      const h = Math.max(3, Math.round(t / mx * ALT));
       const cor = parcial ? '#9AA7B2' : (!m ? '#B9C4CF' : (t >= m ? '#1F7A46' : '#C0392B'));
-      return '<div style="flex:1;text-align:center;min-width:16px" title="' + fmtData(d) + ' · '
-        + (x.saiu_kg == null ? 'sem foto da carteira neste dia' : fmt(t, 1) + ' t' + (m ? ' · meta ' + fmt(m, 1) + ' t' : ' · domingo, sem meta'))
-        + (x.ped != null ? ' · ' + x.ped + ' pedido(s) expedido(s)' : '')
-        + (parcial ? ' · dia em andamento' : '') + '">'
-        + (x.saiu_kg == null
-          /* dia sem foto do 196: em vez de barra zerada (que leria como "não saiu
-             nada"), mostro a contagem do 304 em cinza claro, na altura da própria
-             escala de pedidos. É outra régua, e a legenda diz isso. */
-          ? '<div style="background:repeating-linear-gradient(45deg,#D5DEE6,#D5DEE6 3px,#EAF0F5 3px,#EAF0F5 6px);border-radius:4px 4px 0 0;height:'
-            + Math.max(2, Math.round((+x.ped || 0) / mxP * (ALT * 0.55))) + 'px"></div>'
-          : '<div style="background:' + cor + ';border-radius:4px 4px 0 0;height:' + h + 'px"></div>')
-        + '<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:3px">' + fmtData(d).slice(0, 5) + '</span></div>';
+      return '<div style="flex:1;min-width:7px;display:flex;flex-direction:column;justify-content:flex-end;height:100%" title="' + fmtData(d) + ' · ' + fmt(t, 1) + ' t'
+        + (m ? ' · meta ' + fmt(m, 1) + ' t' : ' · domingo, sem meta') + (parcial ? ' · dia em andamento' : '') + '">'
+        + (h > 26 ? '<span style="font-size:8.5px;font-weight:800;color:' + cor + ';text-align:center;margin-bottom:1px">' + fmt(t, 0) + '</span>' : '')
+        + '<div style="background:' + cor + ';border-radius:3px 3px 0 0;height:' + h + 'px"></div></div>';
     }).join('')
     + '</div></div>'
-    + '<p class="desc" style="font-size:11px;margin-top:6px">'
-    + '<b>Barra colorida</b> = toneladas, medidas entre <b>fotos</b> do REST196 (só existe desde 22/08). '
-    + '<b>Barra hachurada</b> = dias sem foto: aí só sei <b>quantos pedidos</b> foram expedidos, pelo RVEN304 — é outra régua, não é tonelada. '
-    + 'A barra cinza do fim é o dia em andamento. Para ter tonelada do mês inteiro seria preciso um relatório de notas com peso.</p>'
+    /* ===== 2) PEDIDOS — escala própria, tira fina ===== */
+    + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 3px">pedidos expedidos <span style="font-weight:400;text-transform:none">· outra régua, não é tonelada</span></div>'
+    + '<div style="display:flex;align-items:flex-end;gap:3px;height:' + ALTP + 'px">'
+    + L.map(x => {
+      const d = String(x.dia).slice(0, 10), p = +x.ped || 0;
+      if (!p) return '<div style="flex:1;min-width:7px" title="' + fmtData(d) + ' · sem expedição registrada"></div>';
+      return '<div style="flex:1;min-width:7px;background:#7C93AB;border-radius:2px 2px 0 0;height:'
+        + Math.max(2, Math.round(p / mxP * ALTP)) + 'px" title="' + fmtData(d) + ' · ' + p + ' pedido(s) expedido(s)"></div>';
+    }).join('')
+    + '</div>'
+    + '<div style="display:flex;gap:3px;margin-top:3px">'
+    + L.map((x, i) => '<span style="flex:1;min-width:7px;text-align:center;font-size:8.5px;color:var(--fraco-2)">'
+      + (i % passo === 0 ? fmtData(String(x.dia).slice(0, 10)).slice(0, 5) : '') + '</span>').join('')
+    + '</div>'
+    + '<p class="desc" style="font-size:11px;margin-top:8px">'
+    + 'Em cima, <b>toneladas</b> medidas entre fotos do REST196 — só existem desde 22/08; dia sem foto fica com a coluna vazia, porque aí eu não sei o peso. '
+    + 'Embaixo, <b>quantos pedidos</b> foram expedidos pelo RVEN304, que cobre o mês inteiro: é contagem, não peso, por isso tem escala própria. '
+    + 'Cinza no fim é o dia em andamento. Para ter tonelada do mês inteiro seria preciso um relatório de notas com peso.</p>'
     + '</div>';
 }
+
 /* a marca vem do banco; carrego uma vez por sessão, junto do painel */
 try { if (!Object.keys(_PARADA_REVISAR).length) _carregaParadasSuspeitas(); } catch (_) { }
 async function cardAtrasoDia(forcar) {
