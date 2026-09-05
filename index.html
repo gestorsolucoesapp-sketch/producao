@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.493.0';
+const APP_VER = '4.494.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14728,8 +14728,16 @@ function _mqDesenho(cont, nome) {
       + '<circle cx="' + (lx + 11) + '" cy="' + (ly - 5) + '" r="11" fill="' + c.f + '" stroke="' + c.s + '" stroke-width="2"/>'
       + '<text x="' + (lx + 11) + '" y="' + (ly - 0.5) + '" text-anchor="middle" font-size="11" font-weight="800" fill="' + c.t + '">' + p.n + '</text>'
       + '<text x="' + (lx + 30) + '" y="' + ly + '" font-size="14" font-weight="700" fill="#16283A">' + escapeHtml(nome[p.k] || p.k) + '</text>'
-      + (q ? '<text x="' + (lx + 366) + '" y="' + ly + '" text-anchor="end" font-size="13.5" font-weight="800" fill="#16283A">' + q + ' ' + (_mqMetrica === 'h' ? 'h' : 'OS') + ' \u203a</text>'
-           : '<text x="' + (lx + 366) + '" y="' + ly + '" text-anchor="end" font-size="12.5" fill="#98A6B4">—</text>') + '</g>'
+      /* 05/09 — a contagem terminava em lx+366 e o ⧉ novo fica em lx+356: um por
+         cima do outro. No modo editar ela recua para abrir espaço aos dois botões. */
+      + (q ? '<text x="' + (lx + (_mqEdit ? 336 : 366)) + '" y="' + ly + '" text-anchor="end" font-size="13.5" font-weight="800" fill="#16283A">' + q + ' ' + (_mqMetrica === 'h' ? 'h' : 'OS') + ' \u203a</text>'
+           : '<text x="' + (lx + (_mqEdit ? 336 : 366)) + '" y="' + ly + '" text-anchor="end" font-size="12.5" fill="#98A6B4">—</text>') + '</g>'
+      + (_mqEdit ? '<g onclick="event.stopPropagation();mqReplicar(&quot;' + p.k + '&quot;)" style="cursor:pointer"><title>copiar esta bolinha para outras máquinas</title>'
+        /* 05/09 — o caractere ⧉ não existe em toda fonte e saía como quadradinho
+           vazio; dois retângulos desenhados dizem "copiar" em qualquer aparelho */
+        + '<circle cx="' + (lx + 356) + '" cy="' + (ly - 5) + '" r="9" fill="#E8F1FB" stroke="#3A6FB0"/>'
+        + '<rect x="' + (lx + 351.5) + '" y="' + (ly - 9.5) + '" width="6.5" height="7.5" rx="1.5" fill="none" stroke="#3A6FB0" stroke-width="1.4"/>'
+        + '<rect x="' + (lx + 354.5) + '" y="' + (ly - 7) + '" width="6.5" height="7.5" rx="1.5" fill="#E8F1FB" stroke="#3A6FB0" stroke-width="1.4"/></g>' : '')
       + (_mqEdit ? '<g onclick="event.stopPropagation();mqExcluiPonto(\'' + p.k + '\')" style="cursor:pointer"><circle cx="' + (lx + 380) + '" cy="' + (ly - 5) + '" r="9" fill="#FBE3E3" stroke="#D64545"/><text x="' + (lx + 380) + '" y="' + (ly - 1) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#9B2C2C">\u2715</text></g>' : '');
   });
   /* semáforo: diz o que cada cor significa. Sem isso a escala é adivinhação —
@@ -15011,6 +15019,10 @@ async function mqAddPontoCom(nome) {
     _mqPartes = []; _mqEdit = true;
     await renderMqMapa();
     toast('"' + nome + '" criada no meio da figura — arraste para o lugar.');
+    /* 05/09 — o convite para copiar vem AQUI, logo depois de nomear: é o
+       momento em que ele sabe se a peça existe nas outras máquinas. Depois
+       também dá, pelo ⧉ da legenda. */
+    try { if (_mqMaqsReplicar().length) setTimeout(() => mqReplicar(chave), 350); } catch (_) { }
   } catch (e) { toast('Não consegui criar: ' + ((e && e.message) || e)); }
 }
 function _mp_slug(s) {
@@ -43645,6 +43657,79 @@ async function mqCriaDaPalavra(w) {
   if (!nome) { toast('O nome não pode ficar vazio.'); return; }
   _mqEdit = true;
   await mqAddPontoCom(nome);
+}
+
+/* ===== 05/09/2026 (João: "quando eu informar a palavra chave na bolinha me dê
+   a possibilidade de escolher e replicar para outras máquinas que só iguais os
+   motivos, mas o filtro continua por máquina") =====
+   As bolinhas passaram a ser de cada máquina (v4.493) e isso está certo — mas
+   nomear "Baterias" nove vezes é trabalho repetido, e as Van Dam têm as mesmas
+   peças. Aqui ele escolhe PARA QUAIS máquinas copiar, uma vez só.
+   O que é copiado é a BOLINHA (nome, posição, chave). A CONTA continua por
+   máquina: cada cópia lê as ordens da SUA máquina, então a mesma palavra dá
+   números diferentes em cada uma — que é justamente o que ele quer olhar. */
+function _mqMaqsReplicar() {
+  return _mqMaqsDoSetor().filter(m => String(m) !== String(_mqMaq));
+}
+function mqReplicar(chave) {
+  const p = (_mqPartes || []).find(z => z.chave === chave); if (!p) return;
+  const outras = _mqMaqsReplicar();
+  if (!outras.length) { toast('Não há outra máquina neste setor.'); return; }
+  const d = document.createElement('div');
+  d.innerHTML = '<div style="position:fixed;inset:0;background:rgba(11,42,74,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;overflow:auto">'
+    + '<div style="background:#fff;border-radius:14px;padding:15px;max-width:400px;width:100%">'
+    + '<div style="font-size:14px;font-weight:800;color:var(--navy)">Copiar “' + escapeHtml(p.nome) + '” para outras máquinas</div>'
+    + '<p class="desc" style="font-size:11.5px;margin:5px 0 10px">A bolinha vai para as máquinas marcadas, no mesmo lugar do desenho. '
+    + 'A contagem continua por máquina: cada uma lê só as ordens dela.</p>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">'
+    + '<span id="mqRepTodas" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:var(--leve-2)">marcar todas</span>'
+    + '<span id="mqRepNada" style="cursor:pointer;font-size:11px;font-weight:800;border-radius:999px;padding:4px 10px;background:var(--leve-2)">limpar</span></div>'
+    + '<div id="mqRepLista" style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 4px">'
+    + outras.map(m => '<label style="display:inline-flex;align-items:center;gap:5px;border:1px solid var(--linha-2s);border-radius:999px;padding:5px 11px;cursor:pointer;font-size:13px;font-weight:700">'
+      + '<input type="checkbox" class="mqRepCk" value="' + escapeHtml(m) + '" style="width:16px;height:16px"> ' + escapeHtml(m) + '</label>').join('')
+    + '</div>'
+    + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:12px">'
+    + '<span id="mqRepX" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 14px;background:var(--leve-2)">agora não</span>'
+    + '<span id="mqRepOk" style="cursor:pointer;font-size:12px;font-weight:800;border-radius:999px;padding:8px 16px;background:#1F7A46;color:#fff">copiar</span>'
+    + '</div></div></div>';
+  document.body.appendChild(d);
+  const marcadas = () => [...d.querySelectorAll('.mqRepCk')].filter(c => c.checked).map(c => c.value);
+  d.querySelector('#mqRepTodas').onclick = () => d.querySelectorAll('.mqRepCk').forEach(c => { c.checked = true; });
+  d.querySelector('#mqRepNada').onclick = () => d.querySelectorAll('.mqRepCk').forEach(c => { c.checked = false; });
+  d.querySelector('#mqRepX').onclick = () => d.remove();
+  d.querySelector('#mqRepOk').onclick = async () => {
+    const alvos = marcadas();
+    d.remove();
+    if (!alvos.length) return;
+    await _mqReplicaPara(p, alvos);
+  };
+}
+async function _mqReplicaPara(p, alvos) {
+  let ok = 0, jaTinha = 0;
+  for (const m of alvos) {
+    const chaveMapa = String(m) + (_mqVistaSuf ? ':' + _mqVistaSuf : '');
+    try {
+      const { data: ex } = await sb.from('maquina_parte').select('id,num')
+        .eq('setor', _mqSetor).eq('mapa', chaveMapa).eq('chave', p.chave).limit(1);
+      if (ex && ex[0]) {
+        /* já existe naquela máquina: atualiza o nome e reativa, sem duplicar e
+           sem mexer no número que ela já tinha */
+        await sb.from('maquina_parte').update({ nome: p.nome, pos_x: p.pos_x, pos_y: p.pos_y, ativo: true }).eq('id', ex[0].id);
+        jaTinha++;
+      } else {
+        const { data: tn } = await sb.from('maquina_parte').select('num').eq('setor', _mqSetor).eq('mapa', chaveMapa);
+        const prox = 1 + (tn || []).reduce((a, r) => Math.max(a, +r.num || 0), 0);
+        const { error } = await sb.from('maquina_parte').insert({
+          setor: _mqSetor, mapa: chaveMapa, chave: p.chave, nome: p.nome,
+          ordem: p.ordem || 10, pos_x: p.pos_x, pos_y: p.pos_y, num: prox, ativo: true
+        });
+        if (error) throw error;
+        ok++;
+      }
+    } catch (e) { try { console.warn('replicar', m, e && e.message); } catch (_) { } }
+  }
+  toast('⧉ “' + p.nome + '” em ' + (ok + jaTinha) + ' máquina(s)'
+    + (jaTinha ? ' · ' + jaTinha + ' já tinha e foi atualizada' : ''));
 }
 
 (function _vigiaTeto() {
