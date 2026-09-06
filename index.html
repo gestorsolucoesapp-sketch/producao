@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.494.0';
+const APP_VER = '4.495.0';
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -14769,6 +14769,13 @@ async function renderMqMapa() {
     }
     let L = (osLista || []).filter(o => (o.setor || (o.recurso_cod ? setorDe(o.recurso_cod) : '')) === _mqSetor);
     if (_mqMaq) L = L.filter(o => String(o.recurso_cod) === String(_mqMaq));
+    /* 05/09 — em "todo o histórico" a lista da aba (abertas + 90 dias) não
+       basta: a 704 mostrava 6 ordens em Baterias e o banco tem 16. Com o mapa
+       por máquina dá para buscar TUDO dela — são 90 ordens, não 6.234. */
+    if (_mqTudo && _mqMaq) {
+      const _todas = await _mqOSDaMaquina(_mqMaq);
+      if (_todas && _todas.length) L = _todas;
+    }
     if (!_mqTudo && typeof periodoSel !== 'undefined' && periodoSel && periodoSel.de && periodoSel.ate) {
       const de = String(periodoSel.de).slice(0, 10), ate = String(periodoSel.ate).slice(0, 10);
       L = L.filter(o => { const d = String(o.data_abertura || '').slice(0, 10); return d && d >= de && d <= ate; });
@@ -43730,6 +43737,35 @@ async function _mqReplicaPara(p, alvos) {
   }
   toast('⧉ “' + p.nome + '” em ' + (ok + jaTinha) + ' máquina(s)'
     + (jaTinha ? ' · ' + jaTinha + ' já tinha e foi atualizada' : ''));
+}
+
+/* ===== 05/09/2026 (João: "poucas ordens") =====
+   A 704 mostrava 6 em Baterias e o banco tem 16. A aba Manutenção carrega só as
+   ABERTAS + os últimos 90 dias (v4.398, para não puxar 6.234 OS a cada abertura);
+   o histórico antigo vinha da foto `mv_os_parte`, que eu desliguei na v4.490
+   porque ela foi montada com a régua velha do `parte_chave`. Resultado: "todo o
+   histórico" passou a mostrar só 90 dias, calado.
+   Agora que o mapa é POR MÁQUINA o problema some: 90 ordens na 704 inteira,
+   não 6.234. Dá para buscar tudo daquela máquina direto, sem foto nenhuma. */
+let _mqOSCache = {}, _mqOSCarregando = null;
+async function _mqOSDaMaquina(cod) {
+  const k = String(cod || '');
+  if (!k) return [];
+  if (_mqOSCache[k]) return _mqOSCache[k];
+  if (_mqOSCarregando === k) return [];
+  _mqOSCarregando = k;
+  try {
+    const { data, error } = await sb.from('manutencao_os')
+      .select('id,os_num,recurso_cod,setor,data_abertura,horas_parada,atividade,motivo,submotivo,detalhes,conclusao,situacao')
+      .eq('recurso_cod', k).order('data_abertura', { ascending: false }).limit(2000);
+    if (error) throw error;
+    _mqOSCache[k] = data || [];
+  } catch (e) {
+    try { console.warn('OS da máquina:', e && e.message); } catch (_) { }
+    _mqOSCache[k] = [];
+  }
+  _mqOSCarregando = null;
+  return _mqOSCache[k];
 }
 
 (function _vigiaTeto() {
