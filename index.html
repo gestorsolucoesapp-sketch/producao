@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.512.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.513.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3916,7 +3916,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.512.0';
+const APP_VER = '4.513.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10100,6 +10100,15 @@ async function carregarRH() {
     });
     _rhDados.forEach(p => { const m = mp[String(p.matricula)]; if (m) p._promo = m; });
   } catch (_) { }
+  /* nascimento mora em `colaboradores`: é atributo da pessoa, e são 258 no
+     cadastro contra 135 fichas — na ficha, quem não foi entrevistado nunca
+     teria aniversário */
+  try {
+    const cn = await sb.from('colaboradores').select('matricula,nascimento').not('nascimento', 'is', null);
+    const mn = {};
+    (cn.data || []).forEach(r => { if (r.matricula) mn[String(r.matricula)] = r.nascimento; });
+    _rhDados.forEach(p => { const v = mn[String(p.matricula)]; if (v) p._nasc = v; });
+  } catch (_) { }
   try { await entrevCarregar(); } catch (_) { }
   try {
     const rem = await sb.from('rh_remuneracao').select('matricula,cargo,salario,situacao,admissao');
@@ -10179,6 +10188,48 @@ async function rhTarefa(nome, mat, setor) {
    verdade — está na hora de olhar de novo? Data futura acontece (promoção já
    lançada com efeito no mês que vem) e aparece como "a partir de", não como
    tempo negativo. */
+/* ===== 08/09/2026 (João: "sinalize data de nascimento e quando for aniversário
+   de empresa e de nascimento, mostre também na aba Diagnóstico RH e na Gestão de
+   Pessoas") =====
+   Um helper só, usado nas duas abas — duas contas de aniversário em lugares
+   diferentes acabam discordando na virada do dia.
+   Conta pelo dia/mês, ignorando o ano: aniversário não envelhece. 29/02 cai em
+   28/02 nos anos comuns, senão a pessoa passaria três anos sem aparecer.
+   A janela é de 7 dias para frente: serve para preparar, não para lembrar
+   depois que passou. */
+function _aniDias(dataISO) {
+  if (!dataISO) return null;
+  const p = String(dataISO).slice(0, 10).split('-');
+  if (p.length !== 3) return null;
+  const mes = +p[1], dia = +p[2];
+  if (!mes || !dia) return null;
+  const hoje = new Date(); hoje.setHours(12, 0, 0, 0);
+  for (let k = 0; k <= 366; k++) {
+    const d = new Date(hoje.getTime() + k * 86400000);
+    let m2 = mes, d2 = dia;
+    if (mes === 2 && dia === 29) {
+      const bis = (a => (a % 4 === 0 && a % 100 !== 0) || a % 400 === 0)(d.getFullYear());
+      if (!bis) d2 = 28;
+    }
+    if (d.getMonth() + 1 === m2 && d.getDate() === d2) return k;
+  }
+  return null;
+}
+function aniMarca(dataISO, tipo) {
+  const k = _aniDias(dataISO);
+  if (k === null || k > 7) return '';
+  const nasc = tipo === 'nasc';
+  const ico = nasc ? '🎂' : '🎉';
+  let anos = '';
+  if (!nasc) {
+    const ano = +String(dataISO).slice(0, 4);
+    const n = new Date().getFullYear() - ano + (k > 0 && new Date().getMonth() + 1 > +String(dataISO).slice(5, 7) ? 1 : 0);
+    if (n > 0) anos = ' · ' + n + (n === 1 ? ' ano' : ' anos') + ' de casa';
+  }
+  const quando = k === 0 ? 'hoje' : (k === 1 ? 'amanhã' : 'em ' + k + ' dias');
+  const cor = k === 0 ? (nasc ? '#FADBD8;color:#943126' : '#D5F5E3;color:#186A3B') : '#FCF3CF;color:#7D6608';
+  return '<span class="chip" style="background:' + cor + '">' + ico + ' ' + (nasc ? 'aniversário ' : 'aniversário de empresa ') + quando + anos + '</span>';
+}
 function rhDesdeQuando(d) {
   if (!d) return '';
   const x = new Date(String(d).slice(0, 10) + 'T12:00:00');
@@ -10311,6 +10362,7 @@ function rhRender() {
       (p.potencial_multiplicador ? '<span class="chip" style="background:#D5F5E3;color:#186A3B">★ formador</span>' : '') +
       (p.interesse_carreira ? '<span class="chip" style="background:#D6EAF8;color:#1A5276">↗ quer crescer</span>' : '') +
       (p.qtd_atencao > 0 ? '<span class="chip" style="background:#FDEBD0;color:#7E5109">▲ ' + p.qtd_atencao + '</span>' : '') +
+      aniMarca(p._nasc, 'nasc') + aniMarca(p.admissao, 'casa') +
       (p._promo ? '<span class="chip" style="background:#FCF3CF;color:#7D6608">💼 promovido'
         + (p._promo.data_efeito ? ' ' + rhEsc(String(p._promo.data_efeito).slice(0, 10).split('-').reverse().join('/'))
           + ' · ' + rhEsc(rhDesdeQuando(p._promo.data_efeito)) : '')
@@ -10332,7 +10384,8 @@ function rhRender() {
       '</div>' +
       '<div style="font-size:12px;color:#5A6B7B;margin:2px 0 6px">' +
         (p.matricula ? 'mat. ' + rhEsc(p.matricula) + ' · ' : '') + rhEsc(p.cargo || '') +
-        (p.tempo_casa ? ' · ' + rhEsc(p.tempo_casa) : '') + '</div>' +
+        (p.tempo_casa ? ' · ' + rhEsc(p.tempo_casa) : '') +
+        (p._nasc ? ' · 🎂 ' + rhEsc(String(p._nasc).slice(0, 10).split('-').reverse().join('/')) : '') + '</div>' +
       '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' + badges +
         (p._sal ? '<span style="margin-left:auto;font-size:12px;font-weight:800;color:#1A5276">' + rhMoeda(p._sal) + '</span>' : '') + '</div>' +
       (_rhAberto === p.num ? rhFicha(p) : '') +
@@ -10368,7 +10421,7 @@ async function rhEditar(num) {
   $('rhNvMaq').value = p.maquinas || '';
   $('rhNvMora').value = p.mora || '';
   $('rhNvEsc').value = p.escolaridade || '';
-  $('rhNvNasc').value = p.nascimento ? String(p.nascimento).slice(0, 10) : '';
+  $('rhNvNasc').value = p._nasc ? String(p._nasc).slice(0, 10) : '';
   rhNvIdade();
   $('rhNvSens').checked = !!p.sensivel;
   $('rhNvTrava').checked = !!p.requer_apuracao_previa;
@@ -10676,7 +10729,6 @@ async function rhNovaSalvar() {
     admissao: folha ? folha.admissao : null,
     mora: $('rhNvMora').value.trim() || null,
     escolaridade: $('rhNvEsc').value.trim() || null,
-    nascimento: ($('rhNvNasc') && $('rhNvNasc').value) ? $('rhNvNasc').value : null,
     maquinas: $('rhNvMaq').value.trim() || null,
     apontamentos: texto, qtd_atencao: qtd,
     sensivel: $('rhNvSens').checked,
@@ -10694,6 +10746,22 @@ async function rhNovaSalvar() {
     ({ error } = await sb.from('rh_analise_individual').insert(reg));
   }
   if (error) { $('rhNvMsg').innerHTML = '<span style="color:#C0392B">Erro ao salvar: ' + rhEsc(error.message) + '</span>'; return; }
+
+  /* 08/09/2026 — o nascimento não vai no `reg`: ele mora em `colaboradores`,
+     porque é dado da pessoa e não da entrevista. Gravo aqui, pela matrícula.
+     Se falhar, a entrevista já está salva e eu só aviso — perder a entrevista
+     inteira por causa de uma data seria muito pior. */
+  try {
+    const nsc = ($('rhNvNasc') && $('rhNvNasc').value) ? $('rhNvNasc').value : null;
+    const mtc = reg.matricula || (folha && folha.matricula) || null;
+    if (nsc && mtc) {
+      const un = await sb.from('colaboradores').update({ nascimento: nsc }).eq('matricula', String(mtc));
+      if (un.error) toast('entrevista salva, mas a data de nascimento não gravou: ' + un.error.message);
+      else if (_rhDados) { const alvo = _rhDados.find(x => String(x.matricula) === String(mtc)); if (alvo) alvo._nasc = nsc; }
+    } else if (nsc && !mtc) {
+      toast('entrevista salva · a data de nascimento não gravou porque a pessoa está sem matrícula');
+    }
+  } catch (_) { }
 
   // grava temas novos no catalogo
   const novos = [..._rhTemaSel].map(t => ({ tema: t }));
@@ -50894,7 +50962,11 @@ async function fichaColaborador(mat) {
     ['Cargo', escapeHtml(cargo)],
     ['Setor', escapeHtml(c.setor || (AN && AN.setor) || '—')],
     ['Lotação', escapeHtml(c.lotacao || (AN && AN.lotacao) || '—')],
-    ['Admissão', adm ? fmtData(adm) + ' · ' + _fchTempoCasa(adm) : '—'],
+    ['Admissão', adm ? fmtData(adm) + ' · ' + _fchTempoCasa(adm) + ' ' + aniMarca(adm, 'casa') : '—'],
+    /* 08/09/2026 (João) — nascimento e as duas marcas de aniversário também
+       aqui; o helper é o mesmo do Diagnóstico RH para as duas abas nunca
+       discordarem na virada do dia */
+    ['Nascimento', c.nascimento ? fmtData(c.nascimento) + ' ' + aniMarca(c.nascimento, 'nasc') : '<span class="desc">não cadastrada</span>'],
     ['Situação', situacao]
   ].map(([k, v]) => `<tr><td class="nome">${k}</td><td style="text-align:left;font-size:13px;font-weight:700">${v}</td></tr>`).join(''));
 
