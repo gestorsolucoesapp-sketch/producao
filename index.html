@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.507.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.508.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1783,6 +1783,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button id="rhSubA" class="btn" onclick="rhSub('analises')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;background:var(--navy);color:#fff">Análises</button>
           <button id="rhSubC" class="btn" onclick="rhSub('cobertura')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800">☑️ Cobertura das conversas</button>
+          <button id="rhSubD" class="btn" onclick="rhSub('desligados')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800">✂️ Desligados</button>
         </div>
       </div>
 
@@ -1807,6 +1808,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
           <button class="btn rh-chip" data-f="sens"   onclick="rhChip('sens')"   style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">⚠ Confidencial</button>
           <button class="btn rh-chip" data-f="deslig" onclick="rhChip('deslig')" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">✂️ Desligados</button>
           <button class="btn rh-chip" data-f="sement" onclick="rhChip('sement')" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">◻️ Sem entrevista</button>
+          <button id="rhBtnDeslig" class="btn" onclick="rhVerDeslig()" style="display:inline-block;width:auto;padding:8px 12px;font-size:13px">👁 mostrar desligados</button>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
           <div id="rhCount" style="font-size:12px;color:#5A6B7B"></div>
@@ -3913,7 +3915,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.507.0';
+const APP_VER = '4.508.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10059,11 +10061,29 @@ async function carregarRH() {
   if (_rhDados) { rhRender(); return; }
   box.innerHTML = '<div class="card">Carregando fichas...</div>';
   const { data, error } = await sb.from('rh_analise_individual')
-    .select('num,nome,turno,cargo,mora,tempo_casa,escolaridade,maquinas,apontamentos,qtd_atencao,sensivel,analise,pontos_fortes,necessidades,acao_sugerida,temas,potencial_multiplicador,interesse_carreira,requer_apuracao_previa,desligado,desligado_em,desligado_obs,entrevistado,admissao,matricula')
+    .select('num,nome,turno,cargo,mora,tempo_casa,escolaridade,maquinas,apontamentos,qtd_atencao,sensivel,analise,pontos_fortes,necessidades,acao_sugerida,temas,potencial_multiplicador,interesse_carreira,requer_apuracao_previa,desligado,desligado_em,desligado_obs,entrevistado,admissao,nascimento,matricula,setor,lotacao')
     .order('num');
   if (error) { box.innerHTML = '<div class="card">Erro ao carregar: ' + rhEsc(error.message) + '</div>'; return; }
   if (!data || !data.length) { box.innerHTML = '<div class="card">Nenhuma ficha visível para este login.</div>'; return; }
   _rhDados = data;
+  /* 08/09/2026 (João: "não está filtrando o setor"). Eram DOIS problemas.
+     Primeiro, `setor` nem vinha no select — o seletor nascia sem opção nenhuma,
+     por isso parecia quebrado. Segundo, o setor da ficha é grosso: 132
+     Termoformagem e 3 Impressão, então filtrar por ele quase não recorta nada.
+     Agora o setor fino vem da alocação vigente do organograma (o mesmo da
+     sub-aba Cobertura: EMBALADEIRAS, EMBALADEIRA KIT...), casado por matrícula.
+     Quem não tem alocação continua com o setor da ficha — sumir da lista seria
+     pior que aparecer no grupo grosso. */
+  try {
+    const al = await sb.from('org_alocacoes').select('matricula,setor,vigencia_inicio').is('vigencia_fim', null);
+    const mapa = {};
+    (al.data || []).forEach(r => {
+      if (!r.matricula || !r.setor) return;
+      const k = String(r.matricula), at = mapa[k];
+      if (!at || String(r.vigencia_inicio || '') > String(at.vigencia_inicio || '')) mapa[k] = r;
+    });
+    _rhDados.forEach(p => { const m = mapa[String(p.matricula)]; if (m) p._setorOrg = m.setor; });
+  } catch (_) { }
   try { await entrevCarregar(); } catch (_) { }
   try {
     const rem = await sb.from('rh_remuneracao').select('matricula,cargo,salario,situacao,admissao');
@@ -10090,9 +10110,12 @@ async function carregarRH() {
    briga com a lista de baixo. */
 const RH_KPI_CHIP = { 'Apuração prévia': 'trava', 'Formadores': 'mult', 'Querem crescer': 'carr', 'Confidencial': 'sens', 'Sem entrevista': 'sement', 'Desligados': 'deslig' };
 let _rhSetor = '';
+function rhSetorDe(p) { return String((p && (p._setorOrg || p.setor || p.lotacao)) || ''); }
 function rhBase() {
-  const d = _rhDados || [];
-  return _rhSetor ? d.filter(p => String(p.setor || p.lotacao || '') === _rhSetor) : d;
+  let d = _rhDados || [];
+  if (_rhSubAtual === 'desligados') d = d.filter(p => p.desligado);
+  else if (!_rhVerDeslig) d = d.filter(p => !p.desligado);
+  return _rhSetor ? d.filter(p => rhSetorDe(p) === _rhSetor) : d;
 }
 /* 08/09/2026 (João: "não está filtrando o turno"). O seletor de turno DENTRO da
    aba sempre funcionou; quem não valia era a pílula TURNO do topo do app, que
@@ -10114,11 +10137,12 @@ function rhSetorMuda() {
 }
 function rhSetorOpcoes() {
   const sel = $('rhSetorSel'); if (!sel) return;
-  const sts = [...new Set((_rhDados || []).map(p => String(p.setor || p.lotacao || '')).filter(Boolean))].sort();
+  const univ = (_rhDados || []).filter(p => _rhSubAtual === 'desligados' ? p.desligado : (_rhVerDeslig || !p.desligado));
+  const sts = [...new Set(univ.map(rhSetorDe).filter(Boolean))].sort();
   if (_rhSetor && !sts.includes(_rhSetor)) _rhSetor = '';
-  sel.innerHTML = '<option value="">Todos os setores</option>'
+  sel.innerHTML = '<option value="">Todos os setores · ' + univ.length + '</option>'
     + sts.map(st => '<option value="' + escapeHtml(st) + '"' + (st === _rhSetor ? ' selected' : '') + '>'
-      + escapeHtml(st) + ' · ' + (_rhDados || []).filter(p => String(p.setor || p.lotacao || '') === st).length + '</option>').join('');
+      + escapeHtml(st) + ' · ' + univ.filter(p => rhSetorDe(p) === st).length + '</option>').join('');
 }
 /* 08/09/2026 (João: "permita adicionar as tarefas nessa aba"). Não criei um
    cadastro paralelo de tarefa: abro o MESMO modal do app já preenchido com o
@@ -10140,6 +10164,7 @@ function rhKpiToque(lab) {
     document.querySelectorAll('.rh-chip').forEach(b => { b.style.background = ''; b.style.color = ''; });
     rhKpis(); rhRender(); return;
   }
+  if (lab === 'Desligados') { rhSub('desligados'); return; }
   const f = RH_KPI_CHIP[lab]; if (!f) return;
   rhChip(f); rhKpis();
 }
@@ -10295,17 +10320,35 @@ async function rhEditar(num) {
 let _rhSubAtual = 'analises', _rhCob = null, _rhCobSoFalta = false, _rhCobSetor = '';
 function rhSub(v) {
   _rhSubAtual = v;
-  const cob = v === 'cobertura';
+  const cob = v === 'cobertura', des = v === 'desligados';
   const el = id => document.getElementById(id);
   if (el('rhFiltros')) el('rhFiltros').classList.toggle('oculto', cob);
   if (el('rhLista')) el('rhLista').classList.toggle('oculto', cob);
   if (el('rhCobertura')) el('rhCobertura').classList.toggle('oculto', !cob);
-  [['rhSubA', !cob], ['rhSubC', cob]].forEach(p => {
+  if (el('rhBtnDeslig')) el('rhBtnDeslig').classList.toggle('oculto', des);
+  [['rhSubA', v === 'analises'], ['rhSubC', cob], ['rhSubD', des]].forEach(p => {
     const b = el(p[0]); if (!b) return;
     b.style.background = p[1] ? 'var(--navy)' : '';
     b.style.color = p[1] ? '#fff' : '';
   });
-  if (cob) rhCobCarregar();
+  if (cob) { rhCobCarregar(); return; }
+  try { rhKpis(); } catch (_) { }
+  rhRender();
+}
+/* 08/09/2026 (João: "permita não mostrar os desligados e fazer uma sub-aba só de
+   desligados"). Com aba própria para eles, a lista de Análises passa a nascer
+   SEM desligados — é o que ele pediu ver limpo. O botão devolve quando quiser.
+   Na sub-aba Desligados o botão some: ali eles são o assunto. */
+let _rhVerDeslig = false;
+function rhVerDeslig() {
+  _rhVerDeslig = !_rhVerDeslig;
+  const b = $('rhBtnDeslig');
+  if (b) {
+    b.textContent = _rhVerDeslig ? '🙈 esconder desligados' : '👁 mostrar desligados';
+    b.style.background = _rhVerDeslig ? '#2C3E50' : '';
+    b.style.color = _rhVerDeslig ? '#fff' : '';
+  }
+  rhKpis(); rhRender();
 }
 async function rhCobCarregar(forcar) {
   const box = document.getElementById('rhCobertura'); if (!box) return;
