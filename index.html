@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.508.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.509.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3915,7 +3915,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.508.0';
+const APP_VER = '4.509.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -52591,11 +52591,37 @@ function orgAvisaForaDoRH(setores, importados) {
   orgModal('⚠️ ' + r.lista.length + ' fora do relatório', h);
 }
 
+/* ===== 08/09/2026 (João: "quando uma pessoa é desligada ela não aparece no
+   relatório que importei, mas hoje importei e não entrou como desligado") =====
+   O caminho existia pela metade: este botão apagava a pessoa do CADASTRO
+   (`colaboradores.ativo = false`) e parava aí. A ficha do Diagnóstico RH
+   continuava viva, sem tarja de desligado, porque `desligado` mora em outra
+   tabela e ninguém escrevia nela. Dois lugares dizendo coisas diferentes sobre
+   a mesma pessoa.
+   Agora o mesmo toque escreve nos dois, com a data de hoje e de onde veio.
+   Não faço isso sozinho na importação de propósito: `visto_rh` só é atualizado
+   nos setores que vieram no arquivo, e ele importa setor a setor. Varrer a
+   fábrica inteira desligaria hoje 40 pessoas que estão trabalhando. Quem decide
+   continua sendo ele, olhando a lista. */
 async function orgDesativaForaRH(mats) {
   if (!mats || !mats.length) return;
   const { error } = await sb.from('colaboradores').update({ ativo: false }).in('matricula', mats);
   if (error) { toast('Erro: ' + error.message); return; }
-  toast(mats.length + ' marcada(s) como inativa(s)');
+  let aviso = '';
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data: fichas } = await sb.from('rh_analise_individual')
+      .select('num,matricula,desligado').in('matricula', mats);
+    const alvo = (fichas || []).filter(f => !f.desligado).map(f => f.num);
+    if (alvo.length) {
+      const up = await sb.from('rh_analise_individual')
+        .update({ desligado: true, desligado_em: hoje, desligado_obs: 'não veio no relatório importado em ' + hoje })
+        .in('num', alvo);
+      if (up.error) aviso = ' · a ficha do RH não atualizou: ' + up.error.message;
+      else { aviso = ' · ' + alvo.length + ' ficha(s) do RH marcada(s) como desligado'; _rhDados = null; }
+    }
+  } catch (e) { aviso = ' · não consegui atualizar a ficha do RH'; }
+  toast(mats.length + ' marcada(s) como inativa(s)' + aviso);
   orgFechaModal();
   await carregarOrganograma();
 }
