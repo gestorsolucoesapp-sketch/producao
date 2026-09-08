@@ -76,7 +76,18 @@ try {
      /* 21/08/2026: entraram quando o verificador passou a ler o bloco dos parsers
         junto com o app.js. RioParsers é UMD e testa `module`/`self` para saber se
         está no Node ou no navegador — os dois são globais legítimos. */
-     'module','self','exports','globalThis']));
+     'module','self','exports','globalThis',
+     /* 08/09/2026 — auditoria. Estes cinco reprovavam TODO push desde que
+        entraram no app, e nenhum era problema de verdade: addEventListener e
+        cancelAnimationFrame sao do navegador e faltavam na lista, e
+        _tintaCarrinho existe — e' criada com Object.defineProperty(window,...),
+        que esta analise nao enxerga. Verificador que grita sem motivo vira
+        verificador desligado, entao eles entram aqui e o alarme volta a valer. */
+     'addEventListener','removeEventListener','dispatchEvent','cancelAnimationFrame',
+     'Intl','Headers','Request','Response','URL','URLSearchParams','Blob','File','Notification',
+     'ClipboardItem','Audio','WebSocket','EventSource','Worker','BroadcastChannel','indexedDB',
+     'ontouchstart','visualViewport','devicePixelRatio','innerWidth','innerHeight','scrollTo',
+     '_tintaCarrinho']));
   const faltando = new Map();
   walk.ancestor(ast, { Identifier(n, anc) {
     const pai = anc[anc.length - 2]; if (!pai) return;
@@ -104,7 +115,14 @@ const metodos = new Set(['if','for','while','switch','return','typeof','catch','
   'add','remove','toggle','contains','click','focus','blur','preventDefault','stopPropagation','closest',
   'getElementById','querySelector','querySelectorAll','setItem','getItem','removeItem','map','filter','forEach','join','split',
   'replace','slice','push','catch','then','stringify','parse','reload','open','print','alert','confirm','prompt','parseInt',
-  'parseFloat','Number','String','Boolean','encodeURIComponent','decodeURIComponent','Date','Math','JSON','isNaN','showPicker','select']);
+  'parseFloat','Number','String','Boolean','encodeURIComponent','decodeURIComponent','Date','Math','JSON','isNaN','showPicker','select',
+  /* 08/09/2026 — auditoria: metodos nativos que apareciam dentro de onclick e
+     eram acusados de "funcao que nao existe". */
+  'indexOf','setTimeout','setSelectionRange','setCustomValidity','reportValidity','checkValidity',
+  'scrollIntoView','scrollTo','submit','reset','requestAnimationFrame','trim','toUpperCase','toLowerCase',
+  'includes','startsWith','endsWith','padStart','toFixed','concat','sort','reverse','find','some','every',
+  'preventDefault','stopImmediatePropagation','matches','getAttribute','setAttribute','removeAttribute',
+  'insertAdjacentHTML','appendChild','cloneNode','createElement','write','back','forward','go','assign']);
 const chamadas = new Set();
 for (const m of html.matchAll(/on(?:click|change|input|submit|keyup|keydown|blur|focus|search)\s*=\s*(["'])([\s\S]*?)\1/g))
   for (const f of m[2].matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) chamadas.add(f[1]);
