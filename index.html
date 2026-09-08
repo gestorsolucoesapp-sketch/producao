@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.502.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.503.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1779,7 +1779,16 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <div id="rhKpis" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
       </div>
 
-      <div class="card">
+      <div class="card" style="padding:8px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button id="rhSubA" class="btn" onclick="rhSub('analises')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;background:var(--navy);color:#fff">Análises</button>
+          <button id="rhSubC" class="btn" onclick="rhSub('cobertura')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800">☑️ Cobertura das conversas</button>
+        </div>
+      </div>
+
+      <div id="rhCobertura" class="oculto"></div>
+
+      <div class="card" id="rhFiltros">
         <input id="rhBusca" type="text" placeholder="Buscar por nome, cargo, máquina ou tema..."
           oninput="rhRender()" style="width:100%;font-size:16px;padding:9px 10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
@@ -3889,7 +3898,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.502.0';
+const APP_VER = '4.503.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10175,6 +10184,134 @@ async function rhEditar(num) {
   $('rhNvCad').innerHTML = p.matricula ? 'mat. <b>' + rhEsc(p.matricula) + '</b> · ' + rhEsc(p.cargo || '') : '';
 }
 
+/* ===== 08/09/2026 (João: "faça umas caixinhas para check dos colaboradores por
+   turno numa sub-aba dentro de Diagnóstico RH, já veja as pessoas que conversei
+   separadas por setor e as que faltam") =====
+   A caixinha faz as duas coisas que ele pediu: marca sozinha quem TEM entrevista
+   (vem de rh_analise_individual, não dá para desmarcar — desmarcar ali seria
+   apagar entrevista) e deixa marcar à mão quem ele só conversou, o que mora na
+   tabela nova `rh_conversado`.
+   O turno NÃO está no cadastro do colaborador: vem da alocação vigente do
+   organograma, e 52 pessoas não têm alocação. Elas vão para o grupo "sem turno
+   definido" em vez de sumirem da lista — some da tela é como se a pessoa não
+   existisse, e o objetivo aqui é justamente achar quem falta. */
+let _rhSubAtual = 'analises', _rhCob = null, _rhCobSoFalta = false;
+function rhSub(v) {
+  _rhSubAtual = v;
+  const cob = v === 'cobertura';
+  const el = id => document.getElementById(id);
+  if (el('rhFiltros')) el('rhFiltros').classList.toggle('oculto', cob);
+  if (el('rhLista')) el('rhLista').classList.toggle('oculto', cob);
+  if (el('rhCobertura')) el('rhCobertura').classList.toggle('oculto', !cob);
+  [['rhSubA', !cob], ['rhSubC', cob]].forEach(p => {
+    const b = el(p[0]); if (!b) return;
+    b.style.background = p[1] ? 'var(--navy)' : '';
+    b.style.color = p[1] ? '#fff' : '';
+  });
+  if (cob) rhCobCarregar();
+}
+async function rhCobCarregar(forcar) {
+  const box = document.getElementById('rhCobertura'); if (!box) return;
+  if (_rhCob && !forcar) { rhCobRender(); return; }
+  box.innerHTML = '<div class="card"><div class="desc">carregando o quadro...</div></div>';
+  try {
+    const [cl, al, an, mk] = await Promise.all([
+      sb.from('colaboradores').select('matricula,nome,cargo,setor,lotacao').eq('ativo', true).order('nome'),
+      sb.from('org_alocacoes').select('matricula,setor,turno,vigencia_inicio').is('vigencia_fim', null),
+      sb.from('rh_analise_individual').select('matricula,turno,setor,desligado'),
+      sb.from('rh_conversado').select('matricula,conversado,marcado_por_nome,marcado_em')
+    ]);
+    const aloc = {};
+    (al.data || []).forEach(r => {
+      if (!r.matricula) return;
+      const k = String(r.matricula), at = aloc[k];
+      if (!at || String(r.vigencia_inicio || '') > String(at.vigencia_inicio || '')) aloc[k] = r;
+    });
+    const ent = {}; (an.data || []).forEach(r => { if (r.matricula) ent[String(r.matricula)] = r; });
+    const man = {}; (mk.data || []).forEach(r => { if (r.matricula && r.conversado) man[String(r.matricula)] = r; });
+    _rhCob = (cl.data || []).map(p => {
+      const k = String(p.matricula), a = aloc[k] || {}, e = ent[k];
+      return {
+        mat: k, nome: p.nome || '—', cargo: p.cargo || '',
+        setor: a.setor || p.setor || p.lotacao || 'sem setor',
+        turno: a.turno || (e && e.turno) || '',
+        temEnt: !!e, desligado: !!(e && e.desligado), manual: !!man[k],
+        quem: man[k] ? (man[k].marcado_por_nome || '') : ''
+      };
+    });
+  } catch (e) {
+    box.innerHTML = '<div class="card"><div class="desc">não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</div></div>';
+    return;
+  }
+  rhCobRender();
+}
+function rhCobRender() {
+  const box = document.getElementById('rhCobertura'); if (!box || !_rhCob) return;
+  const ORD = ['Manhã', 'Tarde', 'Noite'];
+  const feito = p => p.temEnt || p.manual;
+  const vivos = _rhCob.filter(p => !p.desligado);
+  const nTot = vivos.length, nFeito = vivos.filter(feito).length;
+  const porSetor = {};
+  vivos.forEach(p => { (porSetor[p.setor] = porSetor[p.setor] || []).push(p); });
+  let h = '<div class="card"><div class="titulo-sec">Cobertura das conversas</div>'
+    + '<div class="desc" style="margin-bottom:8px">' + nFeito + ' de ' + nTot + ' ('
+    + (nTot ? Math.round(nFeito / nTot * 100) : 0) + '%) · faltam <b>' + (nTot - nFeito) + '</b>'
+    + ' · ✔ fixo = tem entrevista escrita · caixa livre = você marcou que conversou</div>'
+    + '<button class="btn" onclick="_rhCobSoFalta=!_rhCobSoFalta;rhCobRender()" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;'
+    + (_rhCobSoFalta ? 'background:var(--navy);color:#fff' : '') + '">só quem falta</button>'
+    + ' <button class="btn" onclick="rhCobCarregar(true)" style="width:auto;padding:8px 14px;font-size:13px">🔄 atualizar</button></div>';
+  Object.keys(porSetor).sort().forEach(st => {
+    const L = porSetor[st], f = L.filter(feito).length;
+    const grupos = {};
+    L.forEach(p => { const t = ORD.includes(p.turno) ? p.turno : 'sem turno definido'; (grupos[t] = grupos[t] || []).push(p); });
+    let corpo = '';
+    ORD.concat(['sem turno definido']).forEach(t => {
+      const G = (grupos[t] || []).filter(p => !_rhCobSoFalta || !feito(p));
+      if (!G.length) return;
+      const gf = (grupos[t] || []).filter(feito).length;
+      corpo += '<div style="margin-top:10px"><div style="font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">'
+        + escapeHtml(t) + ' · ' + gf + '/' + (grupos[t] || []).length + '</div>';
+      G.sort((a, b) => a.nome.localeCompare(b.nome)).forEach(p => {
+        const ok = feito(p);
+        corpo += '<label style="display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px solid var(--borda)">'
+          + '<input type="checkbox" ' + (ok ? 'checked' : '') + (p.temEnt ? ' disabled' : '')
+          + ' onchange="rhCobMarcar(\'' + p.mat + '\',this.checked)" style="width:19px;height:19px;flex:none">'
+          + '<span style="flex:1;min-width:0"><b style="' + (ok ? '' : 'color:var(--laranja)') + '">' + escapeHtml(p.nome) + '</b>'
+          + '<span style="display:block;font-size:11px;color:var(--fraco)">mat ' + escapeHtml(p.mat)
+          + (p.cargo ? ' · ' + escapeHtml(p.cargo) : '')
+          + (p.temEnt ? ' · entrevista escrita' : (p.manual ? ' · conversa marcada' + (p.quem ? ' por ' + escapeHtml(p.quem) : '') : ' · falta'))
+          + '</span></span></label>';
+      });
+      corpo += '</div>';
+    });
+    if (!corpo) return;
+    h += '<div class="card"><div class="titulo-sec" style="margin:0">' + escapeHtml(st)
+      + ' <span style="font-weight:800;font-size:12px;color:var(--fraco)">' + f + '/' + L.length + '</span></div>' + corpo + '</div>';
+  });
+  box.innerHTML = h;
+}
+async function rhCobMarcar(mat, on) {
+  const p = (_rhCob || []).find(x => x.mat === String(mat));
+  try {
+    if (on) {
+      const { error } = await sb.from('rh_conversado').upsert({
+        matricula: String(mat), conversado: true,
+        marcado_por: (perfil && perfil.id) || null,
+        marcado_por_nome: (perfil && (perfil.nome || perfil.email)) || null,
+        marcado_em: new Date().toISOString()
+      }, { onConflict: 'matricula' });
+      if (error) throw error;
+    } else {
+      const { error } = await sb.from('rh_conversado').delete().eq('matricula', String(mat));
+      if (error) throw error;
+    }
+    if (p) { p.manual = on; p.quem = on ? ((perfil && (perfil.nome || perfil.email)) || '') : ''; }
+    rhCobRender();
+  } catch (e) {
+    toast('não deu para marcar: ' + ((e && e.message) || e));
+    rhCobRender();
+  }
+}
 async function rhNovaAbrir() {
   $('rhNovaWrap').classList.remove('oculto');
   $('rhNvMsg').innerHTML = '';
