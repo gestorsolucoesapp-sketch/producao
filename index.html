@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.498.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.499.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.498.0';
+const APP_VER = '4.499.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -24685,25 +24685,48 @@ async function carregarPaletizacao() {
    Se a ultima etapa for de fim (EXPEDIDOS, DESPACHADO, NFE, CANCELAMENTO), o
    pedido nao esta parado em lugar nenhum e nada e marcado. */
 const _FLX_FIM = ['EXPEDIDOS', 'DESPACHADO', 'CANCELAMENTO', 'NFE'];
+/* ===== 08/09/2026 (Joao: "estou clicando nos setores esta demorando para
+   abrir") =====
+   O bloco de dados dos atrasados ja tinha cache quente de 5 min, mas TRES
+   consultas continuavam indo ao banco a CADA toque de pilula de setor:
+   `v_item_setor` (em fatias de 250), `fluxo_pedido` (todos os pedidos do
+   recorte) e `producao` dos ultimos 60 dias. Nenhuma das tres muda quando so
+   troca o setor escolhido — o que muda e o recorte da lista. Agora cada chave
+   (pedido / item) e consultada UMA vez por janela de dados e fica memorizada:
+   o segundo toque no mesmo setor nao fala com o banco.
+   Os mapas morrem junto com `_atrDados` (mesma janela de 5 min), senao depois
+   de uma importacao nova a tela serviria dado velho.
+   A data crua fica guardada e o "parado ha Xh" e recalculado na hora — cache
+   de dado, nao de texto, senao o relogio congelava. */
+let _atrMemo = { flx: {}, flxVisto: {}, up: {}, upVisto: {}, set: {}, setVisto: {} };
+function _atrMemoZera() { _atrMemo = { flx: {}, flxVisto: {}, up: {}, upVisto: {}, set: {}, setVisto: {} }; }
 async function _fluxoAtualDe(nums) {
   const m = {};
-  const docs = (nums || []).filter(Boolean);
+  const docs = (nums || []).filter(Boolean).map(String);
   if (!docs.length) return m;
-  try {
-    const linhas = await _leTudoFlx(() => sb.from('fluxo_pedido')
-      .select('documento,seq,setor,data_inclusao')
-      .in('documento', docs).order('documento').order('seq'));
-    const ult = {};
-    (linhas || []).forEach(r => { ult[String(r.documento)] = r; });   // ordenado por seq: sobra o ultimo
-    Object.keys(ult).forEach(k => {
-      const r = ult[k], nome = flxNome(r.setor);
-      if (_FLX_FIM.includes(String(nome).toUpperCase())) return;      // ja saiu
-      m[k] = {
-        setor: nome,
-        min: r.data_inclusao ? Math.max(0, Math.round((Date.now() - new Date(r.data_inclusao).getTime()) / 60000)) : 0
-      };
-    });
-  } catch (e) { try { console.warn('fluxoAtual:', e && e.message); } catch (_) { } }
+  const falta = [...new Set(docs.filter(d => !_atrMemo.flxVisto[d]))];
+  if (falta.length) {
+    try {
+      const linhas = await _leTudoFlx(() => sb.from('fluxo_pedido')
+        .select('documento,seq,setor,data_inclusao')
+        .in('documento', falta).order('documento').order('seq'));
+      const ult = {};
+      (linhas || []).forEach(r => { ult[String(r.documento)] = r; });   // ordenado por seq: sobra o ultimo
+      falta.forEach(d => { _atrMemo.flxVisto[d] = 1; });               // so marca visto se a consulta VOLTOU
+      Object.keys(ult).forEach(k => {
+        const r = ult[k], nome = flxNome(r.setor);
+        if (_FLX_FIM.includes(String(nome).toUpperCase())) return;      // ja saiu
+        _atrMemo.flx[k] = { setor: nome, dt: r.data_inclusao || null };
+      });
+    } catch (e) { try { console.warn('fluxoAtual:', e && e.message); } catch (_) { } }
+  }
+  docs.forEach(d => {
+    const c = _atrMemo.flx[d]; if (!c) return;
+    m[d] = {
+      setor: c.setor,
+      min: c.dt ? Math.max(0, Math.round((Date.now() - new Date(c.dt).getTime()) / 60000)) : 0
+    };
+  });
   return m;
 }
 function _seloFluxo(x) {
@@ -24734,19 +24757,24 @@ function _seloFluxo(x) {
    numero do pedido — e a tela diz isso com todas as letras. */
 async function _ultimaProducaoDe(itens) {
   const m = {};
-  const its = (itens || []).filter(Boolean);
+  const its = (itens || []).filter(Boolean).map(String);
   if (!its.length) return m;
-  try {
-    const de = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
-    const linhas = await _leTudoFlx(() => sb.from('producao')
-      .select('item_cod,op,dia,quantidade,recurso_nome')
-      .in('item_cod', its).gte('dia', de).order('dia'));
-    (linhas || []).forEach(r => {
-      const k = String(r.item_cod);
-      const at = m[k];
-      if (!at || String(r.dia) > String(at.dia)) m[k] = r;
-    });
-  } catch (e) { try { console.warn('ultimaProducao:', e && e.message); } catch (_) { } }
+  const falta = [...new Set(its.filter(i => !_atrMemo.upVisto[i]))];
+  if (falta.length) {
+    try {
+      const de = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+      const linhas = await _leTudoFlx(() => sb.from('producao')
+        .select('item_cod,op,dia,quantidade,recurso_nome')
+        .in('item_cod', falta).gte('dia', de).order('dia'));
+      falta.forEach(i => { _atrMemo.upVisto[i] = 1; });
+      (linhas || []).forEach(r => {
+        const k = String(r.item_cod);
+        const at = _atrMemo.up[k];
+        if (!at || String(r.dia) > String(at.dia)) _atrMemo.up[k] = r;
+      });
+    } catch (e) { try { console.warn('ultimaProducao:', e && e.message); } catch (_) { } }
+  }
+  its.forEach(i => { if (_atrMemo.up[i]) m[i] = _atrMemo.up[i]; });
   return m;
 }
 function _seloProduzido(x) {
@@ -24795,7 +24823,7 @@ async function atrDetalhe(tipo, _mudo) {
       carregarPaletizacao(),
             _leTudoFlx(() => sb.from('pedidos_regiao').select('pedido,cidade,uf,regiao,vendedor_nome').order('id'))
     ]);
-    if (!_quente) _atrDados = { d, df, rp, re, rj, rf, rg, em: Date.now() };
+    if (!_quente) { _atrMemoZera(); _atrDados = { d, df, rp, re, rj, rf, rg, em: Date.now() }; }
     if (_quente && !_logCarregado) { try { await logCarrega(); } catch (_) { } }
     /* guarda a OP inteira, nao so o setor: o Joao quer saber QUAL OP e em que
        maquina ela esta programada. Fica a de menor posicao na fila — e a que
@@ -24829,11 +24857,14 @@ async function atrDetalhe(tipo, _mudo) {
     try {
       /* só os itens que a fila NÃO resolveu, em fatias de 250: `.in()` vai na
          URL e 650 códigos de uma vez passa do tamanho seguro */
-      const _falta = [...new Set((rp || []).map(x => String(x.item_cod || '')).filter(c => c && !setorDoItem[c]))];
+      const _falta = [...new Set((rp || []).map(x => String(x.item_cod || '')).filter(c => c && !setorDoItem[c] && !_atrMemo.setVisto[c]))];
       for (let i = 0; i < _falta.length; i += 250) {
-        const { data: _vs } = await sb.from('v_item_setor').select('item_cod,setor').in('item_cod', _falta.slice(i, i + 250));
-        (_vs || []).forEach(v => { if (v.item_cod && !setorDoItem[v.item_cod] && v.setor && v.setor !== 'Outros') setorDoItem[v.item_cod] = v.setor; });
+        const _fat = _falta.slice(i, i + 250);
+        const { data: _vs } = await sb.from('v_item_setor').select('item_cod,setor').in('item_cod', _fat);
+        _fat.forEach(c => { _atrMemo.setVisto[c] = 1; });
+        (_vs || []).forEach(v => { if (v.item_cod && v.setor && v.setor !== 'Outros') _atrMemo.set[String(v.item_cod)] = v.setor; });
       }
+      Object.keys(_atrMemo.set).forEach(c => { if (!setorDoItem[c]) setorDoItem[c] = _atrMemo.set[c]; });
     } catch (e) { try { console.warn('v_item_setor:', e && e.message); } catch (_) { } }
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
     _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
