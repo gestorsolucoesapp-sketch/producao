@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.501.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.502.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.501.0';
+const APP_VER = '4.502.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -27469,7 +27469,72 @@ function detItensDia(setor, dia) {
 
 /* ================= IA ================= */
 let iaHist = [];
+/* ===== 08/09/2026 (João mandou o print do assistente dizendo "não tenho acesso
+   à aba Diagnóstico RH") =====
+   Não era permissão: o RH simplesmente NUNCA era enviado. `contextoIA()` monta
+   texto só do que está em `dadosPainel` (produção, perda, parada, bobina), então
+   o assistente respondia a verdade sobre si mesmo.
+   Ligado agora SÓ para `souDevReal` — a flag pura de desenvolvedor, não o
+   `souDev`, que o Organograma também acende. Gestor continua sem ver nada disso.
+   Carrega UMA vez por sessão e guarda: são 133 análises, ~111 mil caracteres, e
+   isso viaja em toda pergunta. Se a resposta começar a demorar, é aqui que se
+   corta. `rh_entrevista` está vazia — não adianta ler de lá. */
+let _rhIaCache = null, _rhIaProm = null;
+async function _rhIaTexto() {
+  if (typeof souDevReal === 'undefined' || !souDevReal) return '';
+  if (_rhIaCache !== null) return _rhIaCache;
+  if (_rhIaProm) return _rhIaProm;
+  _rhIaProm = (async () => {
+    try {
+      const [a, s] = await Promise.all([
+        sb.from('rh_analise_individual').select('matricula,nome,cargo,cargo_rh,setor,lotacao,turno,admissao,tempo_casa,escolaridade,mora,maquinas,temas,sensivel,desligado,desligado_em,desligado_obs,entrevistado,qtd_atencao,potencial_multiplicador,interesse_carreira,analise,pontos_fortes,necessidades,acao_sugerida,apontamentos').order('nome'),
+        sb.from('rh_remuneracao').select('matricula,nome,cargo,situacao,admissao,salario,referencia')
+      ]);
+      const sal = {};
+      (s.data || []).forEach(r => { if (r.matricula != null) sal[String(r.matricula)] = r; });
+      const lin = (a.data || []).map(r => {
+        const q = sal[String(r.matricula)] || {};
+        const p = [];
+        p.push('• ' + (r.nome || '—') + (r.matricula ? ' (mat ' + r.matricula + ')' : '')
+          + ' · ' + (r.cargo_rh || r.cargo || '—')
+          + ' · ' + (r.setor || r.lotacao || '—')
+          + ' · turno ' + (r.turno || '—')
+          + (r.admissao ? ' · admissão ' + String(r.admissao).slice(0, 10) : '')
+          + (r.tempo_casa ? ' · ' + r.tempo_casa + ' de casa' : '')
+          + (q.salario != null ? ' · salário R$ ' + q.salario : '')
+          + (r.desligado ? ' · DESLIGADO' + (r.desligado_em ? ' em ' + String(r.desligado_em).slice(0, 10) : '') : '')
+          + (r.sensivel ? ' · CASO SENSÍVEL' : '')
+          + (r.entrevistado === false ? ' · não entrevistado' : ''));
+        const arr = v => Array.isArray(v) ? v.join(', ') : v;
+        if (r.maquinas) p.push('  máquinas: ' + arr(r.maquinas));
+        if (r.temas) p.push('  temas: ' + arr(r.temas));
+        if (r.interesse_carreira) p.push('  interesse de carreira: ' + arr(r.interesse_carreira));
+        if (r.potencial_multiplicador) p.push('  potencial multiplicador: sim');
+        if (r.analise) p.push('  análise: ' + r.analise);
+        if (r.pontos_fortes) p.push('  pontos fortes: ' + arr(r.pontos_fortes));
+        if (r.necessidades) p.push('  necessidades: ' + arr(r.necessidades));
+        if (r.acao_sugerida) p.push('  ação sugerida: ' + arr(r.acao_sugerida));
+        if (r.apontamentos) p.push('  apontamentos: ' + arr(r.apontamentos));
+        if (r.desligado_obs) p.push('  desligamento: ' + r.desligado_obs);
+        return p.join('\n');
+      });
+      _rhIaCache = lin.length
+        ? '\n\n=== DIAGNÓSTICO RH · ' + lin.length + ' colaborador(es) ===\n'
+        + 'Você TEM acesso a estes dados e pode responder perguntas de RH com eles '
+        + '(quem pediu troca de turno, quem está em risco, salário, tempo de casa, ações sugeridas). '
+        + 'Conteúdo confidencial: só o usuário desenvolvedor recebe isto. Não invente nada que não esteja aqui.\n'
+        + lin.join('\n')
+        : '';
+    } catch (e) {
+      try { console.warn('rhIA:', e && e.message); } catch (_) { }
+      _rhIaCache = '';
+    }
+    return _rhIaCache;
+  })();
+  return _rhIaProm;
+}
 function abrirIA() {
+  try { if (typeof souDevReal !== 'undefined' && souDevReal) _rhIaTexto(); } catch (_) { }
   try { pintarIaModo(); } catch (_) { }
   $('iaOverlay').classList.remove('oculto');
   if (iaRegras === null) getIaRegras();
@@ -28410,7 +28475,7 @@ async function enviarIA() {
     const r = await fetch(SB_URL + '/functions/v1/ai-chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_KEY },
-      body: JSON.stringify({ contexto: contextoIA() + ((iaRegras && iaRegras.length) ? '\n\nREGRAS DA FÁBRICA (definidas pelo administrador — sempre respeite ao analisar):\n' + iaRegras.map((r, i) => (i + 1) + '. ' + r).join('\n') : ''), messages: iaHist.slice(-10) })
+      body: JSON.stringify({ contexto: contextoIA() + ((iaRegras && iaRegras.length) ? '\n\nREGRAS DA FÁBRICA (definidas pelo administrador — sempre respeite ao analisar):\n' + iaRegras.map((r, i) => (i + 1) + '. ' + r).join('\n') : '') + (await _rhIaTexto()), messages: iaHist.slice(-10) })
     });
     const d = await r.json();
     let txt = d.texto || (d.error ? _iaErroAmigavel(String(d.error)) : 'Não consegui responder agora.');
