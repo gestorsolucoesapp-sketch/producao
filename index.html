@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.499.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.500.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.499.0';
+const APP_VER = '4.500.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -20366,8 +20366,48 @@ async function preencherMediaTrocasMes(ym, setor) {
     if (el2) el2.textContent = media.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
   } catch (_) { const e = document.getElementById('mediaTrocasMesV'); if (e) e.textContent = '—'; }
 }
+/* ===== 08/09/2026 (Joao mandou o log de congelamentos) =====
+   "renderPainel 19776ms x3 · cardSetupsMaquina 19711ms x3" — 99% do travamento
+   do Painel estava DENTRO do card de setups. Eram duas coisas somadas:
+   1) o Painel chama `cardSetupsMaquina` uma vez global + uma por setor, e cada
+      chamada refazia `calcularTrocas` inteira em cima de `dadosProducaoFull` —
+      7 varreduras completas para desenhar o MESMO calculo, so recortado.
+   2) dentro dela, `horasParadasPorOP` varria `todasParadas` A CADA troca
+      (trocas x paradas) — e isso e o que estoura quando o periodo e grande.
+   Agora a lista completa sai UMA vez por combinacao de dados e o recorte por
+   setor e um filtro em cima dela: cada maquina pertence a um setor so, entao
+   filtrar a TROCA pela maquina da exatamente o mesmo que filtrar as LINHAS
+   antes de agrupar (o agrupamento ja e por maquina). As horas de parada por OP
+   viram indice montado uma vez.
+   Quem passa `baseOpt` (o comparativo do mes) nao usa cache — a base e outra.
+   A assinatura olha tamanho + primeira/ultima linha das duas fontes: se chegou
+   importacao nova ou mudou o periodo, o cache morre sozinho. */
+let _trocasMemo = { sig: null, all: null, porSetor: {} };
+function _trocasSig() {
+  const b = dadosProducaoFull || [], p = todasParadas || [];
+  const bf = b[0], bl = b[b.length - 1], pf = p[0], pl = p[p.length - 1];
+  const mk = r => r ? String(r.recurso_cod || '') + '|' + String(r.op || '') + '|' + String(r.data_inicio || r.dia || r.inicio || '') : '';
+  return b.length + '/' + p.length + '/' + mk(bf) + '/' + mk(bl) + '/' + mk(pf) + '/' + mk(pl);
+}
 function calcularTrocas(setor, baseOpt) {
+  if (baseOpt) return _calcularTrocasRaw(setor, baseOpt);
+  const sig = _trocasSig();
+  if (_trocasMemo.sig !== sig) _trocasMemo = { sig: sig, all: null, porSetor: {} };
+  if (!_trocasMemo.all) _trocasMemo.all = _calcularTrocasRaw('', null);
+  if (!setor) return _trocasMemo.all;
+  if (!_trocasMemo.porSetor[setor]) _trocasMemo.porSetor[setor] = _trocasMemo.all.filter(t => setorDe(t.maq) === setor);
+  return _trocasMemo.porSetor[setor];
+}
+function _calcularTrocasRaw(setor, baseOpt) {
   const horaOP = horaSetupPorOP();
+  /* indice 'maquina|op' -> horas paradas, montado uma vez (antes era um filter
+     em todasParadas por troca) */
+  const _hParOP = {};
+  (todasParadas || []).forEach(pp => {
+    if (!pp.op) return;
+    const k = String(pp.recurso_cod) + '|' + String(pp.op);
+    _hParOP[k] = (_hParOP[k] || 0) + (+pp.tempo_horas || 0);
+  });
   const base = (baseOpt || dadosProducaoFull || []).filter(r => r.item_cod && (r.data_inicio || r.dia) && contaSetup(r.recurso_cod));
   const rows = setor ? base.filter(r => setorDe(r.recurso_cod) === setor) : base;
   // 1 linha por OP (a OP pode vir fatiada em várias linhas); guarda 1º início e o item
@@ -20400,7 +20440,7 @@ function calcularTrocas(setor, baseOpt) {
         if (horaEntrou && fimBruto) {
           const ms = new Date(fimBruto) - new Date(horaEntrou);
           const hBruto = ms > 0 ? ms / 3600000 : 0;               // horas brutas
-          const hPar = horasParadasPorOP(oEnt.maq, oEnt.op);      // paradas dessa OP
+          const hPar = oEnt.op ? (_hParOP[String(oEnt.maq) + '|' + String(oEnt.op)] || 0) : 0;   // paradas dessa OP (indice)
           hLiq = Math.max(0, hBruto - hPar);                      // tempo líquido produzindo
           pc = pecasCaixas(oEnt.qtd, oEnt.unidade, oEnt.desc);
           if (hLiq > 0) {
