@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.506.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.507.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3913,7 +3913,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.506.0';
+const APP_VER = '4.507.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10094,6 +10094,20 @@ function rhBase() {
   const d = _rhDados || [];
   return _rhSetor ? d.filter(p => String(p.setor || p.lotacao || '') === _rhSetor) : d;
 }
+/* 08/09/2026 (João: "não está filtrando o turno"). O seletor de turno DENTRO da
+   aba sempre funcionou; quem não valia era a pílula TURNO do topo do app, que
+   aparece acesa e não fazia nada aqui — pílula ligada que ignora a tela é pior
+   que pílula apagada. Agora ela manda: ao entrar na aba e a cada troca, o
+   seletor de dentro se alinha ao topo. Mexer no de dentro continua valendo e
+   fica sendo a exceção daquela vez. */
+function rhTurnoDoTopo() {
+  try {
+    const t = (typeof turnoSelAtual === 'function') ? String(turnoSelAtual() || '') : '';
+    const sel = $('rhTurno'); if (!sel) return;
+    const vale = ['Manhã', 'Tarde', 'Noite'].includes(t) ? t : '';
+    if (sel.value !== vale) sel.value = vale;
+  } catch (_) { }
+}
 function rhSetorMuda() {
   _rhSetor = ($('rhSetorSel') && $('rhSetorSel').value) || '';
   rhKpis(); rhRender();
@@ -10106,6 +10120,20 @@ function rhSetorOpcoes() {
     + sts.map(st => '<option value="' + escapeHtml(st) + '"' + (st === _rhSetor ? ' selected' : '') + '>'
       + escapeHtml(st) + ' · ' + (_rhDados || []).filter(p => String(p.setor || p.lotacao || '') === st).length + '</option>').join('');
 }
+/* 08/09/2026 (João: "permita adicionar as tarefas nessa aba"). Não criei um
+   cadastro paralelo de tarefa: abro o MESMO modal do app já preenchido com o
+   nome da pessoa. Duas telas gravando tarefa é o caminho curto para dois
+   formatos diferentes na mesma tabela. */
+async function rhTarefa(nome, mat, setor) {
+  try {
+    await abrirNovaTarefa();
+    const t = $('ntTitulo');
+    if (t) { t.value = String(nome || '').trim() + (mat ? ' (mat ' + mat + ')' : ''); }
+    const d = $('ntDesc');
+    if (d && !d.value) d.value = 'Vindo do Diagnóstico RH' + (setor ? ' · ' + setor : '');
+    if (t) t.focus();
+  } catch (e) { toast('não deu para abrir a tarefa: ' + ((e && e.message) || e)); }
+}
 function rhKpiToque(lab) {
   if (lab === 'Fichas') {
     Object.keys(_rhFiltros).forEach(k => { _rhFiltros[k] = false; });
@@ -10117,6 +10145,7 @@ function rhKpiToque(lab) {
 }
 function rhKpis() {
   rhSetorOpcoes();
+  rhTurnoDoTopo();
   const d = rhBase();
   const k = [
     ['Fichas', d.length, '#2C3E50'],
@@ -10182,7 +10211,14 @@ function rhRender() {
       (p.requer_apuracao_previa ? '<span class="chip" style="background:#FADBD8;color:#943126">🔒 apuração</span>' : '') +
       (p.potencial_multiplicador ? '<span class="chip" style="background:#D5F5E3;color:#186A3B">★ formador</span>' : '') +
       (p.interesse_carreira ? '<span class="chip" style="background:#D6EAF8;color:#1A5276">↗ quer crescer</span>' : '') +
-      (p.qtd_atencao > 0 ? '<span class="chip" style="background:#FDEBD0;color:#7E5109">▲ ' + p.qtd_atencao + '</span>' : '');
+      (p.qtd_atencao > 0 ? '<span class="chip" style="background:#FDEBD0;color:#7E5109">▲ ' + p.qtd_atencao + '</span>' : '') +
+      /* 08/09/2026 (João: "permita adicionar as tarefas nessa aba"). O card
+         inteiro já abre a ficha no clique, então o botão precisa de
+         stopPropagation — senão toca em "tarefa" e abre a ficha por cima. */
+      '<span class="chip" role="button" onclick="event.stopPropagation();rhTarefa(\''
+      + String(p.nome || '').replace(/['\\]/g, '') + '\',\'' + String(p.matricula || '').replace(/['\\]/g, '')
+      + '\',\'' + String(p.setor || p.lotacao || '').replace(/['\\]/g, '') + '\')"'
+      + ' style="background:#D5F5E3;color:#186A3B;cursor:pointer;font-weight:800">＋ tarefa</span>';
     const estNome = p.desligado
       ? 'font-weight:800;font-size:14px;color:#C0392B;text-decoration:line-through;text-decoration-thickness:2px;text-decoration-color:#C0392B'
       : 'font-weight:800;font-size:14px';
