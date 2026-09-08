@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.209.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.498.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3889,7 +3889,21 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.497.0';
+const APP_VER = '4.498.0';
+
+  /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
+     requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
+     depende dele fica esperando a pessoa voltar. */
+  function _proxQuadro(fn) {
+    let feito = false;
+    const uma = () => {
+      if (feito) return; feito = true;
+      try { fn(); } catch (e) { console.warn('desenho adiado falhou:', (e && e.message) || e); }
+    };
+    if (document.visibilityState === 'hidden' || !window.requestAnimationFrame) { setTimeout(uma, 0); return; }
+    requestAnimationFrame(() => requestAnimationFrame(uma));
+    setTimeout(uma, 300);   // rede de seguranca: aba escondida no meio do caminho
+  }
 const APP_DATA = '2026-07-19'; // data do deploy
 const SB_URL = 'https://bweblwmgwutzdvqtpbww.supabase.co';
 const SB_KEY = 'sb_publishable_0OUjSsoxVb8ffl32ZpFoDw_d0YNmX7X';
@@ -6033,7 +6047,12 @@ async function carregarSaudeImport(manual) {
   if (manual) toast('🔄 Conferindo a importação…');
   let linhas = null;
   try {
-    const { data, error } = await sb.from('v_saude_import2').select('*').order('mes', { ascending: false });
+    /* 08/09/2026 — auditoria: v_saude_import2 levava 4.128 ms (junta 878.360
+       linhas de seis tabelas para devolver 21) e ja tinha batido no corte de 8 s.
+       Vira foto, atualizada quando entra importacao nova. */
+    let { data, error } = await sb.from('mv_saude_import2').select('*').order('mes', { ascending: false });
+    if (error) { console.warn('foto da saude indisponivel, usando a view:', error.message);
+      ({ data, error } = await sb.from('v_saude_import2').select('*').order('mes', { ascending: false })); }
     if (error) throw error;
     linhas = data || [];
   } catch (e) {
@@ -12128,7 +12147,18 @@ function _trocarAbaReal(qual) {
     if (qual === 'conf') carregarConf();
     if (qual === 'programacao') carregarProgramacao(true);   // entrar na aba sempre busca fila nova
   };
-  requestAnimationFrame(() => requestAnimationFrame(_desenhar));
+  /* 08/09/2026 — auditoria: aqui o desenho de TODAS as abas antigas dependia de
+     requestAnimationFrame, e o navegador nao entrega quadro nenhum com a aba em
+     segundo plano. Medido: 59 s com o app numa aba de fundo, o Painel parado em
+     "Carregando dados…", UM pedido ao servidor, e o rAF agendado sem rodar —
+     enquanto chamar carregarPainel() na mao montava a tela na hora. Ou seja:
+     quem tocava numa aba e saia do app (atender o telefone, apagar a tela)
+     voltava e a espera comecava do zero.
+     _proxQuadro mantem a intencao original — pintar o toque antes de tomar a
+     thread — mas com duas saidas: se a aba ja esta escondida vai direto pelo
+     setTimeout, e se ela for escondida no meio, o timer de 300 ms garante o
+     desenho. Roda uma vez so. */
+  _proxQuadro(_desenhar);
   sincSetorGlobal();
   try { atualizarRecorteTarja(); } catch (_) {}
   /* 21/08/2026: eram TRÊS passadas por toque (na hora, 400ms e 1500ms). A de
@@ -15851,7 +15881,16 @@ async function getMetasReal() {
   if (metasReal) return metasReal;
   metasReal = {};
   try {
-    const { data } = await sb.from('v_metas_ritmo_2026').select('*');   // tem cx além de kg — ver correção de mix
+    /* 08/09/2026 — auditoria: a view v_metas_ritmo_2026 levava 6.884 ms no banco
+       e 8.390 ms medidos pelo app, contra o corte de 8 s do servidor: esta aba
+       ja estava sendo cancelada no meio, e o catch mudo escondia. Ela recalcula
+       o bloco de turno de 123 mil linhas de producao e 168 mil de paradas do ano
+       INTEIRO a cada abertura. Agora le a foto mv_metas_ritmo_2026 (1,8 ms),
+       atualizada junto com as outras no marcar_dados_novos(). Se a foto nao
+       existir neste ambiente, cai na view antiga em vez de ficar sem metas. */
+    let { data, error: _eMetas } = await sb.from('mv_metas_ritmo_2026').select('*');
+    if (_eMetas) { console.warn('foto de metas indisponivel, usando a view:', _eMetas.message);
+      ({ data } = await sb.from('v_metas_ritmo_2026').select('*')); }   // tem cx além de kg — ver correção de mix
     (data || []).forEach(r => {
       const c = String(r.recurso_cod); if (!c) return;
       if (!metasReal[c]) metasReal[c] = {};
@@ -26897,7 +26936,9 @@ async function preencherMediaItensMes(ym, setor) {
     setTimeout(() => preencherConcilia621(anSetor, metrica, totalV), 0);
     setTimeout(() => scrollGraficosFim(box), 60); setTimeout(() => scrollGraficosFim(box), 350);
   };
-  (window.requestAnimationFrame ? requestAnimationFrame(_injPesado) : setTimeout(_injPesado, 0));
+  /* 08/09/2026 — mesma armadilha do roteador: com a aba escondida o quadro
+     nunca vem e a tela de Itens ficava so com o cabecalho. */
+  _proxQuadro(_injPesado);
 }
 
 // Relação item × OP do MÊS ATUAL + ANTERIOR (independe do seletor de período), com busca ao vivo
@@ -31430,7 +31471,9 @@ async function cardSaidaDia(forcar) {
        22/08; o 304 sabe QUANTOS pedidos saíram e cobre o mês inteiro. Junto as
        duas pela data e deixo a tela mostrar as duas leituras separadas. */
     const [sd, ex] = await Promise.all([
-      sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia'),
+      /* 08/09/2026 — auditoria: 1.973 ms medidos, pior caso 7.907 ms. Vira foto. */
+      sb.from('mv_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia')
+        .then(r => r.error ? sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia') : r),
       sb.from('v_expedidos_dia').select('dia,pedidos').order('dia')
     ]);
     if (sd.error) throw sd.error;
@@ -32473,7 +32516,13 @@ async function carregarUsuarios() {
      o servidor já está montando a lista. */
   const pLista = !souAdmin ? null : Promise.all([
     sb.from('perfis').select('*').order('criado_em', { ascending: true }),
-    sb.from('acessos').select('user_id, entrou_em').order('entrou_em', { ascending: false }).limit(1000),
+    /* 08/09/2026 — auditoria: aqui vinham os 1.000 acessos mais recentes de
+       7.508. O grafico dizia "nº de acessos registrados" mas contava so essa
+       fatia — o historico morria em 12 dias e 14 dos 44 usuarios apareciam sem
+       nenhum acesso. A conta agora e' feita no banco (v_acessos_resumo), sobre
+       o historico inteiro, e sao 44 linhas em vez de 1.000. */
+    sb.from('v_acessos_resumo').select('user_id,n,ultimo')
+      .then(r => r.error ? sb.from('acessos').select('user_id, entrou_em').order('entrou_em', { ascending: false }).limit(1000) : r),
     sb.from('ia_uso').select('user_id, criado_em').order('criado_em', { ascending: false }).limit(3000).then(r => r, () => ({ data: [] })),
     sb.from('app_config').select('valor').eq('chave', 'timeout_min').maybeSingle().then(r => r, () => ({ data: null }))
   ]);
@@ -32506,7 +32555,10 @@ async function carregarUsuarios() {
     return;
   }
   const ultimo = {}, cont = {};
+  /* a fonte pode ser o resumo (user_id,n,ultimo) ou, se ela faltar, a lista
+     crua de acessos — a leitura funciona nos dois formatos. */
   (acessos || []).forEach(a => {
+    if (a.n !== undefined) { cont[a.user_id] = +a.n || 0; ultimo[a.user_id] = a.ultimo; return; }
     if (!ultimo[a.user_id]) ultimo[a.user_id] = a.entrou_em;
     cont[a.user_id] = (cont[a.user_id] || 0) + 1;
   });
@@ -43801,10 +43853,35 @@ async function _mqOSDaMaquina(cod) {
       h.set('Range', faixa); h.set('Range-Unit', 'items');
       n.headers = h; return n;
     };
+    /* ---- 08/09/2026 — auditoria: app_config era buscado 15 vezes por abertura,
+       1.406 ms de rede, sempre as mesmas chaves. Sao 63 pontos no codigo lendo
+       uma chave cada. Em vez de mexer nos 63, a resposta fica guardada aqui por
+       um tempo curto: mesma URL, mesma resposta, sem ida ao servidor. Qualquer
+       escrita em app_config joga o guardado fora na hora, e `dados_carimbo`
+       (que existe justamente para avisar de dado novo) nunca e' guardado. ---- */
+    const CFG_MS = 45000;
+    const cfgCache = new Map();
+    const cfgLimpa = () => cfgCache.clear();
+    const cfgChave = (url) => {
+      if (url.indexOf('/rest/v1/app_config') < 0) return null;
+      if (url.indexOf('dados_carimbo') >= 0) return null;
+      return url;
+    };
+    window.__cfgLimpaCache = cfgLimpa;   // para quem quiser forcar
+
     window.fetch = async function (rec, init) {
+      const _u = String((rec && rec.url) || rec || '');
+      const _m = String((init && init.method) || (rec && rec.method) || 'GET').toUpperCase();
+      if (_u.indexOf('/rest/v1/app_config') >= 0 && _m !== 'GET') cfgLimpa();
+      const _ck = _m === 'GET' ? cfgChave(_u) : null;
+      if (_ck) {
+        const g = cfgCache.get(_ck);
+        if (g && (Date.now() - g.t) < CFG_MS) return g.r.clone();
+      }
       const r = await orig(rec, init);
+      if (_ck && r.ok) { try { cfgCache.set(_ck, { t: Date.now(), r: r.clone() }); } catch (_) {} }
       try {
-        const url = String((rec && rec.url) || rec || '');
+        const url = _u;
         if (url.indexOf('/rest/v1/') < 0 || url.indexOf('/rest/v1/rpc/') > 0) return r;
         const metodo = String((init && init.method) || (rec && rec.method) || 'GET').toUpperCase();
         if (metodo !== 'GET') return r;
