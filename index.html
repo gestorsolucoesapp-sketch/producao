@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.513.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.514.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3916,7 +3916,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.513.0';
+const APP_VER = '4.514.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -9247,7 +9247,7 @@ function renderAnaliseMais(cache) {
      O botão vai no TOPO, antes dos cards: quem quer mandar o resumo não quer
      rolar oito cards para achar o botão. */
   box.innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">'
-    + '<button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:12.5px" onclick="enviarTexto(amTexto())">📲 enviar resumo por WhatsApp</button></div>'
+    + '<button class="btn btn-borda" style="width:auto;padding:7px 14px;font-size:12.5px" onclick="amEnviarZap()">📲 enviar resumo por WhatsApp</button></div>'
     + html;
   window._amEscopoAtual = E;
   const ck = $('amCustoKg'); // mantém foco não é necessário
@@ -45941,6 +45941,56 @@ function csLeitura(M, S, tot, temMeta, rot, kg) {
    Sai o que cabe numa mensagem: produção, refugo com a fatia, paradas com o
    maior ofensor e as falhas. O detalhe fica no app — mensagem que precisa de
    rolagem no WhatsApp ninguém lê. */
+/* ===== 08/09/2026 (João: "nas Análises+, quando enviar a produção também quero
+   que envie o nome e aniversário de empresa e de nascimento do setor filtrado")
+   =====
+   O setor NÃO vem do rótulo da tela: vem das máquinas que estão no recorte, por
+   `setorDe(recurso_cod)`. Rótulo é texto de título e muda; máquina é o dado.
+   Uso a mesma janela de 7 dias e o mesmo cálculo do Diagnóstico RH — se a tela
+   diz "aniversário em 3 dias" e o WhatsApp diz outra coisa, ninguém confia em
+   nenhum dos dois.
+   O nascimento vem vazio até ele preencher: nesse caso sai só o aniversário de
+   casa, em vez de o bloco sumir e parecer que não tem ninguém. */
+let _aniCache = null;
+async function aniCarregar() {
+  if (_aniCache) return _aniCache;
+  try {
+    const { data } = await sb.from('colaboradores')
+      .select('matricula,nome,setor,lotacao,admissao,nascimento').eq('ativo', true);
+    _aniCache = data || [];
+  } catch (_) { _aniCache = []; }
+  return _aniCache;
+}
+function _aniNorm(t) {
+  return String(t || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/embaladeiras?/g, 'embalagem').trim();
+}
+function aniTextoSetores(setores) {
+  if (!_aniCache || !_aniCache.length) return [];
+  const alvo = (setores || []).map(_aniNorm).filter(Boolean);
+  const gente = alvo.length
+    ? _aniCache.filter(p => { const st = _aniNorm(p.setor || p.lotacao); return st && alvo.some(a => st.includes(a) || a.includes(st)); })
+    : _aniCache;
+  const itens = [];
+  gente.forEach(p => {
+    [['nasc', p.nascimento, '🎂'], ['casa', p.admissao, '🎉']].forEach(par => {
+      const k = _aniDias(par[1]);
+      if (k === null || k > 7) return;
+      let extra = '';
+      if (par[0] === 'casa') {
+        const n = new Date().getFullYear() - (+String(par[1]).slice(0, 4));
+        if (n > 0) extra = ' · ' + n + (n === 1 ? ' ano' : ' anos') + ' de casa';
+      }
+      itens.push({ k: k, txt: par[2] + ' ' + p.nome + ' — ' + (k === 0 ? 'hoje' : k === 1 ? 'amanhã' : 'em ' + k + ' dias') + extra });
+    });
+  });
+  return itens.sort((a, b) => a.k - b.k || a.txt.localeCompare(b.txt)).map(x => x.txt);
+}
+async function amEnviarZap() {
+  await aniCarregar();
+  enviarTexto(amTexto());
+}
 function amTexto() {
   const E = window._amEscopoAtual;
   if (!E) return '';
@@ -45983,6 +46033,11 @@ function amTexto() {
     L.push('', '*Maiores perdas*');
     topPerda.forEach(([k, v]) => L.push('• ' + String(k).slice(0, 28) + ' — ' + t(v)));
   }
+  try {
+    const setores = [...new Set((E.prod || []).map(r => (typeof setorDe === 'function') ? setorDe(r.recurso_cod) : null).filter(Boolean))];
+    const ani = aniTextoSetores(setores);
+    if (ani.length) { L.push('', '*Aniversários dos próximos 7 dias*'); ani.forEach(x => L.push('• ' + x)); }
+  } catch (_) { }
   L.push('', '_Gerado no app de Produção · Análise+._');
   return L.join('\n');
 }
