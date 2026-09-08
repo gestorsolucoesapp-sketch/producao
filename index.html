@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.500.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.501.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3889,7 +3889,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.500.0';
+const APP_VER = '4.501.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -29344,7 +29344,32 @@ async function detProdMaqTurno(cod, bloco) {
     + (rows.length > 120 ? `<p class="desc" style="font-size:10px;margin:4px 0 0">mostrando 120 de ${rows.length} apontamentos</p>` : ''));
 }
 
-function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes, clickCel, clickNome, pesoPeca }) {
+/* ===== 08/09/2026 (Joao: "permita eu filtrar esse campo por peso do jeito que
+   esta e % tbem") =====
+   A tabela so sabia SOMAR (valFn por linha). Percentual nao e soma: precisa de
+   um denominador. Entao ela ganhou `denRows` — um segundo conjunto de linhas
+   (a producao) somado no MESMO formato maquina x turno. Com ele, cada celula
+   vira perda / (producao + perda) x 100, que e exatamente a regua do refugo do
+   topo do card.
+   O TOTAL da linha NAO e a soma dos tres percentuais: e o percentual dos
+   totais. Somar porcentagem de turno daria numero sem sentido. */
+let _perTurModo = 'kg';   // lembra a escolha entre um render e outro
+function perTurModo(k, m) {
+  try {
+    const a = document.getElementById(k + 'kg'), b = document.getElementById(k + 'pct'), o = document.getElementById(k + 'obs');
+    if (!a || !b) return;
+    const pct = (m === 'pct');
+    a.style.display = pct ? 'none' : ''; b.style.display = pct ? '' : 'none';
+    if (o) o.style.display = pct ? '' : 'none';
+    [['kg', !pct], ['pct', pct]].forEach(par => {
+      const el = document.getElementById(k + 'b' + par[0]); if (!el) return;
+      el.style.background = par[1] ? 'var(--navy)' : 'transparent';
+      el.style.color = par[1] ? '#fff' : 'var(--navy)';
+    });
+    _perTurModo = m;
+  } catch (_) { }
+}
+function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, nomes, clickCel, clickNome, pesoPeca, denRows, denValFn }) {
   const cel = {}, nome = {};
   const ini = c => { c = String(c); if (!cel[c]) cel[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 }; };
   if (incluirCods) incluirCods.forEach(c => { ini(c); if (nomes && nomes[c]) nome[String(c)] = nomes[c]; });
@@ -29369,7 +29394,26 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     if (pesoPeca) { try { const n = _pecasLinha(r); const kgL = +r.peso || 0;
       if (n && n > 0 && kgL > 0) { const o = (pp[c] = pp[c] || { kg: 0, pc: 0 }); o.kg += kgL; o.pc += n; } } catch (_) { } }
   });
-  let linhas = Object.keys(cel).map(c => { const o = cel[c]; return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] }; });
+  /* denominador (producao) somado no mesmo formato maquina x turno */
+  const den = {};
+  if (denRows) {
+    const dv = denValFn || (r => +r.peso || 0);
+    (denRows || []).forEach(r => {
+      const c = String(r.recurso_cod);
+      if (!den[c]) den[c] = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+      den[c][blocoTurno(r.turno, r.dia)] += (dv(r) || 0);
+    });
+  }
+  let linhas = Object.keys(cel).map(c => {
+    const o = cel[c];
+    if (denRows) {
+      const d = den[c] || { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
+      const rz = (p, q) => (p + q) > 0 ? (p / (p + q) * 100) : 0;
+      const tp = o['Manhã'] + o['Tarde'] + o['Noite'], tq = d['Manhã'] + d['Tarde'] + d['Noite'];
+      return { cod: c, nome: nome[c] || c, m: rz(o['Manhã'], d['Manhã']), ta: rz(o['Tarde'], d['Tarde']), n: rz(o['Noite'], d['Noite']), tot: rz(tp, tq) };
+    }
+    return { cod: c, nome: nome[c] || c, m: o['Manhã'], ta: o['Tarde'], n: o['Noite'], tot: o['Manhã'] + o['Tarde'] + o['Noite'] };
+  });
   if (!incluirCods) linhas = linhas.filter(l => l.tot > 0);
   /* 04/08/2026: ordem por CODIGO de maquina, nao por total. Ordenar pelo maior
      numero muda a posicao da linha toda vez que o periodo ou o turno muda, e o
@@ -32197,9 +32241,30 @@ function renderPainel() {
           + `<div style="font-size:11px;opacity:.85;margin-top:2px">fora do refugo: `
           + _foraTipos.map(([k, v]) => escapeHtml(k.toLowerCase()) + ' ' + fmtKg(v)).join(' · ') + '</div>'
         : '');
+    /* 08/09/2026 (João) — botão kg / %. As DUAS tabelas nascem prontas e o botão
+       só troca qual aparece: recalcular no clique seria refazer o painel, que é
+       justamente o que travava. O % usa como numerador só o que conta como
+       REFUGO (a mesma régua do 1,9% do topo); em kg as colunas continuam somando
+       tudo que foi apontado, então a observação embaixo diz isso na hora que o
+       % está ligado — foi essa diferença que já fez o card se contradizer. */
+    const _ptk = 'perTur' + String(setor || 'geral').replace(/[^A-Za-z]/g, '');
+    const _ptPct = (_perTurModo === 'pct');
+    const _clkCel = (c, b) => `detPerdaMaqTurno('${c}','${b}','${(setor || '').replace(/'/g, "")}')`;
+    const _btnPt = (m, lab, on) => `<button type="button" id="${_ptk}b${m}" onclick="perTurModo('${_ptk}','${m}')"`
+      + ` style="cursor:pointer;border:1px solid var(--linha-2s);border-radius:999px;padding:4px 14px;font-size:12px;font-weight:800;`
+      + `background:${on ? 'var(--navy)' : 'transparent'};color:${on ? '#fff' : 'var(--navy)'}">${lab}</button>`;
     html += card('Perdas por máquina e turno', _sub,
-      tabelaMaqTurno(perS, { valFn: r => r.peso || 0, fmtCel: v => v > 0 ? fmtKg(v) : '—', corCel: v => v > 0 ? 'baixo' : 'vazio',
-        clickCel: (c, b) => `detPerdaMaqTurno('${c}','${b}','${(setor || '').replace(/'/g, "")}')` }));
+      '<div style="display:flex;gap:6px;margin:0 0 8px">' + _btnPt('kg', 'kg', !_ptPct) + _btnPt('pct', '%', _ptPct) + '</div>'
+      + `<div id="${_ptk}kg"${_ptPct ? ' style="display:none"' : ''}>`
+      + tabelaMaqTurno(perS, { valFn: r => r.peso || 0, fmtCel: v => v > 0 ? fmtKg(v) : '—', corCel: v => v > 0 ? 'baixo' : 'vazio',
+        clickCel: _clkCel }) + '</div>'
+      + `<div id="${_ptk}pct"${_ptPct ? '' : ' style="display:none"'}>`
+      + tabelaMaqTurno(_perContadas, { valFn: r => r.peso || 0, denRows: prodS, denValFn: r => r.peso || 0,
+        fmtCel: v => v > 0 ? v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—',
+        corCel: v => v > 0 ? 'baixo' : 'vazio', clickCel: _clkCel }) + '</div>'
+      + `<div id="${_ptk}obs"${_ptPct ? '' : ' style="display:none"'} class="desc" style="font-size:11px;margin-top:6px">`
+      + '% = refugo \u00f7 (produ\u00e7\u00e3o + refugo) da pr\u00f3pria c\u00e9lula — mesma r\u00e9gua do n\u00famero do topo. '
+      + 'Em kg as colunas somam TUDO que foi apontado; no % entra s\u00f3 o que conta como refugo.</div>');
   }
   // perdas do 054 (Sleeve/Rotulagem não têm máquina no relatório de perdas)
   if (setor === 'Sleeve' || setor === 'Rotulagem') {
