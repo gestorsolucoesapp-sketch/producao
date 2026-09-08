@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.505.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.506.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1792,6 +1792,9 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <input id="rhBusca" type="text" placeholder="Buscar por nome, cargo, máquina ou tema..."
           oninput="rhRender()" style="width:100%;font-size:16px;padding:9px 10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <select id="rhSetorSel" onchange="rhSetorMuda()" style="font-size:16px;padding:7px;border:1px solid #ccc;border-radius:10px">
+            <option value="">Todos os setores</option>
+          </select>
           <select id="rhTurno" onchange="rhRender()" style="font-size:16px;padding:7px;border:1px solid #ccc;border-radius:10px">
             <option value="">Todos os turnos</option>
             <option value="Manhã">Manhã</option>
@@ -3910,7 +3913,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.505.0';
+const APP_VER = '4.506.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10076,8 +10079,45 @@ async function carregarRH() {
   rhRender();
 }
 
-function rhKpis() {
+/* ===== 08/09/2026 (João: "permita clicar e ver detalhes nos números de
+   desligados e tal, e filtrar por setor") =====
+   Os números do topo eram enfeite: o filtro só existia nos chips de baixo, que
+   ele nem via. Agora cada número É o botão do seu próprio chip — tocar em
+   "Desligados 6" liga o mesmo filtro do chip ✂️, e tocar de novo desliga.
+   "Fichas" limpa tudo; "Folha" não filtra nada, é soma, e por isso continua
+   sem clique — botão que não faz nada ensina o usuário a desconfiar do resto.
+   Os KPIs passam a contar em cima do setor escolhido, senão o número de cima
+   briga com a lista de baixo. */
+const RH_KPI_CHIP = { 'Apuração prévia': 'trava', 'Formadores': 'mult', 'Querem crescer': 'carr', 'Confidencial': 'sens', 'Sem entrevista': 'sement', 'Desligados': 'deslig' };
+let _rhSetor = '';
+function rhBase() {
   const d = _rhDados || [];
+  return _rhSetor ? d.filter(p => String(p.setor || p.lotacao || '') === _rhSetor) : d;
+}
+function rhSetorMuda() {
+  _rhSetor = ($('rhSetorSel') && $('rhSetorSel').value) || '';
+  rhKpis(); rhRender();
+}
+function rhSetorOpcoes() {
+  const sel = $('rhSetorSel'); if (!sel) return;
+  const sts = [...new Set((_rhDados || []).map(p => String(p.setor || p.lotacao || '')).filter(Boolean))].sort();
+  if (_rhSetor && !sts.includes(_rhSetor)) _rhSetor = '';
+  sel.innerHTML = '<option value="">Todos os setores</option>'
+    + sts.map(st => '<option value="' + escapeHtml(st) + '"' + (st === _rhSetor ? ' selected' : '') + '>'
+      + escapeHtml(st) + ' · ' + (_rhDados || []).filter(p => String(p.setor || p.lotacao || '') === st).length + '</option>').join('');
+}
+function rhKpiToque(lab) {
+  if (lab === 'Fichas') {
+    Object.keys(_rhFiltros).forEach(k => { _rhFiltros[k] = false; });
+    document.querySelectorAll('.rh-chip').forEach(b => { b.style.background = ''; b.style.color = ''; });
+    rhKpis(); rhRender(); return;
+  }
+  const f = RH_KPI_CHIP[lab]; if (!f) return;
+  rhChip(f); rhKpis();
+}
+function rhKpis() {
+  rhSetorOpcoes();
+  const d = rhBase();
   const k = [
     ['Fichas', d.length, '#2C3E50'],
     ['Apuração prévia', d.filter(x => x.requer_apuracao_previa).length, '#C0392B'],
@@ -10088,11 +10128,17 @@ function rhKpis() {
     ['Folha (visível)', 'R$ ' + Math.round(d.reduce((t, x) => t + (x._sal || 0), 0) / 1000) + 'k', '#1A5276'],
     ['Desligados', d.filter(x => x.desligado).length, '#7B7D7D']
   ];
-  $('rhKpis').innerHTML = k.map(([lab, v, c]) =>
-    '<div style="flex:1;min-width:84px;background:#F4F7FA;border-radius:10px;padding:8px 6px;text-align:center">' +
-    '<div style="font-size:19px;font-weight:800;color:' + c + '">' + v + '</div>' +
-    '<div style="font-size:10px;color:#5A6B7B;font-weight:700">' + lab + '</div></div>'
-  ).join('');
+  $('rhKpis').innerHTML = k.map(([lab, v, c]) => {
+    const f = RH_KPI_CHIP[lab], liga = (lab === 'Fichas') || !!f;
+    const on = f && _rhFiltros[f];
+    return '<' + (liga ? 'button type="button" onclick="rhKpiToque(\'' + lab.replace(/'/g, "") + '\')"' : 'div')
+      + ' style="flex:1;min-width:84px;border:' + (on ? '2px solid ' + c : '1px solid transparent')
+      + ';background:' + (on ? '#fff' : '#F4F7FA') + ';border-radius:10px;padding:8px 6px;text-align:center;'
+      + (liga ? 'cursor:pointer;font-family:inherit' : '') + '">'
+      + '<div style="font-size:19px;font-weight:800;color:' + c + '">' + v + '</div>'
+      + '<div style="font-size:10px;color:#5A6B7B;font-weight:700">' + lab + '</div>'
+      + '</' + (liga ? 'button' : 'div') + '>';
+  }).join('');
 }
 
 function rhChip(f) {
@@ -10102,13 +10148,14 @@ function rhChip(f) {
     b.style.background = on ? '#2C3E50' : '';
     b.style.color = on ? '#fff' : '';
   });
+  try { rhKpis(); } catch (_) { }
   rhRender();
 }
 
 function rhFiltrar() {
   const q = ($('rhBusca').value || '').trim().toLowerCase();
   const t = $('rhTurno').value;
-  return (_rhDados || []).filter(p => {
+  return rhBase().filter(p => {
     if (t && p.turno !== t) return false;
     if (_rhFiltros.trava && !p.requer_apuracao_previa) return false;
     if (_rhFiltros.mult  && !p.potencial_multiplicador) return false;
@@ -10125,7 +10172,7 @@ function rhFiltrar() {
 function rhRender() {
   if (!_rhDados) return;
   const lista = rhFiltrar();
-  $('rhCount').innerHTML = lista.length + ' de ' + _rhDados.length + ' fichas';
+  $('rhCount').innerHTML = lista.length + ' de ' + rhBase().length + ' fichas' + (_rhSetor ? ' · ' + escapeHtml(_rhSetor) : '');
   if (!lista.length) { $('rhLista').innerHTML = '<div class="card">Nenhuma ficha com esses filtros.</div>'; return; }
   $('rhLista').innerHTML = lista.map(p => {
     const cor = RH_COR_TURNO[p.turno] || '#999';
