@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.575.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.576.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3953,7 +3953,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.575.0';
+const APP_VER = '4.576.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -45257,13 +45257,38 @@ async function rretGravar() {
 let _rbobBase = null, _rbobHist = null, _rbobBusca = '', _rbobSel = null, _rbobTipo = 'saida';
 const RBOB_LIMITE = 10;   // % de divergência contra o 054 que acende o alerta
 
+let _rbobBuscando = false;
+async function rbobBuscaBanco(q) {
+  _rbobBuscando = true;
+  try {
+    const alvo = q.toUpperCase();
+    const { data } = await sb.from('v_rotulo_retorno_base')
+      .select('sleeve_cod,acabado_cod,item_desc,cliente,gramatura,unid_cx,op,maquina,posicao,cx_saldo,cx_feita,cx_total,fim')
+      .or('op.ilike.%' + alvo + '%,acabado_cod.ilike.%' + alvo + '%,sleeve_cod.ilike.%' + alvo + '%')
+      .limit(40);
+    const novos = (data || []).filter(x => !(_rbobBase || []).some(y => y.op === x.op && y.sleeve_cod === x.sleeve_cod));
+    if (novos.length) { _rbobBase = (_rbobBase || []).concat(novos); rbobRender(); }
+  } catch (_) { } finally { setTimeout(() => { _rbobBuscando = false; }, 400); }
+}
+
 async function rbobAbrir(forcar) {
   const cx = $('rbobBox'); if (!cx) return;
   if (!_rbobBase || forcar) {
     cx.innerHTML = '<p class="desc">carregando…</p>';
     try {
       const [b, h] = await Promise.all([
-        sb.from('v_rotulo_retorno_base').select('sleeve_cod,acabado_cod,item_desc,cliente,gramatura,unid_cx,op,maquina,posicao,cx_saldo,cx_feita,cx_total'),
+        /* ===== 09/09/2026 (João: "por que aparece essa mensagem?") =====
+           O aviso "1.368 linhas — o app buscou o resto sozinho" é o vigia do teto
+           de 1.000 linhas do banco: ele percebeu que a resposta veio cheia e foi
+           buscar o resto. Estava CERTO, mas o problema é eu ter pedido a tabela
+           inteira: 1.368 é toda combinação de item × OP que já existiu.
+           Peço só o que serve para lançar bobina — OP com saldo na fila ou com
+           produção nos últimos 90 dias. Cai para ~267 linhas, entra numa página
+           só e a tela abre bem mais rápido. OP mais velha que isso ainda aparece
+           pela busca, que consulta o banco. */
+        sb.from('v_rotulo_retorno_base')
+          .select('sleeve_cod,acabado_cod,item_desc,cliente,gramatura,unid_cx,op,maquina,posicao,cx_saldo,cx_feita,cx_total,fim')
+          .or('cx_saldo.gt.0,fim.gte.' + new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)),
         sb.from('v_rotulo_bobina_op').select('*').order('dia_saida', { ascending: false }).limit(80)
       ]);
       if (b.error) throw b.error;
@@ -45285,6 +45310,9 @@ function rbobRender() {
   const B = (_rbobBase || []);
   const vis = q ? B.filter(r => [r.acabado_cod, r.sleeve_cod, r.op, r.item_desc, r.cliente]
     .some(x => String(x || '').toLowerCase().includes(q))).slice(0, 40) : [];
+  /* OP antiga não vem na carga inicial; se a busca não achar nada aqui, procuro
+     no banco — assim a lista fica leve sem esconder nada dele */
+  if (q.length >= 3 && !vis.length && !_rbobBuscando) rbobBuscaBanco(q);
 
   const bt = (v, r) => '<button class="btn" onclick="_rbobTipo=\'' + v + '\';rbobRender()" '
     + 'style="width:auto;padding:8px 16px;font-size:13px;font-weight:800;'
