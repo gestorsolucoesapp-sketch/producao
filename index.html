@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.553.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.554.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.553.0';
+const APP_VER = '4.554.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -43852,8 +43852,20 @@ function _rnfParse(txt, nomeArq) {
   while ((m = re.exec(txt)) !== null) {
     const q = _rnfNum(m[6]), vu = _rnfNum(m[7]), vt = _rnfNum(m[8]);
     if (q == null || q <= 0) continue;
+    /* ===== 09/09/2026 (João: "está dando IPI atrás do código") =====
+       O cabeçalho da tabela do DANFE termina em "... ALÍQ. ICMS IPI" e o primeiro
+       item vem colado nele. Minha âncora pegava "IPI" como código e empurrava o
+       código de verdade para a descrição — e aí o de-para procurava por "IPI" e
+       não achava, que foi o "já está cadastrado e deu que não conhece".
+       Se o que veio como código é palavra de cabeçalho, jogo fora e uso o
+       primeiro pedaço da descrição, que é o código verdadeiro. */
+    let _cod = m[1].trim(), _des = m[2].trim().replace(/\s+/g, ' ');
+    if (/^(IPI|ICMS|TRIB|TRIBUTOS|ALIQ|ALIQUOTAS|CST|CFOP|NCM|UNID|QUANT|VALOR|TOTAL|PROD|COD|SERVI[ÇC]O|SH)$/i.test(_cod)) {
+      const p = _des.split(/\s+/);
+      if (p.length > 1) { _cod = p.shift(); _des = p.join(' '); }
+    }
     itens.push({
-      cod_prod: m[1].trim(), descricao: m[2].trim().replace(/\s+/g, ' '),
+      cod_prod: _cod, descricao: _des,
       ncm: m[3], cfop: m[4], unidade: (m[5] === 'MIL' ? 'MI' : m[5]).toUpperCase(),
       quantidade: q, valor_unit: vu, valor_total: vt,
       op: (m[2].match(/OP\/Lote:\s*(\d+)/i) || [])[1] || null
@@ -43886,7 +43898,11 @@ async function _rnfResolver(nf) {
   const { data: itens } = await sb.from('rotulo_item').select('sleeve_cod');
   const meus = new Set((itens || []).map(x => String(x.sleeve_cod)));
 
-  const chaveDep = (cnpj, cod) => _rnfSoDig(cnpj) + '|' + String(cod || '').trim().toUpperCase();
+  /* 09/09/2026 — ele cadastrou "SA - 5153" e a nota traz "SA-5153". Para o
+     computador são textos diferentes; para a fábrica é o mesmo rótulo. Comparo
+     sem espaço e sem caixa, dos dois lados. O que fica gravado continua sendo o
+     que ele digitou — normalizo só na hora de comparar. */
+  const chaveDep = (cnpj, cod) => _rnfSoDig(cnpj) + '|' + String(cod || '').replace(/\s+/g, '').toUpperCase();
   const mapa = {};
   (dep || []).forEach(d => { mapa[chaveDep(d.fornecedor_cnpj, d.fornecedor_cod)] = d.sleeve_cod; });
 
@@ -43895,7 +43911,8 @@ async function _rnfResolver(nf) {
     it.rotulos = it.quantidade * (fator[it.unidade] || 1);
     /* 1º o código já é meu (as notas de retorno usam o sleeve direto: 2651301);
        2º o de-para do fornecedor; 3º desisto e marco para ele amarrar */
-    if (meus.has(String(it.cod_prod))) it.sleeve_cod = String(it.cod_prod);
+    const _cn = String(it.cod_prod || '').replace(/\s+/g, '').toUpperCase();
+    if (meus.has(String(it.cod_prod)) || meus.has(_cn)) it.sleeve_cod = meus.has(String(it.cod_prod)) ? String(it.cod_prod) : _cn;
     else it.sleeve_cod = mapa[chaveDep(nf.emitente_cnpj, it.cod_prod)] || null;
     it.status = it.servico ? 'ok' : (it.sleeve_cod ? 'ok' : 'sem_depara');
   });
