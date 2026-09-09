@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v4.532.0';
+const CACHE = 'producao-rioplastic-v4.533.0';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -141,8 +141,17 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  const ehNavegacao = e.request.mode === 'navigate' ||
-    url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+  /* ===== 08/09/2026 — BUG ACHADO PELO JOÃO SEM SABER =====
+     Ele abriu /inicio.html e viu a tarja de erro do app numa página que não tem
+     uma linha de JavaScript. O motivo estava aqui: QUALQUER navegação
+     (`mode === 'navigate'`) era respondida com o index.html do cache. Abrir
+     qualquer outro endereço do site — inicio.html, teste.html — entregava o app
+     pesado no lugar da página pedida, e o iPhone seguia engasgando ao tentar
+     adicionar à tela de início.
+     Agora só a RAIZ e o próprio index.html contam como navegação do app; o
+     resto segue o caminho normal. */
+  const ehIndex = url.pathname.endsWith('/') || url.pathname.endsWith('/index.html');
+  const ehNavegacao = ehIndex && (e.request.mode === 'navigate' || e.request.destination === 'document' || e.request.mode === 'no-cors');
 
   if (ehNavegacao) {
     e.respondWith((async () => {
