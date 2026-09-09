@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.536.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.537.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3930,7 +3930,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.536.0';
+const APP_VER = '4.537.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -56899,6 +56899,16 @@ async function faImportarRH(fExterno) {
     const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+    /* ===== 09/09/2026 — POR QUE A PLANILHA DE AGOSTO NÃO ENTRAVA =====
+       O diagnóstico mostrou a data chegando como "8/11/26", enquanto no Excel a
+       célula mostra 11/08/2026: lendo formatado (`raw:false`), a biblioteca
+       escreve mês/dia/ano com ano de 2 dígitos.
+       Aceitar esse texto seria chutar — 8/11/26 tanto é 11 de agosto quanto 8 de
+       novembro, e errar aqui lança falta no dia errado no crachá de alguém.
+       Então leio a planilha DE NOVO em cru: com `cellDates`, a célula de data
+       vira Date de verdade, sem ambiguidade. A leitura formatada continua valendo
+       para o resto (nome, motivo, horas), que precisa do texto. */
+    const rowsRaw = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, cellDates: true });
     if (!rows.length) throw new Error('planilha vazia');
 
     const cab = rows[0] || [];
@@ -56924,9 +56934,11 @@ async function faImportarRH(fExterno) {
         const mc = iMat >= 0 ? String(r[iMat] == null ? '' : r[iMat]) : '(sem coluna)';
         const dc = iDat >= 0 ? String(r[iDat] == null ? '' : r[iDat]) : '(sem coluna)';
         if (!mc.trim() && !dc.trim()) continue;
-        const okM = /^\d{3,8}$/.test(mc.trim()), okD = !!_faData(dc);
+        const _cru = (rowsRaw[i] || [])[iDat];
+        const _lida = _faData(_cru instanceof Date ? _cru : dc);
+        const okM = /^\d{3,8}$/.test(mc.trim()), okD = !!_lida;
         amostra.push('linha ' + (i + 1) + ' · crachá <b>[' + escapeHtml(mc) + ']</b> ' + (okM ? 'ok' : '✗')
-          + ' · data <b>[' + escapeHtml(dc) + ']</b> ' + (okD ? 'ok' : '✗'));
+          + ' · data <b>[' + escapeHtml(dc) + ']</b> ' + (okD ? '→ ' + _lida : '✗ não consegui ler'));
       }
       return '<div style="margin-top:8px;font-size:12px;line-height:1.6">'
         + 'aba lida: <b>' + escapeHtml(wb.SheetNames[0] || '?') + '</b>' + (abas.split(',').length > 1 ? ' (a planilha tem: ' + escapeHtml(abas) + ')' : '')
@@ -56941,7 +56953,8 @@ async function faImportarRH(fExterno) {
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i] || [];
       const mat = String(r[iMat] == null ? '' : r[iMat]).trim();
-      const dia = _faData(r[iDat]);
+      const _dCru = (rowsRaw[i] || [])[iDat];
+      const dia = _faData(_dCru instanceof Date ? _dCru : r[iDat]);
       if (!/^\d{3,8}$/.test(mat) || !dia) continue;
       linhas.push({ m: mat, nome: iNom >= 0 ? String(r[iNom] || '').trim() : null,
                     d: dia, cod: parseInt(String(r[iCod] || '0').replace(/\D/g, ''), 10) || 0,
