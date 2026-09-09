@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.547.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.548.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.547.0';
+const APP_VER = '4.548.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44053,6 +44053,142 @@ async function rnfConta() {
    2. o que precisa de decisão humana (nota que eu não soube ler)
    3. a conta corrente remessa por remessa, que é a planilha do fiscal          */
 
+/* ===================== EXPORTAR A ANÁLISE FISCAL — 09/09/2026 =====================
+   João: "nessa aba de análise crie um exportador em PDF, XLS, para mandar por
+   WhatsApp ou e-mail".
+
+   Três saídas, porque são três usos diferentes e cada um quebra no formato errado:
+   · WhatsApp = TEXTO curto. Planilha no WhatsApp ninguém abre no celular.
+   · Excel = a planilha inteira, para o fiscal continuar trabalhando em cima.
+   · PDF = a folha de impressão, para anexar em e-mail e arquivar.
+
+   Guardo o que a tela CALCULOU (`_rnfFis`) em vez de recalcular na exportação:
+   dois cálculos do mesmo número acabam discordando, e aí ninguém confia em
+   nenhum dos dois. O que sai no arquivo é exatamente o que está na tela.       */
+
+let _rnfFis = null;
+
+function _rnfCab() {
+  const d = new Date();
+  return 'Análise fiscal de rótulos · Rioplastic · '
+    + d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR').slice(0, 5);
+}
+
+function rnfExpTexto() {
+  if (!_rnfFis) { toast('Abra a análise primeiro.'); return; }
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const L = ['*' + _rnfCab() + '*', ''];
+  L.push('Saldo fiscal: *' + f(_rnfFis.tFis) + '* rótulos');
+  L.push('Controle interno: *' + f(_rnfFis.tCon) + '* (bobina + segregado)');
+  L.push('Diferença: *' + f(_rnfFis.tFis - _rnfFis.tCon) + '*');
+  const dif = _rnfFis.linhas.filter(x => x.dif !== null && Math.abs(x.dif) > 0);
+  if (dif.length) {
+    L.push('', '*Divergindo · ' + dif.length + '*');
+    /* corto em 15: acima disso ninguém lê no WhatsApp, e omitir sem avisar é pior
+       que cortar dizendo quantos ficaram de fora */
+    dif.slice(0, 15).forEach(x => L.push('• ' + x.sleeve + ' ' + (x.cliente || '')
+      + ' — fiscal ' + f(x.fiscal) + ' · controle ' + f(x.controle) + ' · dif ' + f(x.dif)));
+    if (dif.length > 15) L.push('… e mais ' + (dif.length - 15) + '.');
+  } else L.push('', 'Nenhuma divergência entre fiscal e controle.');
+  if (_rnfFis.pend.length) L.push('', '⚠ ' + _rnfFis.pend.length + ' linha(s) de nota sem amarração (não entram na conta).');
+  L.push('', '_Gerado no app de Produção · Rótulos._');
+  enviarTexto(L.join('\n'), 'Análise fiscal de rótulos');
+}
+
+async function rnfExpExcel() {
+  if (!_rnfFis) { toast('Abra a análise primeiro.'); return; }
+  try {
+    await garantirXlsx();
+    const wb = XLSX.utils.book_new();
+    const n = v => (v === null || v === undefined) ? null : Math.round(+v || 0);
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      [_rnfCab()], [],
+      ['Saldo fiscal (não voltou por nota)', n(_rnfFis.tFis)],
+      ['Controle interno (bobina + segregado)', n(_rnfFis.tCon)],
+      ['Diferença', n(_rnfFis.tFis - _rnfFis.tCon)],
+      ['Itens divergindo', _rnfFis.linhas.filter(x => x.dif !== null && Math.abs(x.dif) > 0).length],
+      ['Linhas de nota sem amarração', _rnfFis.pend.length]
+    ]), 'Resumo');
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_rnfFis.linhas.map(x => ({
+      Sleeve: x.sleeve, Descrição: x.desc, Cliente: x.cliente,
+      'Saldo fiscal': n(x.fiscal), 'Controle interno': n(x.controle), Diferença: n(x.dif)
+    }))), 'Fiscal x Controle');
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((_rnfFis.rem || []).map(r => ({
+      'NF remessa': r.nf_remessa, Emissão: r.emissao, Emitente: r.emitente_nome,
+      Sleeve: r.sleeve_cod, Cliente: r.cliente,
+      Entrou: n(r.entrou), Aplicado: n(r.aplicado), Perda: n(r.perda),
+      Devolvido: n(r.devolvido), Retornado: n(r.retornado), Saldo: n(r.saldo),
+      'Saldo R$': +r.saldo_valor || 0, 'Notas de retorno': r.numeros_retorno || ''
+    }))), 'Conta corrente');
+
+    if (_rnfFis.pend.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(_rnfFis.pend.map(p => ({
+        Código: p.cod_prod, Descrição: p.descricao,
+        Quantidade: p.quantidade, Unidade: p.unidade,
+        Problema: p.status === 'sem_depara' ? 'código não cadastrado' : 'sem remessa correspondente'
+      }))), 'Pendências');
+    }
+    const d = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, 'analise-fiscal-rotulos-' + d + '.xlsx');
+    toast('Planilha gerada.');
+  } catch (e) { toast('Não consegui gerar a planilha: ' + ((e && e.message) || e)); }
+}
+
+function rnfExpPdf() {
+  if (!_rnfFis) { toast('Abra a análise primeiro.'); return; }
+  const f = v => (v === null || v === undefined) ? '—' : Math.round(+v || 0).toLocaleString('pt-BR');
+  const linha = x => '<tr' + (x.dif !== null && Math.abs(x.dif) > 0 ? ' class="ruim"' : '') + '>'
+    + '<td>' + escapeHtml(x.sleeve) + '</td><td>' + escapeHtml(String(x.desc).slice(0, 44)) + '</td>'
+    + '<td>' + escapeHtml(x.cliente || '') + '</td><td class="n">' + f(x.fiscal) + '</td>'
+    + '<td class="n">' + f(x.controle) + '</td><td class="n">' + f(x.dif) + '</td></tr>';
+  const rem = (_rnfFis.rem || []).map(r => '<tr><td>' + escapeHtml(r.nf_remessa || '') + '</td>'
+    + '<td>' + escapeHtml(r.sleeve_cod || '') + '</td><td>' + escapeHtml(r.cliente || '') + '</td>'
+    + '<td class="n">' + f(r.entrou) + '</td><td class="n">' + f(r.aplicado) + '</td>'
+    + '<td class="n">' + f(r.perda) + '</td><td class="n">' + f(r.saldo) + '</td></tr>').join('');
+  /* janela nova em vez de mexer na tela: no iPhone o botão de imprimir vira
+     "Salvar em Arquivos", que é como ele anexa no e-mail */
+  const w = window.open('', '_blank');
+  if (!w) { toast('O navegador bloqueou a janela. Libere pop-up para este site.'); return; }
+  w.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">'
+    + '<title>Análise fiscal de rótulos</title><style>'
+    + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:18px;color:#22303C}'
+    + 'h1{font-size:16px;margin:0 0 2px}h2{font-size:13px;margin:18px 0 6px}'
+    + '.sub{font-size:11px;color:#667}'
+    + 'table{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}'
+    + 'th{text-align:left;border-bottom:1px solid #999;padding:4px 3px}'
+    + 'td{border-bottom:1px solid #eee;padding:4px 3px}.n{text-align:right}'
+    + '.ruim{background:#FDEDEC}.kpi{display:flex;gap:10px;margin:10px 0}'
+    + '.kpi div{flex:1;border:1px solid #ccc;border-radius:6px;padding:7px}'
+    + '.kpi b{display:block;font-size:16px}@media print{body{padding:0}}'
+    + '</style></head><body>'
+    + '<h1>' + escapeHtml(_rnfCab()) + '</h1>'
+    + '<div class="sub">Saldo fiscal = o que ainda não voltou por nota. No controle interno, corresponde a bobina + segregado.</div>'
+    + '<div class="kpi"><div>Saldo fiscal<b>' + f(_rnfFis.tFis) + '</b></div>'
+    + '<div>Controle interno<b>' + f(_rnfFis.tCon) + '</b></div>'
+    + '<div>Diferença<b>' + f(_rnfFis.tFis - _rnfFis.tCon) + '</b></div></div>'
+    + '<h2>Fiscal × controle, por rótulo</h2>'
+    + '<table><tr><th>Sleeve</th><th>Descrição</th><th>Cliente</th><th class="n">Fiscal</th>'
+    + '<th class="n">Controle</th><th class="n">Dif.</th></tr>'
+    + _rnfFis.linhas.map(linha).join('') + '</table>'
+    + (rem ? '<h2>Conta corrente das remessas</h2><table><tr><th>NF</th><th>Sleeve</th><th>Cliente</th>'
+      + '<th class="n">Entrou</th><th class="n">Aplicado</th><th class="n">Perda</th><th class="n">Saldo</th></tr>'
+      + rem + '</table>' : '')
+    + (_rnfFis.pend.length ? '<h2>Pendências · ' + _rnfFis.pend.length + '</h2>'
+      + '<div class="sub">Linhas de nota sem amarração — não entram na conta acima.</div>'
+      + '<table><tr><th>Código</th><th>Descrição</th><th class="n">Qtd</th><th>Problema</th></tr>'
+      + _rnfFis.pend.map(p => '<tr><td>' + escapeHtml(p.cod_prod || '') + '</td><td>'
+        + escapeHtml(String(p.descricao || '').slice(0, 44)) + '</td><td class="n">'
+        + (+p.quantidade || 0).toLocaleString('pt-BR') + ' ' + escapeHtml(p.unidade || '') + '</td><td>'
+        + (p.status === 'sem_depara' ? 'código não cadastrado' : 'sem remessa correspondente')
+        + '</td></tr>').join('') + '</table>' : '')
+    + '</body></html>');
+  w.document.close();
+  setTimeout(() => { try { w.print(); } catch (_) { } }, 400);
+}
+
 async function rnfFiscal() {
   const cx = $('rnfFiscal'); if (!cx) return;
   cx.innerHTML = '<p class="desc">carregando…</p>';
@@ -44100,7 +44236,14 @@ async function rnfFiscal() {
       + '<div style="font-size:19px;font-weight:800;color:' + cor + ';margin-top:4px">' + val + '</div>'
       + '<div class="desc" style="font-size:11px;margin-top:3px">' + ap + '</div></div>';
 
-    let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    _rnfFis = { tFis: tFis, tCon: tCon, linhas: linhas, pend: P, rem: R };
+
+    let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">'
+      + '<button class="btn" onclick="rnfExpTexto()" style="width:auto;padding:8px 13px;font-size:13px">📲 WhatsApp</button>'
+      + '<button class="btn" onclick="rnfExpExcel()" style="width:auto;padding:8px 13px;font-size:13px">📊 Excel</button>'
+      + '<button class="btn" onclick="rnfExpPdf()" style="width:auto;padding:8px 13px;font-size:13px">🖨️ PDF</button>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
       + bloco('Saldo fiscal', f(tFis), '#1A5276', 'não voltou por nota')
       + bloco('Controle interno', f(tCon), '#1F7A46', 'bobina + segregado')
       + bloco('Diferença', f(tFis - tCon), Math.abs(tFis - tCon) > 0 ? '#C0392B' : '#7A8794', nDif + ' item(ns) divergindo')
