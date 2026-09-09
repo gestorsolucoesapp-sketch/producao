@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.572.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.573.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3953,7 +3953,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.572.0';
+const APP_VER = '4.573.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -45012,6 +45012,221 @@ async function rbalGravar(sleeve) {
   } catch (e) { toast('Não deu para gravar: ' + ((e && e.message) || e)); }
 }
 
+/* ===================== RETORNO DE BOBINA — 09/09/2026 =====================
+   João: "quando a bobina vai para a máquina e volta, temos que lançar o retorno em
+   kg; eu escolho o código 160…, você preenche o resto, confronta o que produziu
+   pela fila e as perdas com o que eu informar, usa a baixa na fila para baixar o
+   estoque, e me dá a diferença entre o retorno e esse confrontamento, em kg e em
+   unidades."
+
+   As duas peças que faltavam ele definiu: o que SAI é o que a OP precisa (puxado
+   da fila) e a BAIXA é pelo CONSUMIDO (produzido + perda).
+
+   ACHADO NA HORA DE MONTAR, e vale saber: a `fila_producao` traz o SALDO A
+   PRODUZIR, não o total da OP. Na OP 258679 a fila diz 15 caixas e a produção já
+   registrou 426. Usar a fila crua faria "saiu" ficar menor que "produziu" e a
+   conta dar negativo em quase tudo. Total da OP = já produzido + saldo na fila.
+
+   A conta que a tela mostra, aberta linha a linha para ele conferir:
+     saiu      = total da OP × unidades por caixa
+     produziu  = caixas produzidas × unidades por caixa
+     perdeu    = kg do 054 ÷ gramatura
+     esperado  = saiu − produziu − perdeu
+     informado = kg que ele digita ÷ gramatura
+     diferença = informado − esperado, em rótulos E em kg
+
+   Gravo a gramatura USADA no lançamento: se ela for corrigida depois, o
+   lançamento antigo continua explicável em vez de mudar de valor sozinho.      */
+
+let _rretBase = null, _rretSel = null, _rretBusca = '', _rretHist = null;
+
+async function rretAbrir(forcar) {
+  const cx = $('rretBox'); if (!cx) return;
+  if (!_rretBase || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const [b, h] = await Promise.all([
+        sb.from('v_rotulo_retorno_base').select('*'),
+        sb.from('rotulo_retorno').select('*').order('criado_em', { ascending: false }).limit(60)
+      ]);
+      if (b.error) throw b.error;
+      _rretBase = b.data || [];
+      _rretHist = h.data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rretRender();
+}
+
+function rretRender() {
+  const cx = $('rretBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rretBusca');
+  const B = _rretBase || [];
+  const q = _rretBusca.trim().toLowerCase();
+  const vis = q
+    ? B.filter(r => [r.acabado_cod, r.sleeve_cod, r.op, r.item_desc, r.cliente].some(x => String(x || '').toLowerCase().includes(q)))
+    : B.filter(r => +r.cx_saldo > 0 || +r.cx_feita > 0).slice(0, 60);
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+
+  let h = '<p class="desc" style="font-size:11.5px;margin:0 0 8px">Busque pelo <b>código do item (160…)</b>, pelo sleeve ou pela OP. '
+    + 'Eu preencho o resto e mostro a conta antes de gravar.</p>'
+    + '<input id="rretBusca" type="search" autocomplete="off" name="ret_' + Math.random().toString(36).slice(2, 8) + '"'
+    + ' placeholder="código do item, sleeve ou OP…" value="' + escapeHtml(_rretBusca) + '"'
+    + ' oninput="_rretBusca=this.value;rretRender()" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:10px;margin-bottom:9px;box-sizing:border-box">';
+
+  if (!vis.length) { cx.innerHTML = h + '<p class="desc">Nada encontrado.</p>'; _rotFocoVolta('rretBusca', _g); return; }
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:left;color:var(--fraco)"><th>item · OP</th><th>máquina</th>'
+    + '<th style="text-align:right">saiu</th><th style="text-align:right">produziu</th>'
+    + '<th style="text-align:right">perdeu</th><th style="text-align:right">deve voltar</th></tr>';
+  vis.forEach((r, i) => {
+    const pronto = r.esperado != null;
+    h += '<tr class="tocavel" onclick="rretEscolher(' + i + ')" style="cursor:pointer;border-top:1px solid var(--leve-2s)'
+      + (r.retornos_lancados ? ';opacity:.6' : '') + '">'
+      + '<td><b>' + escapeHtml(r.acabado_cod || '') + '</b> <span class="desc">OP ' + escapeHtml(r.op || '') + '</span>'
+      + '<span class="lupa">🔎</span>'
+      + '<div class="desc" style="font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + escapeHtml(String(r.item_desc || '')) + '</div>'
+      + (r.retornos_lancados ? '<div style="font-size:10px;color:#B26B00">já tem retorno lançado</div>' : '') + '</td>'
+      + '<td>' + escapeHtml(r.maquina || '—') + (r.posicao ? '<div class="desc" style="font-size:10px">' + r.posicao + 'º</div>' : '') + '</td>'
+      + '<td style="text-align:right">' + (pronto ? f(r.saiu) : '<span class="desc">—</span>') + '</td>'
+      + '<td style="text-align:right">' + (pronto ? f(r.produziu) : '—') + '</td>'
+      + '<td style="text-align:right">' + (pronto ? f(r.perdeu) : '—') + '</td>'
+      + '<td style="text-align:right;font-weight:800">' + (pronto ? f(r.esperado)
+        : '<span style="color:#B26B00;font-size:10px">falta gramatura ou N UNID</span>') + '</td></tr>';
+  });
+  h += '</table></div>';
+
+  if ((_rretHist || []).length) {
+    h += '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:14px 0 6px">Últimos retornos</div>'
+      + '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="text-align:left;color:var(--fraco)"><th>quando</th><th>sleeve · OP</th>'
+      + '<th style="text-align:right">informado</th><th style="text-align:right">esperado</th><th style="text-align:right">diferença</th></tr>';
+    _rretHist.slice(0, 25).forEach(x => {
+      const d = +x.diferenca || 0;
+      h += '<tr style="border-top:1px solid var(--leve-2s)">'
+        + '<td>' + String(x.dia).split('-').reverse().join('/') + '</td>'
+        + '<td>' + escapeHtml(x.sleeve_cod) + ' <span class="desc">' + escapeHtml(x.op || '') + '</span></td>'
+        + '<td style="text-align:right">' + (+x.kg_informado).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg'
+        + '<div class="desc" style="font-size:10px">' + f(x.rotulos_informado) + '</div></td>'
+        + '<td style="text-align:right">' + f(x.esperado) + '</td>'
+        + '<td style="text-align:right;font-weight:800;color:' + (Math.abs(d) < 1 ? 'var(--fraco)' : d > 0 ? '#1F7A46' : '#C0392B') + '">'
+        + (d > 0 ? '+' : '') + f(d)
+        + '<div class="desc" style="font-size:10px;font-weight:400">' + (+x.diferenca_kg || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg</div></td></tr>';
+    });
+    h += '</table></div>';
+  }
+  cx.innerHTML = h;
+  _rotFocoVolta('rretBusca', _g);
+}
+
+function rretEscolher(i) {
+  const q = _rretBusca.trim().toLowerCase();
+  const vis = q
+    ? (_rretBase || []).filter(r => [r.acabado_cod, r.sleeve_cod, r.op, r.item_desc, r.cliente].some(x => String(x || '').toLowerCase().includes(q)))
+    : (_rretBase || []).filter(r => +r.cx_saldo > 0 || +r.cx_feita > 0).slice(0, 60);
+  const r = vis[i]; if (!r) return;
+  if (r.esperado == null) { toast('Falta a gramatura ou o "N UNID" na descrição — cadastre antes.'); return; }
+  _rretSel = r;
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const lin = (rot, val, cor) => '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--leve-2s);font-size:13px">'
+    + '<span>' + rot + '</span><b' + (cor ? ' style="color:' + cor + '"' : '') + '>' + val + '</b></div>';
+
+  const d = document.createElement('div');
+  d.id = 'rretBox2';
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100001;display:flex;align-items:center;justify-content:center;padding:14px';
+  d.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:520px;width:100%;max-height:86vh;overflow:auto;padding:16px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+    + '<b style="font-size:15px">Retorno · ' + escapeHtml(r.acabado_cod) + ' · OP ' + escapeHtml(r.op || '') + '</b>'
+    + '<span onclick="document.getElementById(\'rretBox2\').remove()" style="cursor:pointer;font-size:18px;color:var(--fraco)">✕</span></div>'
+    + '<p class="desc" style="font-size:11.5px;margin:2px 0 10px">' + escapeHtml(String(r.item_desc || '')) + '<br>'
+    + 'sleeve ' + escapeHtml(r.sleeve_cod) + ' · ' + (+r.unid_cx).toLocaleString('pt-BR') + ' un/cx · '
+    + (+r.gramatura).toLocaleString('pt-BR') + ' g por rótulo</p>'
+    + lin('Saiu <span class="desc">(' + f(r.cx_total) + ' cx da OP)</span>', f(r.saiu))
+    + lin('Produziu <span class="desc">(' + f(r.cx_feita) + ' cx)</span>', '− ' + f(r.produziu))
+    + lin('Perdeu <span class="desc">(' + (+r.kg_perda).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg no 054)</span>', '− ' + f(r.perdeu))
+    + lin('<b>Deve voltar</b>', '<b>' + f(r.esperado) + ' rótulos</b>', '#1A5276')
+    + '<div class="desc" style="font-size:11px;margin:2px 0 12px">= ' + (r.esperado * r.gramatura / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg</div>'
+    + '<label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">Retorno em kg *</label>'
+    + '<input id="rretKg" inputmode="decimal" autocomplete="off" oninput="rretCalc()"'
+    + ' style="width:100%;font-size:18px;padding:10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box">'
+    + '<div id="rretConta" style="margin-top:10px"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px">'
+    + '<button class="btn btn-verde" style="flex:1" onclick="rretGravar()">Gravar retorno</button>'
+    + '<button class="btn btn-borda" style="width:auto;padding:11px 16px" onclick="document.getElementById(\'rretBox2\').remove()">Fechar</button></div>'
+    + '<p class="desc" style="font-size:10.5px;margin-top:10px">Ao gravar, o estoque baixa <b>' + f((+r.produziu || 0) + (+r.perdeu || 0))
+    + '</b> rótulos — o que foi consumido (produzido + perda), como você definiu.</p>'
+    + '</div>';
+  d.onclick = ev => { if (ev.target === d) d.remove(); };
+  document.body.appendChild(d);
+}
+
+function rretCalc() {
+  const r = _rretSel; if (!r) return;
+  const cx = document.getElementById('rretConta'); if (!cx) return;
+  const txt = String((document.getElementById('rretKg') || {}).value || '').trim().replace(/\./g, '').replace(',', '.');
+  if (txt === '') { cx.innerHTML = ''; return; }
+  const kg = +txt;
+  if (!isFinite(kg) || kg < 0) { cx.innerHTML = '<p class="desc" style="color:#943126">valor inválido</p>'; return; }
+  const rot = Math.round(kg * 1000 / r.gramatura);
+  const dif = rot - (+r.esperado || 0);
+  const difKg = dif * r.gramatura / 1000;
+  const cor = Math.abs(dif) < 1 ? '#1F7A46' : dif > 0 ? '#B26B00' : '#C0392B';
+  cx.innerHTML = '<div style="background:var(--leve-4);border-radius:10px;padding:10px;font-size:13px">'
+    + '<div style="display:flex;justify-content:space-between"><span>Você informou</span><b>' + rot.toLocaleString('pt-BR') + ' rótulos</b></div>'
+    + '<div style="display:flex;justify-content:space-between"><span>Deve voltar</span><b>' + Math.round(r.esperado).toLocaleString('pt-BR') + '</b></div>'
+    + '<div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid var(--linha-2s)">'
+    + '<b>Diferença</b><b style="color:' + cor + '">' + (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR') + ' rótulos · '
+    + (difKg > 0 ? '+' : '') + difKg.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg</b></div>'
+    + '<div class="desc" style="font-size:11px;margin-top:5px">'
+    + (Math.abs(dif) < 1 ? 'Fechou.' : dif > 0 ? 'Voltou MAIS do que a conta previa — sobrou material ou a produção ainda não foi toda apontada.'
+      : 'Voltou MENOS do que a conta previa — perda não lançada, refile ou sobra que ficou na máquina.')
+    + '</div></div>';
+}
+
+async function rretGravar() {
+  const r = _rretSel; if (!r) return;
+  const txt = String((document.getElementById('rretKg') || {}).value || '').trim().replace(/\./g, '').replace(',', '.');
+  if (txt === '') { toast('Digite o retorno em kg.'); return; }
+  const kg = +txt;
+  if (!isFinite(kg) || kg < 0) { toast('Valor inválido.'); return; }
+  const rot = Math.round(kg * 1000 / r.gramatura);
+  const dif = rot - (+r.esperado || 0);
+  const baixa = (+r.produziu || 0) + (+r.perdeu || 0);
+  if (!confirm('Retorno da OP ' + r.op + '\n\nInformado: ' + rot.toLocaleString('pt-BR') + ' rótulos ('
+    + kg.toLocaleString('pt-BR') + ' kg)\nDeve voltar: ' + Math.round(r.esperado).toLocaleString('pt-BR')
+    + '\nDiferença: ' + (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR')
+    + '\n\nO estoque vai baixar ' + baixa.toLocaleString('pt-BR') + ' rótulos. Gravar?')) return;
+  try {
+    const r1 = await sb.from('rotulo_retorno').insert({
+      sleeve_cod: r.sleeve_cod, acabado_cod: r.acabado_cod, op: r.op,
+      kg_informado: kg, rotulos_informado: rot, gramatura: r.gramatura,
+      saiu: r.saiu, produziu: r.produziu, perdeu: r.perdeu, esperado: r.esperado,
+      diferenca: dif, diferenca_kg: dif * r.gramatura / 1000, baixou: baixa,
+      quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (r1.error) throw r1.error;
+    if (baixa > 0) {
+      await sb.from('rotulo_movimento').insert({
+        sleeve_cod: r.sleeve_cod, tipo: 'saida', destino: 'bobina',
+        quantidade: baixa, emissao: hojeISO(), fornecedor: 'CONSUMO OP ' + r.op,
+        obs: 'baixa pelo retorno de bobina · produziu ' + Math.round(r.produziu) + ' + perdeu ' + Math.round(r.perdeu)
+      });
+      const at = await sb.from('rotulo_item').select('bobina,aplicado').eq('sleeve_cod', r.sleeve_cod).maybeSingle();
+      const bob = Math.max(0, (+((at.data || {}).bobina) || 0) - baixa);
+      const apl = (+((at.data || {}).aplicado) || 0) + (+r.produziu || 0);
+      await sb.from('rotulo_item').update({ bobina: bob, aplicado: apl }).eq('sleeve_cod', r.sleeve_cod);
+    }
+    const bx = document.getElementById('rretBox2'); if (bx) bx.remove();
+    toast('Retorno gravado. Diferença ' + (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR') + ' rótulos.');
+    _rretBase = null; _rotDados = null; _rlanDados = null;
+    await rretAbrir(true);
+  } catch (e) { toast('Não deu para gravar: ' + ((e && e.message) || e)); }
+}
+
 function rotFluxoSVG() {
   const cx = {
     ent: '#1A5276', prod: '#7D3C98', sai: '#1F7A46', perda: '#C0392B',
@@ -45444,6 +45659,14 @@ function rotVer(v) {
     return;
   }
   if (v === 'fluxo') { box.innerHTML = _rotAbas() + rotFluxoSVG() + rotFluxo(); return; }
+  if (v === 'retorno') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">↩️ Retorno de bobina</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">A bobina foi para a máquina e voltou. Informe o <b>kg que voltou</b> e eu confronto com o que a OP '
+      + 'precisava, o que produziu e o que o 054 registrou de perda.</p>'
+      + '<div id="rretBox"></div></div>';
+    rretAbrir();
+    return;
+  }
   if (v === 'balanco') {
     box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">⚖️ Balanço do estoque</div>'
       + '<p class="desc" style="margin:-2px 0 10px">Conte o rótulo, digite o que achou e grave. '
@@ -45497,7 +45720,7 @@ function _rotAbas() {
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
     + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais')
     + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('perdas', '🗑️ Perdas')
-    + b('balanco', '⚖️ Balanço') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
+    + b('retorno', '↩️ Retorno') + b('balanco', '⚖️ Balanço') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
