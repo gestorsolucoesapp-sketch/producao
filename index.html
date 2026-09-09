@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.534.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.535.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3930,7 +3930,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.534.0';
+const APP_VER = '4.535.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -5332,9 +5332,6 @@ async function aplicarPermissoes() {
        a única que vale para o admin. Se a aba nova não estiver aqui, ela não
        existe para quem é admin, por mais certo que esteja o resto. */
     abasPermitidas = ['painel', 'chao', 'analise', 'analisemais', 'estrategia', 'ano', 'tarefas', 'importar', 'historico', 'usuarios', 'metas', 'oee', 'manut', 'programacao', 'estoque', 'demanda', 'rotulos', 'uv'];
-    /* 09/09/2026 — em obra: só o desenvolvedor vê a Gestão à Vista. Gestor que
-       não é dev também não vê, senão ele mostra para a equipe antes da hora. */
-    if (!souDevReal) abasPermitidas = abasPermitidas.filter(a => a !== 'chao');
     /* a Casa de Tintas é exceção mesmo para o admin: só entra se estiver na
        coluna `abas`. Assim ela não abre para todo gestor sem o João querer. */
     try { if (perfil && Array.isArray(perfil.abas) && perfil.abas.includes('tintas')) abasPermitidas.push('tintas'); } catch (_) { }
@@ -5348,11 +5345,9 @@ async function aplicarPermissoes() {
     if (!abasPermitidas.includes('analisemais')) abasPermitidas.push('analisemais'); // Análise+ para todos
     if (!abasPermitidas.includes('estrategia')) abasPermitidas.push('estrategia'); // Análise de Tendência para todos
     if (!abasPermitidas.includes('ano')) abasPermitidas.push('ano');               // Resumo Anual idem
-    /* 09/09/2026 (João: "deixe a opção de mostrar só para o desenvolvedor, aí
-       vamos trabalhando e depois liberamos para o pessoal") — a Gestão à Vista
-       saiu da liberação geral. Para voltar a liberar, é só devolver esta linha
-       e tirar o filtro do ramo do admin. */
-    // if (!abasPermitidas.includes('chao')) abasPermitidas.push('chao');
+    /* 09/09/2026 — fechada de manhã "só para o desenvolvedor" e REABERTA no mesmo
+       dia ("pode liberar"), depois do redesenho. */
+    if (!abasPermitidas.includes('chao')) abasPermitidas.push('chao');             // Chão de Fábrica: é para o operador
     if (!abasPermitidas.includes('programacao')) abasPermitidas.push('programacao'); // Programação para todos
   }
   // Organograma: além da flag 'desenvolvedor', vale a caixinha da categoria (ou a exceção individual).
@@ -31404,6 +31399,51 @@ async function chaoZap(chave) {
   try { if (navigator.share) { await navigator.share({ text: t }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
 }
+/* ===== 09/09/2026 (João: "permita clicar e ir no local correspondente à
+   análise: clicou em perdas vai no card perdas, em paradas vai no Pareto de
+   paradas, em produção vai no gráfico de produção correspondente ao setor") =====
+   Não crio atalho por título fixo: o nome do card muda com o setor ("Pareto de
+   paradas · todos os setores" x "Paradas por máquina") e amarrar no texto quebra
+   calado na primeira renomeação. Cada card já carrega `data-k`, que é a chave
+   estável usada pela ordenação — procuro por PALAVRA nessa chave, na ordem de
+   preferência, e fico com o primeiro que existir naquele recorte.
+   O setor não precisa ser passado: a pílula do topo é a mesma nas duas abas, e
+   o Painel já se desenha por ela.
+   Se o card estiver recolhido, abro antes de rolar — rolar até um card fechado
+   deixa a pessoa olhando para um título e nada embaixo. */
+const _CHAO_ALVO = {
+  producao: ['produção por turno', 'produção por máquina', 'produção por setor', 'produção'],
+  perda:    ['pareto de perdas', 'perdas por máquina', 'perda'],
+  parada:   ['pareto de paradas', 'paradas por máquina', 'parada']
+};
+function chaoIrPara(tipo) {
+  const chaves = _CHAO_ALVO[tipo] || [];
+  try { trocarAba('painel'); } catch (_) { return; }
+  let tentativas = 0;
+  const procura = setInterval(() => {
+    tentativas++;
+    let alvo = null;
+    const cards = Array.from(document.querySelectorAll('#abaPainel [data-k]'));
+    for (const palavra of chaves) {
+      alvo = cards.find(c => String(c.getAttribute('data-k') || '').toLowerCase().includes(palavra));
+      if (alvo) break;
+    }
+    if (!alvo) { if (tentativas > 25) clearInterval(procura); return; }   // painel ainda desenhando
+    clearInterval(procura);
+    try {
+      if (alvo.classList.contains('oculto-graf')) {
+        const k = String(alvo.getAttribute('data-k') || '').replace(/^c:/, '');
+        togGrafico(k);
+      }
+    } catch (_) { }
+    try {
+      alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      alvo.style.transition = 'box-shadow .4s';
+      alvo.style.boxShadow = '0 0 0 3px rgba(0,150,77,.55)';
+      setTimeout(() => { alvo.style.boxShadow = ''; }, 1800);
+    } catch (_) { }
+  }, 200);
+}
 async function chaoAbrir(forcar) {
   const w = $('chaoWrap'); if (!w) return;
   const preso = (perfil && perfil.resumo_setor && perfil.setor && SETOR_MAQ[perfil.setor]) ? perfil.setor : (typeof setorTravado === 'function' ? setorTravado() : null);
@@ -31509,18 +31549,20 @@ async function chaoAbrir(forcar) {
        pintava a tela toda e cansava a leitura no chão de fábrica. */
     const trio = (o, meta) => {
       const r = meta ? o.prod / meta : null, pp = pct(o.perda, o.prod + o.perda), tm = topMot(o.mot);
-      const bloco = (rot, cor, valor, apoio) =>
-        '<div style="background:#fff;border:1px solid var(--borda);border-top:3px solid ' + cor + ';border-radius:10px;padding:11px 10px 10px">'
+      const bloco = (rot, cor, valor, apoio, ir) =>
+        '<div onclick="chaoIrPara(\'' + ir + '\')" role="button" title="Ver a análise no Painel"'
+        + ' style="cursor:pointer;background:#fff;border:1px solid var(--borda);border-top:3px solid ' + cor + ';border-radius:10px;padding:11px 10px 10px">'
         + '<div style="font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#7A8794">' + rot + '</div>'
         + '<div style="' + h1 + ';color:' + cor + ';margin-top:6px">' + valor + '</div>'
         + '<div class="desc" style="font-size:11px;margin-top:5px;line-height:1.45">' + apoio + '</div></div>';
       return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px">'
         + bloco('Produção', corR(r), fmtV(o.prod),
-            meta ? 'meta ' + fmtV(meta) + '<br><b style="color:' + corR(r) + '">' + (r >= 1 ? Math.round(r * 100) + '% da meta' : 'faltam ' + fmtV(meta - o.prod)) + '</b>' : 'sem meta cadastrada')
-        + bloco('Perda', corP(pp), fpct(pp), fmtKg(o.perda) + ' refugado')
+            meta ? 'meta ' + fmtV(meta) + '<br><b style="color:' + corR(r) + '">' + (r >= 1 ? Math.round(r * 100) + '% da meta' : 'faltam ' + fmtV(meta - o.prod)) + '</b>' : 'sem meta cadastrada', 'producao')
+        + bloco('Perda', corP(pp), fpct(pp), fmtKg(o.perda) + ' refugado', 'perda')
         + bloco('Parada', '#44546A', Math.round(o.par).toLocaleString('pt-BR') + ' h',
-            tm ? 'maior motivo<br><b>' + escapeHtml(tm.nome.toLowerCase()) + ' · ' + Math.round(tm.h) + ' h</b>' : 'máquina parada')
-        + '</div>';
+            tm ? 'maior motivo<br><b>' + escapeHtml(tm.nome.toLowerCase()) + ' · ' + Math.round(tm.h) + ' h</b>' : 'máquina parada', 'parada')
+        + '</div>'
+        + '<p class="desc" style="font-size:10.5px;margin:7px 0 0">Toque num quadro para abrir a análise no Painel.</p>';
     };
     const tit = t => '<div class="desc" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:800">' + t + '</div>';
     let html = '';
