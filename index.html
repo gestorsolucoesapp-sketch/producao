@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.563.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.564.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.563.0';
+const APP_VER = '4.564.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44810,6 +44810,165 @@ function rperRender() {
   _rotFocoVolta('rperBusca', _g);
 }
 
+/* ===================== BALANÇO DO ESTOQUE — 09/09/2026 =====================
+   João: "crie o campo balanço para colocar o estoque inicial e começar a fazer o
+   controle, e acertar quando precisar; colocar senha e gravar a cada balanço a
+   diferença. A senha põe 163156."
+
+   Três decisões que valem explicar:
+
+   1) GUARDO O ANTES, O CONTADO E A DIFERENÇA. Balanço que só sobrescreve o saldo
+      apaga a evidência do próprio ajuste — e a diferença é exatamente o que
+      interessa acompanhar: ela mede o quanto o controle está descolando da
+      realidade.
+
+   2) O ajuste também vira MOVIMENTO, com o rótulo "balanço". Assim a aba de
+      Lançamentos continua explicando cada mudança do saldo; sem isso apareceria
+      um pulo no estoque sem nota nenhuma por trás.
+
+   3) A SENHA é uma tranca contra o toque errado, NÃO é segurança de verdade:
+      ela vive no código da página e quem abrir o código vê. Por isso gravo
+      também QUEM fez cada balanço — a responsabilidade é o que de fato protege.  */
+
+const RBAL_SENHA = '163156';
+let _rbalOk = false, _rbalDados = null, _rbalHist = null, _rbalBusca = '';
+
+function rbalDestrava() {
+  if (_rbalOk) return true;
+  let s = null;
+  try { s = prompt('Senha do balanço:'); } catch (_) { }
+  if (s === null) return false;
+  if (String(s).trim() !== RBAL_SENHA) { toast('Senha errada.'); return false; }
+  _rbalOk = true;
+  return true;
+}
+
+async function rbalAbrir(forcar) {
+  const cx = $('rbalBox'); if (!cx) return;
+  if (!_rbalDados || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const [it, hi] = await Promise.all([
+        sb.from('rotulo_item').select('sleeve_cod,item_desc,cliente,bobina,aplicado,segregado').order('cliente').order('sleeve_cod'),
+        sb.from('v_rotulo_balanco').select('*').order('criado_em', { ascending: false }).limit(200)
+      ]);
+      if (it.error) throw it.error;
+      _rbalDados = it.data || [];
+      _rbalHist = hi.data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rbalRender();
+}
+
+function rbalRender() {
+  const cx = $('rbalBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rbalBusca');
+  const D = _rbalDados || [], H = _rbalHist || [];
+  const jaFez = {}; H.forEach(b => { if (!jaFez[b.sleeve_cod]) jaFez[b.sleeve_cod] = b; });
+  const q = _rbalBusca.trim().toLowerCase();
+  const vis = D.filter(r => !q || [r.sleeve_cod, r.item_desc, r.cliente].some(x => String(x || '').toLowerCase().includes(q)));
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const semBal = D.filter(r => !jaFez[r.sleeve_cod]).length;
+
+  let h = '<div style="border:1px solid #A9CCE3;background:#EAF2F8;border-radius:10px;padding:9px 11px;font-size:12px;margin-bottom:9px">'
+    + 'O <b>primeiro balanço</b> de cada rótulo abre o controle: o número contado vira o saldo em bobina. '
+    + 'Depois disso, cada balanço grava a <b>diferença</b> entre o que o app dizia e o que foi contado.'
+    + (semBal ? '<br><b>' + semBal + ' rótulo(s)</b> ainda sem balanço nenhum.' : '') + '</div>';
+
+  h += '<input id="rbalBusca" type="search" autocomplete="off" name="bal_' + Math.random().toString(36).slice(2, 8) + '"'
+    + ' placeholder="buscar rótulo, item ou cliente…" value="' + escapeHtml(_rbalBusca) + '"'
+    + ' oninput="_rbalBusca=this.value;rbalRender()" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;margin-bottom:9px;box-sizing:border-box">';
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:left;color:var(--fraco)"><th>sleeve · item</th><th style="text-align:right">no app</th>'
+    + '<th style="text-align:right">último balanço</th><th style="text-align:right">contar</th></tr>';
+  vis.slice(0, 200).forEach(r => {
+    const b = jaFez[r.sleeve_cod];
+    const arg = _rotArg(r.sleeve_cod);
+    h += '<tr style="border-top:1px solid var(--leve-2s)">'
+      + '<td><b>' + escapeHtml(r.sleeve_cod) + '</b>'
+      + '<div class="desc" style="font-size:10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + escapeHtml(String(r.item_desc || '')) + '</div>'
+      + '<div class="desc" style="font-size:10px">' + escapeHtml(r.cliente || '') + '</div></td>'
+      + '<td style="text-align:right;font-weight:700">' + f(r.bobina) + '</td>'
+      + '<td style="text-align:right">' + (b
+        ? f(b.contado) + '<div class="desc" style="font-size:10px">' + String(b.dia).split('-').reverse().join('/')
+          + (b.diferenca != null && +b.diferenca !== 0
+            ? ' · <b style="color:' + (+b.diferenca > 0 ? '#1F7A46' : '#C0392B') + '">'
+              + (+b.diferenca > 0 ? '+' : '') + f(b.diferenca) + '</b>' : '') + '</div>'
+        : '<span class="desc">nunca</span>') + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">'
+      + '<input id="rbalIn_' + escapeHtml(r.sleeve_cod) + '" inputmode="numeric" autocomplete="off" placeholder="0"'
+      + ' style="width:96px;font-size:16px;padding:6px;border:1px solid #ccc;border-radius:8px;text-align:right">'
+      + '<button class="btn" onclick="rbalGravar(' + arg + ')" style="width:auto;padding:6px 10px;font-size:12px;margin-left:5px;font-weight:800;background:var(--navy);color:#fff">✓</button>'
+      + '</td></tr>';
+  });
+  h += '</table></div>';
+  if (vis.length > 200) h += '<p class="desc" style="font-size:11px">Mostrando 200 de ' + vis.length + ' — use a busca.</p>';
+
+  if (H.length) {
+    h += '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:14px 0 6px">Últimos balanços</div>'
+      + '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="text-align:left;color:var(--fraco)"><th>quando</th><th>sleeve</th><th style="text-align:right">app</th>'
+      + '<th style="text-align:right">contado</th><th style="text-align:right">dif.</th><th>quem</th></tr>';
+    H.slice(0, 40).forEach(b => {
+      const d = +b.diferenca || 0;
+      h += '<tr style="border-top:1px solid var(--leve-2s)">'
+        + '<td>' + String(b.dia).split('-').reverse().join('/') + (b.inicial ? '<div class="desc" style="font-size:10px">inicial</div>' : '') + '</td>'
+        + '<td>' + escapeHtml(b.sleeve_cod) + '</td>'
+        + '<td style="text-align:right">' + (b.saldo_antes == null ? '—' : f(b.saldo_antes)) + '</td>'
+        + '<td style="text-align:right;font-weight:700">' + f(b.contado) + '</td>'
+        + '<td style="text-align:right;font-weight:800;color:' + (d > 0 ? '#1F7A46' : d < 0 ? '#C0392B' : 'var(--fraco)') + '">'
+        + (d > 0 ? '+' : '') + f(d) + '</td>'
+        + '<td class="desc">' + escapeHtml(b.quem_nome || '—') + '</td></tr>';
+    });
+    h += '</table></div>';
+  }
+  cx.innerHTML = h;
+  _rotFocoVolta('rbalBusca', _g);
+}
+
+async function rbalGravar(sleeve) {
+  const el = document.getElementById('rbalIn_' + sleeve);
+  const txt = String((el || {}).value || '').trim().replace(/\./g, '').replace(',', '.');
+  if (txt === '') { toast('Digite o valor contado.'); return; }
+  const contado = +txt;
+  if (!isFinite(contado) || contado < 0) { toast('Valor inválido.'); return; }
+  if (!rbalDestrava()) return;
+
+  const it = (_rbalDados || []).find(x => x.sleeve_cod === sleeve) || {};
+  const antes = +it.bobina || 0;
+  const jaTem = (_rbalHist || []).some(b => b.sleeve_cod === sleeve);
+  const dif = contado - antes;
+  if (!confirm('Balanço do ' + sleeve + '\n\nNo app: ' + antes.toLocaleString('pt-BR')
+    + '\nContado: ' + contado.toLocaleString('pt-BR')
+    + '\nDiferença: ' + (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR') + '\n\nGravar?')) return;
+
+  try {
+    const r1 = await sb.from('rotulo_balanco').insert({
+      sleeve_cod: sleeve, contado: contado, saldo_antes: antes, diferenca: dif,
+      inicial: !jaTem, quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (r1.error) throw r1.error;
+    /* o ajuste vira movimento: sem isso o saldo pula sem nada explicando */
+    if (dif !== 0) {
+      await sb.from('rotulo_movimento').insert({
+        sleeve_cod: sleeve, tipo: dif > 0 ? 'entrada' : 'saida', destino: 'bobina',
+        quantidade: Math.abs(dif), emissao: hojeISO(), fornecedor: 'BALANÇO',
+        obs: 'ajuste de balanço · app dizia ' + antes + ', contado ' + contado
+      });
+    }
+    const r2 = await sb.from('rotulo_item').update({ bobina: contado }).eq('sleeve_cod', sleeve);
+    if (r2.error) throw r2.error;
+    toast('Balanço gravado. Diferença ' + (dif > 0 ? '+' : '') + dif.toLocaleString('pt-BR') + '.');
+    _rbalDados = null; _rotDados = null; _rlanDados = null;
+    await rbalAbrir(true);
+  } catch (e) { toast('Não deu para gravar: ' + ((e && e.message) || e)); }
+}
+
 function rotFluxoSVG() {
   const cx = {
     ent: '#1A5276', prod: '#7D3C98', sai: '#1F7A46', perda: '#C0392B',
@@ -45163,6 +45322,14 @@ function rotVer(v) {
     return;
   }
   if (v === 'fluxo') { box.innerHTML = _rotAbas() + rotFluxoSVG() + rotFluxo(); return; }
+  if (v === 'balanco') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">⚖️ Balanço do estoque</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Conte o rótulo, digite o que achou e grave. '
+      + 'Pede senha, guarda a diferença e registra quem fez.</p>'
+      + '<div id="rbalBox"></div></div>';
+    rbalAbrir();
+    return;
+  }
   if (v === 'perdas') {
     box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">🗑️ Perda de rótulo por sleeve</div>'
       + '<p class="desc" style="margin:-2px 0 10px">Do relatório <b>054</b>: o peso perdido vira número de rótulos pela gramatura de cada um, '
@@ -45208,7 +45375,7 @@ function _rotAbas() {
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
     + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais')
     + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('perdas', '🗑️ Perdas')
-    + b('fluxo', '🔀 Fluxograma') + '</div></div>';
+    + b('balanco', '⚖️ Balanço') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
