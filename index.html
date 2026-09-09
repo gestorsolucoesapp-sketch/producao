@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.557.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.558.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.557.0';
+const APP_VER = '4.558.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -43966,7 +43966,17 @@ function rnfPrev() {
       + escapeHtml(RNF_PAPEL_ROT[nf.papel] || '?') + '</span>'
       + '<span class="desc" style="font-size:11px;flex:1">' + escapeHtml(nf.emitente_nome || '') + ' · ' + (nf.emissao || '?') + '</span>'
       + '<span onclick="rnfTira(' + i + ')" style="cursor:pointer;color:var(--fraco)">✕</span></div>';
-    if (nf.erro) h += '<div style="font-size:12px;color:#943126;margin-top:5px">⚠ ' + escapeHtml(nf.erro) + '</div>';
+    /* ===== 09/09/2026 (João: "importei, entrou só no fiscal; você acertou para
+       entrar no estoque, aí importei de novo mas não dá a opção de lançar só no
+       estoque; apague o lançamento para eu importar novamente") =====
+       Ele teve de me pedir para apagar no banco — o app não dava saída nenhuma.
+       Nota já importada agora oferece REFAZER: apaga o que estava e importa do
+       zero, com as regras de hoje. Fica ao lado do aviso, e não é automático:
+       refazer sozinho apagaria lançamento que alguém pode ter conferido. */
+    if (nf.erro) h += '<div style="font-size:12px;color:#943126;margin-top:5px">⚠ ' + escapeHtml(nf.erro)
+      + (/j\u00e1 foi importada/.test(nf.erro) && nf.chave
+        ? ' <span onclick="rnfRefazer(' + i + ')" style="cursor:pointer;text-decoration:underline;font-weight:800">apagar e importar de novo</span>'
+        : '') + '</div>';
     (nf.itens || []).forEach(it => {
       const cor = it.status === 'ok' ? 'var(--fraco)' : '#943126';
       h += '<div style="font-size:11.5px;color:' + cor + ';margin-top:4px;line-height:1.5">'
@@ -43989,6 +43999,28 @@ function rnfPrev() {
   cx.innerHTML = h;
 }
 function rnfTira(i) { _rnfFila.splice(i, 1); rnfPrev(); }
+
+async function rnfRefazer(i) {
+  const nf = _rnfFila[i]; if (!nf || !nf.chave) return;
+  if (!confirm('Apagar a nota ' + (nf.numero || '') + ' e o que ela lançou, para importar de novo?')) return;
+  try {
+    /* tira o que ela somou no estoque ANTES de apagar o movimento, senão o saldo
+       fica com a entrada de uma nota que não existe mais */
+    const { data: mv } = await sb.from('rotulo_movimento').select('sleeve_cod,quantidade,tipo').eq('chave_nf', nf.chave);
+    for (const m of (mv || [])) {
+      const at = await sb.from('rotulo_item').select('bobina').eq('sleeve_cod', m.sleeve_cod).maybeSingle();
+      const base = +((at.data || {}).bobina) || 0;
+      const novo = base - (m.tipo === 'entrada' ? (+m.quantidade || 0) : -(+m.quantidade || 0));
+      await sb.from('rotulo_item').update({ bobina: novo < 0 ? 0 : novo }).eq('sleeve_cod', m.sleeve_cod);
+    }
+    await sb.from('rotulo_movimento').delete().eq('chave_nf', nf.chave);
+    await sb.from('rotulo_nf').delete().eq('chave', nf.chave);   // os itens caem por cascade
+    nf.erro = null;
+    _rotDados = null; _rlanDados = null;
+    toast('Apagada. Toque em Gravar para importar de novo.');
+    rnfPrev();
+  } catch (e) { toast('Não deu para apagar: ' + ((e && e.message) || e)); }
+}
 
 /* 09/09/2026 (João: "quando importar uma nota e não tiver cadastro, já abra a
    tela e preencha o que tiver de informação"). Levo tudo que a NOTA já sabe —
