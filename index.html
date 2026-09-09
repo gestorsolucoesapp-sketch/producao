@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.550.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.551.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.550.0';
+const APP_VER = '4.551.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -43959,7 +43959,9 @@ function rnfPrev() {
         + (it.servico ? ' · <i>serviço</i>' : '')
         + (it.op ? ' · OP ' + escapeHtml(it.op) : '')
         + (it.sleeve_cod ? ' · sleeve ' + escapeHtml(it.sleeve_cod) : '')
-        + (it.status === 'sem_depara' ? ' · <b>não sei que sleeve é este — cadastre o de-para</b>' : '')
+        + (it.status === 'sem_depara' ? ' · <b>não sei que sleeve é este</b> '
+          + '<span onclick="rnfCadastrar(' + i + ',' + (nf.itens.indexOf(it)) + ')"'
+          + ' style="cursor:pointer;text-decoration:underline;font-weight:800">cadastrar agora</span>' : '')
         + (it.status === 'sem_remessa' ? ' · <b>não achei a remessa que este retorno debita</b>' : '')
         + '</div>';
     });
@@ -43970,6 +43972,25 @@ function rnfPrev() {
   cx.innerHTML = h;
 }
 function rnfTira(i) { _rnfFila.splice(i, 1); rnfPrev(); }
+
+/* 09/09/2026 (João: "quando importar uma nota e não tiver cadastro, já abra a
+   tela e preencha o que tiver de informação"). Levo tudo que a NOTA já sabe —
+   nome e CNPJ do emitente, o código dele e a descrição — e abro o cadastro em
+   cima disso. O que a nota não tem (sleeve, item Rioplastic, gramatura) fica
+   vazio e é obrigatório: é justamente o que só ele sabe. */
+function rnfCadastrar(iNota, iItem) {
+  const nf = _rnfFila[iNota]; if (!nf) return;
+  const it = (nf.itens || [])[iItem]; if (!it) return;
+  _rcadPre = {
+    forn_nome: String(nf.emitente_nome || '').toUpperCase(),
+    forn_cnpj: nf.emitente_cnpj || '',
+    forn_cod: String(it.cod_prod || '').toUpperCase(),
+    desc: String(it.descricao || '').toUpperCase(),
+    cliente: '', acabado: '', sleeve: ''
+  };
+  rotVer('cadastro');
+  setTimeout(() => { try { rcadForm(null); } catch (_) { } }, 250);
+}
 
 async function rnfGravar() {
   const ok = _rnfFila.filter(n => !n.erro && n.chave);
@@ -44206,7 +44227,32 @@ function rnfExpPdf() {
    e da Kromos. Cadastro que só aceita um fornecedor obrigaria a apagar o anterior
    e perderia o histórico das notas antigas.                                    */
 
-let _rcadDados = null, _rcadBusca = '', _rcadEdit = null;
+let _rcadDados = null, _rcadBusca = '', _rcadEdit = null, _rcadPre = null;
+
+/* ===== 09/09/2026 (João: "padrão de cadastro MAIÚSCULO; CNPJ no padrão; não
+   sugerir nos campos pois pode influenciar erro; quando importar uma nota e não
+   tiver cadastro já abra a tela e preencha o que tiver de informação; não
+   aceitar gravar faltando dados") =====
+   Os quatro primeiros pedidos são a mesma coisa por baixo: cadastro é chave de
+   cruzamento, e chave escrita de dois jeitos ("Kromos" e "KROMOS") vira dois
+   fornecedores diferentes na hora de reconhecer a nota.
+   O do exemplo no campo é o mais traiçoeiro: "SA-5325" cinza parece preenchido,
+   e num cadastro que ninguém revisa depois isso vira dado errado silencioso —
+   exatamente a família de problema que ele me cobrou hoje de manhã. */
+function _rcadMai(el) { const p = el.selectionStart; el.value = String(el.value || '').toUpperCase(); try { el.setSelectionRange(p, p); } catch (_) { } }
+function _rcadCnpj(el) {
+  const d = String(el.value || '').replace(/\D/g, '').slice(0, 14);
+  let v = d;
+  if (d.length > 12) v = d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2}).*/, '$1.$2.$3/$4-$5');
+  else if (d.length > 8) v = d.replace(/^(\d{2})(\d{3})(\d{3})(\d{0,4})/, '$1.$2.$3/$4');
+  else if (d.length > 5) v = d.replace(/^(\d{2})(\d{3})(\d{0,3})/, '$1.$2.$3');
+  else if (d.length > 2) v = d.replace(/^(\d{2})(\d{0,3})/, '$1.$2');
+  el.value = v;
+}
+function _rcadCnpjFmt(d) {
+  const x = String(d || '').replace(/\D/g, '');
+  return x.length === 14 ? x.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : x;
+}
 
 async function rcadAbrir(forcar) {
   const cx = $('rcadBox'); if (!cx) return;
@@ -44260,6 +44306,9 @@ function rcadRender() {
 
 async function rcadForm(sleeve) {
   const r = sleeve ? (_rcadDados || []).find(x => x.sleeve_cod === sleeve) : null;
+  /* `_rcadPre` traz o que a NOTA já sabe quando o cadastro é aberto a partir de
+     uma linha que não foi reconhecida — em vez de obrigar a redigitar tudo */
+  const P = _rcadPre || {}; _rcadPre = null;
   _rcadEdit = sleeve || null;
   let dep = [];
   if (sleeve) {
@@ -44268,19 +44317,23 @@ async function rcadForm(sleeve) {
       dep = data || [];
     } catch (_) { }
   }
+  /* placeholder deixa de mostrar EXEMPLO e passa a dizer só o que é o campo:
+     exemplo em cinza parece preenchido e induz a copiar formato errado */
   const inp = (id, rot, val, ph, tipo) =>
     '<div style="flex:1;min-width:150px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">' + rot + '</label>'
     + '<input id="' + id + '" type="' + (tipo || 'text') + '" value="' + escapeHtml(val == null ? '' : String(val)) + '"'
-    + ' placeholder="' + escapeHtml(ph || '') + '" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box"></div>';
+    + ' placeholder="' + escapeHtml(ph || '') + '"'
+    + (tipo === 'number' ? '' : ' oninput="_rcadMai(this)" autocapitalize="characters" spellcheck="false"')
+    + ' style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box;text-transform:uppercase"></div>';
 
   let h = '<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    + inp('rcSleeve', 'Código do sleeve', r ? r.sleeve_cod : '', '2651301')
-    + inp('rcAcab', 'Item Rioplastic', r ? r.acabado_cod : '', '1605481')
+    + inp('rcSleeve', 'Código do sleeve *', (r ? r.sleeve_cod : (P.sleeve || '')), '')
+    + inp('rcAcab', 'Item Rioplastic *', (r ? r.acabado_cod : (P.acabado || '')), '')
     + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
-    + inp('rcCli', 'Cliente', r ? r.cliente : '', 'Dondonzinho')
-    + inp('rcGram', 'Gramatura unitária (g)', r ? r.gramatura : '', '0,85', 'number')
+    + inp('rcCli', 'Cliente *', (r ? r.cliente : (P.cliente || '')), '')
+    + inp('rcGram', 'Gramatura unitária (g) *', r ? r.gramatura : '', '', 'number')
     + '</div><div style="margin-top:8px">'
-    + inp('rcDesc', 'Descrição do produto', r ? r.item_desc : '', 'SLEEVE CONFEITO CHOCOLATE DONDONZINHO')
+    + inp('rcDesc', 'Descrição do produto *', (r ? r.item_desc : (P.desc || '')), '')
     + '</div>';
 
   h += '<div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">'
@@ -44302,10 +44355,12 @@ async function rcadForm(sleeve) {
 
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
     + '<select id="rcDepTipo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">'
-    + '<option value="grafica">gráfica</option><option value="cliente">cliente</option></select>'
-    + inp('rcDepNome', '', '', 'nome (ex.: Kromos)')
-    + inp('rcDepCnpj', '', '', 'CNPJ')
-    + inp('rcDepCod', '', '', 'código na nota (SA-5325)')
+    + '<option value="grafica">GRÁFICA</option><option value="cliente">CLIENTE</option></select>'
+    + inp('rcDepNome', 'Nome', P.forn_nome || '', '')
+    + '<div style="flex:1;min-width:150px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">CNPJ</label>'
+    + '<input id="rcDepCnpj" inputmode="numeric" value="' + escapeHtml(_rcadCnpjFmt(P.forn_cnpj || '')) + '"'
+    + ' oninput="_rcadCnpj(this)" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box"></div>'
+    + inp('rcDepCod', 'Código na nota', P.forn_cod || '', '')
     + '<button class="btn" style="width:auto;padding:9px 16px;font-size:13px;font-weight:800;background:var(--navy);color:#fff" onclick="rcadAddDep()">+ Adicionar código</button></div></div>';
 
   h += '<div style="display:flex;gap:8px;margin-top:16px">'
@@ -44321,14 +44376,14 @@ async function rcadAddDep() {
   const sl = ($('rcSleeve') || {}).value || _rcadEdit;
   if (!sl) { toast('Salve o rótulo antes de amarrar códigos.'); return; }
   const cnpj = String(($('rcDepCnpj') || {}).value || '').replace(/\D/g, '');
-  const cod = String(($('rcDepCod') || {}).value || '').trim();
+  const cod = String(($('rcDepCod') || {}).value || '').trim().toUpperCase();
   const nome = String(($('rcDepNome') || {}).value || '').trim();
   const tipo = ($('rcDepTipo') || {}).value || 'grafica';
   if (!cnpj || !cod) { toast('Preciso do CNPJ e do código na nota.'); return; }
   try {
     const { error } = await sb.from('rotulo_depara').upsert({
       fornecedor_cnpj: cnpj, fornecedor_cod: cod, sleeve_cod: String(sl).trim(),
-      fornecedor_nome: nome || null, tipo: tipo, ativo: true
+      fornecedor_nome: nome.toUpperCase() || null, tipo: tipo, ativo: true
     }, { onConflict: 'fornecedor_cnpj,fornecedor_cod' });
     if (error) throw error;
     toast('Código amarrado.');
@@ -44343,15 +44398,21 @@ async function rcadTiraDep(cnpj, cod) {
 }
 
 async function rcadSalvar() {
-  const sl = String(($('rcSleeve') || {}).value || '').trim();
-  if (!sl) { toast('O código do sleeve é obrigatório.'); return; }
+  const sl = String(($('rcSleeve') || {}).value || '').trim().toUpperCase();
+  /* 09/09/2026 — "não aceitar gravar faltando dados". Cadastro pela metade é o
+     que faz a nota não ser reconhecida depois, e aí ninguém lembra de voltar. */
+  const falta = [];
+  if (!sl) falta.push('código do sleeve');
+  if (!String(($('rcAcab') || {}).value || '').trim()) falta.push('item Rioplastic');
+  if (!String(($('rcCli') || {}).value || '').trim()) falta.push('cliente');
+  if (!String(($('rcDesc') || {}).value || '').trim()) falta.push('descrição');
+  if (String(($('rcGram') || {}).value || '').trim() === '') falta.push('gramatura');
+  if (falta.length) { toast('Falta preencher: ' + falta.join(', ') + '.'); return; }
   const g = String(($('rcGram') || {}).value || '').trim().replace(',', '.');
+  const M = id => String(($(id) || {}).value || '').trim().toUpperCase();
   const reg = {
-    sleeve_cod: sl,
-    acabado_cod: String(($('rcAcab') || {}).value || '').trim() || null,
-    cliente: String(($('rcCli') || {}).value || '').trim() || null,
-    item_desc: String(($('rcDesc') || {}).value || '').trim() || null,
-    gramatura: g === '' ? null : (+g || null)
+    sleeve_cod: sl, acabado_cod: M('rcAcab'), cliente: M('rcCli'),
+    item_desc: M('rcDesc'), gramatura: g === '' ? null : (+g || null)
   };
   try {
     const { error } = await sb.from('rotulo_item').upsert(reg, { onConflict: 'sleeve_cod' });
@@ -44368,7 +44429,7 @@ async function rcadSalvar() {
     if (cnpjS && codS) {
       const r2 = await sb.from('rotulo_depara').upsert({
         fornecedor_cnpj: cnpjS, fornecedor_cod: codS, sleeve_cod: sl,
-        fornecedor_nome: String(($('rcDepNome') || {}).value || '').trim() || null,
+        fornecedor_nome: String(($('rcDepNome') || {}).value || '').trim().toUpperCase() || null,
         tipo: ($('rcDepTipo') || {}).value || 'grafica', ativo: true
       }, { onConflict: 'fornecedor_cnpj,fornecedor_cod' });
       if (r2.error) { toast('Rótulo salvo, mas o código não: ' + r2.error.message); }
