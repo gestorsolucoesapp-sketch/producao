@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.545.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.546.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.545.0';
+const APP_VER = '4.546.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -43751,6 +43751,294 @@ let _teto1k = [];
    João em 03/09: "deixe para lançar manual por enquanto" — o importador de NF
    fica para depois (o de-para `rotulo_depara` e o fator MI já estão no banco). */
 let _rotDados = null, _rotCli = '', _rotBusca = '', _rotEdit = null;
+/* ===================== NOTAS FISCAIS DE RÓTULO — 09/09/2026 =====================
+   João explicou o ciclo em 5 etapas e pediu: "quero uma aba de importação onde vou
+   arrastar todos esses documentos de outros clientes, você faz toda essa comparação
+   e sinaliza possíveis divergências".
+
+   O DESENHO, e o porquê de cada escolha:
+
+   1) O PAPEL DA NOTA SAI DO CFOP, não de quem lança. 6924 é a gráfica entregando,
+      5901 é o cliente abrindo saldo, 5925/5125 é retorno de aplicação, 5903 é perda,
+      5101 é a venda do acabado. Em 03/09 a regra era "quem lança escolhe o balde";
+      as cinco notas do exemplo mostraram que o CFOP já responde isso sozinho.
+
+   2) A REMESSA É UMA CONTA CORRENTE. Cada retorno debita dela. Foi assim que a
+      planilha do fiscal fechou exata: 127.170 entrou, 1.823 de perda + 51.156 +
+      51.156 de aplicação = 104.135, saldo 23.035.
+
+   3) NÃO ADIVINHO SLEEVE. Se o código da nota não estiver no de-para, a linha entra
+      com status `sem_depara` e aparece para ele amarrar. Chutar aqui erra estoque de
+      material que é do cliente.
+
+   4) MI e ML são milheiro (ele confirmou). O fator vem de `rotulo_unidade`, nunca
+      chumbado — foi o risco de errar 1.000× que já tinha sido levantado em 03/09.
+
+   5) A CHAVE DE ACESSO é a identidade da nota. Arrastar o mesmo PDF duas vezes não
+      duplica nada.                                                                */
+
+let _rnfFila = [];        // notas lidas, ainda não gravadas
+let _rnfBusy = false;
+
+/* CFOP → papel. Deixo o mapa explícito e visível: quando aparecer um CFOP novo, a
+   nota entra como '?' e PEDE decisão, em vez de ser classificada no chute. */
+const RNF_CFOP = {
+  '6924': 'entrada_grafica', '5924': 'entrada_grafica',
+  '5901': 'remessa_cliente', '6901': 'remessa_cliente',
+  '5902': 'retorno', '6902': 'retorno',
+  '5925': 'retorno', '6925': 'retorno',
+  '5125': 'retorno', '6125': 'retorno',
+  '5903': 'perda', '6903': 'perda',
+  '5101': 'venda', '6101': 'venda', '5102': 'venda', '6102': 'venda'
+};
+const RNF_PAPEL_ROT = {
+  entrada_grafica: 'entrada da gráfica', remessa_cliente: 'remessa do cliente',
+  retorno: 'retorno de industrialização', perda: 'nota de perda',
+  venda: 'venda do acabado', devolucao: 'devolução', '?': 'não identificado'
+};
+
+function _rnfNum(t) {
+  if (t == null) return null;
+  const s = String(t).trim().replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+function _rnfData(t) {
+  const m = String(t || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? m[3] + '-' + m[2] + '-' + m[1] : null;
+}
+function _rnfSoDig(t) { return String(t || '').replace(/\D/g, ''); }
+
+/* ---- leitura do PDF: junto o texto de todas as páginas ---- */
+async function _rnfTexto(arquivo) {
+  await garantirPdfJs();
+  const buf = await arquivo.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  let txt = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    const pg = await doc.getPage(p);
+    const tc = await pg.getTextContent();
+    txt += tc.items.map(i => i.str).join(' ') + '\n';
+  }
+  return txt.replace(/\s+/g, ' ').trim();
+}
+
+/* ---- o parser ----
+   Trabalho sobre o texto corrido porque o DANFE muda de layout entre emissores;
+   o que NÃO muda é a chave de 44 dígitos, o CNPJ, o CFOP de 4 dígitos e o padrão
+   "UNID QUANT VALOR_UNIT VALOR_TOTAL" de cada item. */
+function _rnfParse(txt, nomeArq) {
+  const chaves = (txt.match(/\b\d[\d\s.]{50,70}\d\b/g) || [])
+    .map(x => _rnfSoDig(x)).filter(x => x.length === 44);
+  const chave = chaves[0] || null;
+
+  const nNota = (txt.match(/N[ºo°]?\.?\s*:?\s*(\d{3}\.\d{3}\.\d{3})/) || [])[1] || null;
+  const emissao = _rnfData((txt.match(/DATA DA EMISS[ÃA]O\s*([\d/]+)/i) || [])[1]
+    || (txt.match(/EMISS[ÃA]O:?\s*([\d/]+)/i) || [])[1]);
+  const natureza = (txt.match(/NATUREZA DA OPERA[ÇC][ÃA]O\s+(.{5,90}?)\s+(?:PROTOCOLO|INSCRI)/i) || [])[1] || '';
+
+  const cnpjs = (txt.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g) || []).map(_rnfSoDig);
+  const RIO = '60348695';                                   // CNPJ raiz da Rioplastic
+  const emitCnpj = cnpjs.find(c => c.slice(0, 8) !== RIO) || cnpjs[0] || null;
+  const destCnpj = cnpjs.find(c => c.slice(0, 8) === RIO) || cnpjs[1] || null;
+  const eEmitida = String(txt).slice(0, 400).toUpperCase().indexOf('RECEBEMOS DE INDUSTRIA E COMERCIO DE PLASTICOS') >= 0;
+  const emitNome = eEmitida ? 'INDUSTRIA E COMERCIO DE PLASTICOS RIO PARDO'
+    : ((txt.match(/RECEBEMOS DE\s+(.{5,60}?)\s+(?:OS PRODUTOS|LTDA)/i) || [])[1] || '').trim();
+
+  /* itens: ancorados no CFOP + unidade, que é o trecho estável de toda DANFE */
+  const itens = [];
+  const re = /([A-Z0-9][A-Z0-9./-]{2,20})\s+(.{4,120}?)\s+(\d{8})\s+\d\s*\/?\s*\d{2}\s+(\d{4})\s+(MI|ML|MIL|UN|PC|CX|KG)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/gi;
+  let m;
+  while ((m = re.exec(txt)) !== null) {
+    const q = _rnfNum(m[6]), vu = _rnfNum(m[7]), vt = _rnfNum(m[8]);
+    if (q == null || q <= 0) continue;
+    itens.push({
+      cod_prod: m[1].trim(), descricao: m[2].trim().replace(/\s+/g, ' '),
+      ncm: m[3], cfop: m[4], unidade: (m[5] === 'MIL' ? 'MI' : m[5]).toUpperCase(),
+      quantidade: q, valor_unit: vu, valor_total: vt,
+      op: (m[2].match(/OP\/Lote:\s*(\d+)/i) || [])[1] || null
+    });
+  }
+
+  /* notas referenciadas: é por elas que o retorno acha a remessa que debita */
+  const refs = (txt.match(/NF-E REFERENCIADA:?\s*([\d\s]{44,60})/gi) || [])
+    .map(x => _rnfSoDig(x)).map(x => x.slice(-44)).filter(x => x.length === 44);
+
+  const cfops = itens.map(i => i.cfop);
+  const cfopP = cfops[0] || null;
+  let papel = RNF_CFOP[cfopP] || '?';
+  if (/PERCA|PERDA/i.test(txt) && cfops.includes('5903')) papel = 'perda';
+
+  return {
+    chave, numero: nNota, serie: '1', emissao, natureza: natureza.trim(),
+    emitente_nome: emitNome, emitente_cnpj: emitCnpj, destinatario_cnpj: destCnpj,
+    cfop_principal: cfopP, papel, itens, refs, arquivo: nomeArq,
+    valor_total: _rnfNum((txt.match(/VALOR TOTAL DA NOTA\s*([\d.,]+)/i) || [])[1]),
+    texto_bruto: txt.slice(0, 4000)
+  };
+}
+
+/* ---- resolve sleeve, remessa e converte para rótulos ---- */
+async function _rnfResolver(nf) {
+  const { data: uni } = await sb.from('rotulo_unidade').select('unidade,fator');
+  const fator = {}; (uni || []).forEach(u => fator[u.unidade] = +u.fator || 1);
+  const { data: dep } = await sb.from('rotulo_depara').select('fornecedor_cnpj,fornecedor_cod,sleeve_cod');
+  const { data: itens } = await sb.from('rotulo_item').select('sleeve_cod');
+  const meus = new Set((itens || []).map(x => String(x.sleeve_cod)));
+
+  const chaveDep = (cnpj, cod) => _rnfSoDig(cnpj) + '|' + String(cod || '').trim().toUpperCase();
+  const mapa = {};
+  (dep || []).forEach(d => { mapa[chaveDep(d.fornecedor_cnpj, d.fornecedor_cod)] = d.sleeve_cod; });
+
+  nf.itens.forEach(it => {
+    it.servico = /APLICA[ÇC][ÃA]O DE SLEEVE/i.test(it.descricao) || it.cfop === '5125' || it.cfop === '6125';
+    it.rotulos = it.quantidade * (fator[it.unidade] || 1);
+    /* 1º o código já é meu (as notas de retorno usam o sleeve direto: 2651301);
+       2º o de-para do fornecedor; 3º desisto e marco para ele amarrar */
+    if (meus.has(String(it.cod_prod))) it.sleeve_cod = String(it.cod_prod);
+    else it.sleeve_cod = mapa[chaveDep(nf.emitente_cnpj, it.cod_prod)] || null;
+    it.status = it.servico ? 'ok' : (it.sleeve_cod ? 'ok' : 'sem_depara');
+  });
+
+  /* a remessa que este retorno debita: pelas notas referenciadas na própria nota */
+  if (['retorno', 'perda', 'devolucao'].includes(nf.papel) && nf.refs.length) {
+    const { data: rem } = await sb.from('rotulo_nf').select('chave,papel').in('chave', nf.refs);
+    const cand = (rem || []).filter(r => ['remessa_cliente', 'entrada_grafica'].includes(r.papel)).map(r => r.chave);
+    nf.itens.forEach(it => {
+      if (it.servico) return;
+      it.chave_remessa = cand[0] || null;
+      if (!it.chave_remessa && it.status === 'ok') it.status = 'sem_remessa';
+    });
+  }
+  return nf;
+}
+
+/* ---- tela ---- */
+async function rnfArquivos(files) {
+  if (_rnfBusy) return; _rnfBusy = true;
+  const cx = $('rnfPrev'); if (cx) cx.innerHTML = '<p class="desc">lendo…</p>';
+  try {
+    for (const f of Array.from(files || [])) {
+      try {
+        const txt = await _rnfTexto(f);
+        const nf = await _rnfResolver(_rnfParse(txt, f.name));
+        if (!nf.chave) { nf.erro = 'não achei a chave de acesso de 44 dígitos'; }
+        else {
+          const { data: ja } = await sb.from('rotulo_nf').select('chave').eq('chave', nf.chave).maybeSingle();
+          if (ja) nf.erro = 'esta nota já foi importada';
+        }
+        if (!_rnfFila.some(x => x.chave && x.chave === nf.chave)) _rnfFila.push(nf);
+      } catch (e) {
+        _rnfFila.push({ arquivo: f.name, erro: (e && e.message) || String(e), itens: [] });
+      }
+    }
+  } finally { _rnfBusy = false; rnfPrev(); }
+}
+
+function rnfPrev() {
+  const cx = $('rnfPrev'); if (!cx) return;
+  if (!_rnfFila.length) { cx.innerHTML = ''; return; }
+  let h = '';
+  _rnfFila.forEach((nf, i) => {
+    const ruim = nf.erro || nf.papel === '?' || (nf.itens || []).some(x => x.status !== 'ok');
+    h += '<div style="border:1px solid ' + (ruim ? '#E6B0AA' : 'var(--borda)') + ';border-left:4px solid '
+      + (ruim ? '#C0392B' : '#1F7A46') + ';border-radius:10px;padding:10px;margin-top:8px">'
+      + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+      + '<b style="font-size:13px">NF ' + escapeHtml(nf.numero || '?') + '</b>'
+      + '<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#EAF2F8;color:#1A5276">'
+      + escapeHtml(RNF_PAPEL_ROT[nf.papel] || '?') + '</span>'
+      + '<span class="desc" style="font-size:11px;flex:1">' + escapeHtml(nf.emitente_nome || '') + ' · ' + (nf.emissao || '?') + '</span>'
+      + '<span onclick="rnfTira(' + i + ')" style="cursor:pointer;color:var(--fraco)">✕</span></div>';
+    if (nf.erro) h += '<div style="font-size:12px;color:#943126;margin-top:5px">⚠ ' + escapeHtml(nf.erro) + '</div>';
+    (nf.itens || []).forEach(it => {
+      const cor = it.status === 'ok' ? 'var(--fraco)' : '#943126';
+      h += '<div style="font-size:11.5px;color:' + cor + ';margin-top:4px;line-height:1.5">'
+        + '<b>' + escapeHtml(it.cod_prod) + '</b> · ' + escapeHtml(String(it.descricao).slice(0, 48))
+        + ' · ' + it.quantidade.toLocaleString('pt-BR') + ' ' + it.unidade
+        + ' = <b>' + Math.round(it.rotulos).toLocaleString('pt-BR') + '</b> rótulos'
+        + (it.servico ? ' · <i>serviço</i>' : '')
+        + (it.op ? ' · OP ' + escapeHtml(it.op) : '')
+        + (it.sleeve_cod ? ' · sleeve ' + escapeHtml(it.sleeve_cod) : '')
+        + (it.status === 'sem_depara' ? ' · <b>não sei que sleeve é este — cadastre o de-para</b>' : '')
+        + (it.status === 'sem_remessa' ? ' · <b>não achei a remessa que este retorno debita</b>' : '')
+        + '</div>';
+    });
+    h += '</div>';
+  });
+  const podem = _rnfFila.filter(n => !n.erro && n.chave).length;
+  h += '<button class="btn btn-verde" style="margin-top:12px" onclick="rnfGravar()">Gravar ' + podem + ' nota(s)</button>';
+  cx.innerHTML = h;
+}
+function rnfTira(i) { _rnfFila.splice(i, 1); rnfPrev(); }
+
+async function rnfGravar() {
+  const ok = _rnfFila.filter(n => !n.erro && n.chave);
+  if (!ok.length) { toast('Nada para gravar.'); return; }
+  let n = 0;
+  for (const nf of ok) {
+    try {
+      const { error } = await sb.from('rotulo_nf').insert({
+        chave: nf.chave, numero: nf.numero, serie: nf.serie, emissao: nf.emissao,
+        emitente_nome: nf.emitente_nome, emitente_cnpj: nf.emitente_cnpj,
+        destinatario_cnpj: nf.destinatario_cnpj, natureza: nf.natureza,
+        cfop_principal: nf.cfop_principal, papel: nf.papel, valor_total: nf.valor_total,
+        arquivo: nf.arquivo, texto_bruto: nf.texto_bruto,
+        importado_por: (perfil || {}).id || null
+      });
+      if (error) throw error;
+      const linhas = (nf.itens || []).map((it, k) => ({
+        chave: nf.chave, seq: k + 1, cod_prod: it.cod_prod, descricao: it.descricao,
+        ncm: it.ncm, cfop: it.cfop, unidade: it.unidade, quantidade: it.quantidade,
+        valor_unit: it.valor_unit, valor_total: it.valor_total,
+        sleeve_cod: it.sleeve_cod || null, rotulos: it.rotulos, op: it.op || null,
+        chave_remessa: it.chave_remessa || null, servico: !!it.servico, status: it.status
+      }));
+      if (linhas.length) {
+        const r2 = await sb.from('rotulo_nf_item').insert(linhas);
+        if (r2.error) throw r2.error;
+      }
+      n++;
+    } catch (e) { toast('NF ' + (nf.numero || '?') + ': ' + ((e && e.message) || e)); }
+  }
+  _rnfFila = []; rnfPrev();
+  toast(n + ' nota(s) gravada(s).');
+  rnfConta();
+}
+
+/* ---- conta corrente das remessas: a planilha do fiscal, calculada ---- */
+async function rnfConta() {
+  const cx = $('rnfConta'); if (!cx) return;
+  cx.innerHTML = '<p class="desc">carregando…</p>';
+  try {
+    const { data, error } = await sb.from('v_rotulo_remessa').select('*').order('emissao', { ascending: false });
+    if (error) throw error;
+    const D = data || [];
+    if (!D.length) { cx.innerHTML = '<p class="desc">Nenhuma remessa importada ainda.</p>'; return; }
+    const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+    let h = '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="text-align:left;color:var(--fraco)"><th>remessa</th><th>sleeve</th><th>cliente</th>'
+      + '<th style="text-align:right">entrou</th><th style="text-align:right">aplicado</th>'
+      + '<th style="text-align:right">perda</th><th style="text-align:right">saldo</th><th style="text-align:right">R$</th></tr>';
+    D.forEach(r => {
+      h += '<tr style="border-top:1px solid var(--leve-2s)' + (r.estourou ? ';background:#FDEDEC' : '') + '">'
+        + '<td><b>' + escapeHtml(r.nf_remessa || '?') + '</b><div class="desc" style="font-size:10px">'
+        + (r.emissao ? String(r.emissao).split('-').reverse().join('/') : '') + '</div></td>'
+        + '<td>' + escapeHtml(r.sleeve_cod || '') + '</td>'
+        + '<td>' + escapeHtml(r.cliente || '—') + '</td>'
+        + '<td style="text-align:right">' + f(r.entrou) + '</td>'
+        + '<td style="text-align:right">' + f(r.aplicado) + '</td>'
+        + '<td style="text-align:right">' + f(r.perda) + '</td>'
+        + '<td style="text-align:right;font-weight:800;color:' + (r.estourou ? '#C0392B' : 'var(--navy)') + '">' + f(r.saldo) + '</td>'
+        + '<td style="text-align:right">' + (+r.saldo_valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</td></tr>'
+        + (r.numeros_retorno ? '<tr><td colspan="8" class="desc" style="font-size:10.5px;padding-bottom:6px">retornos: '
+          + escapeHtml(r.numeros_retorno) + '</td></tr>' : '');
+    });
+    cx.innerHTML = h + '</table></div>';
+  } catch (e) {
+    cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
 async function rotAbrir(forcar) {
   const box = $('rotBox'); if (!box) return;
   if (!_rotDados || forcar) {
@@ -43772,10 +44060,50 @@ async function rotAbrir(forcar) {
 function _rotArg(v) { return JSON.stringify(String(v)).replace(/"/g, '&quot;'); }
 function _rotN(v) { return (v === null || v === undefined || v === '') ? null : (+v || 0); }
 function _rotFmt(v) { return v === null || v === undefined ? '<span style="color:var(--fraco-2)">—</span>' : fmtNum(Math.round(+v)); }
+/* 09/09/2026 — a aba Rótulos ganhou sub-vistas. O estoque continua sendo a tela
+   principal; as notas fiscais são um assunto próprio e grande demais para caber
+   dentro dela. `rotVista` guarda a escolha entre renders. */
+let _rotVista = 'estoque';
+function rotVer(v) {
+  _rotVista = v;
+  const box = $('rotBox'); if (!box) return;
+  if (v === 'notas') {
+    box.innerHTML = _rotAbas()
+      + '<div class="card"><div class="titulo-sec">📥 Importar notas fiscais</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Arraste os PDFs das DANFEs — remessa, retorno, perda, entrada da gráfica. '
+      + 'Eu leio o CFOP para saber o que cada nota faz, converto MI/ML em rótulos e amarro cada retorno na remessa dele. '
+      + 'O que eu não conseguir identificar, eu digo.</p>'
+      + '<div id="rnfDrop" style="border:2px dashed var(--linha);border-radius:12px;padding:16px;text-align:center">'
+      + '<div style="font-size:26px;line-height:1">📄</div>'
+      + '<div style="font-size:13px;font-weight:700;margin:6px 0">Solte aqui os PDFs das notas</div>'
+      + '<input type="file" accept=".pdf,application/pdf" multiple onchange="rnfArquivos(this.files)" style="font-size:13px"></div>'
+      + '<div id="rnfPrev"></div></div>'
+      + '<div class="card"><div class="titulo-sec">📒 Conta corrente das remessas</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Uma linha por remessa e sleeve: o que entrou, o que voltou por aplicação e por perda, e o saldo que ainda está na nossa mão.</p>'
+      + '<div id="rnfConta"></div></div>';
+    try {
+      const d = document.getElementById('rnfDrop');
+      if (d) {
+        d.ondragover = e => { e.preventDefault(); d.style.background = 'var(--leve)'; };
+        d.ondragleave = () => { d.style.background = ''; };
+        d.ondrop = e => { e.preventDefault(); d.style.background = ''; rnfArquivos(e.dataTransfer.files); };
+      }
+    } catch (_) { }
+    rnfPrev(); rnfConta();
+    return;
+  }
+  rotRender();
+}
+function _rotAbas() {
+  const b = (v, r) => '<button class="btn" onclick="rotVer(\'' + v + '\')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;'
+    + (_rotVista === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
+  return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
+    + b('estoque', '📦 Estoque') + b('notas', '🧾 Notas fiscais') + '</div></div>';
+}
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
   const D = _rotDados || [];
-  if (!D.length) { box.innerHTML = '<p class="desc">Nenhum rótulo cadastrado ainda.</p>'; return; }
+  if (!D.length) { box.innerHTML = _rotAbas() + '<p class="desc">Nenhum rótulo cadastrado ainda.</p>'; return; }
   const q = _rotBusca.trim().toLowerCase();
   const vis = D.filter(r => (!_rotCli || (r.cliente || '(sem cliente)') === _rotCli)
     && (!_rotSetor || r.setor === _rotSetor)
@@ -43796,7 +44124,7 @@ function rotRender() {
   const faltam = D.filter(r => r.sobra !== null && +r.sobra < 0);
   const urgente = faltam.slice().sort((a, b) => String(a.primeira_entrega || '9') < String(b.primeira_entrega || '9') ? -1 : 1)[0];
   const semFator = D.filter(r => r.caixas !== null && r.unid_cx === null);
-  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+  let h = _rotAbas() + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Rótulos</div>'
     + '<div style="font-size:20px;font-weight:800;color:var(--navy)">' + fmtNum(Math.round(somaT)) + '</div></div>'
     + '<div style="flex:1;min-width:104px;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.5px">Itens</div>'
