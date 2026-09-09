@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.561.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.562.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.561.0';
+const APP_VER = '4.562.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44664,6 +44664,126 @@ function rlanRender() {
 function rlanCli(v) { _rlanCli = v; rlanRender(); }
 function rlanForn(v) { _rlanForn = v; rlanRender(); }
 
+/* ===================== PERDAS DE RÓTULO — 09/09/2026 =====================
+   João: "use o relatório 054 para fazer o % de perdas de cada sleeve; relacione a
+   quantidade por caixa, a quantidade produzida por OP, pegue os dados do 054 que
+   estão em gramas, relacione com o peso individual de cada rótulo e dê o %".
+
+   A conta, conferida com o exemplo que ele mandou:
+     perdidos  = peso do 054 (kg) × 1000 ÷ gramatura do rótulo
+                 0,336 kg → 336 g ÷ 0,81 g = 415 rótulos
+     aplicados = caixas produzidas na OP × unidades por caixa
+                 21 cx × 1.785 = 37.485
+     %         = perdidos ÷ (aplicados + perdidos) = 1,09%
+
+   Uso o PESO e não a coluna `quantidade` do 054: ela não fecha com o peso
+   (0,04 contra 415) — é outra medida, e ele mandou usar o peso.
+
+   O % é perdidos ÷ (aplicados + perdidos), a MESMA régua do refugo no resto do
+   app. Se fosse dividido só pelo aplicado, o número daqui não poderia ser
+   comparado com o refugo das outras telas.                                     */
+
+let _rperDados = null, _rperPeriodo = 'mes', _rperBusca = '';
+
+async function rperAbrir(forcar) {
+  const cx = $('rperBox'); if (!cx) return;
+  if (!_rperDados || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const { data, error } = await sb.from('v_rotulo_perda').select('*').gt('kg_perda', 0);
+      if (error) throw error;
+      _rperDados = data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rperRender();
+}
+
+function rperRender() {
+  const cx = $('rperBox'); if (!cx) return;
+  const D = _rperDados || [];
+  if (!D.length) { cx.innerHTML = '<p class="desc">Nenhuma perda do 054 para os rótulos cadastrados.</p>'; return; }
+
+  const hoje = new Date();
+  const ini = _rperPeriodo === 'mes'
+    ? hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0') + '-01' : '0000-01-01';
+  const q = _rperBusca.trim().toLowerCase();
+  const linhas = D.filter(r => String(r.dia || '') >= ini
+    && (!q || [r.sleeve_cod, r.acabado_cod, r.cliente, r.item_desc].some(x => String(x || '').toLowerCase().includes(q))));
+
+  /* junto por SLEEVE: a pergunta dele é "qual rótulo perde mais", não "qual dia" */
+  const por = {};
+  linhas.forEach(r => {
+    const k = r.sleeve_cod;
+    if (!por[k]) por[k] = { sleeve: k, acab: r.acabado_cod, cli: r.cliente, desc: r.item_desc,
+                           gram: r.gramatura, kg: 0, perd: 0, apl: 0, ops: new Set(), motivos: {} };
+    const o = por[k];
+    o.kg += +r.kg_perda || 0;
+    o.perd += +r.rotulos_perdidos || 0;
+    o.apl += +r.rotulos_aplicados || 0;
+    if (r.op) o.ops.add(r.op);
+    String(r.motivos || '').split(' · ').filter(Boolean).forEach(m => o.motivos[m] = (o.motivos[m] || 0) + (+r.rotulos_perdidos || 0));
+  });
+  const arr = Object.values(por).map(o => {
+    o.pct = (o.apl + o.perd) > 0 ? o.perd * 100 / (o.apl + o.perd) : null;
+    return o;
+  }).sort((a, b) => (b.perd || 0) - (a.perd || 0));
+
+  const tKg = arr.reduce((a, x) => a + x.kg, 0);
+  const tPerd = arr.reduce((a, x) => a + x.perd, 0);
+  const tApl = arr.reduce((a, x) => a + x.apl, 0);
+  const tPct = (tApl + tPerd) > 0 ? tPerd * 100 / (tApl + tPerd) : 0;
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const cor = p => p == null ? 'var(--fraco)' : p >= 3 ? '#C0392B' : p >= 1.5 ? '#B26B00' : '#1F7A46';
+
+  const bt = (v, r) => '<button class="btn" onclick="_rperPeriodo=\'' + v + '\';rperRender()" '
+    + 'style="width:auto;padding:6px 13px;font-size:12.5px;font-weight:800;'
+    + (_rperPeriodo === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
+
+  let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + bt('mes', 'Mês atual') + bt('tudo', 'Todo o período') + '</div>'
+    + '<input type="search" autocomplete="off" name="per_' + Math.random().toString(36).slice(2, 8) + '"'
+    + ' placeholder="buscar por sleeve, item ou cliente…" value="' + escapeHtml(_rperBusca) + '"'
+    + ' oninput="_rperBusca=this.value;rperRender()" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;margin-bottom:9px;box-sizing:border-box">';
+
+  const bloco = (rot, val, c, ap) =>
+    '<div style="flex:1;min-width:112px;background:#fff;border:1px solid var(--borda);border-top:3px solid ' + c + ';border-radius:10px;padding:10px">'
+    + '<div style="font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7A8794">' + rot + '</div>'
+    + '<div style="font-size:19px;font-weight:800;color:' + c + ';margin-top:4px">' + val + '</div>'
+    + '<div class="desc" style="font-size:10.5px;margin-top:3px">' + ap + '</div></div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + bloco('Perda', tPct.toFixed(2).replace('.', ',') + '%', cor(tPct), 'do que passou pela máquina')
+    + bloco('Rótulos perdidos', f(tPerd), '#C0392B', tKg.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' kg no 054')
+    + bloco('Aplicados', f(tApl), '#1F7A46', arr.length + ' rótulo(s) com perda')
+    + '</div>';
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:left;color:var(--fraco)"><th>sleeve · item</th><th>cliente</th>'
+    + '<th style="text-align:right">perdidos</th><th style="text-align:right">aplicados</th><th style="text-align:right">%</th></tr>';
+  arr.forEach(o => {
+    const mot = Object.entries(o.motivos).sort((a, b) => b[1] - a[1])[0];
+    h += '<tr style="border-top:1px solid var(--leve-2s)">'
+      + '<td><b>' + escapeHtml(o.sleeve) + '</b> <span class="desc">' + escapeHtml(o.acab || '') + '</span>'
+      + '<div class="desc" style="font-size:10px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + escapeHtml(String(o.desc || '')) + '</div>'
+      + (mot ? '<div style="font-size:10px;color:#943126">' + escapeHtml(mot[0].toLowerCase()) + '</div>' : '') + '</td>'
+      + '<td>' + escapeHtml(o.cli || '—') + '<div class="desc" style="font-size:10px">' + o.ops.size + ' OP</div></td>'
+      + '<td style="text-align:right;color:#C0392B;font-weight:700">' + f(o.perd)
+      + '<div class="desc" style="font-size:10px;font-weight:400">' + o.kg.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + ' kg</div></td>'
+      + '<td style="text-align:right">' + (o.apl ? f(o.apl) : '<span class="desc">sem produção</span>')
+      + '<div class="desc" style="font-size:10px">' + (o.gram ? (+o.gram).toLocaleString('pt-BR') + ' g/un' : 'sem gramatura') + '</div></td>'
+      + '<td style="text-align:right;font-weight:800;color:' + cor(o.pct) + '">'
+      + (o.pct == null ? '—' : o.pct.toFixed(2).replace('.', ',') + '%') + '</td></tr>';
+  });
+  h += '</table></div>'
+    + '<p class="desc" style="font-size:11px;margin-top:8px">Perdidos = peso do 054 ÷ gramatura do rótulo. '
+    + 'Aplicados = caixas da OP × unidades por caixa. O % é perdidos ÷ (aplicados + perdidos), a mesma régua do refugo no resto do app. '
+    + 'Rótulo sem gramatura ou sem “N UNID” na descrição fica sem % — não invento fator.</p>';
+  cx.innerHTML = h;
+}
+
 function rotFluxoSVG() {
   const cx = {
     ent: '#1A5276', prod: '#7D3C98', sai: '#1F7A46', perda: '#C0392B',
@@ -45017,6 +45137,14 @@ function rotVer(v) {
     return;
   }
   if (v === 'fluxo') { box.innerHTML = _rotAbas() + rotFluxoSVG() + rotFluxo(); return; }
+  if (v === 'perdas') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">🗑️ Perda de rótulo por sleeve</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Do relatório <b>054</b>: o peso perdido vira número de rótulos pela gramatura de cada um, '
+      + 'e é comparado com o que a OP aplicou.</p>'
+      + '<div id="rperBox"></div></div>';
+    rperAbrir();
+    return;
+  }
   if (v === 'lanc') {
     box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">📒 Lançamentos por nota</div>'
       + '<p class="desc" style="margin:-2px 0 10px">O extrato do estoque: cada nota que somou ou tirou rótulo, e de quem veio.</p>'
@@ -45053,7 +45181,8 @@ function _rotAbas() {
     + (_rotVista === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
     + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais')
-    + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
+    + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('perdas', '🗑️ Perdas')
+    + b('fluxo', '🔀 Fluxograma') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
