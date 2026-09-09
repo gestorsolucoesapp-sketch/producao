@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.535.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.536.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3930,7 +3930,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.535.0';
+const APP_VER = '4.536.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -56908,7 +56908,34 @@ async function faImportarRH(fExterno) {
     const iDes = _faCol(cab, 'DESCRICAO_JUSTIFICATVA', 'DESCRICAO_JUSTIFICATIVA', 'DESCRICAO');
     const iDat = _faCol(cab, 'APONTAMENTO_DATA', 'DATA');
     const iHor = _faCol(cab, 'Total horas decimal', 'TOTAL_JUSTIFICATIVA', 'HORAS');
-    if (iMat < 0 || iDat < 0) throw new Error('não achei as colunas de crachá e data — é a planilha certa?');
+    /* ===== 09/09/2026 (João: planilha de agosto do RH voltando "nenhuma linha
+       válida", com o print mostrando crachá numérico e data dd/mm/aaaa) =====
+       Eu não tinha como saber ONDE quebrava: a mensagem era a mesma para
+       cabeçalho errado, aba errada, crachá com caractere estranho ou data em
+       outro formato. Agora o erro mostra a aba lida, os cabeçalhos que
+       reconheci e os três primeiros valores CRUS de crachá e data, com o código
+       de cada caractere quando não bate no padrão. Diagnóstico em vez de
+       adivinhação. */
+    const _diag = () => {
+      const abas = (wb.SheetNames || []).join(', ');
+      const amostra = [];
+      for (let i = 1; i < rows.length && amostra.length < 3; i++) {
+        const r = rows[i] || [];
+        const mc = iMat >= 0 ? String(r[iMat] == null ? '' : r[iMat]) : '(sem coluna)';
+        const dc = iDat >= 0 ? String(r[iDat] == null ? '' : r[iDat]) : '(sem coluna)';
+        if (!mc.trim() && !dc.trim()) continue;
+        const okM = /^\d{3,8}$/.test(mc.trim()), okD = !!_faData(dc);
+        amostra.push('linha ' + (i + 1) + ' · crachá <b>[' + escapeHtml(mc) + ']</b> ' + (okM ? 'ok' : '✗')
+          + ' · data <b>[' + escapeHtml(dc) + ']</b> ' + (okD ? 'ok' : '✗'));
+      }
+      return '<div style="margin-top:8px;font-size:12px;line-height:1.6">'
+        + 'aba lida: <b>' + escapeHtml(wb.SheetNames[0] || '?') + '</b>' + (abas.split(',').length > 1 ? ' (a planilha tem: ' + escapeHtml(abas) + ')' : '')
+        + '<br>cabeçalho: <b>' + escapeHtml((cab || []).filter(Boolean).slice(0, 12).join(' | ')) + '</b>'
+        + '<br>crachá col ' + (iMat < 0 ? '<b>NÃO ACHEI</b>' : iMat) + ' · data col ' + (iDat < 0 ? '<b>NÃO ACHEI</b>' : iDat)
+        + (amostra.length ? '<br>' + amostra.join('<br>') : '<br>nenhuma linha com conteúdo depois do cabeçalho')
+        + '</div>';
+    };
+    if (iMat < 0 || iDat < 0) { prev.innerHTML = '<div class="desc" style="margin-top:10px"><span style="color:var(--critico-s)">Não achei as colunas de crachá e data.</span>' + _diag() + '</div>'; return; }
 
     const linhas = [];
     for (let i = 1; i < rows.length; i++) {
@@ -56921,7 +56948,7 @@ async function faImportarRH(fExterno) {
                     desc: iDes >= 0 ? String(r[iDes] || '').trim() : null,
                     h: Math.round(_faHoras(iHor >= 0 ? r[iHor] : null) * 1e4) / 1e4 });
     }
-    if (!linhas.length) throw new Error('nenhuma linha válida na planilha');
+    if (!linhas.length) { prev.innerHTML = '<div class="desc" style="margin-top:10px"><span style="color:var(--critico-s)">Nenhuma linha válida — nada foi gravado.</span>' + _diag() + '</div>'; return; }
 
     msg('<span class="spin" style="border-color:var(--verde);border-top-color:transparent"></span> gravando ' + linhas.length + ' linha(s)…');
     const { data, error } = await sb.rpc('importar_faltas_rh', { p_linhas: linhas });
