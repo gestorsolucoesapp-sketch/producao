@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.562.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.563.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.562.0';
+const APP_VER = '4.563.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44319,6 +44319,26 @@ function rnfExpPdf() {
    e da Kromos. Cadastro que só aceita um fornecedor obrigaria a apagar o anterior
    e perderia o histórico das notas antigas.                                    */
 
+/* ===== 09/09/2026 (João: "quando estou pesquisando um item, digito um número e
+   sai; tenho que clicar de novo para pôr o outro") =====
+   A cada tecla eu redesenhava a tela inteira, e o campo de busca ia junto — o
+   navegador perde o foco quando o elemento é destruído. Guardo qual campo estava
+   ativo e onde estava o cursor ANTES de redesenhar, e devolvo depois. Vale para
+   as três buscas (cadastro, lançamentos, perdas). */
+function _rotFocoGuarda(id) {
+  const a = document.activeElement;
+  if (!a || a.id !== id) return null;
+  try { return { pos: a.selectionStart, fim: a.selectionEnd }; } catch (_) { return { pos: null }; }
+}
+function _rotFocoVolta(id, g) {
+  if (!g) return;
+  const n = document.getElementById(id); if (!n) return;
+  try {
+    n.focus();
+    if (g.pos != null) n.setSelectionRange(g.pos, g.fim == null ? g.pos : g.fim);
+  } catch (_) { }
+}
+
 let _rcadDados = null, _rcadBusca = '', _rcadEdit = null, _rcadPre = null;
 
 /* ===== 09/09/2026 (João: "padrão de cadastro MAIÚSCULO; CNPJ no padrão; não
@@ -44364,6 +44384,7 @@ async function rcadAbrir(forcar) {
 
 function rcadRender() {
   const cx = $('rcadBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rcadBusca');
   const D = _rcadDados || [];
   const q = _rcadBusca.trim().toLowerCase();
   const vis = q ? D.filter(r => [r.sleeve_cod, r.acabado_cod, r.item_desc, r.cliente, r.graficas, r.cod_cliente]
@@ -44371,14 +44392,14 @@ function rcadRender() {
   const semDep = D.filter(r => !r.n_depara).length;
 
   let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
-    + '<input type="search" autocomplete="off" name="busca_' + Math.random().toString(36).slice(2, 8) + '" placeholder="buscar por código, item, cliente ou gráfica…" value="' + escapeHtml(_rcadBusca) + '"'
+    + '<input id="rcadBusca" type="search" autocomplete="off" name="busca_' + Math.random().toString(36).slice(2, 8) + '" placeholder="buscar por código, item, cliente ou gráfica…" value="' + escapeHtml(_rcadBusca) + '"'
     + ' oninput="_rcadBusca=this.value;rcadRender()" style="flex:1;min-width:180px;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">'
     + '<button class="btn btn-verde" style="width:auto;padding:9px 14px;font-size:13px" onclick="rcadForm(null)">+ Novo rótulo</button></div>';
 
   if (semDep) h += '<div style="border:1px solid #F0D9B0;background:#FFF6E9;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:12px;margin-bottom:10px">'
     + '<b>' + semDep + ' rótulo(s) sem nenhum código de gráfica ou cliente.</b> Enquanto faltar, a nota deles cai como “não sei que sleeve é este”.</div>';
 
-  if (!vis.length) { cx.innerHTML = h + '<p class="desc">Nada encontrado.</p>'; return; }
+  if (!vis.length) { cx.innerHTML = h + '<p class="desc">Nada encontrado.</p>'; _rotFocoVolta('rcadBusca', _g); return; }
 
   h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
     + '<tr style="text-align:left;color:var(--fraco)"><th>sleeve</th><th>item Rioplastic</th><th>cliente</th>'
@@ -44394,6 +44415,7 @@ function rcadRender() {
       + '<td style="text-align:right">' + (r.gramatura != null ? (+r.gramatura).toLocaleString('pt-BR') : '<span class="desc">—</span>') + '</td></tr>';
   });
   cx.innerHTML = h + '</table></div>';
+  _rotFocoVolta('rcadBusca', _g);
 }
 
 async function rcadForm(sleeve) {
@@ -44610,6 +44632,7 @@ async function rlanAbrir(forcar) {
 
 function rlanRender() {
   const cx = $('rlanBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rlanBusca');
   const D = _rlanDados || [];
   if (!D.length) {
     cx.innerHTML = '<p class="desc">Nenhum lançamento por nota ainda. O saldo que está no estoque veio da carga inicial das planilhas.</p>';
@@ -44635,7 +44658,7 @@ function rlanRender() {
   };
 
   const soma = vis.reduce((a, r) => a + (r.tipo === 'entrada' ? (+r.quantidade || 0) : -(+r.quantidade || 0)), 0);
-  let h = '<input type="search" autocomplete="off" name="lan_' + Math.random().toString(36).slice(2, 8) + '"'
+  let h = '<input id="rlanBusca" type="search" autocomplete="off" name="lan_' + Math.random().toString(36).slice(2, 8) + '"'
     + ' placeholder="buscar por sleeve, item, nota, gráfica ou cliente…" value="' + escapeHtml(_rlanBusca) + '"'
     + ' oninput="_rlanBusca=this.value;rlanRender()" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;margin-bottom:8px;box-sizing:border-box">'
     + '<div class="desc" style="font-size:11px;margin-bottom:3px">por cliente</div>' + cont('cliente', _rlanCli, 'rlanCli')
@@ -44660,6 +44683,7 @@ function rlanRender() {
         ? (+r.qtd_informada).toLocaleString('pt-BR') + ' ' + escapeHtml(r.unidade || '') : '') + '</div></td></tr>';
   });
   cx.innerHTML = h + '</table></div>';
+  _rotFocoVolta('rlanBusca', _g);
 }
 function rlanCli(v) { _rlanCli = v; rlanRender(); }
 function rlanForn(v) { _rlanForn = v; rlanRender(); }
@@ -44703,6 +44727,7 @@ async function rperAbrir(forcar) {
 
 function rperRender() {
   const cx = $('rperBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rperBusca');
   const D = _rperDados || [];
   if (!D.length) { cx.innerHTML = '<p class="desc">Nenhuma perda do 054 para os rótulos cadastrados.</p>'; return; }
 
@@ -44744,7 +44769,7 @@ function rperRender() {
 
   let h = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
     + bt('mes', 'Mês atual') + bt('tudo', 'Todo o período') + '</div>'
-    + '<input type="search" autocomplete="off" name="per_' + Math.random().toString(36).slice(2, 8) + '"'
+    + '<input id="rperBusca" type="search" autocomplete="off" name="per_' + Math.random().toString(36).slice(2, 8) + '"'
     + ' placeholder="buscar por sleeve, item ou cliente…" value="' + escapeHtml(_rperBusca) + '"'
     + ' oninput="_rperBusca=this.value;rperRender()" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;margin-bottom:9px;box-sizing:border-box">';
 
@@ -44782,6 +44807,7 @@ function rperRender() {
     + 'Aplicados = caixas da OP × unidades por caixa. O % é perdidos ÷ (aplicados + perdidos), a mesma régua do refugo no resto do app. '
     + 'Rótulo sem gramatura ou sem “N UNID” na descrição fica sem % — não invento fator.</p>';
   cx.innerHTML = h;
+  _rotFocoVolta('rperBusca', _g);
 }
 
 function rotFluxoSVG() {
