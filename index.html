@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.518.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.519.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3916,7 +3916,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.518.0';
+const APP_VER = '4.519.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -10237,6 +10237,21 @@ function aniMarca(dataISO, tipo) {
   const cor = k === 0 ? (nasc ? '#FADBD8;color:#943126' : '#D5F5E3;color:#186A3B') : '#FCF3CF;color:#7D6608';
   return '<span class="chip" style="background:' + cor + '">' + ico + ' ' + (nasc ? 'aniversário ' : 'aniversário de empresa ') + quando + anos + '</span>';
 }
+/* tempo de casa em texto, calculado da admissão — o campo `tempo_casa` da ficha
+   é texto solto e só existe em 104 das 135 fichas */
+function rhTempoCasa(d) {
+  if (!d) return '';
+  const x = new Date(String(d).slice(0, 10) + 'T12:00:00');
+  if (isNaN(x)) return '';
+  const h = new Date();
+  let m = (h.getFullYear() - x.getFullYear()) * 12 + (h.getMonth() - x.getMonth());
+  if (h.getDate() < x.getDate()) m--;
+  if (m < 0) return 'entrada futura';
+  if (m < 1) return 'menos de 1 mês de casa';
+  if (m < 12) return m + (m === 1 ? ' mês de casa' : ' meses de casa');
+  const a = Math.floor(m / 12), r = m % 12;
+  return a + (a === 1 ? ' ano' : ' anos') + (r ? ' e ' + r + (r === 1 ? ' mês' : ' meses') : '') + ' de casa';
+}
 function rhDesdeQuando(d) {
   if (!d) return '';
   const x = new Date(String(d).slice(0, 10) + 'T12:00:00');
@@ -10496,8 +10511,8 @@ async function rhCobCarregar(forcar) {
   box.innerHTML = '<div class="card"><div class="desc">carregando o quadro...</div></div>';
   try {
     const [cl, al, an, mk] = await Promise.all([
-      sb.from('colaboradores').select('matricula,nome,cargo,setor,lotacao').eq('ativo', true).order('nome'),
-      sb.from('org_alocacoes').select('matricula,setor,turno,vigencia_inicio').is('vigencia_fim', null),
+      sb.from('colaboradores').select('matricula,nome,cargo,setor,lotacao,admissao,nascimento').eq('ativo', true).order('nome'),
+      sb.from('org_alocacoes').select('matricula,setor,turno,maquina_codigo,funcao,vigencia_inicio').is('vigencia_fim', null),
       sb.from('rh_analise_individual').select('matricula,turno,setor,desligado'),
       sb.from('rh_conversado').select('matricula,conversado,marcado_por_nome,marcado_em')
     ]);
@@ -10515,6 +10530,8 @@ async function rhCobCarregar(forcar) {
         mat: k, nome: p.nome || '—', cargo: p.cargo || '',
         setor: a.setor || p.setor || p.lotacao || 'sem setor',
         turno: a.turno || (e && e.turno) || '',
+        adm: p.admissao || null, nasc: p.nascimento || null,
+        maq: a.maquina_codigo || '', funcao: a.funcao || '',
         temEnt: !!e, desligado: !!(e && e.desligado), manual: !!man[k],
         quem: man[k] ? (man[k].marcado_por_nome || '') : ''
       };
@@ -10573,10 +10590,27 @@ function rhCobRender() {
           + '<input type="checkbox" ' + (ok ? 'checked' : '') + (p.temEnt ? ' disabled' : '')
           + ' onchange="rhCobMarcar(\'' + p.mat + '\',this.checked)" style="width:19px;height:19px;flex:none">'
           + '<span style="flex:1;min-width:0"><b style="' + (ok ? '' : 'color:var(--laranja)') + '">' + escapeHtml(p.nome) + '</b>'
+          /* 08/09/2026 (João: "coloque a data de entrada e detalhes dos
+             colaboradores"). Duas linhas: a de cima identifica (matrícula,
+             cargo, máquina/função), a de baixo é o tempo — entrada, tempo de
+             casa e as marcas de aniversário. Junto tudo numa linha só ficava
+             uma tripa ilegível no celular.
+             Sem admissão eu escrevo "entrada não cadastrada" em vez de omitir:
+             na tela que serve para caçar quem falta, campo vazio some e ninguém
+             vai atrás. */
           + '<span style="display:block;font-size:11px;color:var(--fraco)">mat ' + escapeHtml(p.mat)
           + (p.cargo ? ' · ' + escapeHtml(p.cargo) : '')
+          + (p.maq ? ' · máq ' + escapeHtml(p.maq) : '')
+          + (p.funcao ? ' · ' + escapeHtml(p.funcao) : '')
           + (p.temEnt ? ' · entrevista escrita' : (p.manual ? ' · conversa marcada' + (p.quem ? ' por ' + escapeHtml(p.quem) : '') : ' · falta'))
-          + '</span></span></label>';
+          + '</span>'
+          + '<span style="display:block;font-size:11px;color:var(--fraco);margin-top:1px">'
+          + (p.adm ? '📅 entrada ' + escapeHtml(fmtData(String(p.adm).slice(0, 10))) + ' · ' + escapeHtml(rhTempoCasa(p.adm))
+            : '📅 entrada não cadastrada')
+          + (p.nasc ? ' · 🎂 ' + escapeHtml(fmtData(String(p.nasc).slice(0, 10))) : '')
+          + '</span>'
+          + aniMarca(p.nasc, 'nasc') + aniMarca(p.adm, 'casa')
+          + '</span></label>';
       });
       corpo += '</div>';
     });
