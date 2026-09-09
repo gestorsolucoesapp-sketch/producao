@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.555.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.557.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.555.0';
+const APP_VER = '4.557.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44012,7 +44012,11 @@ function rnfCadastrar(iNota, iItem) {
 async function rnfGravar() {
   const ok = _rnfFila.filter(n => !n.erro && n.chave);
   if (!ok.length) { toast('Nada para gravar.'); return; }
-  let n = 0, somou = 0;
+  let n = 0, somou = 0, _rnfOrigem = {};
+  try {
+    const oi = await sb.from('rotulo_item').select('sleeve_cod,origem');
+    (oi.data || []).forEach(x => { if (x.origem) _rnfOrigem[x.sleeve_cod] = x.origem; });
+  } catch (_) { }
   for (const nf of ok) {
     try {
       const { error } = await sb.from('rotulo_nf').insert({
@@ -44045,9 +44049,18 @@ async function rnfGravar() {
          aplicação na produção, e isso ele lança no controle interno.
          Cada movimento guarda de QUAL gráfica veio, e a chave da nota impede
          somar duas vezes se o mesmo PDF voltar. */
-      if (nf.papel === 'entrada_grafica') {
+      /* 09/09/2026 — quem soma no estoque deixou de ser "a nota da gráfica" e
+         passou a ser "a nota de quem ENTREGA aquele rótulo", que o cadastro diz.
+         Item sem origem definida não soma e avisa: melhor não somar e falar do
+         que somar errado num material de terceiro. */
+      if (nf.papel === 'entrada_grafica' || nf.papel === 'remessa_cliente') {
         for (const it of (nf.itens || [])) {
           if (!it.sleeve_cod || it.servico || !(it.rotulos > 0)) continue;
+          const ori = (_rnfOrigem || {})[it.sleeve_cod];
+          if (!ori) { toast(it.sleeve_cod + ': falta dizer no cadastro quem entrega — não somei no estoque.'); continue; }
+          const casa = (ori === 'grafica' && nf.papel === 'entrada_grafica')
+            || (ori === 'cliente' && nf.papel === 'remessa_cliente');
+          if (!casa) continue;   // é a outra nota do par: alimenta só o saldo fiscal
           try {
             const mv = await sb.from('rotulo_movimento').insert({
               sleeve_cod: it.sleeve_cod, tipo: 'entrada', destino: 'bobina',
@@ -44386,7 +44399,22 @@ async function rcadForm(sleeve) {
     + inp('rcGram', 'Gramatura unitária (g) *', r ? r.gramatura : '', '', 'number')
     + '</div><div style="margin-top:8px">'
     + inp('rcDesc', 'Descrição do produto *', (r ? r.item_desc : (P.desc || '')), '')
-    + '</div>';
+    + '</div>'
+    /* ===== 09/09/2026 (João: "tem vez que a nota não é da gráfica e sim do
+       cliente, exemplo Frutap; deixe uma caixinha para eu selecionar, não deixe
+       salvar sem, e use a regra") =====
+       É esta escolha que diz ao importador QUAL nota é a entrega física daquele
+       rótulo. No Dondonzinho é a da gráfica; no Frutap é a do próprio cliente.
+       Sem ela eu teria de adivinhar — e somar a nota errada (ou as duas) dobra
+       estoque de material que nem é nosso. Nasce em branco de propósito: opção
+       pré-marcada vira resposta automática de quem passa rápido. */
+    + '<div style="margin-top:10px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">Quem entrega o rótulo *</label>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">'
+    + ['grafica', 'cliente'].map(o => '<label style="display:flex;align-items:center;gap:6px;border:1px solid var(--borda);border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px;font-weight:700">'
+      + '<input type="radio" name="rcOrigem" value="' + o + '"' + ((r && r.origem === o) ? ' checked' : '') + ' style="width:17px;height:17px">'
+      + (o === 'grafica' ? 'GRÁFICA' : 'CLIENTE') + '</label>').join('')
+    + '</div>'
+    + '<div class="desc" style="font-size:10.5px;margin-top:4px">A nota de quem entrega é a que soma no estoque. A outra alimenta só o saldo fiscal.</div></div>';
 
   h += '<div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">'
     + '<div style="font-size:12px;font-weight:800;color:#2C3E50">Códigos de fora</div>'
@@ -44459,12 +44487,14 @@ async function rcadSalvar() {
   if (!String(($('rcCli') || {}).value || '').trim()) falta.push('cliente');
   if (!String(($('rcDesc') || {}).value || '').trim()) falta.push('descrição');
   if (String(($('rcGram') || {}).value || '').trim() === '') falta.push('gramatura');
+  const org = (document.querySelector('input[name="rcOrigem"]:checked') || {}).value || '';
+  if (!org) falta.push('quem entrega o rótulo');
   if (falta.length) { toast('Falta preencher: ' + falta.join(', ') + '.'); return; }
   const g = String(($('rcGram') || {}).value || '').trim().replace(',', '.');
   const M = id => String(($(id) || {}).value || '').trim().toUpperCase();
   const reg = {
     sleeve_cod: sl, acabado_cod: M('rcAcab'), cliente: M('rcCli'),
-    item_desc: M('rcDesc'), gramatura: g === '' ? null : (+g || null)
+    item_desc: M('rcDesc'), gramatura: g === '' ? null : (+g || null), origem: org
   };
   try {
     const { error } = await sb.from('rotulo_item').upsert(reg, { onConflict: 'sleeve_cod' });
@@ -44515,6 +44545,92 @@ async function rcadSalvar() {
 
    `viewBox` + largura 100% para caber no celular sem cortar; o texto é <text>
    de verdade, então dá zoom sem borrar.                                        */
+
+/* ===================== LANÇAMENTOS DE NOTA — 09/09/2026 =====================
+   João: "quero clicar e ver a lista de lançamentos de notas fiscais de entrada
+   gráfica e poder filtrar por cliente, código ou gráfica".
+
+   É o extrato do estoque: cada linha é uma nota que somou (ou tirou) rótulo, com
+   de quem veio. Serve para responder "de onde vieram esses 341.000?" sem ter de
+   abrir a pasta de PDFs.
+
+   Os filtros são pílulas com a CONTAGEM em cada uma. Filtro que não diz quanto
+   tem obriga a tentar um por um.                                              */
+
+let _rlanDados = null, _rlanCli = '', _rlanForn = '', _rlanBusca = '';
+
+async function rlanAbrir(forcar) {
+  const cx = $('rlanBox'); if (!cx) return;
+  if (!_rlanDados || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const { data, error } = await sb.from('v_rotulo_lancamento').select('*')
+        .order('emissao', { ascending: false }).order('id', { ascending: false });
+      if (error) throw error;
+      _rlanDados = data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rlanRender();
+}
+
+function rlanRender() {
+  const cx = $('rlanBox'); if (!cx) return;
+  const D = _rlanDados || [];
+  if (!D.length) {
+    cx.innerHTML = '<p class="desc">Nenhum lançamento por nota ainda. O saldo que está no estoque veio da carga inicial das planilhas.</p>';
+    return;
+  }
+  const q = _rlanBusca.trim().toLowerCase();
+  const vis = D.filter(r => (!_rlanCli || (r.cliente || '—') === _rlanCli)
+    && (!_rlanForn || r.fornecedor === _rlanForn)
+    && (!q || [r.sleeve_cod, r.acabado_cod, r.item_desc, r.nota_fiscal, r.fornecedor, r.cliente]
+      .some(x => String(x || '').toLowerCase().includes(q))));
+
+  const cont = (campo, sel, fn) => {
+    const m = {};
+    D.forEach(r => { const k = (r[campo] || '—'); m[k] = (m[k] || 0) + (+r.quantidade || 0); });
+    return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">'
+      + '<button class="btn" onclick="' + fn + '(\'\')" style="width:auto;padding:5px 11px;font-size:12px;font-weight:800;'
+      + (sel ? '' : 'background:var(--navy);color:#fff') + '">todos</button>'
+      + Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+        '<button class="btn" onclick="' + fn + '(' + _rotArg(k) + ')" style="width:auto;padding:5px 11px;font-size:12px;font-weight:800;'
+        + (sel === k ? 'background:var(--navy);color:#fff' : '') + '">' + escapeHtml(k)
+        + ' <span style="opacity:.75">' + Math.round(v).toLocaleString('pt-BR') + '</span></button>').join('')
+      + '</div>';
+  };
+
+  const soma = vis.reduce((a, r) => a + (r.tipo === 'entrada' ? (+r.quantidade || 0) : -(+r.quantidade || 0)), 0);
+  let h = '<input type="search" autocomplete="off" name="lan_' + Math.random().toString(36).slice(2, 8) + '"'
+    + ' placeholder="buscar por sleeve, item, nota, gráfica ou cliente…" value="' + escapeHtml(_rlanBusca) + '"'
+    + ' oninput="_rlanBusca=this.value;rlanRender()" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;margin-bottom:8px;box-sizing:border-box">'
+    + '<div class="desc" style="font-size:11px;margin-bottom:3px">por cliente</div>' + cont('cliente', _rlanCli, 'rlanCli')
+    + '<div class="desc" style="font-size:11px;margin-bottom:3px">por gráfica / origem</div>' + cont('fornecedor', _rlanForn, 'rlanForn')
+    + '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:8px 0 6px">'
+    + vis.length + ' lançamento(s) · saldo ' + Math.round(soma).toLocaleString('pt-BR') + ' rótulos</div>';
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:left;color:var(--fraco)"><th>nota</th><th>sleeve · item</th><th>origem</th>'
+    + '<th style="text-align:right">rótulos</th></tr>';
+  vis.forEach(r => {
+    const ent = r.tipo === 'entrada';
+    h += '<tr style="border-top:1px solid var(--leve-2s)">'
+      + '<td><b>' + escapeHtml(r.nota_fiscal || '—') + '</b><div class="desc" style="font-size:10px">'
+      + (r.emissao ? String(r.emissao).split('-').reverse().join('/') : '') + '</div></td>'
+      + '<td>' + escapeHtml(r.sleeve_cod || '') + '<div class="desc" style="font-size:10px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + escapeHtml(String(r.item_desc || '')) + '</div></td>'
+      + '<td>' + escapeHtml(r.fornecedor) + '<div class="desc" style="font-size:10px">' + escapeHtml(r.cliente || '') + '</div></td>'
+      + '<td style="text-align:right;font-weight:800;color:' + (ent ? '#1F7A46' : '#C0392B') + '">'
+      + (ent ? '+' : '−') + Math.round(+r.quantidade || 0).toLocaleString('pt-BR')
+      + '<div class="desc" style="font-size:10px;font-weight:400">' + (r.qtd_informada != null
+        ? (+r.qtd_informada).toLocaleString('pt-BR') + ' ' + escapeHtml(r.unidade || '') : '') + '</div></td></tr>';
+  });
+  cx.innerHTML = h + '</table></div>';
+}
+function rlanCli(v) { _rlanCli = v; rlanRender(); }
+function rlanForn(v) { _rlanForn = v; rlanRender(); }
 
 function rotFluxoSVG() {
   const cx = {
@@ -44815,6 +44931,13 @@ function rotVer(v) {
     return;
   }
   if (v === 'fluxo') { box.innerHTML = _rotAbas() + rotFluxoSVG() + rotFluxo(); return; }
+  if (v === 'lanc') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">📒 Lançamentos por nota</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">O extrato do estoque: cada nota que somou ou tirou rótulo, e de quem veio.</p>'
+      + '<div id="rlanBox"></div></div>';
+    rlanAbrir();
+    return;
+  }
   if (v === 'cadastro') {
     box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">⚙️ Cadastro de rótulos</div>'
       + '<p class="desc" style="margin:-2px 0 10px">Cada rótulo é a mesma coisa com quatro nomes: o item Rioplastic, o código do sleeve, '
@@ -44838,7 +44961,7 @@ function _rotAbas() {
     + (_rotVista === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
     + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais')
-    + b('fiscal', '🧮 Análise fiscal') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
+    + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
