@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.573.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.574.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3953,7 +3953,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.573.0';
+const APP_VER = '4.574.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -45227,6 +45227,245 @@ async function rretGravar() {
   } catch (e) { toast('Não deu para gravar: ' + ((e && e.message) || e)); }
 }
 
+/* ===================== SAÍDA E RETORNO DE BOBINA — 09/09/2026 =====================
+   João, redesenhando o que eu tinha feito: "eu informo o que foi para a máquina e
+   o que retornou, e dá baixa no estoque dessa forma. Vou informar OP, lote,
+   código, o que der para puxar; na hora que colocar o código já preencha, e
+   depois o retorno. Então vai ter a aba saída e retorno. Fica mais certo o % de
+   perda, e quando divergir muito mostre."
+
+   POR QUE FICA MAIS CERTO, e vale registrar: com saída e retorno informados, a
+   perda REAL sai por diferença —
+
+       consumido = saiu − voltou
+       perda     = consumido − produzido
+       %         = perda ÷ consumido
+
+   — sem depender de o 054 ter sido lançado. O 054 vira CONFERÊNCIA em vez de
+   fonte: quando os dois discordam muito, é perda não apontada ou apontada na OP
+   errada. É por isso que ele pediu "quando divergir muito, mostre".
+
+   A saída baixa o estoque na hora; o retorno devolve. Assim o saldo fica certo
+   mesmo com a bobina passando dias na máquina — que era o furo do desenho
+   anterior, onde só o retorno mexia no estoque.                                */
+
+let _rbobBase = null, _rbobHist = null, _rbobBusca = '', _rbobSel = null, _rbobTipo = 'saida';
+const RBOB_LIMITE = 10;   // % de divergência contra o 054 que acende o alerta
+
+async function rbobAbrir(forcar) {
+  const cx = $('rbobBox'); if (!cx) return;
+  if (!_rbobBase || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const [b, h] = await Promise.all([
+        sb.from('v_rotulo_retorno_base').select('sleeve_cod,acabado_cod,item_desc,cliente,gramatura,unid_cx,op,maquina,posicao,cx_saldo,cx_feita,cx_total'),
+        sb.from('v_rotulo_bobina_op').select('*').order('dia_saida', { ascending: false }).limit(80)
+      ]);
+      if (b.error) throw b.error;
+      _rbobBase = b.data || [];
+      _rbobHist = h.data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rbobRender();
+}
+
+function rbobRender() {
+  const cx = $('rbobBox'); if (!cx) return;
+  const _g = _rotFocoGuarda('rbobBusca');
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const q = _rbobBusca.trim().toLowerCase();
+  const B = (_rbobBase || []);
+  const vis = q ? B.filter(r => [r.acabado_cod, r.sleeve_cod, r.op, r.item_desc, r.cliente]
+    .some(x => String(x || '').toLowerCase().includes(q))).slice(0, 40) : [];
+
+  const bt = (v, r) => '<button class="btn" onclick="_rbobTipo=\'' + v + '\';rbobRender()" '
+    + 'style="width:auto;padding:8px 16px;font-size:13px;font-weight:800;'
+    + (_rbobTipo === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
+
+  let h = '<div style="display:flex;gap:6px;margin-bottom:10px">' + bt('saida', '➡️ Saída') + bt('retorno', '↩️ Retorno') + '</div>'
+    + '<p class="desc" style="font-size:11.5px;margin:0 0 8px">'
+    + (_rbobTipo === 'saida'
+      ? 'O que <b>foi para a máquina</b>. Baixa do estoque na hora.'
+      : 'O que <b>voltou da máquina</b>. Volta para o estoque, e o que sobrou vira a perda real.')
+    + ' Busque pelo código do item (160…), sleeve ou OP.</p>'
+    + '<input id="rbobBusca" type="search" autocomplete="off" name="bob_' + Math.random().toString(36).slice(2, 8) + '"'
+    + ' placeholder="código do item, sleeve ou OP…" value="' + escapeHtml(_rbobBusca) + '"'
+    + ' oninput="_rbobBusca=this.value;rbobRender()" style="width:100%;font-size:16px;padding:9px;border:1px solid #ccc;border-radius:10px;margin-bottom:9px;box-sizing:border-box">';
+
+  if (q && !vis.length) h += '<p class="desc">Nada encontrado.</p>';
+  if (vis.length) {
+    h += '<div style="overflow:auto;max-height:44vh"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+    vis.forEach((r, i) => {
+      const ab = (_rbobHist || []).find(x => x.sleeve_cod === r.sleeve_cod && x.op === r.op);
+      h += '<tr class="tocavel" onclick="rbobEscolher(' + i + ')" style="cursor:pointer;border-top:1px solid var(--leve-2s)">'
+        + '<td style="padding:6px 4px"><b>' + escapeHtml(r.acabado_cod || '') + '</b> <span class="desc">OP ' + escapeHtml(r.op || '') + '</span>'
+        + '<span class="lupa">🔎</span>'
+        + '<div class="desc" style="font-size:10px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+        + escapeHtml(String(r.item_desc || '')) + '</div>'
+        + (ab ? '<div style="font-size:10px;color:#1A5276">saiu ' + f(ab.saiu) + (ab.voltou ? ' · voltou ' + f(ab.voltou) : ' · sem retorno') + '</div>' : '')
+        + '</td><td style="text-align:right;padding:6px 4px" class="desc">' + escapeHtml(r.maquina || '') + '</td></tr>';
+    });
+    h += '</table></div>';
+  }
+
+  const H = (_rbobHist || []).filter(x => x.saiu);
+  if (H.length) {
+    const alerta = H.filter(x => x.divergencia != null && x.consumido > 0
+      && Math.abs(x.divergencia) * 100 / x.consumido > RBOB_LIMITE);
+    if (alerta.length) {
+      h += '<div style="border:1px solid #E6B0AA;background:#FDEDEC;border-radius:10px;padding:10px;margin-top:14px">'
+        + '<b style="font-size:12.5px;color:#943126">⚠ ' + alerta.length + ' OP com divergência acima de ' + RBOB_LIMITE + '%</b>'
+        + '<p class="desc" style="font-size:11px;margin:3px 0 0">A perda que sai da conta (saiu − voltou − produzido) está longe do que o 054 registrou. '
+        + 'Ou faltou apontar perda, ou foi apontada em outra OP.</p></div>';
+    }
+    h += '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:14px 0 6px">Bobinas na máquina e fechadas</div>'
+      + '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<tr style="text-align:left;color:var(--fraco)"><th>OP · sleeve</th><th style="text-align:right">saiu</th>'
+      + '<th style="text-align:right">voltou</th><th style="text-align:right">produziu</th>'
+      + '<th style="text-align:right">perda</th><th style="text-align:right">054</th></tr>';
+    H.forEach(x => {
+      const aberto = !x.voltou;
+      const div = x.divergencia, pct = x.pct_perda;
+      const grande = div != null && x.consumido > 0 && Math.abs(div) * 100 / x.consumido > RBOB_LIMITE;
+      h += '<tr style="border-top:1px solid var(--leve-2s)' + (grande ? ';background:#FDEDEC' : '') + '">'
+        + '<td><b>' + escapeHtml(x.op || '') + '</b> <span class="desc">' + escapeHtml(x.sleeve_cod) + '</span>'
+        + (aberto ? '<div style="font-size:10px;color:#B26B00;font-weight:800">na máquina</div>' : '') + '</td>'
+        + '<td style="text-align:right">' + f(x.saiu) + '</td>'
+        + '<td style="text-align:right">' + (x.voltou ? f(x.voltou) : '—') + '</td>'
+        + '<td style="text-align:right">' + (x.produzido == null ? '—' : f(x.produzido)) + '</td>'
+        + '<td style="text-align:right;font-weight:800">' + (x.perda_real == null ? '—' : f(x.perda_real))
+        + (pct != null ? '<div class="desc" style="font-size:10px;font-weight:400">' + (+pct).toLocaleString('pt-BR') + '%</div>' : '') + '</td>'
+        + '<td style="text-align:right;color:' + (grande ? '#943126' : 'var(--fraco)') + '">'
+        + (x.perda_054 == null ? '—' : f(x.perda_054))
+        + (div != null ? '<div style="font-size:10px">' + (div > 0 ? '+' : '') + f(div) + '</div>' : '') + '</td></tr>';
+    });
+    h += '</table></div>';
+  }
+  cx.innerHTML = h;
+  _rotFocoVolta('rbobBusca', _g);
+}
+
+function rbobEscolher(i) {
+  const q = _rbobBusca.trim().toLowerCase();
+  const vis = (_rbobBase || []).filter(r => [r.acabado_cod, r.sleeve_cod, r.op, r.item_desc, r.cliente]
+    .some(x => String(x || '').toLowerCase().includes(q))).slice(0, 40);
+  const r = vis[i]; if (!r) return;
+  if (!(r.gramatura > 0)) { toast('Falta a gramatura no cadastro deste rótulo.'); return; }
+  _rbobSel = r;
+  const ab = (_rbobHist || []).find(x => x.sleeve_cod === r.sleeve_cod && x.op === r.op);
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  const ehSaida = _rbobTipo === 'saida';
+
+  const d = document.createElement('div');
+  d.id = 'rbobBox2';
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100001;display:flex;align-items:center;justify-content:center;padding:14px';
+  d.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:520px;width:100%;max-height:86vh;overflow:auto;padding:16px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+    + '<b style="font-size:15px">' + (ehSaida ? '➡️ Saída' : '↩️ Retorno') + ' · OP ' + escapeHtml(r.op || '') + '</b>'
+    + '<span onclick="document.getElementById(\'rbobBox2\').remove()" style="cursor:pointer;font-size:18px;color:var(--fraco)">✕</span></div>'
+    /* tudo que dá para puxar do código, puxado — ele só digita o kg e o lote */
+    + '<p class="desc" style="font-size:11.5px;margin:2px 0 10px">' + escapeHtml(String(r.item_desc || '')) + '<br>'
+    + 'item ' + escapeHtml(r.acabado_cod || '') + ' · sleeve ' + escapeHtml(r.sleeve_cod)
+    + ' · ' + escapeHtml(r.cliente || '') + '<br>'
+    + (+r.gramatura).toLocaleString('pt-BR') + ' g por rótulo · ' + (r.unid_cx ? (+r.unid_cx).toLocaleString('pt-BR') + ' un/cx' : 'sem un/cx')
+    + (r.maquina ? ' · ' + escapeHtml(r.maquina) : '') + '</p>'
+    + (ab && ab.saiu ? '<div style="background:var(--leve-4);border-radius:10px;padding:9px;font-size:12.5px;margin-bottom:10px">'
+      + 'Já saiu <b>' + f(ab.saiu) + '</b> rótulos nesta OP'
+      + (ab.voltou ? ' · já voltou <b>' + f(ab.voltou) + '</b>' : ' · <b style="color:#B26B00">ainda não voltou nada</b>') + '</div>' : '')
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:130px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">'
+    + (ehSaida ? 'Foi para a máquina (kg) *' : 'Voltou da máquina (kg) *') + '</label>'
+    + '<input id="rbobKg" inputmode="decimal" autocomplete="off" oninput="rbobCalc()"'
+    + ' style="width:100%;font-size:18px;padding:10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box"></div>'
+    + '<div style="flex:1;min-width:110px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">Lote</label>'
+    + '<input id="rbobLote" autocomplete="off" oninput="_rcadMai(this)"'
+    + ' style="width:100%;font-size:16px;padding:10px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box;text-transform:uppercase"></div>'
+    + '</div>'
+    + '<div id="rbobConta" style="margin-top:10px"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px">'
+    + '<button class="btn btn-verde" style="flex:1" onclick="rbobGravar()">Gravar ' + (ehSaida ? 'saída' : 'retorno') + '</button>'
+    + '<button class="btn btn-borda" style="width:auto;padding:11px 16px" onclick="document.getElementById(\'rbobBox2\').remove()">Fechar</button></div>'
+    + '</div>';
+  d.onclick = ev => { if (ev.target === d) d.remove(); };
+  document.body.appendChild(d);
+}
+
+function rbobCalc() {
+  const r = _rbobSel; if (!r) return;
+  const cx = document.getElementById('rbobConta'); if (!cx) return;
+  const txt = String((document.getElementById('rbobKg') || {}).value || '').trim().replace(/\./g, '').replace(',', '.');
+  if (txt === '') { cx.innerHTML = ''; return; }
+  const kg = +txt;
+  if (!isFinite(kg) || kg <= 0) { cx.innerHTML = '<p class="desc" style="color:#943126">valor inválido</p>'; return; }
+  const rot = Math.round(kg * 1000 / r.gramatura);
+  const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+  let h = '<div style="background:var(--leve-4);border-radius:10px;padding:10px;font-size:13px">'
+    + '<div style="display:flex;justify-content:space-between"><span>' + kg.toLocaleString('pt-BR') + ' kg ÷ '
+    + (+r.gramatura).toLocaleString('pt-BR') + ' g</span><b>' + rot.toLocaleString('pt-BR') + ' rótulos</b></div>';
+  if (_rbobTipo === 'retorno') {
+    const ab = (_rbobHist || []).find(x => x.sleeve_cod === r.sleeve_cod && x.op === r.op);
+    if (ab && ab.saiu) {
+      const consumido = (+ab.saiu || 0) - (+ab.voltou || 0) - rot;
+      const prod = +ab.produzido || 0;
+      const perda = consumido - prod;
+      const pct = consumido > 0 ? perda * 100 / consumido : null;
+      h += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--linha-2s)">'
+        + '<div style="display:flex;justify-content:space-between"><span>Consumido (saiu − voltou)</span><b>' + f(consumido) + '</b></div>'
+        + '<div style="display:flex;justify-content:space-between"><span>Produzido</span><b>' + f(prod) + '</b></div>'
+        + '<div style="display:flex;justify-content:space-between"><b>Perda real</b><b style="color:'
+        + (pct == null ? 'var(--fraco)' : pct >= 3 ? '#C0392B' : pct >= 1.5 ? '#B26B00' : '#1F7A46') + '">'
+        + f(perda) + (pct == null ? '' : ' · ' + pct.toFixed(2).replace('.', ',') + '%') + '</b></div>';
+      if (ab.perda_054 != null) {
+        const dv = perda - (+ab.perda_054 || 0);
+        const grande = consumido > 0 && Math.abs(dv) * 100 / consumido > RBOB_LIMITE;
+        h += '<div style="display:flex;justify-content:space-between;font-size:12px;color:' + (grande ? '#943126' : 'var(--fraco)') + '">'
+          + '<span>054 registrou</span><span>' + f(ab.perda_054) + ' · dif ' + (dv > 0 ? '+' : '') + f(dv) + '</span></div>'
+          + (grande ? '<div style="font-size:11px;color:#943126;margin-top:4px"><b>Divergência grande.</b> Ou faltou apontar perda no 054, ou ela foi apontada em outra OP.</div>' : '');
+      }
+      h += '</div>';
+    } else h += '<div class="desc" style="font-size:11px;margin-top:5px">Esta OP não tem saída lançada — lance a saída primeiro para eu calcular a perda.</div>';
+  }
+  cx.innerHTML = h + '</div>';
+}
+
+async function rbobGravar() {
+  const r = _rbobSel; if (!r) return;
+  const txt = String((document.getElementById('rbobKg') || {}).value || '').trim().replace(/\./g, '').replace(',', '.');
+  if (txt === '') { toast('Digite o kg.'); return; }
+  const kg = +txt;
+  if (!isFinite(kg) || kg <= 0) { toast('Valor inválido.'); return; }
+  const rot = Math.round(kg * 1000 / r.gramatura);
+  const ehSaida = _rbobTipo === 'saida';
+  if (!confirm((ehSaida ? 'Saída' : 'Retorno') + ' da OP ' + r.op + '\n\n' + kg.toLocaleString('pt-BR') + ' kg = '
+    + rot.toLocaleString('pt-BR') + ' rótulos\n\nO estoque vai ' + (ehSaida ? 'BAIXAR' : 'VOLTAR') + ' esse valor. Gravar?')) return;
+  try {
+    const r1 = await sb.from('rotulo_bobina').insert({
+      tipo: _rbobTipo, sleeve_cod: r.sleeve_cod, acabado_cod: r.acabado_cod, op: r.op,
+      lote: String((document.getElementById('rbobLote') || {}).value || '').trim().toUpperCase() || null,
+      kg: kg, rotulos: rot, gramatura: r.gramatura,
+      quem: (perfil || {}).id || null, quem_nome: (perfil || {}).nome || null
+    });
+    if (r1.error) throw r1.error;
+    await sb.from('rotulo_movimento').insert({
+      sleeve_cod: r.sleeve_cod, tipo: ehSaida ? 'saida' : 'entrada', destino: 'bobina',
+      quantidade: rot, qtd_informada: kg, unidade: 'KG', emissao: hojeISO(),
+      fornecedor: (ehSaida ? 'SAÍDA MÁQUINA' : 'RETORNO MÁQUINA') + ' OP ' + (r.op || ''),
+      obs: kg + ' kg ÷ ' + r.gramatura + ' g'
+    });
+    const at = await sb.from('rotulo_item').select('bobina').eq('sleeve_cod', r.sleeve_cod).maybeSingle();
+    const base = +((at.data || {}).bobina) || 0;
+    const novo = ehSaida ? Math.max(0, base - rot) : base + rot;
+    await sb.from('rotulo_item').update({ bobina: novo }).eq('sleeve_cod', r.sleeve_cod);
+    const bx = document.getElementById('rbobBox2'); if (bx) bx.remove();
+    toast((ehSaida ? 'Saída' : 'Retorno') + ' gravado · ' + rot.toLocaleString('pt-BR') + ' rótulos.');
+    _rbobBase = null; _rotDados = null; _rlanDados = null;
+    await rbobAbrir(true);
+  } catch (e) { toast('Não deu para gravar: ' + ((e && e.message) || e)); }
+}
+
 function rotFluxoSVG() {
   const cx = {
     ent: '#1A5276', prod: '#7D3C98', sai: '#1F7A46', perda: '#C0392B',
@@ -45659,12 +45898,12 @@ function rotVer(v) {
     return;
   }
   if (v === 'fluxo') { box.innerHTML = _rotAbas() + rotFluxoSVG() + rotFluxo(); return; }
-  if (v === 'retorno') {
-    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">↩️ Retorno de bobina</div>'
-      + '<p class="desc" style="margin:-2px 0 10px">A bobina foi para a máquina e voltou. Informe o <b>kg que voltou</b> e eu confronto com o que a OP '
-      + 'precisava, o que produziu e o que o 054 registrou de perda.</p>'
-      + '<div id="rretBox"></div></div>';
-    rretAbrir();
+  if (v === 'bobina') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">🔄 Saída e retorno de bobina</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Você informa o que <b>foi</b> para a máquina e o que <b>voltou</b>. '
+      + 'A perda real sai da diferença — saiu − voltou − produzido — sem depender do 054, que passa a servir de conferência.</p>'
+      + '<div id="rbobBox"></div></div>';
+    rbobAbrir();
     return;
   }
   if (v === 'balanco') {
@@ -45720,7 +45959,7 @@ function _rotAbas() {
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
     + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais')
     + b('fiscal', '🧮 Análise fiscal') + b('lanc', '📒 Lançamentos') + b('perdas', '🗑️ Perdas')
-    + b('retorno', '↩️ Retorno') + b('balanco', '⚖️ Balanço') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
+    + b('bobina', '🔄 Saída e retorno') + b('balanco', '⚖️ Balanço') + b('fluxo', '🔀 Fluxograma') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
