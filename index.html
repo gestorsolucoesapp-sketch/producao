@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.554.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.555.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.554.0';
+const APP_VER = '4.555.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44012,7 +44012,7 @@ function rnfCadastrar(iNota, iItem) {
 async function rnfGravar() {
   const ok = _rnfFila.filter(n => !n.erro && n.chave);
   if (!ok.length) { toast('Nada para gravar.'); return; }
-  let n = 0;
+  let n = 0, somou = 0;
   for (const nf of ok) {
     try {
       const { error } = await sb.from('rotulo_nf').insert({
@@ -44035,11 +44035,41 @@ async function rnfGravar() {
         const r2 = await sb.from('rotulo_nf_item').insert(linhas);
         if (r2.error) throw r2.error;
       }
+      /* ===== 09/09/2026 (João: "não entrou no estoque; lembrando que pode ter
+         gráficas diferentes, então tem que somar os itens e identificar quando é
+         de cada gráfica") =====
+         Só a nota da GRÁFICA soma na bobina. A remessa do cliente traz a mesma
+         quantidade — é o mesmo material visto pelo lado fiscal — e somar as duas
+         dobraria o estoque; ela alimenta a conta corrente da remessa, não o
+         físico. Retorno e perda também não mexem aqui: o que sai do físico é a
+         aplicação na produção, e isso ele lança no controle interno.
+         Cada movimento guarda de QUAL gráfica veio, e a chave da nota impede
+         somar duas vezes se o mesmo PDF voltar. */
+      if (nf.papel === 'entrada_grafica') {
+        for (const it of (nf.itens || [])) {
+          if (!it.sleeve_cod || it.servico || !(it.rotulos > 0)) continue;
+          try {
+            const mv = await sb.from('rotulo_movimento').insert({
+              sleeve_cod: it.sleeve_cod, tipo: 'entrada', destino: 'bobina',
+              nota_fiscal: nf.numero, chave_nf: nf.chave,
+              quantidade: it.rotulos, qtd_informada: it.quantidade, unidade: it.unidade,
+              emissao: nf.emissao, fornecedor: nf.emitente_nome, fornecedor_cnpj: nf.emitente_cnpj,
+              obs: 'entrada automática pela NF ' + (nf.numero || '')
+            });
+            if (mv.error) { if (String(mv.error.message || '').indexOf('ux_mov_nf_sleeve') < 0) throw mv.error; continue; }
+            const at = await sb.from('rotulo_item').select('bobina').eq('sleeve_cod', it.sleeve_cod).maybeSingle();
+            const novo = (+((at.data || {}).bobina) || 0) + it.rotulos;
+            await sb.from('rotulo_item').update({ bobina: novo }).eq('sleeve_cod', it.sleeve_cod);
+            somou += it.rotulos;
+          } catch (e2) { toast('Estoque do ' + it.sleeve_cod + ' não somou: ' + ((e2 && e2.message) || e2)); }
+        }
+      }
       n++;
     } catch (e) { toast('NF ' + (nf.numero || '?') + ': ' + ((e && e.message) || e)); }
   }
   _rnfFila = []; rnfPrev();
-  toast(n + ' nota(s) gravada(s).');
+  toast(n + ' nota(s) gravada(s).' + (somou ? ' Entraram ' + Math.round(somou).toLocaleString('pt-BR') + ' rótulos no estoque.' : ''));
+  _rotDados = null; _rcadDados = null;
   rnfConta();
 }
 
@@ -44723,6 +44753,7 @@ async function rnfFiscal() {
   }
 }
 
+let _rotGraf = null;    // quanto cada gráfica entregou de cada sleeve
 async function rotAbrir(forcar) {
   const box = $('rotBox'); if (!box) return;
   if (!_rotDados || forcar) {
@@ -44732,6 +44763,13 @@ async function rotAbrir(forcar) {
       if (error) throw error;
       _rotDados = data || [];
     } catch (e) { box.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>'; return; }
+    /* 09/09/2026 — a origem por gráfica é leitura à parte porque é opcional: se
+       falhar, o estoque continua aparecendo (só sem a linha de origem). */
+    try {
+      const g = await sb.from('v_rotulo_por_grafica').select('*');
+      _rotGraf = {};
+      (g.data || []).forEach(x => { (_rotGraf[x.sleeve_cod] = _rotGraf[x.sleeve_cod] || []).push(x); });
+    } catch (_) { _rotGraf = null; }
   }
   rotRender();
 }
@@ -44861,6 +44899,20 @@ function rotRender() {
       + (r.acabado_cod ? ' <span style="color:var(--fraco-2);font-size:10px">' + escapeHtml(String(r.acabado_cod)) + '</span>' : '')
       + (r.setor ? ' <span style="font-size:9.5px;font-weight:800;border-radius:6px;padding:1px 6px;background:' + (r.setor === 'Sleeve' ? '#F0E9F6' : '#FBEAE7') + ';color:' + (r.setor === 'Sleeve' ? '#7A3E9D' : '#C0392B') + '">' + escapeHtml(r.setor) + '</span>' : '')
       + '<div style="color:var(--fraco);font-size:10.5px;max-width:270px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(String(r.item_desc || '')) + '</div>'
+      /* 09/09/2026 (João: "pode ter gráficas diferentes, tem que somar os itens e
+         identificar quando é de cada gráfica"). A linha de origem só aparece
+         quando existe movimento por nota — enquanto o saldo for o da carga
+         inicial das planilhas, não há de quem falar. */
+      + (function () {
+          const g = (_rotGraf || {})[r.sleeve_cod];
+          if (!g || !g.length) return '';
+          return '<div style="font-size:10px;margin-top:2px;display:flex;gap:4px;flex-wrap:wrap">'
+            + g.sort((a, b) => (+b.rotulos || 0) - (+a.rotulos || 0)).map(x =>
+              '<span title="última entrada ' + (x.ultima ? String(x.ultima).split('-').reverse().join('/') : '—') + '"'
+              + ' style="background:#FCF3CF;color:#7D6608;border-radius:999px;padding:1px 6px;font-weight:700">'
+              + escapeHtml(String(x.fornecedor)) + ' ' + Math.round(+x.rotulos || 0).toLocaleString('pt-BR') + '</span>').join('')
+            + '</div>';
+        })()
       + (r.obs ? '<div style="color:#B98900;font-size:10px;font-weight:700">⚠ ' + escapeHtml(String(r.obs)) + '</div>' : '')
       + '</td>'
       + '<td style="padding:6px;text-align:right">' + _rotFmt(r.bobina) + '</td>'
