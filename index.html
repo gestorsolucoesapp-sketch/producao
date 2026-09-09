@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.548.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.549.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.548.0';
+const APP_VER = '4.549.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44189,6 +44189,177 @@ function rnfExpPdf() {
   setTimeout(() => { try { w.print(); } catch (_) { } }, 400);
 }
 
+/* ===================== CADASTRO DE RÓTULOS — 09/09/2026 =====================
+   João: "na aba cadastro tem que criar um campo gráfica e código do item na nota
+   fiscal dessa gráfica; então vamos ter: código interno do item Rioplastic,
+   código interno do sleeve, código interno do cliente, nome da gráfica."
+
+   Cada rótulo é a mesma coisa chamada por quatro nomes diferentes:
+     · 1605481   — o acabado, como a Rioplastic chama
+     · 2651301   — o sleeve, como o controle chama
+     · 27431     — como o CLIENTE chama na remessa dele
+     · SA-5325   — como a GRÁFICA chama na nota dela
+   O importador não tem como adivinhar isso; é aqui que a amarração é feita, e é
+   por isso que a nota da Kromos caiu como "não sei que sleeve é este".
+
+   VÁRIAS gráficas por sleeve, de propósito: hoje o mesmo item veio da Nova Fátima
+   e da Kromos. Cadastro que só aceita um fornecedor obrigaria a apagar o anterior
+   e perderia o histórico das notas antigas.                                    */
+
+let _rcadDados = null, _rcadBusca = '', _rcadEdit = null;
+
+async function rcadAbrir(forcar) {
+  const cx = $('rcadBox'); if (!cx) return;
+  if (!_rcadDados || forcar) {
+    cx.innerHTML = '<p class="desc">carregando…</p>';
+    try {
+      const { data, error } = await sb.from('v_rotulo_cadastro').select('*').order('cliente').order('sleeve_cod');
+      if (error) throw error;
+      _rcadDados = data || [];
+    } catch (e) {
+      cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui carregar: ' + escapeHtml(String(e.message || e)) + '</p>';
+      return;
+    }
+  }
+  rcadRender();
+}
+
+function rcadRender() {
+  const cx = $('rcadBox'); if (!cx) return;
+  const D = _rcadDados || [];
+  const q = _rcadBusca.trim().toLowerCase();
+  const vis = q ? D.filter(r => [r.sleeve_cod, r.acabado_cod, r.item_desc, r.cliente, r.graficas, r.cod_cliente]
+    .some(x => String(x || '').toLowerCase().includes(q))) : D;
+  const semDep = D.filter(r => !r.n_depara).length;
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
+    + '<input type="search" placeholder="buscar por código, item, cliente ou gráfica…" value="' + escapeHtml(_rcadBusca) + '"'
+    + ' oninput="_rcadBusca=this.value;rcadRender()" style="flex:1;min-width:180px;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">'
+    + '<button class="btn btn-verde" style="width:auto;padding:9px 14px;font-size:13px" onclick="rcadForm(null)">+ Novo rótulo</button></div>';
+
+  if (semDep) h += '<div style="border:1px solid #F0D9B0;background:#FFF6E9;color:#7A5A1E;border-radius:10px;padding:9px 11px;font-size:12px;margin-bottom:10px">'
+    + '<b>' + semDep + ' rótulo(s) sem nenhum código de gráfica ou cliente.</b> Enquanto faltar, a nota deles cai como “não sei que sleeve é este”.</div>';
+
+  if (!vis.length) { cx.innerHTML = h + '<p class="desc">Nada encontrado.</p>'; return; }
+
+  h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="text-align:left;color:var(--fraco)"><th>sleeve</th><th>item Rioplastic</th><th>cliente</th>'
+    + '<th>cód. cliente</th><th>gráfica · código</th><th style="text-align:right">g/un</th></tr>';
+  vis.forEach(r => {
+    h += '<tr onclick="rcadForm(' + _rotArg(r.sleeve_cod) + ')" style="cursor:pointer;border-top:1px solid var(--leve-2s)">'
+      + '<td><b>' + escapeHtml(r.sleeve_cod) + '</b></td>'
+      + '<td>' + escapeHtml(r.acabado_cod || '—') + '<div class="desc" style="font-size:10px">'
+      + escapeHtml(String(r.item_desc || '').slice(0, 40)) + '</div></td>'
+      + '<td>' + escapeHtml(r.cliente || '—') + '</td>'
+      + '<td>' + (r.cod_cliente ? escapeHtml(r.cod_cliente) : '<span class="desc">—</span>') + '</td>'
+      + '<td>' + (r.graficas ? escapeHtml(r.graficas) : '<span style="color:#B26B00">falta cadastrar</span>') + '</td>'
+      + '<td style="text-align:right">' + (r.gramatura != null ? (+r.gramatura).toLocaleString('pt-BR') : '<span class="desc">—</span>') + '</td></tr>';
+  });
+  cx.innerHTML = h + '</table></div>';
+}
+
+async function rcadForm(sleeve) {
+  const r = sleeve ? (_rcadDados || []).find(x => x.sleeve_cod === sleeve) : null;
+  _rcadEdit = sleeve || null;
+  let dep = [];
+  if (sleeve) {
+    try {
+      const { data } = await sb.from('rotulo_depara').select('*').eq('sleeve_cod', sleeve).eq('ativo', true);
+      dep = data || [];
+    } catch (_) { }
+  }
+  const inp = (id, rot, val, ph, tipo) =>
+    '<div style="flex:1;min-width:150px"><label style="display:block;font-size:11px;font-weight:800;color:#2C3E50">' + rot + '</label>'
+    + '<input id="' + id + '" type="' + (tipo || 'text') + '" value="' + escapeHtml(val == null ? '' : String(val)) + '"'
+    + ' placeholder="' + escapeHtml(ph || '') + '" style="width:100%;font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box"></div>';
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + inp('rcSleeve', 'Código do sleeve', r ? r.sleeve_cod : '', '2651301')
+    + inp('rcAcab', 'Item Rioplastic', r ? r.acabado_cod : '', '1605481')
+    + '</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + inp('rcCli', 'Cliente', r ? r.cliente : '', 'Dondonzinho')
+    + inp('rcGram', 'Gramatura unitária (g)', r ? r.gramatura : '', '0,85', 'number')
+    + '</div><div style="margin-top:8px">'
+    + inp('rcDesc', 'Descrição do produto', r ? r.item_desc : '', 'SLEEVE CONFEITO CHOCOLATE DONDONZINHO')
+    + '</div>';
+
+  h += '<div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">'
+    + '<div style="font-size:12px;font-weight:800;color:#2C3E50">Códigos de fora</div>'
+    + '<p class="desc" style="font-size:11px;margin:2px 0 8px">Como este rótulo é chamado na nota de cada gráfica e do cliente. É por aqui que o importador reconhece.</p>';
+  if (dep.length) {
+    dep.forEach(d => {
+      h += '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--leve-2s)">'
+        + '<span style="font-size:9.5px;font-weight:800;padding:1px 6px;border-radius:999px;background:'
+        + (d.tipo === 'cliente' ? '#EAF2F8;color:#1A5276' : '#FCF3CF;color:#7D6608') + '">'
+        + (d.tipo === 'cliente' ? 'cliente' : 'gráfica') + '</span>'
+        + '<b style="flex:1">' + escapeHtml(d.fornecedor_nome || d.fornecedor_cnpj || '?') + '</b>'
+        + '<span>' + escapeHtml(d.fornecedor_cod) + '</span>'
+        + '<span onclick="event.stopPropagation();rcadTiraDep(' + _rotArg(d.fornecedor_cnpj) + ',' + _rotArg(d.fornecedor_cod) + ')"'
+        + ' style="cursor:pointer;color:var(--fraco)">✕</span></div>';
+    });
+  } else h += '<p class="desc" style="font-size:11.5px">Nenhum código cadastrado ainda.</p>';
+
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+    + '<select id="rcDepTipo" style="font-size:16px;padding:8px;border:1px solid #ccc;border-radius:10px">'
+    + '<option value="grafica">gráfica</option><option value="cliente">cliente</option></select>'
+    + inp('rcDepNome', '', '', 'nome (ex.: Kromos)')
+    + inp('rcDepCnpj', '', '', 'CNPJ')
+    + inp('rcDepCod', '', '', 'código na nota (SA-5325)')
+    + '<button class="btn" style="width:auto;padding:9px 13px;font-size:13px" onclick="rcadAddDep()">Adicionar</button></div></div>';
+
+  h += '<div style="display:flex;gap:8px;margin-top:16px">'
+    + '<button class="btn btn-verde" style="flex:1" onclick="rcadSalvar()">Salvar</button>'
+    + '<button class="btn btn-borda" style="width:auto;padding:11px 16px" onclick="rcadFechar()">Fechar</button></div>';
+
+  const box = $('rcadBox');
+  box.innerHTML = '<div class="card"><div class="titulo-sec">' + (r ? '✎ ' + escapeHtml(r.sleeve_cod) : '+ Novo rótulo') + '</div>' + h + '</div>';
+}
+function rcadFechar() { _rcadEdit = null; rcadRender(); }
+
+async function rcadAddDep() {
+  const sl = ($('rcSleeve') || {}).value || _rcadEdit;
+  if (!sl) { toast('Salve o rótulo antes de amarrar códigos.'); return; }
+  const cnpj = String(($('rcDepCnpj') || {}).value || '').replace(/\D/g, '');
+  const cod = String(($('rcDepCod') || {}).value || '').trim();
+  const nome = String(($('rcDepNome') || {}).value || '').trim();
+  const tipo = ($('rcDepTipo') || {}).value || 'grafica';
+  if (!cnpj || !cod) { toast('Preciso do CNPJ e do código na nota.'); return; }
+  try {
+    const { error } = await sb.from('rotulo_depara').upsert({
+      fornecedor_cnpj: cnpj, fornecedor_cod: cod, sleeve_cod: String(sl).trim(),
+      fornecedor_nome: nome || null, tipo: tipo, ativo: true
+    }, { onConflict: 'fornecedor_cnpj,fornecedor_cod' });
+    if (error) throw error;
+    toast('Código amarrado.');
+    _rcadDados = null; await rcadAbrir(true); rcadForm(String(sl).trim());
+  } catch (e) { toast('Não deu: ' + ((e && e.message) || e)); }
+}
+async function rcadTiraDep(cnpj, cod) {
+  try {
+    await sb.from('rotulo_depara').update({ ativo: false }).eq('fornecedor_cnpj', cnpj).eq('fornecedor_cod', cod);
+    _rcadDados = null; await rcadAbrir(true); if (_rcadEdit) rcadForm(_rcadEdit);
+  } catch (e) { toast('Não deu: ' + ((e && e.message) || e)); }
+}
+
+async function rcadSalvar() {
+  const sl = String(($('rcSleeve') || {}).value || '').trim();
+  if (!sl) { toast('O código do sleeve é obrigatório.'); return; }
+  const g = String(($('rcGram') || {}).value || '').trim().replace(',', '.');
+  const reg = {
+    sleeve_cod: sl,
+    acabado_cod: String(($('rcAcab') || {}).value || '').trim() || null,
+    cliente: String(($('rcCli') || {}).value || '').trim() || null,
+    item_desc: String(($('rcDesc') || {}).value || '').trim() || null,
+    gramatura: g === '' ? null : (+g || null)
+  };
+  try {
+    const { error } = await sb.from('rotulo_item').upsert(reg, { onConflict: 'sleeve_cod' });
+    if (error) throw error;
+    toast('Salvo.');
+    _rcadDados = null; _rotDados = null; await rcadAbrir(true);
+  } catch (e) { toast('Não deu para salvar: ' + ((e && e.message) || e)); }
+}
+
 async function rnfFiscal() {
   const cx = $('rnfFiscal'); if (!cx) return;
   cx.innerHTML = '<p class="desc">carregando…</p>';
@@ -44347,6 +44518,14 @@ function rotVer(v) {
     rnfPrev();
     return;
   }
+  if (v === 'cadastro') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">⚙️ Cadastro de rótulos</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Cada rótulo é a mesma coisa com quatro nomes: o item Rioplastic, o código do sleeve, '
+      + 'como o <b>cliente</b> chama na remessa dele e como cada <b>gráfica</b> chama na nota dela. É essa amarração que faz o importador reconhecer sozinho.</p>'
+      + '<div id="rcadBox"></div></div>';
+    rcadAbrir();
+    return;
+  }
   if (v === 'fiscal') {
     box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">🧮 Análise fiscal</div>'
       + '<p class="desc" style="margin:-2px 0 10px">Compara o que as notas dizem com o que o controle interno diz. '
@@ -44361,7 +44540,7 @@ function _rotAbas() {
   const b = (v, r) => '<button class="btn" onclick="rotVer(\'' + v + '\')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;'
     + (_rotVista === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
-    + b('estoque', '📦 Estoque') + b('notas', '🧾 Notas fiscais') + b('fiscal', '🧮 Análise fiscal') + '</div></div>';
+    + b('estoque', '📦 Estoque') + b('cadastro', '⚙️ Cadastro') + b('notas', '🧾 Notas fiscais') + b('fiscal', '🧮 Análise fiscal') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
