@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.546.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.547.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3934,7 +3934,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.546.0';
+const APP_VER = '4.547.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -44039,6 +44039,118 @@ async function rnfConta() {
   }
 }
 
+/* ===================== ANÁLISE FISCAL DOS RÓTULOS — 09/09/2026 =====================
+   João: "onde você vai fazer a análise fiscal? crie uma sub-aba".
+
+   Aqui mora a comparação, e ela tem uma régua que veio do ciclo fechado do
+   Dondonzinho: o SALDO FISCAL de uma remessa é o que ainda não voltou por nota.
+   No controle interno, isso corresponde a BOBINA + SEGREGADO — o que está na mão.
+   O "aplicado" NÃO entra: ele já saiu pela nota de retorno. Foi assim que os
+   23.035 do fiscal bateram com 22.140 + 895 do controle.
+
+   Três blocos, nesta ordem, porque é a ordem em que a dúvida aparece:
+   1. o placar (fiscal x controle, e a diferença)
+   2. o que precisa de decisão humana (nota que eu não soube ler)
+   3. a conta corrente remessa por remessa, que é a planilha do fiscal          */
+
+async function rnfFiscal() {
+  const cx = $('rnfFiscal'); if (!cx) return;
+  cx.innerHTML = '<p class="desc">carregando…</p>';
+  try {
+    const [rem, est, pend] = await Promise.all([
+      sb.from('v_rotulo_remessa').select('*'),
+      sb.from('v_rotulo_estoque').select('sleeve_cod,item_desc,cliente,bobina,aplicado,segregado'),
+      sb.from('rotulo_nf_item').select('chave,cod_prod,descricao,quantidade,unidade,status,sleeve_cod')
+        .neq('status', 'ok')
+    ]);
+    if (rem.error) throw rem.error;
+    const R = rem.data || [], E = est.data || [], P = pend.data || [];
+
+    /* saldo fiscal por sleeve = soma dos saldos das remessas daquele sleeve */
+    const fis = {};
+    R.forEach(r => {
+      if (!r.sleeve_cod) return;
+      fis[r.sleeve_cod] = (fis[r.sleeve_cod] || 0) + (+r.saldo || 0);
+    });
+    const f = v => Math.round(+v || 0).toLocaleString('pt-BR');
+
+    /* comparo só o que a régua permite comparar: na mão = bobina + segregado */
+    const linhas = [];
+    const sleeves = new Set([...Object.keys(fis), ...E.map(x => x.sleeve_cod)]);
+    sleeves.forEach(s => {
+      const e = E.find(x => x.sleeve_cod === s) || {};
+      const naMao = (+e.bobina || 0) + (+e.segregado || 0);
+      const temFis = Object.prototype.hasOwnProperty.call(fis, s);
+      linhas.push({
+        sleeve: s, desc: e.item_desc || '', cliente: e.cliente || '',
+        fiscal: temFis ? fis[s] : null, controle: naMao,
+        dif: temFis ? (fis[s] - naMao) : null
+      });
+    });
+    linhas.sort((a, b) => Math.abs(b.dif || 0) - Math.abs(a.dif || 0));
+
+    const tFis = linhas.reduce((a, x) => a + (x.fiscal || 0), 0);
+    const tCon = linhas.reduce((a, x) => a + x.controle, 0);
+    const nDif = linhas.filter(x => x.dif !== null && Math.abs(x.dif) > 0).length;
+    const semNota = linhas.filter(x => x.fiscal === null && x.controle > 0).length;
+
+    const bloco = (rot, val, cor, ap) =>
+      '<div style="flex:1;min-width:120px;background:#fff;border:1px solid var(--borda);border-top:3px solid ' + cor + ';border-radius:10px;padding:10px">'
+      + '<div style="font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7A8794">' + rot + '</div>'
+      + '<div style="font-size:19px;font-weight:800;color:' + cor + ';margin-top:4px">' + val + '</div>'
+      + '<div class="desc" style="font-size:11px;margin-top:3px">' + ap + '</div></div>';
+
+    let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+      + bloco('Saldo fiscal', f(tFis), '#1A5276', 'não voltou por nota')
+      + bloco('Controle interno', f(tCon), '#1F7A46', 'bobina + segregado')
+      + bloco('Diferença', f(tFis - tCon), Math.abs(tFis - tCon) > 0 ? '#C0392B' : '#7A8794', nDif + ' item(ns) divergindo')
+      + '</div>';
+
+    if (P.length) {
+      h += '<div style="border:1px solid #E6B0AA;border-left:4px solid #C0392B;border-radius:10px;padding:10px;margin-bottom:10px">'
+        + '<b style="font-size:13px;color:#943126">Precisam de decisão sua · ' + P.length + '</b>'
+        + '<p class="desc" style="font-size:11.5px;margin:4px 0 6px">Estas linhas de nota eu não consegui amarrar sozinho. Enquanto não amarrar, elas não entram na conta.</p>';
+      P.slice(0, 20).forEach(x => {
+        h += '<div style="font-size:11.5px;padding:4px 0;border-top:1px solid var(--leve-2s)">'
+          + '<b>' + escapeHtml(x.cod_prod || '?') + '</b> · ' + escapeHtml(String(x.descricao || '').slice(0, 46))
+          + ' · ' + (+x.quantidade || 0).toLocaleString('pt-BR') + ' ' + escapeHtml(x.unidade || '')
+          + ' — <b style="color:#943126">' + (x.status === 'sem_depara' ? 'código não cadastrado' : 'sem remessa correspondente') + '</b></div>';
+      });
+      h += '</div>';
+    }
+
+    h += '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:12px 0 6px">Fiscal × controle, por rótulo</div>';
+    if (!linhas.length) h += '<p class="desc">Nada para comparar ainda — importe as notas.</p>';
+    else {
+      h += '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        + '<tr style="text-align:left;color:var(--fraco)"><th>sleeve</th><th>cliente</th>'
+        + '<th style="text-align:right">fiscal</th><th style="text-align:right">controle</th><th style="text-align:right">dif.</th></tr>';
+      linhas.forEach(x => {
+        const ruim = x.dif !== null && Math.abs(x.dif) > 0;
+        h += '<tr style="border-top:1px solid var(--leve-2s)' + (ruim ? ';background:#FDEDEC' : '') + '">'
+          + '<td><b>' + escapeHtml(x.sleeve) + '</b><div class="desc" style="font-size:10px">'
+          + escapeHtml(String(x.desc).slice(0, 40)) + '</div></td>'
+          + '<td>' + escapeHtml(x.cliente || '—') + '</td>'
+          + '<td style="text-align:right">' + (x.fiscal === null ? '<span class="desc">sem nota</span>' : f(x.fiscal)) + '</td>'
+          + '<td style="text-align:right">' + f(x.controle) + '</td>'
+          + '<td style="text-align:right;font-weight:800;color:' + (ruim ? '#C0392B' : 'var(--fraco)') + '">'
+          + (x.dif === null ? '—' : f(x.dif)) + '</td></tr>';
+      });
+      h += '</table></div>';
+      if (semNota) h += '<p class="desc" style="font-size:11.5px;margin-top:6px">'
+        + semNota + ' rótulo(s) têm saldo no controle e nenhuma nota importada. Não é divergência — é nota que ainda não entrou.</p>';
+    }
+
+    h += '<div style="font-size:12px;font-weight:800;color:#2C3E50;margin:14px 0 6px">Conta corrente das remessas</div>'
+      + '<p class="desc" style="font-size:11.5px;margin:0 0 6px">Uma linha por remessa e sleeve — é a planilha do fiscal, calculada.</p>'
+      + '<div id="rnfConta"></div>';
+    cx.innerHTML = h;
+    rnfConta();
+  } catch (e) {
+    cx.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui montar a análise: ' + escapeHtml(String(e.message || e)) + '</p>';
+  }
+}
+
 async function rotAbrir(forcar) {
   const box = $('rotBox'); if (!box) return;
   if (!_rotDados || forcar) {
@@ -44077,10 +44189,10 @@ function rotVer(v) {
       + '<div style="font-size:26px;line-height:1">📄</div>'
       + '<div style="font-size:13px;font-weight:700;margin:6px 0">Solte aqui os PDFs das notas</div>'
       + '<input type="file" accept=".pdf,application/pdf" multiple onchange="rnfArquivos(this.files)" style="font-size:13px"></div>'
-      + '<div id="rnfPrev"></div></div>'
-      + '<div class="card"><div class="titulo-sec">📒 Conta corrente das remessas</div>'
-      + '<p class="desc" style="margin:-2px 0 10px">Uma linha por remessa e sleeve: o que entrou, o que voltou por aplicação e por perda, e o saldo que ainda está na nossa mão.</p>'
-      + '<div id="rnfConta"></div></div>';
+      + '<div id="rnfPrev"></div>'
+      /* 09/09/2026 — a conta corrente saiu daqui e foi para a Análise fiscal.
+         Esta tela é de ENTRAR dado; conferência é outro momento e outra cabeça. */
+      + '<p class="desc" style="margin-top:12px">Depois de gravar, a conferência fica em <b>🧮 Análise fiscal</b>.</p></div>';
     try {
       const d = document.getElementById('rnfDrop');
       if (d) {
@@ -44089,7 +44201,15 @@ function rotVer(v) {
         d.ondrop = e => { e.preventDefault(); d.style.background = ''; rnfArquivos(e.dataTransfer.files); };
       }
     } catch (_) { }
-    rnfPrev(); rnfConta();
+    rnfPrev();
+    return;
+  }
+  if (v === 'fiscal') {
+    box.innerHTML = _rotAbas() + '<div class="card"><div class="titulo-sec">🧮 Análise fiscal</div>'
+      + '<p class="desc" style="margin:-2px 0 10px">Compara o que as notas dizem com o que o controle interno diz. '
+      + 'Saldo fiscal é o que ainda não voltou por nota; no controle, isso é bobina + segregado — o aplicado já saiu pelo retorno.</p>'
+      + '<div id="rnfFiscal"></div></div>';
+    rnfFiscal();
     return;
   }
   rotRender();
@@ -44098,7 +44218,7 @@ function _rotAbas() {
   const b = (v, r) => '<button class="btn" onclick="rotVer(\'' + v + '\')" style="width:auto;padding:8px 14px;font-size:13px;font-weight:800;'
     + (_rotVista === v ? 'background:var(--navy);color:#fff' : '') + '">' + r + '</button>';
   return '<div class="card" style="padding:8px"><div style="display:flex;gap:6px;flex-wrap:wrap">'
-    + b('estoque', '📦 Estoque') + b('notas', '🧾 Notas fiscais') + '</div></div>';
+    + b('estoque', '📦 Estoque') + b('notas', '🧾 Notas fiscais') + b('fiscal', '🧮 Análise fiscal') + '</div></div>';
 }
 function rotRender() {
   const box = $('rotBox'); if (!box) return;
