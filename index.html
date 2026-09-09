@@ -1285,7 +1285,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.541.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.542.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3931,7 +3931,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.541.0';
+const APP_VER = '4.542.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -56653,6 +56653,50 @@ async function renderOrgFaltas() {
                   : '<div class="desc">nenhum lançamento nos últimos 30 dias em ' + escapeHtml(orgSetorLabel()) + '</div>';
   h += '</div>';
 
+  /* ===== 09/09/2026 (João: "faça uma sub-aba gráficos onde mostra o número por
+     setor e indique os maiores atestadistas de cada setor") =====
+     Uso `brutos`, a lista SEM o filtro de setor: um gráfico por setor que já
+     está filtrado por um setor mostraria uma barra só. O recorte de tempo é o
+     mesmo do resto da tela (30 dias), senão o número aqui brigaria com o de
+     baixo.
+     Só conta quem tem cadastro: quem está "Fora do organograma" não tem setor e
+     entraria numa barra inventada — esses já têm o quadro próprio, com o setor
+     que veio na planilha. */
+  {
+    const porSetorF = {}, porPessoa = {};
+    (brutos || []).forEach(r => {
+      const c = colabIdx[r.matricula]; if (!c) return;
+      const st = c.setor || c.lotacao || 'sem setor';
+      if (!porSetorF[st]) porSetorF[st] = { n: 0, atest: 0, falta: 0 };
+      porSetorF[st].n++;
+      if (r.tipo === 'atestado') porSetorF[st].atest++;
+      if (r.tipo === 'falta') porSetorF[st].falta++;
+      if (r.tipo === 'atestado') {
+        const k = st + '|' + r.matricula;
+        if (!porPessoa[k]) porPessoa[k] = { setor: st, nome: c.nome || r.matricula, n: 0 };
+        porPessoa[k].n++;
+      }
+    });
+    const setores = Object.entries(porSetorF).sort((a, b) => b[1].n - a[1].n);
+    if (setores.length) {
+      const maior = Math.max(...setores.map(x => x[1].n)) || 1;
+      let g = '<div class="card"><div class="titulo-sec">📊 Gráficos · últimos 30 dias</div>'
+        + '<p class="desc" style="margin:-2px 0 10px">Fábrica inteira, sem o filtro de setor do topo. Barra = lançamentos no período.</p>';
+      setores.forEach(([st, v]) => {
+        const top = Object.values(porPessoa).filter(p => p.setor === st).sort((a, b) => b.n - a.n).slice(0, 3);
+        g += '<div style="margin-bottom:11px">'
+          + '<div style="display:flex;justify-content:space-between;font-size:12.5px;font-weight:800;color:#2C3E50">'
+          + '<span>' + escapeHtml(st) + '</span><span>' + v.n + '</span></div>'
+          + '<div style="height:9px;border-radius:999px;background:var(--leve-2s);overflow:hidden;margin:4px 0 3px">'
+          + '<div style="height:100%;width:' + Math.round(v.n / maior * 100) + '%;background:#1A5276"></div></div>'
+          + '<div class="desc" style="font-size:11px">' + v.atest + ' atestado(s) · ' + v.falta + ' falta(s)'
+          + (top.length ? ' · <b>mais atestados:</b> ' + top.map(p => escapeHtml(orgPrimeiro(p.nome) || p.nome) + ' (' + p.n + ')').join(' · ') : '')
+          + '</div></div>';
+      });
+      h += g + '</div>';
+    }
+  }
+
   /* ---- filtro por tipo ---- */
   h += '<div class="card"><div class="titulo-sec">Últimos 30 dias · ' + escapeHtml(orgSetorLabel()) + '</div>';
   h += '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px">';
@@ -56703,14 +56747,15 @@ async function faCarregaPendentes() {
   const box = $('faPendBox'); if (!box) return;
   try {
     const { data, error } = await sb.from('org_faltas_pendentes')
-      .select('matricula,nome,tipo,data,horas').order('matricula');
+      .select('matricula,nome,tipo,data,horas,setor_rh').order('matricula');
     if (error) throw error;
     const regs = data || [];
     if (!regs.length) { box.innerHTML = ''; return; }
 
     const por = {};
     regs.forEach(r => {
-      if (!por[r.matricula]) por[r.matricula] = { nome: r.nome || '', n: 0, tipos: {} };
+      if (!por[r.matricula]) por[r.matricula] = { nome: r.nome || '', n: 0, tipos: {}, setor: '' };
+      if (!por[r.matricula].setor && r.setor_rh) por[r.matricula].setor = r.setor_rh;
       por[r.matricula].n++;
       por[r.matricula].tipos[r.tipo] = (por[r.matricula].tipos[r.tipo] || 0) + 1;
     });
@@ -56720,12 +56765,15 @@ async function faCarregaPendentes() {
     h += '<div class="titulo-sec">👤 Fora do organograma</div>';
     h += '<p class="desc" style="margin-bottom:9px"><b>' + gente.length + ' pessoa(s)</b> e <b>' + regs.length +
          ' lançamento(s)</b> vieram na planilha do RH mas <b>não estão cadastradas em nenhum setor por enquanto</b>. ' +
-         'Ficam guardados aqui, fora das contagens e do semáforo, até serem cadastrados.</p>';
+         'Ficam guardados aqui, fora das contagens e do semáforo, até serem cadastrados. ' +
+         'O setor ao lado do nome é o que veio na <b>planilha do RH</b> — serve para você saber onde cadastrar.</p>';
     h += '<div style="max-height:40vh;overflow:auto;border:1px solid var(--linha-s);border-radius:10px">';
     gente.forEach(([mat, g]) => {
       const det = Object.entries(g.tipos).map(([t, n]) => n + '× ' + t).join(' · ');
-      h += '<div style="display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
-        '<b style="flex:1;min-width:0">' + escapeHtml(g.nome || '(sem nome)') + '</b>' +
+      h += '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:7px 10px;border-bottom:1px solid var(--leve-2s);font-size:13px">' +
+        '<b style="flex:1 1 160px;min-width:0">' + escapeHtml(g.nome || '(sem nome)') + '</b>' +
+        (g.setor ? '<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#EAF2F8;color:#1A5276">'
+          + escapeHtml(g.setor) + '</span>' : '<span style="font-size:10px;color:var(--fraco-2s)">sem setor na planilha</span>') +
         '<span style="font-size:11px;color:var(--fraco-2s)">' + escapeHtml(mat) + '</span>' +
         '<span style="font-size:11px;color:var(--fraco)">' + escapeHtml(det) + '</span></div>';
     });
@@ -57065,6 +57113,12 @@ async function faImportarRH(fExterno) {
     const iDes = _faCol(cab, 'DESCRICAO_JUSTIFICATVA', 'DESCRICAO_JUSTIFICATIVA', 'DESCRICAO');
     const iDat = _faCol(cab, 'APONTAMENTO_DATA', 'DATA');
     const iHor = _faCol(cab, 'Total horas decimal', 'TOTAL_JUSTIFICATIVA', 'HORAS');
+    /* 09/09/2026 (João: "pessoas fora do organograma, sinalize o setor que é pego
+       no relatório de Excel importado") — a planilha tem DEPARTAMENTO_DESCRICAO
+       e eu jogava fora. Vai junto e é guardado em `setor_rh`, coluna à parte:
+       é o que o RH diz, não o cadastro do app. Misturar os dois apagaria a
+       divergência que interessa justamente enxergar. */
+    const iDep = _faCol(cab, 'DEPARTAMENTO_DESCRICAO', 'DEPARTAMENTO_DESCRICAO', 'DEPARTAMENTO', 'SETOR');
     /* ===== 09/09/2026 (João: planilha de agosto do RH voltando "nenhuma linha
        válida", com o print mostrando crachá numérico e data dd/mm/aaaa) =====
        Eu não tinha como saber ONDE quebrava: a mensagem era a mesma para
@@ -57106,6 +57160,7 @@ async function faImportarRH(fExterno) {
       linhas.push({ m: mat, nome: iNom >= 0 ? String(r[iNom] || '').trim() : null,
                     d: dia, cod: parseInt(String(r[iCod] || '0').replace(/\D/g, ''), 10) || 0,
                     desc: iDes >= 0 ? String(r[iDes] || '').trim() : null,
+                    dep: iDep >= 0 ? String(r[iDep] || '').trim() : null,
                     h: Math.round(_faHoras(iHor >= 0 ? r[iHor] : null) * 1e4) / 1e4 });
     }
     if (!linhas.length) { prev.innerHTML = '<div class="desc" style="margin-top:10px"><span style="color:var(--critico-s)">Nenhuma linha válida — nada foi gravado.</span>' + _diag() + '</div>'; return; }
@@ -57220,11 +57275,20 @@ function faLinha(r, idx) {
   const faltam = fora ? Math.round((new Date(ate + 'T12:00:00') - new Date(hj + 'T12:00:00')) / 864e5) + 1 : 0;
   const c = idx[r.matricula];
   const nm = c ? c.nome : r.matricula;
-  return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
+  /* 09/09/2026 (João: "coloque o setor") — a lista misturava a fábrica inteira e
+     não dizia de onde era cada um. Prefiro o setor do CADASTRO (organograma);
+     só caio no `setor_rh` da planilha quando a pessoa ainda não tem cadastro,
+     e aí a etiqueta fica âmbar para não passar por dado do app. */
+  const _st = (c && (c.setor || c.lotacao)) || '';
+  const _stRh = !_st && r.setor_rh ? String(r.setor_rh) : '';
+  const _selo = _st
+    ? '<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#EAF2F8;color:#1A5276;white-space:nowrap">' + escapeHtml(_st) + '</span>'
+    : (_stRh ? '<span title="setor que veio na planilha do RH — pessoa ainda sem cadastro no organograma" style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;background:#FDEBD0;color:#7E5109;white-space:nowrap">' + escapeHtml(_stRh) + ' · RH</span>' : '');
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--leve-2s);font-size:12.5px">' +
     orgAvatar(nm, 24) +
-    '<span style="flex:1;min-width:0"><b>' + escapeHtml(orgPrimeiro(nm) || nm) + '</b>' +
+    '<span style="flex:1 1 150px;min-width:0"><b>' + escapeHtml(orgPrimeiro(nm) || nm) + '</b>' +
     (r.motivo ? '<span style="font-size:11px;color:' + (/confirmar/i.test(r.motivo) ? 'var(--laranja)' : 'var(--fraco)') + '"> · ' + escapeHtml(r.motivo) + '</span>' : '') + '</span>' +
-    '<span style="white-space:nowrap;text-align:right;display:flex;align-items:center;gap:6px">' +
+    '<span style="white-space:nowrap;text-align:right;display:flex;align-items:center;gap:6px">' + _selo +
     '<span style="font-size:10px;font-weight:800;color:#fff;background:' + (CORT[r.tipo] || 'var(--fraco)') + ';padding:2px 8px;border-radius:999px">' + escapeHtml(r.tipo) + '</span>' +
     '<span style="color:var(--fraco)">' + fmtDataSem(r.data) +
       ((r.dias && r.dias > 1) ? ' → ' + fmtDataSem(r.fim || r.data) + ' <b style="color:var(--txt-2)">' + r.dias + ' dia(s)</b>' : ' <b style="color:var(--txt-2)">1 dia</b>') + '</span>' +
