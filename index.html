@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.582.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.583.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -1679,6 +1679,12 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <div class="titulo-sec">Link do formul&aacute;rio nas tarefas</div>
         <div class="usr-telas"><label><input type="checkbox" id="chkLinkForm" onchange="togLinkForm(this.checked)"> Mostrar o link do Google Forms nas tarefas que t&ecirc;m formul&aacute;rio no app</label></div>
         <p class="desc" style="margin-top:4px">Desmarcado, s&oacute; aparece o bot&atilde;o <b>Preencher no app</b> &mdash; evita que a pessoa abra o link, olhe e ache que cumpriu. Vale para todos os aparelhos.</p>
+        <!-- 09/09/2026 (João: "permita eu ativar ou um ou outro na tarefa de
+             inspeção; exemplo, que façam somente pelo Google Forms, aí escondo o
+             link fazer pelo app"). O controle do LINK já existia; faltava o do
+             outro lado. Com os dois, ele escolhe: só link, só app, ou os dois. -->
+        <div class="usr-telas" style="margin-top:8px"><label><input type="checkbox" id="chkFormApp" onchange="togFormApp(this.checked)"> Mostrar o bot&atilde;o <b>Preencher no app</b></label></div>
+        <p class="desc" style="margin-top:4px">Desmarque para a inspe&ccedil;&atilde;o ser feita <b>s&oacute; pelo Google Forms</b>. N&atilde;o d&aacute; para desmarcar os dois &mdash; sobraria tarefa sem jeito de cumprir.</p>
       </div>
       <div class="card">
         <div class="titulo-sec">Letreiro de produ&ccedil;&atilde;o</div>
@@ -3953,7 +3959,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.582.0';
+const APP_VER = '4.583.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -6528,23 +6534,38 @@ async function carregarTarefas() {
    Fica oculto por padrão; o gestor libera em Config./Acesso → Usuários.
    O texto do link continua no banco — isto é só exibição. */
 let _mostrarLinkForm = false;
+let _mostrarFormApp = true;   // 09/09/2026 — o outro lado do controle do link
 async function getLinkFormCfg() {
   try {
-    const { data } = await sb.from('app_config').select('valor').eq('chave', 'mostrar_link_form').maybeSingle();
-    _mostrarLinkForm = !!(data && String(data.valor) === 'true');
-  } catch (_) { _mostrarLinkForm = false; }
+    const { data } = await sb.from('app_config').select('chave,valor').in('chave', ['mostrar_link_form', 'mostrar_form_app']);
+    const m = {}; (data || []).forEach(x => m[x.chave] = String(x.valor));
+    _mostrarLinkForm = m.mostrar_link_form === 'true';
+    /* padrão LIGADO: se a configuração nunca foi salva, o botão do app aparece.
+       O contrário deixaria a tarefa sem jeito de ser cumprida em quem nunca
+       abriu essa tela. */
+    _mostrarFormApp = m.mostrar_form_app === undefined ? true : m.mostrar_form_app !== 'false';
+  } catch (_) { _mostrarLinkForm = false; _mostrarFormApp = true; }
   const c = $('chkLinkForm'); if (c) c.checked = _mostrarLinkForm;
+  const c2 = $('chkFormApp'); if (c2) c2.checked = _mostrarFormApp;
 }
 async function togLinkForm(on) {
+  if (!on && !_mostrarFormApp) { toast('Precisa sobrar um dos dois — a tarefa ficaria sem jeito de cumprir.'); const c = $('chkLinkForm'); if (c) c.checked = true; return; }
   _mostrarLinkForm = !!on;
   if (!(await salvarCfg('mostrar_link_form', _mostrarLinkForm))) { toast('❌ Não consegui salvar.'); return; }
   toast(_mostrarLinkForm ? '🔗 Link do formulário visível.' : '🙈 Link do formulário oculto.');
   try { if (typeof renderTarefas === 'function') renderTarefas(); } catch (_) {}
 }
+async function togFormApp(on) {
+  if (!on && !_mostrarLinkForm) { toast('Precisa sobrar um dos dois — a tarefa ficaria sem jeito de cumprir.'); const c = $('chkFormApp'); if (c) c.checked = true; return; }
+  _mostrarFormApp = !!on;
+  if (!(await salvarCfg('mostrar_form_app', _mostrarFormApp))) { toast('❌ Não consegui salvar.'); return; }
+  toast(_mostrarFormApp ? '🦺 Preenchimento pelo app liberado.' : '🔗 Inspeção só pelo Google Forms.');
+  try { if (typeof renderTarefas === 'function') renderTarefas(); } catch (_) {}
+}
 // descrição da tarefa: some com a URL quando ela tem formulário próprio no app
 function tarDescVisivel(t) {
   const d = String(t.descricao || '');
-  if (t.form_app && !_mostrarLinkForm) {
+  if (t.form_app && !_mostrarLinkForm && _mostrarFormApp) {
     const limpo = d.replace(/https?:\/\/[^\s]+/g, '').replace(/[ \t]{2,}/g, ' ').trim();
     return limpo ? linkificar(limpo) : '';
   }
@@ -6640,7 +6661,7 @@ function renderTarefas() {
             <span style="background:var(--leve);color:var(--txt-2);padding:2px 8px;border-radius:6px;font-weight:600">${alvo}</span>
             ${t.recorrente ? '<span style="background:#EAF3EE;color:#1F7A46;padding:2px 8px;border-radius:6px;font-weight:600">🔁 recorrente</span>' : ''}
             ${t.fixa ? '<span style="background:#EAF0FB;color:#28348E;padding:2px 8px;border-radius:6px;font-weight:600" title="não sai da lista ao ser concluída">📌 fixa</span>' : ''}
-            ${t.form_app === 'inspecao_seguranca' ? `<button onclick="abrirInspecaoSeguranca('${t.id}')" class="btn btn-verde" style="width:auto;padding:3px 12px;font-size:12px;font-weight:700">🦺 Preencher no app</button>` : ''}
+            ${(t.form_app === 'inspecao_seguranca' && _mostrarFormApp) ? `<button onclick="abrirInspecaoSeguranca('${t.id}')" class="btn btn-verde" style="width:auto;padding:3px 12px;font-size:12px;font-weight:700">🦺 Preencher no app</button>` : ''}
             ${t.so_gestor ? '<span style="background:#F4ECFB;color:#6B3FA0;padding:2px 8px;border-radius:6px;font-weight:600" title="só gestores enxergam">🔒 só gestor</span>' : ''}
             ${t.fixa && t.ultima_conclusao ? `<span style="color:var(--fraco);font-size:11px">última: ${fmtDataSem(String(t.ultima_conclusao).slice(0,10))}</span>` : ''}
             ${seloPrazo(t)}
@@ -6993,7 +7014,7 @@ function abrirNotificacoes(jaRecarregado) {
           return `<div style="border-left:5px solid #28348E;background:#F5F7FD;border-radius:10px;padding:10px;margin-bottom:8px">
             <div onclick="irParaTarefas()" style="cursor:pointer;font-size:13px;color:#2C3E50;font-weight:600">${x.txt}</div>
             ${x.tarefa.descricao ? `<div style="font-size:12px;color:var(--fraco);margin-top:3px">${escapeHtml(String(x.tarefa.descricao).slice(0, 140))}</div>` : ''}
-            ${x.tarefa.form_app === 'inspecao_seguranca'
+            ${(x.tarefa.form_app === 'inspecao_seguranca' && _mostrarFormApp)
               ? `<button onclick="document.getElementById('notifOv').remove();abrirInspecaoSeguranca('${x.tarefa.id}')" class="btn btn-verde" style="width:100%;padding:8px;font-size:13px;margin-top:8px">🦺 Preencher o check list</button>
                  <div class="desc" style="font-size:11px;margin-top:4px;text-align:center">só sai do sino depois de preencher</div>`
               : `<button onclick="darCienciaTarefa('${x.tarefa.id}')" class="btn btn-borda" style="width:100%;padding:7px;font-size:12.5px;margin-top:8px">
