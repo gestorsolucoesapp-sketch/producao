@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.585.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.586.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3959,7 +3959,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.585.0';
+const APP_VER = '4.586.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -38792,16 +38792,20 @@ function destravaReserva(qual) {
   const porPed = {};
   (A.linhas || []).forEach(l => {
     const n = String(l.pedido).split('/')[0];
-    (porPed[n] || (porPed[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0 });
+    (porPed[n] || (porPed[n] = [])).push({ item: String(l.item_cod), kg: +l.peso_pendente || 0, qtd: +l.qtd_pendente || 0, un: l.un });
   });
   const fila = comp.slice().sort((a, b) =>
     String(a.ent || '9999-99-99').localeCompare(String(b.ent || '9999-99-99')) || (b.kg - a.kg));
   const ok = [], pa = [];
   fila.forEach(p => {
     let falta = 0;
+    /* 11/09/2026 — cada linha guarda quanto veio do reservado (pega) e quanto
+       falta separar (f): é disso que sai o quadro por depósito. */
+    p._resLin = [];
     (porPed[String(p.num)] || []).forEach(l => {
       const d = saldo[l.item] || 0, pega = Math.min(d, l.kg);
       saldo[l.item] = d - pega; falta += Math.max(0, l.kg - pega);
+      p._resLin.push({ item: l.item, kg: l.kg, qtd: l.qtd, un: l.un, pega, f: Math.max(0, l.kg - pega) });
     });
     p._faltaRes = falta;
     (falta > 0.001 ? pa : ok).push(p);
@@ -38817,7 +38821,8 @@ function destravaReserva(qual) {
       <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} 🔎
         <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}${venc ? ' · <b style="color:var(--critico)">' + p.atraso + 'd vencido</b>' : ''}</div></td>
       <td><span class="cel ${qual === 'parcial' ? 'baixo' : 'ok'}">${kg(p.kg)}
-        ${qual === 'parcial' ? `<div style="font-size:10px;font-weight:800;opacity:.95">separar ${kg(p._faltaRes)}</div>` : ''}</span></td></tr>`;
+        ${qual === 'parcial' ? `<div style="font-size:10px;font-weight:800;opacity:.95">separar ${kg(p._faltaRes)}</div>` : ''}</span>
+        ${qual === 'parcial' ? `<div style="font-size:10px;color:var(--fraco-2);margin-top:2px;text-align:center">${escapeHtml(_resOndeBuscar(p))}</div>` : ''}</td></tr>`;
   }).join('');
   const nota = qual === 'parcial'
     ? `<p class="desc" style="margin:0 0 7px;font-size:11.5px">Estes pedidos <b>vão faturar</b> — o material existe. Mas parte dele ainda <b>não foi movida para o depósito reservado</b>, então alguém precisa separar antes de carregar. É a lista de trabalho do depósito.</p>
@@ -38826,7 +38831,106 @@ function destravaReserva(qual) {
   abreDet(tit,
     `<p class="idet-desc"><b>${L.length}</b> pedido(s) · <b>${kg(totKg)}</b>`
     + (qual === 'parcial' ? ` · falta separar <b style="color:var(--critico)">${kg(totFalta)}</b>` : '') + '</p>'
-    + nota + tabSimples(['Pedido · cliente', qual === 'parcial' ? 'Pedido / separar' : 'Pedido'], linhas));
+    + nota + _resQuadroDeposito(L, qual)
+    + tabSimples(['Pedido · cliente', qual === 'parcial' ? 'Pedido / separar' : 'Pedido'], linhas));
+}
+
+/* ===== 11/09/2026 (João, no print de "Pronto · reserva completa": "esse também,
+   quanto em cada depósito, tonelagem e paletes") =====
+   Reparte o peso dos pedidos da lista pelos depósitos do 241, SEM arbitrar:
+     - parte já reservada  -> vem do depósito reservado (_DEP_RESERV). Com um só
+       depósito reservado (hoje o 6) é exato.
+     - parte a separar     -> vem de onde o item tem saldo FORA do reservado. Se o
+       item está num depósito só, é exato; se está em dois ou mais, NÃO escolho
+       um — vai para a linha "em mais de um depósito" com os nomes. Se o 241 não
+       mostra saldo fora do reservado, a linha diz isso (foto do 241 x REST196).
+   Palete: mesma régua do card (caixas somadas por item, teto de 20 por palete),
+   por isso o total da reserva completa bate com o número do card. A parte a
+   separar vira caixa pela proporção da linha (qtd × kg a separar ÷ kg da linha).
+   Item fora de CX não vira palete — a linha diz "parte em kg". */
+function _resDepsFora(item) {
+  const I = (_depoItem && _depoItem.itens && _depoItem.itens[String(item)]) || null;
+  return I ? (I.deps || []).filter(d => !_DEP_RESERV.includes(String(d.cod)) && d.kg > 0) : [];
+}
+function _resDepsDentro(item) {
+  const I = (_depoItem && _depoItem.itens && _depoItem.itens[String(item)]) || null;
+  return I ? (I.deps || []).filter(d => _DEP_RESERV.includes(String(d.cod)) && d.kg > 0) : [];
+}
+function _resDepRot(d) { return String(d.cod) + ' · ' + String(d.nome || '').trim(); }
+function _resOndeBuscar(p) {
+  const deps = new Set(); let multi = false, sem = false;
+  (p._resLin || []).forEach(l => {
+    if (!(l.f > 0.001)) return;
+    const df = _resDepsFora(l.item);
+    if (df.length === 1) deps.add(_resDepRot(df[0]));
+    else if (df.length > 1) { multi = true; df.forEach(d => deps.add(_resDepRot(d))); }
+    else sem = true;
+  });
+  if (!deps.size) return sem ? 'sem saldo no 241 fora do reservado' : '';
+  const a = [...deps];
+  return 'buscar em ' + a.slice(0, 3).join(', ') + (a.length > 3 ? ' +' + (a.length - 3) : '') + (multi ? ' (item em mais de um)' : '')
+    + (sem ? ' · parte sem saldo no 241' : '');
+}
+function _resQuadroDeposito(L, qual) {
+  if (!L || !L.length || !_depoItem || !_depoItem.itens) return '';
+  const B = {};
+  const add = (key, rot, tipo, l, kgv, ped, extra) => {
+    const o = B[key] || (B[key] = { rot, tipo, kg: 0, cxItem: {}, semCx: 0, peds: new Set(), extra: new Set() });
+    o.kg += kgv; o.peds.add(ped);
+    if (_ehCx(l.un)) o.cxItem[l.item] = (o.cxItem[l.item] || 0) + (l.kg > 0 ? l.qtd * kgv / l.kg : 0);
+    else o.semCx += kgv;
+    (extra || []).forEach(x => o.extra.add(x));
+  };
+  L.forEach(p => (p._resLin || []).forEach(l => {
+    if (l.pega > 0.001) {
+      const dr = _resDepsDentro(l.item);
+      if (dr.length === 1) add('r' + dr[0].cod, _resDepRot(dr[0]), 'res', l, l.pega, p.num);
+      else add('rmulti', 'reservado em mais de um depósito', 'res', l, l.pega, p.num, dr.map(_resDepRot));
+    }
+    if (l.f > 0.001) {
+      const df = _resDepsFora(l.item);
+      if (df.length === 1) add('s' + df[0].cod, _resDepRot(df[0]), 'sep', l, l.f, p.num);
+      else if (df.length > 1) add('smulti', 'item em mais de um depósito', 'multi', l, l.f, p.num, df.map(_resDepRot));
+      else add('ssem', 'sem saldo no 241 fora do reservado', 'sem', l, l.f, p.num);
+    }
+  }));
+  const ordTipo = { res: 0, sep: 1, multi: 2, sem: 3 };
+  const arr = Object.values(B).map(o => Object.assign(o, {
+    pal: Object.values(o.cxItem).reduce((z, cx) => z + _paletes(Math.round(cx * 1000) / 1000), 0)
+  })).sort((a, b) => (ordTipo[a.tipo] - ordTipo[b.tipo]) || (b.kg - a.kg));
+  if (!arr.length) return '';
+  const t = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' t' : Math.round(v).toLocaleString('pt-BR') + ' kg';
+  const sub = { res: ['já separado', '#1F7A46'], sep: ['a separar', '#8A5A00'], multi: ['a separar · escolher de onde', '#8A5A00'], sem: ['conferir o 241', '#9B2C2C'] };
+  const totKg = arr.reduce((z, o) => z + o.kg, 0), totPal = arr.reduce((z, o) => z + o.pal, 0);
+  const foto = _depoItem.dia ? String(_depoItem.dia).slice(0, 10).split('-').reverse().join('/') : '';
+  let h = '<div style="border:1px solid var(--leve-2s);border-radius:12px;padding:10px 11px;margin:0 0 10px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">'
+    + '<b style="font-size:13px;color:var(--navy)">Onde está · por depósito</b>'
+    + '<span style="font-size:10.5px;color:var(--fraco)">' + (foto ? 'foto do 241 de ' + foto : '') + '</span></div>'
+    + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">'
+    + '<tr style="text-align:left;color:var(--fraco);font-size:10.5px"><th>depósito</th><th style="text-align:right">peso</th><th style="text-align:right">paletes</th><th style="text-align:right">ped</th></tr>';
+  arr.forEach(o => {
+    const [sx, cor] = sub[o.tipo];
+    const bg = o.tipo === 'res' ? ';background:#EAF6EE' : (o.tipo === 'sem' ? ';background:#FDEDED' : '');
+    h += '<tr style="border-top:1px solid var(--leve-2s)' + bg + '">'
+      + '<td style="padding:5px 4px"><b>' + escapeHtml(o.rot) + '</b>'
+      + '<div style="font-size:10px;font-weight:800;color:' + cor + '">' + sx + '</div>'
+      + (o.extra.size ? '<div style="font-size:10px;color:var(--fraco)">' + escapeHtml([...o.extra].join(' · ')) + '</div>' : '') + '</td>'
+      + '<td style="text-align:right;font-weight:800">' + t(o.kg) + '</td>'
+      + '<td style="text-align:right">' + (o.pal ? o.pal.toLocaleString('pt-BR') : '<span style="color:var(--fraco)">—</span>')
+      + (o.semCx > 0.5 ? '<div style="font-size:9.5px;color:var(--fraco)">+ ' + t(o.semCx) + ' fora de caixa</div>' : '') + '</td>'
+      + '<td style="text-align:right">' + o.peds.size + '</td></tr>';
+  });
+  h += '<tr style="border-top:2px solid var(--leve-2s)"><td style="padding:5px 4px"><b>Total</b></td>'
+    + '<td style="text-align:right;font-weight:900">' + t(totKg) + '</td>'
+    + '<td style="text-align:right;font-weight:800">' + totPal.toLocaleString('pt-BR') + '</td>'
+    + '<td style="text-align:right">' + L.length + '</td></tr></table></div>'
+    + '<div style="font-size:10.5px;color:var(--fraco);margin-top:6px;line-height:1.4">'
+    + (qual === 'parcial'
+      ? 'A parte <b>já separada</b> está no reservado. A parte <b>a separar</b> está onde o item tem saldo fora do reservado — quando o item está em mais de um depósito, não escolho por você: a linha mostra os depósitos.'
+      : 'Reserva completa quer dizer que o pedido inteiro já está no depósito reservado — por isso o peso sai todo de lá.')
+    + ' Um pedido com itens em depósitos diferentes conta em cada linha, então a coluna "ped" não soma o total. Palete arredondado por item em cada depósito.</div></div>';
+  return h;
 }
 
 /* ===== 01/09/2026 (Joao: "crie um botao enviar por WhatsApp") =====
@@ -39672,7 +39776,7 @@ function reservaTexto() {
       saldo[l.item] = d - pega;
       const f = Math.max(0, l.kg - pega);
       falta += f;
-      if (f > 0.001) its.push({ item: l.item, falta: f });
+      if (f > 0.001) its.push({ item: l.item, falta: f });  /* depósito sai de _resDepsFora na hora de escrever */
     });
     if (falta > 0.001) { p._faltaRes = falta; p._faltaItens = its.sort((a, b) => b.falta - a.falta); pa.push(p); }
   });
@@ -39688,7 +39792,14 @@ function reservaTexto() {
     L.push('• *' + p.num + '* ' + String(p.cli || '')
       + '\n   separar ' + kg(p._faltaRes) + (p.ent ? ' · entrega ' + fmtDataSem(p.ent) : '')
       + ((+p.atraso || 0) > 0 ? ' · *' + p.atraso + 'd VENCIDO*' : '')
-      + (p._faltaItens || []).map(x => '\n   → ' + x.item + ' ' + _descItem(x.item) + ' · ' + kg(x.falta)).join(''));
+      /* 11/09/2026: _descItem recebia o CÓDIGO no lugar da descrição e a linha
+         saía "1002165 1002165". Agora vai a descrição do 241 e onde buscar. */
+      + (p._faltaItens || []).map(x => {
+          const df = _resDepsFora(x.item);
+          const onde = df.length === 1 ? ' · buscar no ' + _resDepRot(df[0])
+            : df.length > 1 ? ' · em ' + df.map(_resDepRot).join(' / ') : '';
+          return '\n   → ' + x.item + ' ' + _descItem(((_depoItem.itens[x.item] || {}).desc) || '') + ' · ' + kg(x.falta) + onde;
+        }).join(''));
   });
   if (pa.length > 25) L.push('', '_… e mais ' + (pa.length - 25) + ' pedido(s). Lista completa no app._');
   L.push('', '_Gerado no app de Produção._');
