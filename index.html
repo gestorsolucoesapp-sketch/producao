@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.583.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.584.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3959,7 +3959,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.583.0';
+const APP_VER = '4.584.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -25791,6 +25791,9 @@ async function atrDetalhe(tipo, _mudo) {
          "vence em 7 dias" — e ali ele vale ATE MAIS, porque e a carga que ainda
          da para montar antes de virar atraso. */
       + (true ? '<span onclick="atrRoteiro()" style="cursor:pointer;font-size:11.5px;font-weight:800;background:var(--navy);color:#fff;border-radius:999px;padding:4px 11px;margin-right:8px">🚚 agrupar por região</span>' : '')
+      /* 09/09/2026 — botão pedido pelo João: onde está guardado o material dos
+         pedidos que já têm reserva, em tonelada e palete por depósito. */
+      + '<span onclick="atrDeposito()" style="cursor:pointer;font-size:11.5px;font-weight:800;background:var(--leve-2);color:var(--navy);border-radius:999px;padding:4px 11px;margin-right:8px">📦 por depósito</span>'
       + '<span onclick="atrDetalhe(\'' + tipo + '\')" style="cursor:pointer;font-size:11.5px;color:var(--fraco-2)">✕ fechar</span></span></div>'
       + '<p class="desc" style="font-size:11px;margin:3px 0 5px">Toque em 💬 para justificar. A justificativa fica no pedido e vale para todos.</p>'
       + '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px">'
@@ -31282,6 +31285,105 @@ function atrAbrir(tipo, pilula) {
   try { _atrPintaSetores(); } catch (_) { }
   atrDetalhe(tipo);
 }
+/* ===================== ONDE ESTÁ O MATERIAL — 09/09/2026 =====================
+   João: "nesse card coloque um botão onde clico e mostra quantas toneladas e
+   quantos paletes tem em cada depósito do reservado e parcial."
+
+   O que dá para responder, e o que NÃO dá — isto importa para ninguém ler o
+   número errado:
+
+   · A reserva NÃO é feita por depósito. O app cobre os pedidos contra o estoque
+     TOTAL do item, por ordem de entrega. Então eu não sei dizer "esta reserva
+     está no depósito 3".
+   · O que eu sei, e é o que a pergunta dele quer na prática, é ONDE ESTÁ O
+     MATERIAL DESSES ITENS: pego os itens dos pedidos atrasados que já têm
+     reserva (cheia ou parcial) e abro o estoque deles por depósito, do 241.
+
+   Escrevo isso na tela, não só aqui: número de expedição que a pessoa acha que
+   é reserva alocada vira separação errada.
+
+   PALETE: mesma régua do resto do app (CX_POR_PALETE), e só para item contado em
+   caixa. Item em quilo não vira palete — arredondar peso em palete seria inventar.  */
+
+async function atrDeposito() {
+  const A = _atrDados || {};
+  const L = (A.d || []).filter(x => x.cheio || x.parcial);
+  if (!L.length) { toast('Nenhum pedido com reserva na lista.'); return; }
+  const itens = [...new Set(L.map(x => String(x.item_cod)).filter(Boolean))];
+
+  const d = document.createElement('div');
+  d.id = 'depBox';
+  d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100001;display:flex;align-items:center;justify-content:center;padding:14px';
+  d.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:560px;width:100%;max-height:84vh;overflow:auto;padding:16px">'
+    + '<p class="desc">procurando nos depósitos…</p></div>';
+  d.onclick = ev => { if (ev.target === d) d.remove(); };
+  document.body.appendChild(d);
+
+  try {
+    const foto = await sb.from('estoque_deposito').select('dia_foto').order('dia_foto', { ascending: false }).limit(1).maybeSingle();
+    const dia = (foto.data || {}).dia_foto;
+    if (!dia) throw new Error('nenhum estoque por depósito importado (relatório 241)');
+    /* busco em blocos: lista de item grande estoura o tamanho da URL */
+    let linhas = [];
+    for (let i = 0; i < itens.length; i += 120) {
+      const { data, error } = await sb.from('estoque_deposito')
+        .select('deposito_cod,deposito_nome,item_cod,item_desc,unidade,quantidade,peso')
+        .eq('dia_foto', dia).in('item_cod', itens.slice(i, i + 120));
+      if (error) throw error;
+      linhas = linhas.concat(data || []);
+    }
+    const por = {};
+    linhas.forEach(r => {
+      const k = (r.deposito_cod || '?') + ' · ' + (r.deposito_nome || '');
+      if (!por[k]) por[k] = { kg: 0, cx: 0, itens: new Set(), semCx: 0 };
+      const o = por[k];
+      o.kg += +r.peso || 0;
+      if (_ehCx(r.unidade)) o.cx += +r.quantidade || 0; else o.semCx += +r.peso || 0;
+      o.itens.add(String(r.item_cod));
+    });
+    const arr = Object.entries(por).map(([k, o]) => ({ dep: k, kg: o.kg, pal: _paletes(o.cx), cx: o.cx, n: o.itens.size, semCx: o.semCx }))
+      .sort((a, b) => b.kg - a.kg);
+    const tKg = arr.reduce((a, x) => a + x.kg, 0), tPal = arr.reduce((a, x) => a + x.pal, 0);
+    /* item que aparece em mais de um depósito é o que dá trabalho na separação */
+    const cont = {};
+    linhas.forEach(r => { (cont[r.item_cod] = cont[r.item_cod] || new Set()).add(r.deposito_cod); });
+    const espalhados = Object.entries(cont).filter(([, s]) => s.size > 1);
+
+    let h = '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'
+      + '<b style="font-size:15px">Onde está o material</b>'
+      + '<span onclick="document.getElementById(\'depBox\').remove()" style="cursor:pointer;font-size:18px;color:var(--fraco)">✕</span></div>'
+      + '<p class="desc" style="font-size:11.5px;margin:0 0 10px">Estoque dos <b>' + itens.length + ' item(ns)</b> dos pedidos atrasados que já têm reserva — cheia ou parcial. '
+      + 'Foto de ' + String(dia).split('-').reverse().join('/') + '.<br>'
+      + '<b>Não é a reserva alocada:</b> a reserva é feita contra o total do item, não por depósito. Isto mostra onde o material está guardado.</p>'
+      + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+      + '<div style="flex:1;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Total</div>'
+      + '<div style="font-size:19px;font-weight:800;color:var(--navy)">' + (tKg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' t</div></div>'
+      + '<div style="flex:1;background:var(--leve-4);border-radius:10px;padding:9px"><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Paletes</div>'
+      + '<div style="font-size:19px;font-weight:800;color:var(--navy)">' + tPal.toLocaleString('pt-BR') + '</div></div></div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      + '<tr style="text-align:left;color:var(--fraco)"><th>depósito</th><th style="text-align:right">t</th>'
+      + '<th style="text-align:right">paletes</th><th style="text-align:right">itens</th></tr>';
+    arr.forEach(x => {
+      h += '<tr style="border-top:1px solid var(--leve-2s)">'
+        + '<td><b>' + escapeHtml(x.dep) + '</b></td>'
+        + '<td style="text-align:right;font-weight:700">' + (x.kg / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '</td>'
+        + '<td style="text-align:right">' + (x.pal ? x.pal.toLocaleString('pt-BR') : '<span class="desc">—</span>')
+        + (x.semCx ? '<div class="desc" style="font-size:10px">parte em kg</div>' : '') + '</td>'
+        + '<td style="text-align:right">' + x.n + '</td></tr>';
+    });
+    h += '</table>';
+    if (espalhados.length) {
+      h += '<div style="border:1px solid #F0D9B0;background:#FFF6E9;border-radius:10px;padding:9px 11px;font-size:12px;margin-top:12px;color:#7A5A1E">'
+        + '<b>' + espalhados.length + ' item(ns) em mais de um depósito.</b> São os que dão trabalho na separação — o mesmo pedido obriga a buscar em dois lugares.</div>';
+    }
+    if (!arr.length) h += '<p class="desc">Nenhum desses itens aparece no estoque por depósito.</p>';
+    d.firstElementChild.innerHTML = h;
+  } catch (e) {
+    d.firstElementChild.innerHTML = '<p class="desc" style="color:var(--critico-s)">não consegui: ' + escapeHtml(String(e.message || e))
+      + '</p><button class="btn" style="margin-top:10px" onclick="document.getElementById(\'depBox\').remove()">Fechar</button>';
+  }
+}
+
 function atrPorSetor(setor) {
   /* tocar de novo na mesma pílula limpa o filtro, como as de baixo */
   _atrSetor = (_atrSetor === setor ? '' : setor); _atrTipo = '';
