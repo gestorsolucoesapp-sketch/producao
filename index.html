@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.587.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.588.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.587.0';
+const APP_VER = '4.588.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -46021,7 +46021,10 @@ function _mpFaixa(x, y, w, tit, linhas, c) {
 function _mpSvg(sp) {
   const N = {};
   (sp.nos || []).forEach(n => { n.h = n.h || ((n.s || []).length ? 30 + n.s.length * 15 : 32); N[n.id] = n; });
-  const usadas = new Set((sp.setas || []).map(s => s.c || 'linha'));
+  /* 11/09/2026: as pontas de seta nasciam só para as cores das setas declaradas,
+     mas o `extra` de um mapa pode desenhar seta na mão (o trilho das etapas) e
+     ficava sem ponta, calado. Agora define todas — são 7 marcadores minúsculos. */
+  const usadas = new Set(Object.keys(MPC).concat((sp.setas || []).map(s => s.c || 'linha')));
   let defs = '<defs>';
   usadas.forEach(k => {
     defs += '<marker id="mpa-' + k + '" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="' + _mpCor(k) + '"/></marker>';
@@ -46082,55 +46085,158 @@ function _mpMapaFabrica() {
   };
 }
 
-function _mpMapaPedido() {
-  const nos = [
-    { id: 'p1', x: 20, y: 60, w: 200, c: 'dado', t: 'Pedido na carteira', tag: '196', s: ['cliente · item · entrega', 'quantidade e peso pendentes'] },
-    { id: 'p2', x: 250, y: 60, w: 200, c: 'proc', t: 'Fila de produção', tag: '264 · 339', s: ['a OP casa pelo ITEM', 'a do próprio pedido vem 1º'] },
-    { id: 'p3', x: 480, y: 60, w: 200, c: 'proc', t: 'Produção', tag: '621 · 622', s: ['621 = fonte do peso', '622 = item e OP apontados'] },
-    { id: 'p4', x: 710, y: 60, w: 190, c: 'ok', t: 'Estoque do item', tag: '196 · 241', s: ['saldo livre do item', '241 = em qual depósito'] },
-    { id: 'p5', x: 710, y: 185, w: 190, h: 75, c: 'ok', t: 'Alocação', s: ['por data de entrega:', 'quem vence antes leva'] },
-    { id: 'p6', x: 480, y: 185, w: 200, h: 75, c: 'ok', t: 'Reserva · depósito 6', s: ['completa → pode chamar carga', 'parcial → alguém separa'] },
-    { id: 'p7', x: 250, y: 185, w: 200, c: 'dado', t: 'Montagem de carga', s: ['por região, saindo da fábrica', 'menor veículo que comporta', 'palete: 20 cx por item + misto'] },
-    { id: 'p8', x: 20, y: 185, w: 200, h: 75, c: 'ok', t: 'Expedição / nota', tag: '304', s: ['fim do fluxo: EXPEDIDOS,', 'DESPACHADO ou NFE'] },
-    { id: 'r1', x: 20, y: 345, w: 210, c: 'risco', t: 'Entrega vencida', s: ['entrega antes do dia da foto'] },
-    { id: 'r2', x: 250, y: 345, w: 210, c: 'ambar', t: 'Vence em 7 dias', s: ['vira atraso se não sair'] },
-    { id: 'r3', x: 480, y: 345, w: 210, c: 'proc', t: 'Produção atrasada', s: ['prazo = entrega − 7 dias', 'conta o que falta após alocar'] },
-    { id: 'r4', x: 710, y: 345, w: 190, c: 'ok', t: 'Saída da carteira', s: ['o que diminuiu entre fotos', 'meta 42 t por dia'] }
+/* ===== 11/09/2026 (João: "tá muito simples, o processo tem que fazer todo o
+   fluxo desde a proposta até a carga") =====
+   O mapa anterior mostrava só o miolo (carteira → carga). Este percorre as 13
+   etapas na ordem, e para CADA uma diz três coisas diferentes, que é o que um
+   mapa de processo tem de responder:
+     · o que acontece na fábrica;
+     · o que o app enxerga daquilo (relatório e tela);
+     · a régua ou a armadilha daquela etapa.
+   A espinha das etapas 2 a 11 é o FLX_ORDEM do próprio app — a mesma ordem que o
+   veredito do fluxo usa para dizer onde a data se perdeu. Não inventei sequência:
+   se o ERP mudar as etapas, muda ali e o mapa acompanha. */
+function _mpMapaFluxo() {
+  const RX = 44, X1 = 78, W1 = 470, X2 = 574, W2 = 326;
+  const E = [
+    { n: '0', c: 'dado', t: 'PROPOSTA', q: 'Comercial monta a proposta com o cliente',
+      d: ['ela não é carteira ainda: é demanda que pode ou não virar pedido'],
+      v: 'RVEN002 · emissão de propostas', tela: 'aba Demanda',
+      r: 'Quem diz que virou pedido é o Fluxo/Situação “PROPOSTA TRANSFORMADA EM PEDIDOS”. O funil separa: sem pedido · virou pedido · já na carteira.' },
+    { n: '1', c: 'proc', t: 'DIGITAÇÃO', q: 'O pedido é digitado no ERP e ganha número',
+      d: ['daqui em diante cada passo fica carimbado com data, hora e quem repassou'],
+      v: 'RVEN304 · histórico do documento', tela: 'ficha do pedido',
+      r: 'O tempo de cada linha é a permanência NAQUELA etapa, não o acumulado.' },
+    { n: '2', c: 'proc', t: 'COMERCIAL', q: 'Confere preço, condição e prazo',
+      d: ['normalmente passa na hora — mas quando trava, trava muito'],
+      v: 'RVEN304', tela: 'Comercial / Logística',
+      r: 'Mediana de 1 minuto e média de 2.698. Por isso a previsão do app usa MEDIANA: a média prometeria data que ninguém cumpre.' },
+    { n: '3', c: 'proc', t: 'PCP', q: 'Programa o pedido e decide quando produzir',
+      d: ['é aqui que o pedido encontra a capacidade da fábrica'],
+      v: 'RVEN304 · capacidade por setor', tela: 'Programação',
+      r: 'O prazo de produção que o app cobra é a entrega menos 7 dias.' },
+    { n: '4', c: 'risco', t: 'ARTES', q: 'Arte do produto: aprovação do cliente',
+      d: ['etapa que mais segura pedido sem ninguém ver'],
+      v: 'RVEN304', tela: 'Comercial (motivo do atraso)',
+      r: 'Caso real: 54,7 dias em ARTES num pedido de 49 dias de prazo. A fábrica recebeu 7 dias DEPOIS da data prometida, sem nenhuma máquina ter tocado nele.' },
+    { n: '5', c: 'proc', t: 'LIBERADO PARA PRODUZIR', q: 'Vira OP e entra na fila da máquina',
+      d: ['a OP casa pelo ITEM; a do próprio pedido aparece primeiro'],
+      v: 'RGER339 · RPCP264 → fila', tela: 'Programação',
+      r: 'A fila traz o SALDO a produzir, não o total da OP. Total = já produzido + saldo na fila.' },
+    { n: '6', c: 'proc', t: 'PRODUÇÃO', q: 'A máquina roda a OP, turno a turno',
+      d: ['Extrusão faz bobina · Termoformagem, Impressão, Sleeve, Rotulagem,', 'Embaladeiras e Compressão fazem o acabado'],
+      v: 'RPCP621 (peso) · 622 (item e OP)', tela: 'Painel · Gestão à Vista',
+      r: 'Refugo (624), paradas (643) e consumo (646) nascem aqui — cada um tem o seu mapa nesta aba.' },
+    { n: '7', c: 'proc', t: 'TÉRMINO DE PRODUÇÃO', q: 'A OP fecha e o material vira saldo',
+      d: ['o pedido sai da fábrica e volta a ser assunto do comercial'],
+      v: 'RVEN304 · fila zera', tela: 'Programação',
+      r: 'Enquanto a OP não fecha, o pedido conta como produção atrasada se já passou da entrega menos 7.' },
+    { n: '8', c: 'ok', t: 'ESTOQUE', q: 'O acabado fica em algum depósito',
+      d: ['saldo livre do item, em um monte só — não é etiquetado por pedido'],
+      v: 'REST196 (saldo) · REST241 (depósito)', tela: 'Painel · por depósito',
+      r: 'Nada no ERP amarra estoque a pedido. O 241 diz ONDE está, não de quem é.' },
+    { n: '9', c: 'ok', t: 'ALOCAÇÃO', q: 'O app reparte o saldo entre os pedidos',
+      d: ['item por item, na ordem da data de entrega: quem vence antes leva'],
+      v: 'conta do app sobre o 196', tela: 'lista de atrasados',
+      r: 'É por isso que um item com saldo no depósito pode faltar para um pedido: alguém na frente já levou. A tela mostra “1º de 6 no item”.' },
+    { n: '10', c: 'ok', t: 'SEPARAÇÃO · reserva', q: 'Alguém move o material para o depósito reservado (6)',
+      d: ['reserva completa → pode chamar carga', 'reserva parcial → falta separar o resto'],
+      v: 'REST241 · depósito 6', tela: 'Painel (328 e 52)',
+      r: 'Reservar é ato manual no ERP. O app reparte o reservado pela mesma fila de entrega — senão o mesmo quilo apareceria coberto em vários pedidos.' },
+    { n: '11', c: 'ok', t: 'MONT. CARGA', q: 'Os pedidos viram carga e rota',
+      d: ['a carga fica aberta e puxa o que cabe e está a até 120 km da última parada', 'ordem das paradas a partir da fábrica, vizinho mais próximo'],
+      v: 'RVEN002 (cidade e região)', tela: 'Comercial / Logística',
+      r: 'Palete: item com 20+ caixas gera paletes cheios e as sobras de todos os itens se juntam em paletes mistos. O app escolhe o MENOR veículo que comporta.' },
+    { n: '12', c: 'ambar', t: 'FATURAMENTO', q: 'Emite a nota fiscal da carga',
+      d: ['trava por crédito ou cobrança acontece aqui'],
+      v: 'RVEN304', tela: 'Comercial / Logística',
+      r: 'O RVEN304 não registra o FINANCEIRO: se o pedido trava por crédito, esse tempo não está sendo medido por nenhuma tela.' },
+    { n: '13', c: 'ok', t: 'EXPEDIDO · despachado', q: 'O caminhão sai e o pedido some da carteira',
+      d: ['fim do fluxo: EXPEDIDOS, DESPACHADO ou NFE'],
+      v: 'RVEN304 · e a carteira encolhe', tela: 'Saída da carteira',
+      r: 'Não há relatório de faturamento: o app mede a saída pelo que DIMINUIU entre duas fotos da carteira. Meta de 42 t por dia.' }
   ];
-  const setas = [
-    { de: 'p1', para: 'p2', c: 'proc', r: 'falta' },
-    { de: 'p2', para: 'p3', c: 'proc' },
-    { de: 'p3', para: 'p4', c: 'ok' },
-    { de: 'p4', para: 'p5', c: 'ok' },
-    { de: 'p5', para: 'p6', c: 'ok' },
-    { de: 'p6', para: 'p7', c: 'dado' },
-    { de: 'p7', para: 'p8', c: 'dado' },
-    { de: 'p1', para: 'p4', a: 't', b: 't', ym: 32, c: 'ok', trac: true, r: 'já tem em estoque: não precisa de OP' }
-  ];
-  const etapas = ['COMERCIAL', 'ARTES', 'PCP', 'PRODUÇÃO', 'MONTAGEM DE CARGA', 'FATURAMENTO', 'EXPEDIÇÃO'];
-  let ex = _mpTx(20, 332, 'Réguas de atraso que o app usa', { b: true, c: 'txt', sz: 12 })
-    + _mpTx(20, 442, 'Etapas que o RVEN304 registra — o pedido fica “parado em” uma delas', { b: true, c: 'txt', sz: 12 });
-  let x = 20;
-  etapas.forEach(e => {
-    const w = 18 + e.length * 7.4;
-    ex += '<rect x="' + x + '" y="454" width="' + w + '" height="28" rx="14" fill="#F4ECF7" stroke="' + MPC.proc + '" stroke-opacity=".5"/>'
-      + '<text x="' + (x + w / 2) + '" y="472" font-size="10.5" font-weight="800" text-anchor="middle" fill="' + MPC.proc + '">' + _mpE(e) + '</text>';
-    x += w + 8;
+  const nos = [], setas = [];
+  let y = 56, ex = '';
+  ex += _mpTx(X1, 38, 'O QUE ACONTECE', { b: true, sz: 10 }) + _mpTx(X2, 38, 'O QUE O APP ENXERGA', { b: true, sz: 10 });
+  const pos = [];
+  E.forEach((e, i) => {
+    const alt = 34 + e.d.length * 15;
+    const rl = _mpQuebra(e.r, 44);
+    const alt2 = 34 + rl.length * 14;
+    const h = Math.max(alt, alt2, 52);
+    pos.push({ y, h, c: e.c });
+    /* coluna 1: a etapa e o que acontece nela */
+    nos.push({ id: 'e' + i, x: X1, y, w: W1, h, c: e.c, t: e.t, s: [e.q].concat(e.d), tag: e.n === '0' ? 'antes do pedido' : '' });
+    /* coluna 2: o que o app vê + a régua, em caixa clara */
+    ex += _mpFaixa(X2, y, W2, e.v, rl, e.c === 'risco' ? 'risco' : (e.c === 'ambar' ? 'ambar' : (e.c === 'ok' ? 'ok' : 'dado')));
+    /* selo da tela onde isso aparece */
+    const tw = String(e.tela).length * 5.6 + 16;
+    ex += '<rect x="' + (X2 + W2 - tw) + '" y="' + (y - 9) + '" width="' + tw + '" height="17" rx="8" fill="#fff" stroke="' + _mpCor(e.c) + '" stroke-width="1.3"/>'
+      + '<text x="' + (X2 + W2 - tw / 2) + '" y="' + (y + 3) + '" font-size="9.5" font-weight="800" text-anchor="middle" fill="' + _mpCor(e.c) + '">' + _mpE(e.tela) + '</text>';
+    y += h + 16;
   });
-  ex += _mpTx(20, 502, 'Parado há 3 dias ou mais fica vermelho. O FINANCEIRO não aparece neste relatório: trava por crédito ou cobrança não é medida.', { sz: 10.5 })
-    + _mpFaixa(20, 520, 880, 'Nada no ERP amarra estoque a pedido — nem o depósito 6', [
-      'O saldo do item é um monte só. Quem decide de quem é o material é a fila por data de entrega (alocação): por isso a tela diz',
-      '“1º de 6 no item” e “79 de 80 cx em estoque”, e um item com saldo no depósito pode faltar para um pedido que está atrás na fila.'], 'ambar');
+  /* trilho: bolinha numerada ligada por uma linha só, de cima a baixo */
+  const yIni = pos[0].y + 20, yFim = pos[pos.length - 1].y + 20;
+  let rail = '<path d="M' + RX + ' ' + yIni + ' V' + yFim + '" stroke="' + MPC.linha + '" stroke-width="3" fill="none"/>';
+  pos.forEach((p, i) => {
+    const cy = p.y + 20, c = _mpCor(p.c);
+    rail += '<circle cx="' + RX + '" cy="' + cy + '" r="15" fill="#fff" stroke="' + c + '" stroke-width="3"/>'
+      + '<text x="' + RX + '" y="' + (cy + 5) + '" font-size="12" font-weight="800" text-anchor="middle" fill="' + c + '">' + _mpE(E[i].n) + '</text>'
+      + '<path d="M' + (RX + 16) + ' ' + cy + ' H' + (X1 - 3) + '" stroke="' + c + '" stroke-width="2" fill="none" marker-end="url(#mpa-linha)"/>';
+  });
+  /* faixas de fase, à esquerda do trilho */
+  const fases = [[0, 0, 'ANTES', 'dado'], [1, 4, 'COMERCIAL E PCP', 'proc'], [5, 7, 'FÁBRICA', 'proc'], [8, 10, 'ESTOQUE', 'ok'], [11, 13, 'SAÍDA', 'ok']];
+  fases.forEach(f => {
+    const a = pos[f[0]], b = pos[f[1]];
+    const y1 = a.y - 4, y2 = b.y + b.h + 4, cor = _mpCor(f[3]);
+    rail += '<rect x="8" y="' + y1 + '" width="7" height="' + (y2 - y1) + '" rx="3" fill="' + cor + '" fill-opacity=".35"/>'
+      + '<text x="11" y="' + ((y1 + y2) / 2) + '" font-size="9.5" font-weight="800" fill="' + cor
+      + '" text-anchor="middle" transform="rotate(-90 11 ' + ((y1 + y2) / 2) + ')">' + _mpE(f[2]) + '</text>';
+  });
+  ex = rail + ex;
+  /* rodapé: as réguas de atraso, que atravessam o fluxo todo */
+  const yb = y + 6;
+  ex += _mpTx(20, yb + 14, 'Onde cada régua de atraso morde neste fluxo', { b: true, c: 'txt', sz: 12.5 });
+  const reg = [['Produção atrasada', 'entrega − 7 dias', 'etapas 5 a 7', 'proc'],
+  ['Vence em 7 dias', 'entrega perto', 'etapas 8 a 11', 'ambar'],
+  ['Entrega vencida', 'passou da entrega', 'qualquer etapa', 'risco'],
+  ['Parado em <setor>', '3 dias na mesma etapa', 'etapas 1 a 12', 'dado']];
+  const rw = (880 - 3 * 8) / 4;
+  reg.forEach((r, i) => {
+    const rx = 20 + i * (rw + 8), cor = _mpCor(r[3]);
+    ex += '<rect x="' + rx + '" y="' + (yb + 24) + '" width="' + rw + '" height="58" rx="10" fill="#fff" stroke="' + cor + '" stroke-width="2"/>'
+      + '<text x="' + (rx + 12) + '" y="' + (yb + 44) + '" font-size="11.5" font-weight="800" fill="' + MPC.txt + '">' + _mpE(r[0]) + '</text>'
+      + '<text x="' + (rx + 12) + '" y="' + (yb + 60) + '" font-size="10" fill="' + MPC.cinza + '">' + _mpE(r[1]) + '</text>'
+      + '<text x="' + (rx + 12) + '" y="' + (yb + 75) + '" font-size="10" font-weight="800" fill="' + cor + '">' + _mpE(r[2]) + '</text>';
+  });
+  const H = yb + 100;
   return {
-    w: 920, h: 590, svg: _mpSvg({ w: 920, h: 590, nos, setas, extra: ex }),
+    w: 920, h: H, svg: _mpSvg({ w: 920, h: H, nos, setas, extra: ex }),
     regras: [
-      'Atraso é contra o <b>dia da foto</b> da carteira, não contra a data do aparelho: abrir a carteira de ontem dá o mesmo resultado.',
-      'Produção atrasada usa a <b>cobertura alocada</b> (a mesma régua do banco), não o saldo bruto da linha.',
-      'Saída da carteira: dia sem foto é coluna vazia e <b>não entra no denominador</b> da meta.'
+      'As etapas 1 a 13 são a ordem que o próprio app usa (<b>FLX_ORDEM</b>) para dizer onde a data se perdeu — não é sequência inventada aqui.',
+      'O veredito do fluxo usa a <b>mediana</b> de cada etapa que ainda falta, não a média: no COMERCIAL a mediana é 1 minuto e a média, 2.698.',
+      'Atraso é sempre contra o <b>dia da foto</b> da carteira, nunca contra a data do aparelho.'
     ],
-    faltam: ['Onde entra o financeiro (crédito / cobrança) no fluxo do pedido — o RVEN304 não registra.'],
-    onde: 'Painel (Pedidos atrasados) · Comercial / Logística · Programação'
+    faltam: [
+      'Onde entra o FINANCEIRO (crédito e cobrança) — o RVEN304 não registra essa etapa e nenhuma tela mede esse tempo.',
+      'Existe etapa entre TÉRMINO DE PRODUÇÃO e MONT. CARGA que eu não esteja vendo? Ex.: qualidade, paletização, conferência de carga.',
+      'Quem decide chamar a transportadora, e isso fica registrado em algum lugar?'
+    ],
+    onde: 'Comercial / Logística · Programação · Painel · Demanda'
   };
+}
+
+/* quebra texto em linhas de até n caracteres, sem cortar palavra */
+function _mpQuebra(t, n) {
+  const p = String(t || '').split(/\s+/), out = [];
+  let l = '';
+  p.forEach(w => {
+    if (!l) { l = w; return; }
+    if ((l + ' ' + w).length <= n) l += ' ' + w; else { out.push(l); l = w; }
+  });
+  if (l) out.push(l);
+  return out;
 }
 
 function _mpMapaDados() {
@@ -46371,7 +46477,7 @@ function _mpMapaTintas() {
 /* sub-abas: a ordem é a do caminho do material e do pedido, depois o apoio */
 const MP_ABAS = [
   { id: 'fabrica', ico: '🏭', nome: 'Fábrica', tit: 'Setores e o caminho do material', desc: 'Os setores com as máquinas do cadastro do app e o que já está confirmado sobre o material passando de um para outro.', fn: _mpMapaFabrica },
-  { id: 'pedido', ico: '📦', nome: 'Pedido → entrega', tit: 'Do pedido na carteira até a expedição', desc: 'Como o app decide se o pedido tem material, quem leva o estoque, o que está reservado e como vira carga.', fn: _mpMapaPedido },
+  { id: 'pedido', ico: '📦', nome: 'Proposta → carga', tit: 'O fluxo inteiro, da proposta até o caminhão sair', desc: 'As 13 etapas na ordem: o que acontece, o que o app enxerga de cada uma e a régua ou a armadilha de cada passo.', fn: _mpMapaFluxo },
   { id: 'dia', ico: '⏱️', nome: 'Dia e turnos', tit: 'O dia de produção', desc: 'Dia operacional, turnos, peso de cada dia da semana e as réguas de meta, média e previsão.', fn: _mpMapaDia },
   { id: 'perdas', ico: '🗑️', nome: 'Perdas', tit: 'Do apontamento de refugo ao % de perda', desc: 'Como a regra do tipo de perda decide o setor culpado e por que cada máquina tem perda própria, recebida e enviada.', fn: _mpMapaPerdas },
   { id: 'paradas', ico: '⏸️', nome: 'Paradas e OEE', tit: 'Da parada apontada ao Painel', desc: 'O que o app confere antes de somar horas paradas, como sai o setup e onde o filtro de motivo muda o número.', fn: _mpMapaParadas },
