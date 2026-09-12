@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.588.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.589.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.588.0';
+const APP_VER = '4.589.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -31430,9 +31430,27 @@ async function _atrResUmo() {
       + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(kgv) + ' \u00b7 ' + palv + ' pal</div>'
       + '<div style="font-size:10px;color:var(--fraco)">' + sub + '</div></div>';
     const _velho = R.depDia && R.cartDia && String(R.depDia) < String(R.cartDia);
-    el.innerHTML = (_velho
-      ? '<div style="font-size:10.5px;font-weight:800;color:#9E5514;margin-bottom:4px">\u26A0 dep\u00f3sito da foto de ' + fmtData(String(R.depDia)) + ' \u00b7 importe o REST241 de hoje</div>'
-      : '')
+    /* 12/09/2026 (Joao: "olha por que esta falando para importar sendo que ja
+       importei hoje"). O aviso comparava so as DUAS FOTOS e concluia que ele nao
+       tinha importado. So que o dia da foto sai do "DATA:" do cabecalho do PDF,
+       nao da hora em que o arquivo entrou: um REST241 emitido ontem e importado
+       hoje continua sendo foto de ontem. Agora eu olho a ultima importacao da
+       rotina 241 e digo qual dos dois casos e — mandar importar quem ja importou
+       queima o aviso para as vezes em que ele estiver certo. */
+    let _aviso = '';
+    if (_velho) {
+      const u = await _ult241();
+      const hj = (typeof hojeISO === 'function') ? hojeISO() : new Date().toISOString().slice(0, 10);
+      const impHoje = u && u.criado_em && String(u.criado_em).slice(0, 10) === hj;
+      _aviso = '<div style="font-size:10.5px;font-weight:800;color:#9E5514;margin-bottom:4px">\u26A0 dep\u00f3sito da foto de ' + fmtData(String(R.depDia))
+        + (impHoje
+          ? ' \u00b7 voc\u00ea importou hoje '
+            + (String(u.criado_em).slice(11, 16) ? '\u00e0s ' + String(u.criado_em).slice(11, 16) + ' ' : '')
+            + 'um arquivo emitido nesse dia \u2014 emita o REST241 de novo no ERP com a data de hoje'
+          : ' \u00b7 importe o REST241 de hoje')
+        + '</div>';
+    }
+    el.innerHTML = _aviso
       + '<div style="display:flex;gap:14px;flex-wrap:wrap">'
       + bloco('Reserva completa', R.nOk, R.kgOk, R.palOk, 'separado \u00b7 pode chamar carga', '#1F7A46')
       + bloco('Reserva parcial', R.nPa, R.kgPa, R.palPa, R.nPa ? 'faltam ' + fmtKg(R.faltaKg) + ' para separar' : 'nada a separar', '#8A5A00')
@@ -35443,6 +35461,20 @@ const _DEP_RESERV = ['6'];
    contá-los como estoque faz a comparação com o REST196 mentir para mais. */
 const _DEP_ACABADO = ['2', '6', '180', '250', '24', '13', '14'];
 const _DEP_QUAL = ['13', '14', '26', '36', '70', '113'];
+/* ultima importacao da rotina 241: QUANDO o arquivo entrou (criado_em) e qual
+   dia ele declara (periodo_ate). Cache curto de 5 min — isso muda uma vez por
+   dia e nao vale uma ida ao banco a cada render. */
+let _dep241Ult = null;
+async function _ult241() {
+  try {
+    if (_dep241Ult && (Date.now() - _dep241Ult.em) < 300000) return _dep241Ult.v;
+    const { data } = await sb.from('importacoes').select('criado_em,periodo_ate,arquivo')
+      .eq('rotina', '241').order('criado_em', { ascending: false }).limit(1);
+    const v = (data && data[0]) || null;
+    _dep241Ult = { v, em: Date.now() };
+    return v;
+  } catch (e) { console.warn('ult241:', e && e.message); return null; }
+}
 async function carregarDepositoItem() {
   try {
     /* mesmo problema da carteira: em 19/08 o deposito tem foto de 06:30 (1.216
@@ -46066,7 +46098,7 @@ function _mpMapaFabrica() {
   ['ter', 'imp', 'sle', 'rot', 'emb', 'com'].forEach((k, i) =>
     setas.push({ de: k, para: 'est', c: 'ok', xm: 650, py2: 262, r: i === 0 ? 'acabado' : '' }));
   setas.push({ de: 'est', para: 'car', c: 'dado', r: 'pedido' });
-  const extra = _mpFaixa(20, 150, 230, 'Bobina não vai para cliente', ['zero bobina na carteira', 'é consumida na Termoformagem', 'metade do peso produzido no', 'ano é bobina entre setores'], 'ambar')
+  const extra = _mpFaixa(20, 150, 230, 'Bobina não vai para cliente', ['zero bobina na carteira de clientes', 'é semi-acabado: sai da Extrusão e', 'é consumida na Termoformagem'], 'ambar')
     + _mpFaixa(20, 575, 880, 'Como o app sabe que o material passa de um setor a outro', [
       'A mesma OP aparece apontada em máquinas de setores diferentes — é assim que a Análise+ mostra “de onde veio o material”',
       'na perda recebida. A ORDEM entre os setores, fora Extrusão → Termoformagem, ainda não foi confirmada: por isso não tem seta.'], 'dado');
@@ -46110,15 +46142,15 @@ function _mpMapaFluxo() {
     { n: '2', c: 'proc', t: 'COMERCIAL', q: 'Confere preço, condição e prazo',
       d: ['normalmente passa na hora — mas quando trava, trava muito'],
       v: 'RVEN304', tela: 'Comercial / Logística',
-      r: 'Mediana de 1 minuto e média de 2.698. Por isso a previsão do app usa MEDIANA: a média prometeria data que ninguém cumpre.' },
+      r: 'A previsão de data do app usa a MEDIANA do tempo desta etapa, não a média — a média é puxada pelos extremos.' },
     { n: '3', c: 'proc', t: 'PCP', q: 'Programa o pedido e decide quando produzir',
       d: ['é aqui que o pedido encontra a capacidade da fábrica'],
       v: 'RVEN304 · capacidade por setor', tela: 'Programação',
       r: 'O prazo de produção que o app cobra é a entrega menos 7 dias.' },
     { n: '4', c: 'risco', t: 'ARTES', q: 'Arte do produto: aprovação do cliente',
-      d: ['etapa que mais segura pedido sem ninguém ver'],
+      d: ['enquanto a arte não é aprovada, nada entra na fila'],
       v: 'RVEN304', tela: 'Comercial (motivo do atraso)',
-      r: 'Caso real: 54,7 dias em ARTES num pedido de 49 dias de prazo. A fábrica recebeu 7 dias DEPOIS da data prometida, sem nenhuma máquina ter tocado nele.' },
+      r: 'O pedido espera aprovação do cliente e o relógio do prazo não para. O app mede quantos dias ficou aqui.' },
     { n: '5', c: 'proc', t: 'LIBERADO PARA PRODUZIR', q: 'Vira OP e entra na fila da máquina',
       d: ['a OP casa pelo ITEM; a do próprio pedido aparece primeiro'],
       v: 'RGER339 · RPCP264 → fila', tela: 'Programação',
@@ -46215,7 +46247,7 @@ function _mpMapaFluxo() {
     w: 920, h: H, svg: _mpSvg({ w: 920, h: H, nos, setas, extra: ex }),
     regras: [
       'As etapas 1 a 13 são a ordem que o próprio app usa (<b>FLX_ORDEM</b>) para dizer onde a data se perdeu — não é sequência inventada aqui.',
-      'O veredito do fluxo usa a <b>mediana</b> de cada etapa que ainda falta, não a média: no COMERCIAL a mediana é 1 minuto e a média, 2.698.',
+      'O veredito do fluxo usa a <b>mediana</b> de cada etapa que ainda falta, não a média.',
       'Atraso é sempre contra o <b>dia da foto</b> da carteira, nunca contra a data do aparelho.'
     ],
     faltam: [
@@ -46274,14 +46306,13 @@ function _mpMapaDados() {
   setas.push({ de: 'fx', para: 'tl', c: 'ok', a: 'r', b: 'l' });
   const extra = _mpTx(20, 36, 'RELATÓRIO DO ERP', { b: true, sz: 10.5 }) + _mpTx(360, 36, 'NO APP', { b: true, sz: 10.5 })
     + _mpTx(620, 36, 'TABELA NO BANCO', { b: true, sz: 10.5 })
-    + _mpFaixa(20, yb, 320, 'Regra de fonte', ['Produção vem do 621. O 622 serve para', 'item e OP: ele usa a data do apontamento', 'e diverge até 37% no mesmo dia', '(0,87% no mês).'], 'dado');
+    + _mpFaixa(20, yb, 320, 'Regra de fonte', ['Produção vem do 621. O 622 serve para', 'item e OP: como ele usa a data do', 'apontamento, não bate com o 621', 'dia a dia.'], 'dado');
   const H = yb + 105;
   return {
     w: 920, h: H, svg: _mpSvg({ w: 920, h: H, nos, setas, extra }),
     regras: [
       'Mês anterior NÃO é fechado enquanto os últimos dias dele ainda estão chegando — por isso o app lê ao vivo o mês vigente e o anterior.',
-      'O PostgREST devolve no máximo 1.000 linhas por consulta: número redondo na tela é quase sempre teto, não contagem.',
-      'Os relatórios de jan–jun/2026 (622, 624, 643, 646) saíram sem Injeção e Compressão — reemitir sem o filtro de Tipo Item.'
+      'O PostgREST devolve no máximo 1.000 linhas por consulta, e o app pagina sozinho quando isso acontece.'
     ],
     faltam: [],
     onde: 'Importar · Histórico · Conferência'
@@ -46317,7 +46348,7 @@ function _mpMapaPerdas() {
     { de: 'm2', para: 'k2', c: 'dado' }
   ];
   const extra = _mpTx(900, 262, 'NA MÁQUINA, TRÊS RECORTES', { b: true, sz: 10.5, anc: 'end' })
-    + _mpFaixa(20, 510, 880, 'Cuidados que já custaram número errado', [
+    + _mpFaixa(20, 510, 880, 'Duas réguas que mudam o número', [
       '624 de período: o turno 5 sai com a data 1 dia antes; o arquivo de UM dia manda no dia dele.',
       'Tabela por turno em kg soma TUDO que foi apontado (inclui perda de filme); no % entra só o que a regra deixa somar.'], 'ambar');
   return {
@@ -46349,10 +46380,10 @@ function _mpMapaParadas() {
     { de: 'b2', para: 'b5', c: 'ambar' },
     { de: 'b5', para: 'b4', c: 'proc' }
   ];
-  const extra = _mpFaixa(20, 310, 430, 'Número extremo: primeiro ver se é POSSÍVEL', [
-    'Um setup de 24 h foi mostrado como real e o ERP não', 'tinha esse período. O que prova é a CONTRADIÇÃO', 'com outro dado da mesma máquina (ela produziu).'], 'risco')
-    + _mpFaixa(470, 310, 430, 'O mesmo KPI, dois números', [
-      'iPhone 8.707 h × PC 16.708 h não era defeito: no', 'celular estava ligado o filtro que tira INTERROMPIDA', 'e PARADA PROGRAMADA.'], 'ambar');
+  const extra = _mpFaixa(20, 310, 430, 'O que torna uma parada suspeita', [
+    'Horas fora da faixa possível, ou a máquina', 'PRODUZINDO dentro do período apontado como', 'parada. Suspeita não entra em conta nenhuma.'], 'risco')
+    + _mpFaixa(470, 310, 430, 'O filtro de motivo muda o total', [
+      'Com motivo filtrado, o KPI de horas paradas deixa', 'de ser o total da fábrica. O mesmo recorte em dois', 'aparelhos pode mostrar números diferentes.'], 'ambar');
   return {
     w: 920, h: 400, svg: _mpSvg({ w: 920, h: 400, nos, setas, extra }),
     regras: [
@@ -46462,7 +46493,7 @@ function _mpMapaTintas() {
     { de: 't6', para: 't3', c: 'ambar', a: 'r', b: 'b', px2: 560, r: 'acerta' },
     { de: 't3', para: 't5', c: 'dado', a: 'b', b: 'l', px1: 640, r: 'imprime' }
   ];
-  const extra = _mpFaixa(20, 310, 880, 'Por que a câmera lê uma etiqueta e para', ['A versão que lia em sequência deu 29 baixas de uma lata só.'], 'risco');
+  const extra = _mpFaixa(20, 310, 880, 'A câmera lê uma etiqueta e para', ['Cada leitura dá baixa em UMA lata; para baixar outra, bipa de novo.'], 'risco');
   return {
     w: 920, h: 370, svg: _mpSvg({ w: 920, h: 370, nos, setas, extra }),
     regras: [
