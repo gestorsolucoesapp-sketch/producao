@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.593.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.594.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.593.0';
+const APP_VER = '4.594.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -32551,11 +32551,24 @@ async function cardSaidaDia(forcar) {
     /* duas fontes, cada uma dizendo o que sabe: o 196 sabe o PESO mas só desde
        22/08; o 304 sabe QUANTOS pedidos saíram e cobre o mês inteiro. Junto as
        duas pela data e deixo a tela mostrar as duas leituras separadas. */
+    /* ===== 12/09/2026 (João: "está dando sempre esses erros") =====
+       O erro era `v_expedidos_dia · 500 · statement timeout`. Eu pedia a view
+       INTEIRA, sem recorte de data — ela varre todo o histórico do fluxo do
+       pedido — e a tela usa só os ÚLTIMOS 30 DIAS (`slice(-30)`). Ou seja: o
+       banco levava minutos para montar meses de dado que eu jogava fora na
+       linha seguinte, e estourava o tempo limite do PostgREST.
+       Agora peço 60 dias (o dobro do que a tela mostra, para o gráfico não
+       ficar sem folga) nas DUAS fontes. A régua é a data, não `limit`: limite
+       de linhas cortaria pelo fim e poderia deixar o dia de hoje de fora. */
+    const _desde = (() => { const d = new Date(); d.setDate(d.getDate() - 60); return d.toISOString().slice(0, 10); })();
     const [sd, ex] = await Promise.all([
       /* 08/09/2026 — auditoria: 1.973 ms medidos, pior caso 7.907 ms. Vira foto. */
-      sb.from('mv_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia')
-        .then(r => r.error ? sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').order('dia') : r),
-      sb.from('v_expedidos_dia').select('dia,pedidos').order('dia')
+      sb.from('mv_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').gte('dia', _desde).order('dia')
+        .then(r => r.error ? sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').gte('dia', _desde).order('dia') : r),
+      /* o strip de pedidos é acessório: se ele falhar, o gráfico de toneladas
+         ainda vale. Por isso o erro dele NÃO derruba o card. */
+      sb.from('v_expedidos_dia').select('dia,pedidos').gte('dia', _desde).order('dia')
+        .then(r => r, () => ({ data: [], error: null }))
     ]);
     if (sd.error) throw sd.error;
     const porDia = {};
