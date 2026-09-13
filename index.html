@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.596.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.597.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.596.0';
+const APP_VER = '4.597.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -31997,9 +31997,35 @@ function chaoTurno(b, manter) {
         + '</div>'; }).join('')
     + '<p class="desc" style="font-size:10px;margin:6px 0 2px">Verde bateu a meta da máquina neste turno · amarelo 90% · vermelho abaixo. O % é o quanto da meta foi feito.</p></div>';
 }
+/* ===== 12/09/2026 (João: print "paradas · erro 500 · statement timeout" na
+   Gestão à Vista) =====
+   A consulta pedia o MÊS INTEIRO de uma vez, para até 25 máquinas, com filtro
+   de revisão — e o banco desistia no meio. Nenhum dado chegava e a tela
+   mostrava a faixa vermelha.
+   Agora vai em BLOCOS DE 7 DIAS, um de cada vez. É a mesma soma no fim: cada
+   parada cai num dia só, então fatiar por data não duplica nem perde linha.
+   Cada pedaço é pequeno o bastante para caber no tempo limite, e se um bloco
+   falhar eu devolvo o que já tenho em vez de perder o mês todo. */
+async function _leEmBlocosDia(mk, de, ate, dias) {
+  const passo = dias || 7, out = [];
+  let ini = new Date(de + 'T12:00:00'), fim = new Date(ate + 'T12:00:00');
+  let falhou = 0;
+  while (ini <= fim) {
+    const b1 = ini.toISOString().slice(0, 10);
+    const d2 = new Date(ini); d2.setDate(d2.getDate() + passo - 1);
+    const b2 = (d2 > fim ? fim : d2).toISOString().slice(0, 10);
+    try { const parte = await _leTudoFlx(() => mk(b1, b2)); for (const x of parte) out.push(x); }
+    catch (e) { falhou++; console.warn('bloco ' + b1 + '→' + b2 + ' falhou:', e && e.message); }
+    ini = new Date(d2); ini.setDate(ini.getDate() + 1);
+  }
+  if (falhou) out._incompleto = falhou;
+  return out;
+}
 async function _chaoParadasTurno(S, cods, mes0, ult, noEscopo) {
   try {
-    const R = await _leTudoFlx(() => sb.from('paradas').select('dia,recurso_cod,tempo_horas,inicio').gte('dia', mes0).lte('dia', ult).in('recurso_cod', cods).is('revisar', null).order('id'));
+    const R = await _leEmBlocosDia((b1, b2) => sb.from('paradas').select('dia,recurso_cod,tempo_horas,inicio')
+      .gte('dia', b1).lte('dia', b2).in('recurso_cod', cods).is('revisar', null).order('id'), mes0, ult, 7);
+    if (R._incompleto) { try { saudeRegistra({ alvo: 'paradas (Gestão à Vista)', msg: R._incompleto + ' bloco(s) de dias não vieram — as horas de parada podem estar abaixo do real' }); } catch (_) { } }
     const acc = { 'Manhã': 0, 'Tarde': 0, 'Noite': 0 };
     const dados = _chaoDados[S], MQ = dados ? dados.MQ : null;
     R.forEach(x => { if (!noEscopo(x.recurso_cod)) return; try { const t = tempoParadaPorTurno(x.inicio, +x.tempo_horas || 0, String(x.dia).slice(0, 10));
