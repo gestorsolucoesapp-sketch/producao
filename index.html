@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.599.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.600.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.599.0';
+const APP_VER = '4.600.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -31822,6 +31822,34 @@ async function chaoAbrir(forcar) {
     const M = somaDias(diasMes), U = D[ult] || vazio();
     const metaMes = metaDiaCheio == null ? null : diasMes.reduce((a, d) => a + (metaDia(d) || 0), 0);
     const metaBlMes = b => { const mb = metaBloco(b); return mb == null ? null : diasMes.reduce((a, d) => a + mb * fatorDia(d), 0); };
+    /* ===== 13/09/2026 (João: "quando põe Todos dá para mandar de todos os
+       setores, um embaixo do outro?") =====
+       Dá, e sem ida nova ao banco: com o filtro em Todos eu já carreguei as
+       máquinas da fábrica inteira — só faltava separar por setor na hora de
+       escrever. Só monto quando NÃO há setor escolhido; com um setor na pílula
+       a lista seria ele mesmo repetido.
+       A meta de cada setor sai da mesma régua da meta da fábrica (soma das
+       máquinas daquele setor, dia a dia, com o peso do sábado) — assim o total
+       dos setores fecha com o número de cima em vez de brigar com ele. */
+    const _setoresLista = S ? [] : setoresEscopo.slice();
+    const _metaSetorMes = sec => {
+      const cs = (SETOR_MAQ[sec] || []).map(String);
+      let cheio = 0, ok = false;
+      BL.forEach(b => { cs.forEach(c => { const m = metasData && metasData[c]; if (m && m[b]) { cheio += m[b]; ok = true; } }); });
+      return ok ? diasMes.reduce((a, d) => a + cheio * fatorDia(d), 0) : null;
+    };
+    const _porSetor = (() => {
+      if (!_setoresLista.length) return null;
+      const acc = {}, noMes = d => d >= mes0 && d <= ult;
+      const get = sec => acc[sec] || (acc[sec] = { prod: 0, perda: 0, par: 0 });
+      PX.forEach(x => { if (!noEscopo(x.recurso_cod)) return; if (!noMes(String(x.dia).slice(0, 10))) return;
+        const sec = setorDe(x.recurso_cod); if (!sec || _setoresLista.indexOf(sec) < 0) return;
+        const o = get(sec); o.prod += +x.prod || 0; o.perda += +x.perda || 0; });
+      R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; if (!noMes(String(x.dia).slice(0, 10))) return;
+        const sec = setorDe(x.recurso_cod); if (!sec || _setoresLista.indexOf(sec) < 0) return;
+        get(sec).par += +x.tempo_horas || 0; });
+      return acc;
+    })();
     const topMot = mot => { const ks = Object.keys(mot).sort((a, b) => mot[b] - mot[a]); return ks.length ? { nome: ks[0], h: mot[ks[0]] } : null; };
     const pct = (a, b) => (!emCx && b > 0) ? (100 * a / b) : null;
     const face = r => r == null ? '😶' : r >= 1 ? '😃' : r >= 0.9 ? '😐' : '😟';
@@ -31877,6 +31905,17 @@ async function chaoAbrir(forcar) {
         const h = (parBl && parBl[b] != null) ? Math.round(parBl[b]) + ' h parada' : 'parada calculando…';
         return b + ' · ' + fmtV(o.prod) + (mb ? ' / ' + fmtV(mb) + (r ? ' (' + Math.round(r * 100) + '%)' : '') : '') + (pp == null ? '' : ' · perda ' + fpct(pp)) + ' · ' + h; }).join('\n')
       + '\n\n*' + (ult === hoje ? 'Hoje' : 'Último dia') + ' · ' + dLabel(ult) + '*\n' + linhaTrio(U, metaDia(ult))
+      + (_porSetor
+        ? '\n\n*Por setor · ' + nomeMes + ' até ' + dLabel(ult) + '*\n'
+          + Object.keys(_porSetor)
+            .sort((a, b) => _porSetor[b].prod - _porSetor[a].prod)
+            .map(sec => { const o = _porSetor[sec], mt = _metaSetorMes(sec), r = mt ? o.prod / mt : null,
+              pp = (o.prod + o.perda) > 0 ? (100 * o.perda / (o.prod + o.perda)) : null;
+              return '• *' + sec + '* · ' + fmtKg(o.prod)
+                + (mt ? ' / ' + fmtKg(mt) + (r ? ' (' + Math.round(r * 100) + '%)' : '') : '')
+                + (pp == null ? '' : ' · perda ' + fpct(pp))
+                + ' · ' + Math.round(o.par) + ' h parada'; }).join('\n')
+        : '')
       + '\n\n_Gestão à Vista · Rioplastic_';
     _chaoZapTxt['setor'] = _chaoZapMonta(null);
     /* cabeçalho: escopo + pílulas quando a pessoa pode trocar */
