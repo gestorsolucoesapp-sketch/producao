@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.604.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.605.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.604.0';
+const APP_VER = '4.605.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -31588,6 +31588,19 @@ async function _atrResUmo() {
       + '<div style="display:flex;gap:14px;flex-wrap:wrap">'
       + bloco('Reserva completa', R.nOk, R.kgOk, R.palOk, 'separado \u00b7 pode chamar carga', '#1F7A46')
       + bloco('Reserva parcial', R.nPa, R.kgPa, R.palPa, R.nPa ? 'faltam ' + fmtKg(R.faltaKg) + ' para separar' : 'nada a separar', '#8A5A00')
+      /* 14/09/2026: entra no MESMO card porque a pergunta é a mesma — o que está
+         separado esperando carga. Só que aqui o assunto não é falta, é sobra de
+         antecedência; por isso fica ao lado, não dentro do verde. */
+      + (R.adi && R.adi.n
+        ? '<div style="min-width:150px">'
+          + '<div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Adiantados</div>'
+          + '<b onclick="destravaReserva(\'ok\',\'todas\')" style="font-size:22px;color:#9E5514;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">' + R.adi.n + '</b>'
+          + '<div style="font-size:11px;color:var(--fraco)">' + fmtKg(R.adi.kg) + ' \u00b7 prontos antes da hora</div>'
+          + '<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap">'
+          + RES_ADI.filter(f => R.adi[f.k] && R.adi[f.k].n).map(f =>
+            '<span onclick="destravaReserva(\'ok\',\'' + f.k + '\')" title="' + f.rot + ' · ' + fmtKg(R.adi[f.k].kg) + '" style="cursor:pointer;font-size:10px;font-weight:800;border-radius:999px;padding:2px 8px;background:#FFF6E9;border:1px solid #F0D9B0;color:' + f.cor + '">' + f.rot.replace(' dias ou mais', 'd+').replace(' dias', 'd') + ' ' + R.adi[f.k].n + '</span>').join('')
+          + '</div></div>'
+        : '')
       + '</div>';
   } catch (e) { el.innerHTML = ''; console.warn('resUmo:', e && e.message); }
 }
@@ -39098,7 +39111,7 @@ function detSeparar(filtro) {
       }).join('')));
 }
 
-function destravaReserva(qual) {
+function destravaReserva(qual, adiFaixa) {
   const A = _alocarEstoque();
   if (!A) { toast('Importe o REST196 primeiro'); return; }
   if (!_depoItem || !_depoItem.itens) { toast('Importe o REST241 (depósito) para ver a reserva'); return; }
@@ -39127,16 +39140,27 @@ function destravaReserva(qual) {
     p._faltaRes = falta;
     (falta > 0.001 ? pa : ok).push(p);
   });
-  const L = qual === 'parcial' ? pa : ok;
-  const tit = qual === 'parcial' ? '⚠️ Pronto · reserva parcial' : '✅ Pronto · reserva completa';
+  let L = qual === 'parcial' ? pa : ok;
+  let tit = qual === 'parcial' ? '⚠️ Pronto · reserva parcial' : '✅ Pronto · reserva completa';
+  /* 14/09/2026: a mesma lista serve de detalhe do número "adiantados". Filtrar
+     aqui (e não numa tela nova) mantém uma régua só: se a conta do card mudar,
+     a lista muda junto. */
+  const _cDia = (_cart196 && _cart196.dia) || null;
+  if (adiFaixa) {
+    const fx = adiFaixa === 'todas' ? null : RES_ADI.find(f => f.k === adiFaixa);
+    L = L.filter(p => { const f = _resFaixaAdi(p, _cDia); return f && (!fx || f.k === fx.k); });
+    tit = '⏩ Adiantados · ' + (fx ? fx.rot : '15 dias ou mais') + ' antes da entrega';
+  }
   if (!L.length) { abreDet(tit, '<p class="idet-desc">Nenhum pedido nessa condição.</p>'); return; }
   const totKg = L.reduce((s, p) => s + (+p.kg || 0), 0);
   const totFalta = L.reduce((s, p) => s + (+p._faltaRes || 0), 0);
   const linhas = L.map(p => {
     const venc = (+p.atraso || 0) > 0;
+    const _fa = qual === 'parcial' ? null : _resFaixaAdi(p, _cDia);
+    const _dd = _fa ? _resDiasAte(p, _cDia) : null;
     return `<tr style="cursor:pointer" onclick="detPedido('${_jsAttr(p.num)}')">
       <td class="nome" style="font-size:12px"><span class="cod">${escapeHtml(p.num)}</span> ${escapeHtml(String(p.cli || '').slice(0, 26))} 🔎
-        <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}${venc ? ' · <b style="color:var(--critico)">' + p.atraso + 'd vencido</b>' : ''}</div></td>
+        <div style="font-size:10.5px;color:var(--fraco-2)">${p.linhas} linha(s)${p.ent ? ' · entrega ' + fmtDataSem(p.ent) : ''}${venc ? ' · <b style="color:var(--critico)">' + p.atraso + 'd vencido</b>' : ''}${_fa ? ' · <b style="color:' + _fa.cor + '">⏩ ' + _dd + 'd antes</b>' : ''}</div></td>
       <td><span class="cel ${qual === 'parcial' ? 'baixo' : 'ok'}">${kg(p.kg)}
         ${qual === 'parcial' ? `<div style="font-size:10px;font-weight:800;opacity:.95">separar ${kg(p._faltaRes)}</div>` : ''}</span>
         ${qual === 'parcial' ? `<div style="font-size:10px;color:var(--fraco-2);margin-top:2px;text-align:center">${escapeHtml(_resOndeBuscar(p))}</div>` : ''}</td></tr>`;
@@ -39165,6 +39189,32 @@ function destravaReserva(qual) {
    por isso o total da reserva completa bate com o número do card. A parte a
    separar vira caixa pela proporção da linha (qtd × kg a separar ÷ kg da linha).
    Item fora de CX não vira palete — a linha diz "parte em kg". */
+/* ===== 14/09/2026 (João: "sinalize pedido que adiantaram muito além da data de
+   entrega", e escolheu as três faixas: 15 a 29, 30 a 59, 60+) =====
+   Adiantado = pedido com RESERVA COMPLETA (material já separado no depósito 6)
+   cuja entrega ainda está longe. Não é erro, mas é palete ocupado e capacidade
+   gasta antes da hora enquanto outro pedido está vencido — por isso vale ver.
+   A conta é contra o DIA DA FOTO da carteira, igual a todas as réguas de atraso
+   do app: abrir a carteira de ontem tem de dar o mesmo resultado.
+   As faixas são as que ele definiu; não invento corte nem junto tudo num número
+   só, porque 20 dias e 90 dias pedem conversas diferentes com o comercial. */
+const RES_ADI = [
+  { k: '15', min: 15, max: 29, rot: '15 a 29 dias', cor: '#8A5A00' },
+  { k: '30', min: 30, max: 59, rot: '30 a 59 dias', cor: '#9E5514' },
+  { k: '60', min: 60, max: 99999, rot: '60 dias ou mais', cor: '#9B2C2C' }
+];
+function _resDiasAte(p, cartDia) {
+  if (!p || !p.ent || !cartDia) return null;
+  const a = new Date(String(p.ent).slice(0, 10) + 'T12:00:00');
+  const b = new Date(String(cartDia).slice(0, 10) + 'T12:00:00');
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((a - b) / 86400000);
+}
+function _resFaixaAdi(p, cartDia) {
+  const d = _resDiasAte(p, cartDia);
+  if (d == null || d < RES_ADI[0].min) return null;
+  return RES_ADI.find(f => d >= f.min && d <= f.max) || null;
+}
 function _resDepsFora(item) {
   const I = (_depoItem && _depoItem.itens && _depoItem.itens[String(item)]) || null;
   return I ? (I.deps || []).filter(d => !_DEP_RESERV.includes(String(d.cod)) && d.kg > 0) : [];
@@ -39793,7 +39843,15 @@ function _cardDestravaBase(_semAlav) {
            REST241, e ele hoje tem UMA foto no banco. Se o 241 do dia nao for
            importado, o numero congela na foto velha sem avisar ninguem — e
            "pode chamar carga" viraria mentira. Guardo a data da foto usada. */
-        _progResNum = { nOk, nPa, kgOk, kgPa, palOk, palPa,
+        /* 14/09/2026: o card de atrasados mostra a versão curta destes números.
+           Calculo as faixas AQUI, junto com o resto, para os dois cards nunca
+           divergirem — a mesma razão pela qual nOk/kgOk já moravam aqui. */
+        const _cDia = (_cart196 && _cart196.dia) || null;
+        const _adi = { n: 0, kg: 0 };
+        RES_ADI.forEach(f => { _adi[f.k] = { n: 0, kg: 0 }; });
+        _rOk.forEach(p => { const f = _resFaixaAdi(p, _cDia); if (!f) return;
+          _adi.n++; _adi.kg += +p.kg || 0; _adi[f.k].n++; _adi[f.k].kg += +p.kg || 0; });
+        _progResNum = { nOk, nPa, kgOk, kgPa, palOk, palPa, adi: _adi,
           faltaKg: _rPa.reduce((z, p) => z + (+p._faltaRes || 0), 0),
           depDia: (_depoItem && _depoItem.dia) || null,
           cartDia: (_cart196 && _cart196.dia) || null };
