@@ -1304,7 +1304,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.600.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.601.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3970,7 +3970,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.600.0';
+const APP_VER = '4.601.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -30216,6 +30216,35 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     const cn = cliNome(l.cod);
     return `<tr><td class="nome"${cn ? ` onclick="${cn}" style="cursor:pointer"` : ''}>${selo(l.cod)}${setaRec(l.cod)}<span class="cod">${escapeHtml(l.cod)}</span> <span${cn ? ' style="text-decoration:underline dotted;text-underline-offset:3px"' : ''}>${escapeHtml(l.nome)}</span>${bocaBadge(l.cod)}${cn ? ' 🔎' : ''}${seloPeca(l.cod)}</td>${cH(l.m, 0, l.cod)}${cH(l.ta, 1, l.cod)}${cH(l.n, 2, l.cod)}${cH(l.tot, 3, l.cod)}</tr>`;
   }).join('');
+  /* ===== 13/09/2026 (Renato, pelo João: "dá para colocar a soma aqui?", com as
+     três colunas de turno marcadas no print) =====
+     Rodapé com a soma de cada turno e o total do recorte.
+     O total sai de `cel`/`den` (os números crus), NUNCA da média das células:
+     no modo %, somar porcentagem de máquina daria um número que não existe — o
+     certo é refugo total ÷ (refugo + produção) do turno inteiro, a mesma conta
+     de cada célula, só que um nível acima.
+     Soma apenas as máquinas MOSTRADAS, para a coluna fechar com o que se vê. */
+  const _codsVis = new Set(linhas.map(l => String(l.cod)));
+  const _somaCol = (obj, b) => Object.keys(obj || {}).reduce((a2, c) => a2 + (_codsVis.has(String(c)) ? (obj[c][b] || 0) : 0), 0);
+  const _rodape = (() => {
+    if (!linhas.length) return '';
+    const bs = ['Manhã', 'Tarde', 'Noite'];
+    const pv = bs.map(b => _somaCol(cel, b));
+    const pTot = pv.reduce((a2, x) => a2 + x, 0);
+    let vals, vTot;
+    if (denRows) {
+      const dv = bs.map(b => _somaCol(den, b));
+      const dTot = dv.reduce((a2, x) => a2 + x, 0);
+      const rz = (p, q) => (p + q) > 0 ? (p / (p + q) * 100) : 0;
+      vals = pv.map((p, i) => rz(p, dv[i])); vTot = rz(pTot, dTot);
+    } else { vals = pv; vTot = pTot; }
+    const cl = ['t-man', 't-tar', 't-noi'];
+    return '<tfoot><tr style="border-top:2px solid var(--linha-2s)">'
+      + '<td class="nome" style="font-weight:900">TOTAL<div class="desc" style="font-size:10px;font-weight:600">'
+      + linhas.length + ' máquina(s)' + (denRows ? ' · refugo ÷ (refugo + produção)' : '') + '</div></td>'
+      + vals.map((v, i) => '<td class="' + cl[i] + '" style="font-weight:900">' + (v > 0 ? fmtCel(v) : '—') + '</td>').join('')
+      + '<td style="font-weight:900">' + (vTot > 0 ? fmtCel(vTot) : '—') + '</td></tr></tfoot>';
+  })();
   const nOrig = Object.keys(origem).length;
   const nRec = Object.keys(matRec).filter(c => matRec[c] > 0.05).length;
   const notaOrig = (nOrig
@@ -30223,7 +30252,7 @@ function tabelaMaqTurno(rows, { valFn, fmtCel, corCel, corTurno, incluirCods, no
     : '') + (nRec
     ? `<p class="desc explica" style="font-size:10.5px;margin:4px 0 0">↗ ${nRec} máquina(s) com perda recebida de outro setor — o material já chegou ruim (material ruim, bobina, pigmento). O kg continua contando aqui; toque na célula do turno para ver de qual máquina veio, rastreado pela OP.</p>`
     : '');
-  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody></table></div>` + notaOrig;
+  return `<div style="overflow-x:auto"><table class="aprov-tab"><thead><tr><th style="text-align:left">Máquina</th><th class="t-man">Manhã</th><th class="t-tar">Tarde</th><th class="t-noi">Noite</th><th>Total</th></tr></thead><tbody>${rows2}</tbody>${_rodape}</table></div>` + notaOrig;
 }
 // tabela de aproveitamento máquina × turno (produção termo ÷ consumo bobina)
 function tabelaAprov(termoRows, bobRows) {
