@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.615.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.616.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3994,7 +3994,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.615.0';
+const APP_VER = '4.616.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -35643,6 +35643,7 @@ async function gravar(id, substituir = false) {
       try {
         const { data: nArq } = await sb.rpc('arquiva_estoque_dia');
         if (nArq) toast('📚 ' + fmtNum(nArq) + ' linhas do estoque arquivadas');
+        try { await sb.rpc('refaz_plano'); } catch (e) { console.warn('refaz_plano:', e && e.message); }
       } catch (e) { console.warn('arquiva_estoque_dia:', e && e.message); }
     }
     if (mapa.tabela === 'rest196_pendente') {
@@ -47207,8 +47208,12 @@ async function plnAbrir(forcar) {
     box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando o plano…</p>';
     try {
       const [a, b, c] = await Promise.all([
-        _leTudoFlx(() => sb.from('v_estoque_min_max').select('*').order('kg_mes_media', { ascending: false })),
-        sb.from('v_item_mes').select('mes,kg,cx').gte('mes', '2025-01-01'),
+        /* 15/09/2026 — a view calculava 276 mil linhas de produção a cada
+           abertura e estourava o tempo limite ("statement timeout"). Virou FOTO
+           no banco (mv_): calcula uma vez e a tela só lê. Refaz quando a régua
+           muda ou entra importação nova. */
+        _leTudoFlx(() => sb.from('mv_estoque_min_max').select('*').order('kg_mes_media', { ascending: false })),
+        sb.from('mv_item_mes').select('mes,kg,cx').gte('mes', '2025-01-01').limit(2000),
         sb.from('plano_param').select('*')
       ]);
       _plnDados = a || [];
@@ -47373,7 +47378,10 @@ async function plnSalvaRegua() {
   if (its[0].valor >= its[1].valor) { toast('O mínimo tem de ser menor que o máximo.'); return; }
   try {
     for (const it of its) { const { error } = await sb.from('plano_param').update({ valor: it.valor }).eq('chave', it.chave); if (error) throw error; }
-    toast('⚙️ Régua salva — recalculando.');
+    toast('⚙️ Régua salva — recalculando…');
+    /* a foto precisa ser refeita, senão a régua nova não muda número nenhum e
+       parece que o salvar não funcionou */
+    try { await sb.rpc('refaz_plano'); } catch (e) { toast('Salvou, mas não consegui recalcular agora: ' + ((e && e.message) || e)); }
     _plnDados = null; await plnAbrir(true);
   } catch (e) { toast('❌ ' + ((e && e.message) || e)); }
 }
