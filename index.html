@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.622.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.623.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3994,7 +3994,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.622.0';
+const APP_VER = '4.623.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -47189,59 +47189,38 @@ async function mpZap() {
 }
 
 
-/* ===== 14/09/2026 (João: "plano de vendas, estoque mínimo e máximo de todos os
-   itens conhecidos") =====
-   FONTE E LIMITE, escritos na própria tela porque mudam a leitura:
-   a base é a PRODUÇÃO real por item (jan/2025 em diante, 276 mil linhas). Produção
-   não é demanda — é o que a fábrica fez. Onde faltou material, ela subestima o
-   que o cliente queria. A carteira, que é a demanda de verdade, só tem 24 dias
-   guardados, e o estoque começou a ser arquivado hoje. Por isso o mínimo e o
-   máximo são uma RÉGUA DE COBERTURA (dias de venda), não uma previsão: são
-   defensáveis para item com giro, e não são para item que roda sob pedido.
-   As contas vivem no banco (v_item_plano, v_estoque_min_max, plano_param) para
-   a tela não ter régua própria — se mudar, muda num lugar só. */
-/* 15/09/2026: DUAS bases, de propósito. `_plnDados` é BOBINA (estoque) e
-   `_plnVend` é ACABADO (vendas). Quando o estoque virou bobina eu deixei a tela
-   de vendas lendo a mesma lista, e bobina apareceu como item que "puxa a venda"
-   — que é justamente o que o João mandou tirar. Cada tela com a sua base. */
-let _plnDados = null, _plnMes = null, _plnVista = 'estoque', _plnBusca = '', _plnCurva = '', _plnSit = '', _plnPar = null, _plnFora = null, _plnBoca = null, _plnVend = null, _plnCanal = null, _plnCanalMes = null, _plnBuscaIt = '', _plnCurvaIt = '', _plnCanalSel = '';
+/* ===== 15/09/2026 (João: "ficou meio misturado e confuso; faça sem separar
+   industrial; curva ABC de tudo e por setor; mínimo e máximo de tudo e permita
+   filtrar por boca") =====
+   Refeita do zero, com UMA lista só. O que saiu e por quê:
+   · a separação industrial x linha própria SAIU. Ela dependia de achar nome de
+     cliente na descrição, errava nos dois sentidos e dividia a tela em duas
+     leituras que ninguém pediu;
+   · as três listas (bobina, acabado, todos) viraram UMA, com filtros. Bobina e
+     acabado convivem: quem quiser um só filtra pelo setor.
+   Duas curvas ABC, de propósito: a GERAL diz o peso do item na fábrica inteira;
+   a DO SETOR diz o peso dele dentro do setor. Um item pode ser C na fábrica e A
+   na Injeção — e quem programa a Injeção precisa da segunda.
+   Tudo em três unidades (t, cx, milheiro), menos onde não existe: bobina não tem
+   caixa nem milheiro, e item sem "N UNID" na descrição fica sem milheiro. */
+let _plnDados = null, _plnMes = null, _plnVista = 'itens', _plnPar = null, _plnBoca = null;
+let _plnBusca = '', _plnCurva = '', _plnSit = '', _plnSetor = '', _plnBocaSel = '', _plnCurvaTipo = 'geral';
 
 async function plnAbrir(forcar) {
   const box = $('planoBox'); if (!box) return;
   if (!_plnDados || forcar) {
     box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando o plano…</p>';
     try {
-      const [a, b, c, d, bo, vd, cm, ic] = await Promise.all([
-        /* 15/09/2026 — a view calculava 276 mil linhas de produção a cada
-           abertura e estourava o tempo limite ("statement timeout"). Virou FOTO
-           no banco (mv_): calcula uma vez e a tela só lê. Refaz quando a régua
-           muda ou entra importação nova. */
-        _leTudoFlx(() => sb.from('mv_estoque_min_max').select('*').order('kg_mes_media', { ascending: false })),
-        /* 15/09/2026 (João: "bobina não entra, só entra produto cujo código
-           começa com 160"). O gráfico e a sazonalidade têm de usar o MESMO
-           recorte da lista, senão o mês médio incluiria bobina e a régua de
-           cobertura sairia contra um volume que não é de cliente. */
-        sb.from('mv_item_mes').select('mes,kg,cx,item_cod').gte('mes', '2025-01-01').like('item_cod', '160%').limit(20000),
+      const [a, b, c, bo] = await Promise.all([
+        _leTudoFlx(() => sb.from('mv_plano_item').select('*').order('kg_total', { ascending: false })),
+        sb.from('mv_item_mes').select('mes,kg,cx').gte('mes', '2025-01-01').limit(20000),
         sb.from('plano_param').select('*'),
-        sb.from('v_plano_fora').select('*'),
-        /* 15/09/2026 (João: "permita a análise por boca também"). Reuso a
-           dedução de boca que o app já faz na Demanda (v_boca_item_dia): uma
-           régua só para a fábrica inteira. */
-        sb.from('mv_boca_mes').select('*').limit(3000),
-        _leTudoFlx(() => sb.from('mv_plano_vendas').select('*').order('kg_total', { ascending: false })),
-        sb.from('mv_canal_mes').select('*').limit(200),
-        _leTudoFlx(() => sb.from('mv_item_canal').select('item_cod,canal,nome_achado'))
+        sb.from('mv_boca_mes').select('*').limit(3000)
       ]);
       _plnDados = a || [];
       _plnMes = (b.data || []);
       _plnPar = {}; (c.data || []).forEach(p => { _plnPar[p.chave] = +p.valor; });
-      _plnFora = (d && d.data) || [];
       _plnBoca = (bo && bo.data) || [];
-      _plnVend = vd || [];
-      _plnCanalMes = (cm && cm.data) || [];
-      /* canal por item vira mapa para a lista de itens poder mostrar a etiqueta
-         sem uma segunda consulta por linha */
-      _plnCanal = {}; (ic || []).forEach(x => { _plnCanal[String(x.item_cod)] = x; });
     } catch (e) {
       box.innerHTML = '<p class="desc" style="color:var(--critico-s)">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>';
       try { saudeRegistra({ alvo: 'plano', msg: (e && e.message) || e }); } catch (_) { }
@@ -47251,105 +47230,111 @@ async function plnAbrir(forcar) {
   plnRender();
 }
 function plnVer(v) { _plnVista = v; plnRender(); }
-/* 15/09/2026 (João: "tudo tem que ser cx, ton e milheiros"). Uma função só para
-   as três unidades, usada em todas as sub-abas — assim nenhuma tela inventa um
-   formato próprio. O milheiro sai das unidades por caixa, que vêm da DESCRIÇÃO
-   do item; item sem "N UNID" não recebe milheiro zero, recebe traço: zero seria
-   lido como "não vende", e o certo é dizer que não dá para converter. */
-function _pln3(kg, cx, mil, tam) {
-  const f = tam === 'g' ? '13px' : '11.5px';
-  return '<div style="font-size:' + f + ';font-weight:800;line-height:1.35;white-space:nowrap">' + fmtKg(+kg || 0) + '</div>'
-    + '<div style="font-size:10.5px;color:var(--fraco);white-space:nowrap">' + fmtNum(Math.round(+cx || 0)) + ' cx</div>'
-    + '<div style="font-size:10.5px;color:var(--fraco);white-space:nowrap">'
-    + (mil == null || isNaN(+mil) ? '<span title="a descrição do item não traz N UNID">— mil</span>' : fmtNum(Math.round(+mil)) + ' mil') + '</div>';
-}
 function plnFiltra(qual, v) {
   if (qual === 'curva') _plnCurva = (_plnCurva === v ? '' : v);
   if (qual === 'sit') _plnSit = (_plnSit === v ? '' : v);
+  if (qual === 'setor') _plnSetor = v;
+  if (qual === 'boca') _plnBocaSel = v;
+  if (qual === 'tipo') _plnCurvaTipo = v;
   plnRender();
 }
 function plnBusca(v) { const g = _rotFocoGuarda('plnBuscaInp'); _plnBusca = String(v || '').toLowerCase(); plnRender(); _rotFocoVolta('plnBuscaInp', g); }
 
+/* as três unidades, sempre na mesma ordem. Cada área fala numa: o comercial em
+   milheiro, a expedição em caixa, a fábrica em tonelada. */
+function _pln3(kg, cx, mil, semCx) {
+  return '<div style="font-size:12.5px;font-weight:800;line-height:1.35;white-space:nowrap">' + fmtKg(+kg || 0) + '</div>'
+    + (semCx ? '<div style="font-size:10px;color:var(--fraco-2)">bobina: só peso</div>'
+      : '<div style="font-size:10.5px;color:var(--fraco);white-space:nowrap">' + fmtNum(Math.round(+cx || 0)) + ' cx</div>'
+        + '<div style="font-size:10.5px;color:var(--fraco);white-space:nowrap">'
+        + (mil == null || isNaN(+mil) ? '<span title="a descrição não traz N UNID">— mil</span>' : fmtNum(Math.round(+mil)) + ' mil') + '</div>');
+}
+function _plnSemCx(x) { return String(x.setor) === 'Extrusão' || String(x.item_cod).slice(0, 3) === '300'; }
+function _plnCurvaDe(x) { return _plnCurvaTipo === 'setor' ? x.curva_setor : x.curva; }
+
 function _plnFiltrado() {
   return (_plnDados || []).filter(x => {
-    if (_plnCurva && x.curva !== _plnCurva) return false;
+    if (_plnSetor && String(x.setor) !== _plnSetor) return false;
+    if (_plnBocaSel && String(x.boca || '') !== _plnBocaSel) return false;
+    if (_plnCurva && _plnCurvaDe(x) !== _plnCurva) return false;
     if (_plnSit && x.situacao !== _plnSit) return false;
-    if (_plnBusca) {
-      const t = (String(x.item_cod) + ' ' + String(x.item_desc || '')).toLowerCase();
-      if (t.indexOf(_plnBusca) < 0) return false;
-    }
+    if (_plnBusca) { const t = (String(x.item_cod) + ' ' + String(x.item_desc || '')).toLowerCase(); if (t.indexOf(_plnBusca) < 0) return false; }
     return true;
   });
 }
 
 function plnRender() {
   const box = $('planoBox'); if (!box) return;
-  const pil = [['estoque', '📦 Estoque de bobina'], ['vendas', '📈 Plano de vendas'], ['itens', '📋 Todos os itens'], ['boca', '🔵 Por boca'], ['canal', '🏭 Por canal'], ['regua', '⚙️ Régua']]
+  const pil = [['itens', '📋 Itens · curva e min/máx'], ['vendas', '📈 Plano de vendas'], ['boca', '🔵 Por boca'], ['regua', '⚙️ Régua']]
     .map(([k, r]) => '<span onclick="plnVer(\'' + k + '\')" style="cursor:pointer;display:inline-block;font-size:12.5px;font-weight:800;border-radius:999px;padding:7px 12px;margin:0 6px 6px 0;'
       + (k === _plnVista ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('');
   box.innerHTML = '<div style="margin-bottom:6px">' + pil + '</div>'
-    + (_plnVista === 'vendas' ? _plnVendas() : _plnVista === 'regua' ? _plnRegua() : _plnVista === 'boca' ? _plnPorBoca()
-      : _plnVista === 'canal' ? _plnPorCanal() : _plnVista === 'itens' ? _plnTodosItens() : _plnEstoque());
+    + (_plnVista === 'vendas' ? _plnVendas() : _plnVista === 'regua' ? _plnRegua() : _plnVista === 'boca' ? _plnPorBoca() : _plnItens());
   if (_plnVista === 'vendas') { try { _plnGraf(); } catch (_) { } }
 }
 
-/* ---------- estoque mínimo e máximo ---------- */
-function _plnEstoque() {
-  const L = _plnFiltrado();
-  const cont = s => (_plnDados || []).filter(x => x.situacao === s).length;
-  const curva = c => (_plnDados || []).filter(x => x.curva === c).length;
+/* ---------- lista única: curva ABC e min/máx ---------- */
+function _plnItens() {
+  const D = _plnDados || [], L = _plnFiltrado();
+  const setores = [...new Set(D.map(x => String(x.setor)))].sort();
+  const bocas = [...new Set(D.map(x => String(x.boca || '')).filter(Boolean))].sort((a, b) => (+a || 0) - (+b || 0) || a.localeCompare(b));
+  /* as contagens respeitam os OUTROS filtros, não o próprio: assim a pílula
+     mostra quanto sobraria ao clicar, que é o que a pessoa quer saber */
+  const semCurva = D.filter(x => (!_plnSetor || String(x.setor) === _plnSetor) && (!_plnBocaSel || String(x.boca || '') === _plnBocaSel) && (!_plnSit || x.situacao === _plnSit));
+  const semSit = D.filter(x => (!_plnSetor || String(x.setor) === _plnSetor) && (!_plnBocaSel || String(x.boca || '') === _plnBocaSel) && (!_plnCurva || _plnCurvaDe(x) === _plnCurva));
+  const nC = c => semCurva.filter(x => _plnCurvaDe(x) === c).length;
+  const nS = s => semSit.filter(x => x.situacao === s).length;
   const pil = (txt, n, at, on, cor) => '<span onclick="' + on + '" style="cursor:pointer;display:inline-block;font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;margin:0 5px 5px 0;'
-    + (at ? 'background:' + cor + ';color:#fff' : 'background:#fff;color:' + cor + ';border:1px solid var(--linha-2s)') + '">' + txt + ' ' + n + '</span>';
-  let h = '<div style="border:1px solid #D7E2EF;background:#F3F7FB;border-radius:10px;padding:9px 12px;font-size:12px;color:#33506E;margin:0 0 9px">'
-    + '<b>Aqui é BOBINA, não acabado.</b> Acabado (160…) é feito sob pedido: mínimo e máximo nele acusariam 1.200 itens “abaixo do mínimo” que não são problema. '
-    + 'Quem se guarda em estoque é a bobina, que alimenta a Termoformagem. O acabado continua no <b>Plano de vendas</b>.</div>'
-    + '<p class="desc" style="margin:0 0 8px">Mínimo e máximo saem da <b>cobertura em dias</b> sobre a média mensal dos últimos '
-    + (_plnPar && _plnPar.meses_base ? _plnPar.meses_base : 12) + ' meses de produção — mínimo ' + ((_plnPar && _plnPar.cobertura_min_dias) || 15)
-    + ' dias, máximo ' + ((_plnPar && _plnPar.cobertura_max_dias) || 45) + ' dias. Mude isso na aba <b>Régua</b>.</p>'
-    + '<div style="margin-bottom:6px">'
-    + pil('🔴 abaixo do mínimo', cont('abaixo do minimo'), _plnSit === 'abaixo do minimo', "plnFiltra('sit','abaixo do minimo')", '#9B2C2C')
-    + pil('🟡 acima do máximo', cont('acima do maximo'), _plnSit === 'acima do maximo', "plnFiltra('sit','acima do maximo')", '#9E5514')
-    + pil('🟢 ok', cont('ok'), _plnSit === 'ok', "plnFiltra('sit','ok')", '#1F7A46')
-    + pil('⚪ sem giro', cont('sem giro'), _plnSit === 'sem giro', "plnFiltra('sit','sem giro')", '#64748B')
-    + '</div><div style="margin-bottom:8px">'
-    + ['A', 'B', 'C'].map(c => pil('curva ' + c, curva(c), _plnCurva === c, "plnFiltra('curva','" + c + "')", '#1A5276')).join('')
+    + (at ? 'background:' + cor + ';color:#fff' : 'background:#fff;color:' + cor + ';border:1px solid var(--linha-2s)') + '">' + txt + ' ' + fmtNum(n) + '</span>';
+  const sel = (id, val, opts, qual) => '<select onchange="plnFiltra(\'' + qual + '\',this.value)" style="padding:7px 9px;border-radius:9px;border:1px solid var(--linha-2s);font-size:13px;background:#fff;max-width:100%">'
+    + opts.map(o => '<option value="' + escapeHtml(o[0]) + '"' + (String(val) === String(o[0]) ? ' selected' : '') + '>' + escapeHtml(o[1]) + '</option>').join('') + '</select>';
+  const somaKg = L.reduce((a, x) => a + (+x.kg_mes_media || 0), 0);
+  const somaCx = L.filter(x => !_plnSemCx(x)).reduce((a, x) => a + (+x.cx_mes_media || 0), 0);
+  const somaMil = L.reduce((a, x) => a + (+x.mil_mes_media || 0), 0);
+  const cor = s => s === 'abaixo do minimo' ? '#9B2C2C' : s === 'acima do maximo' ? '#9E5514' : s === 'ok' ? '#1F7A46' : '#64748B';
+
+  let h = '<p class="desc" style="margin:0 0 8px">Todos os <b>' + fmtNum(D.length) + '</b> itens que a fábrica produz — acabado e bobina juntos. '
+    + 'Mínimo e máximo saem da <b>cobertura em dias</b> sobre a média mensal dos últimos ' + ((_plnPar && _plnPar.meses_base) || 12)
+    + ' meses: mínimo ' + ((_plnPar && _plnPar.cobertura_min_dias) || 15) + ' dias, máximo ' + ((_plnPar && _plnPar.cobertura_max_dias) || 45) + ' dias.</p>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + sel('s', _plnSetor, [['', 'todos os setores']].concat(setores.map(s => [s, s])), 'setor')
+    + sel('b', _plnBocaSel, [['', 'todas as bocas']].concat(bocas.map(b => [b, 'boca ' + b])), 'boca')
+    + sel('t', _plnCurvaTipo, [['geral', 'curva da fábrica'], ['setor', 'curva dentro do setor']], 'tipo')
+    + '</div>'
+    + '<div style="margin-bottom:4px">' + ['A', 'B', 'C'].map(c => pil('curva ' + c, nC(c), _plnCurva === c, "plnFiltra('curva','" + c + "')", '#1A5276')).join('') + '</div>'
+    + '<div style="margin-bottom:7px">'
+    + pil('🔴 abaixo do mín.', nS('abaixo do minimo'), _plnSit === 'abaixo do minimo', "plnFiltra('sit','abaixo do minimo')", '#9B2C2C')
+    + pil('🟡 acima do máx.', nS('acima do maximo'), _plnSit === 'acima do maximo', "plnFiltra('sit','acima do maximo')", '#9E5514')
+    + pil('🟢 ok', nS('ok'), _plnSit === 'ok', "plnFiltra('sit','ok')", '#1F7A46')
+    + pil('⚪ sem giro', nS('sem giro'), _plnSit === 'sem giro', "plnFiltra('sit','sem giro')", '#64748B')
     + '</div>'
     + '<input id="plnBuscaInp" value="' + escapeHtml(_plnBusca) + '" oninput="plnBusca(this.value)" placeholder="buscar item ou descrição" '
     + 'style="width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--linha-2s);font-size:14px;margin-bottom:8px">'
-    + '<p class="desc" style="font-size:11.5px;margin:0 0 6px"><b>' + fmtNum(L.length) + '</b> item(ns) na lista.</p>';
-  const cor = s => s === 'abaixo do minimo' ? '#9B2C2C' : s === 'acima do maximo' ? '#9E5514' : s === 'ok' ? '#1F7A46' : '#64748B';
-  /* 15/09/2026 (João: "bobina não tem cxs"). Bobina é medida em PESO — não tem
-     caixa nem milheiro. Por isso esta tela é a única do Plano que não mostra as
-     três unidades: mostrar "0 cx" ao lado de cada bobina seria número falso. */
-  h += '<div class="res-lista">' + tabSimples(['Item', 'Mín. / Máx. (peso)', 'Hoje (peso)'], L.slice(0, 200).map(x =>
-    '<tr style="cursor:pointer" onclick="detItem(\'' + escapeHtml(String(x.item_cod)) + '\')">'
-    + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(x.item_cod)) + '</span> '
-    + escapeHtml(String(x.item_desc || '').slice(0, 30))
-    + '<div style="font-size:10.5px;color:var(--fraco-2)">curva ' + x.curva + ' · faz ' + fmtKg(+x.kg_mes_media || 0) + '/mês'
-    + (+x.kg_consumo_12m ? ' · consumo 12m ' + fmtKg(+x.kg_consumo_12m) : '')
-    + (x.variacao != null ? ' · varia ' + Math.round(+x.variacao * 100) + '%' : '') + '</div></td>'
-    + '<td style="text-align:center;font-size:11.5px;white-space:nowrap"><b>' + fmtKg(+x.kg_minimo || 0) + '</b> / ' + fmtKg(+x.kg_maximo || 0)
-    + '<div style="font-size:9.5px;color:var(--fraco)">bobina se mede em peso</div></td>'
-    + '<td><span class="cel" style="background:' + cor(x.situacao) + '">' + fmtKg(+x.kg_hoje || 0)
-    + (x.dias_cobertura != null ? '<div style="font-size:10px;font-weight:700">' + x.dias_cobertura + ' dias</div>' : '') + '</span></td></tr>').join('')) + '</div>'
-    + (L.length > 200 ? '<p class="desc">mostrando 200 de ' + fmtNum(L.length) + '</p>' : '')
+    + '<p class="desc" style="font-size:11.5px;margin:0 0 6px"><b>' + fmtNum(L.length) + '</b> item(ns) · somam <b>' + fmtKg(somaKg) + '</b> · '
+    + fmtNum(Math.round(somaCx)) + ' cx · ' + fmtNum(Math.round(somaMil)) + ' mil por mês</p>';
+
+  h += '<div class="res-lista">' + tabSimples(['Item', 'Curva · mín/máx', 'Média/mês · hoje'], L.slice(0, 300).map(x => {
+    const sc = _plnSemCx(x), cv = _plnCurvaDe(x);
+    return '<tr style="cursor:pointer" onclick="detItem(\'' + escapeHtml(String(x.item_cod)) + '\')">'
+      + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(x.item_cod)) + '</span> ' + escapeHtml(String(x.item_desc || '').slice(0, 30))
+      + '<div style="font-size:10.5px;color:var(--fraco-2)">' + escapeHtml(String(x.setor))
+      + (x.boca ? ' · boca ' + escapeHtml(String(x.boca)) : '')
+      + (x.unid_cx ? ' · ' + fmtNum(+x.unid_cx) + ' un/cx' : '') + '</div></td>'
+      + '<td style="text-align:center;font-size:11.5px;white-space:nowrap">'
+      + '<b style="font-size:13px;color:#1A5276">' + cv + '</b>'
+      + '<div style="font-size:10px;color:var(--fraco)">' + (_plnCurvaTipo === 'setor' ? (+x.pct_setor || 0).toFixed(1) + '% do setor' : (+x.pct_geral || 0).toFixed(2) + '% da fábrica') + '</div>'
+      + '<div style="font-size:10.5px;margin-top:3px"><b>' + fmtKg(+x.kg_minimo || 0) + '</b> / ' + fmtKg(+x.kg_maximo || 0) + '</div></td>'
+      + '<td style="text-align:right">' + _pln3(x.kg_mes_media, x.cx_mes_media, x.mil_mes_media, sc)
+      + '<div style="margin-top:4px"><span class="cel" style="background:' + cor(x.situacao) + '">' + fmtKg(+x.kg_hoje || 0)
+      + (x.dias_cobertura != null ? '<div style="font-size:10px;font-weight:700">' + x.dias_cobertura + ' dias</div>' : '') + '</span></div></td></tr>';
+  }).join('')) + '</div>'
+    + (L.length > 300 ? '<p class="desc">mostrando 300 de ' + fmtNum(L.length) + ' — use a busca ou os filtros</p>' : '')
     + '<div style="border:1px solid #F0D9B0;background:#FFF6E9;border-radius:10px;padding:9px 12px;font-size:12px;color:#7A5A1E;margin-top:10px">'
     + '<b>Leia com cuidado</b><ul style="margin:6px 0 0 18px;padding:0">'
     + '<li>A base é <b>produção</b>, não demanda. Onde faltou material, a média está menor que a procura real.</li>'
-    + '<li>A média é de <b>produção</b> de bobina. O consumo real na Termoformagem vem do 646 e aparece ao lado, para você comparar as duas pontas.</li>'
-    + '<li>O estoque de hoje é <b>uma foto</b>. O histórico começou a ser guardado em 14/09; com ele o máximo passa a ter base real.</li>'
-    + '<li>Falta <b>lead time</b> e <b>lote mínimo</b> por item. Com eles o mínimo deixa de ser cobertura e vira ponto de pedido de verdade.</li></ul></div>'
-    /* o que a regra do 160 deixou de fora fica VISÍVEL. Esconder seria pior:
-       são 25 mil toneladas, e quem olhar a curva ABC precisa saber que ela é
-       calculada só sobre o acabado. */
-    + ((_plnFora && _plnFora.length)
-      ? '<div style="border:1px solid var(--linha-2s);border-radius:10px;padding:9px 12px;font-size:12px;margin-top:8px">'
-        + '<b style="color:var(--navy)">Fora do plano</b>'
-        + '<p class="desc" style="font-size:11px;margin:2px 0 6px">Só entra item que começa com <b>160</b> (acabado). O resto aparece aqui para você conferir se alguma família deveria entrar.</p>'
-        + _plnFora.map(f => '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-top:1px solid var(--leve-2s)">'
-          + '<span><b>' + escapeHtml(String(f.prefixo)) + '…</b> <span class="desc" style="font-size:10.5px">' + escapeHtml(String(f.exemplo || '').slice(0, 26)) + '</span></span>'
-          + '<span style="white-space:nowrap;font-weight:800;color:var(--fraco)">' + fmtNum(f.itens) + ' itens · ' + fmtNum(f.t_periodo) + ' t</span></div>').join('')
-        + '</div>' : '');
+    + '<li>Acabado é feito <b>sob pedido</b>: “abaixo do mínimo” nele é o normal, não um alerta. Em bobina é que a falta dói.</li>'
+    + '<li>O estoque de hoje é <b>uma foto</b>. O histórico começou em 14/09; com ele o máximo passa a ter base real.</li>'
+    + '<li>Falta <b>lead time</b> e <b>lote mínimo</b> por item — com eles o mínimo vira ponto de pedido de verdade.</li></ul></div>';
   return h;
 }
 
@@ -47361,44 +47346,40 @@ function _plnVendas() {
   if (!ks.length) return '<p class="desc">Sem produção no período.</p>';
   const ult12 = ks.slice(-12);
   const media = ult12.reduce((a, k) => a + M[k].kg, 0) / (ult12.length || 1);
-  /* sazonalidade: quanto cada mês do ano pesa contra a média geral. Com 21 meses
-     há 1 ou 2 observações por mês — é indício, não previsão, e a tela diz isso. */
   const porMes = {};
   ks.forEach(k => { const m = k.slice(5, 7); (porMes[m] || (porMes[m] = [])).push(M[k].kg); });
   const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const idx = Object.keys(porMes).sort().map(m => {
     const v = porMes[m].reduce((a, x) => a + x, 0) / porMes[m].length;
-    return { m, nome: MESES[+m - 1], v, i: media ? v / media : 1, n: porMes[m].length };
+    return { nome: MESES[+m - 1], i: media ? v / media : 1, n: porMes[m].length };
   });
-  let h = '<p class="desc" style="margin:0 0 8px">Base: <b>produção real de acabado</b> (código 160…) desde jan/2025. Bobina não entra: é semi-acabado e vive na aba <b>Estoque de bobina</b>. Serve para dimensionar o mês; não é previsão de venda — a carteira só tem 24 dias guardados.</p>'
+  /* por setor, com a mesma base da lista */
+  const S = {};
+  (_plnDados || []).forEach(x => { const k = String(x.setor); const o = S[k] || (S[k] = { kg: 0, n: 0 }); o.kg += +x.kg_mes_media || 0; o.n++; });
+  const sk = Object.keys(S).sort((a, b) => S[b].kg - S[a].kg);
+  const totS = sk.reduce((a, k) => a + S[k].kg, 0) || 1;
+  let h = '<p class="desc" style="margin:0 0 8px">Base: <b>produção real</b> desde jan/2025, fábrica inteira. Serve para dimensionar o mês; não é previsão de venda — a carteira só tem 24 dias guardados.</p>'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Média dos últimos ' + ult12.length + ' meses</div>'
-    + '<b style="font-size:22px;color:var(--navy)">' + fmtKg(media) + '</b>'
-    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum(Math.round((_plnVend || []).reduce((a, x) => a + (+x.cx_mes_media || 0), 0))) + ' cx · '
-    + fmtNum(Math.round((_plnVend || []).reduce((a, x) => a + (+x.mil_mes_media || 0), 0))) + ' mil por mês</div></div>'
+    + '<b style="font-size:22px;color:var(--navy)">' + fmtKg(media) + '</b><div style="font-size:11px;color:var(--fraco)">por mês</div></div>'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Melhor mês</div>'
     + '<b style="font-size:22px;color:#1F7A46">' + fmtKg(Math.max.apply(null, ks.map(k => M[k].kg))) + '</b>'
     + '<div style="font-size:11px;color:var(--fraco)">' + (ks.reduce((a, k) => M[k].kg > M[a].kg ? k : a, ks[0])) + '</div></div>'
-    + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Itens de acabado</div>'
-    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum((_plnVend || []).length) + '</b>'
-    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum((_plnVend || []).filter(x => x.curva === 'A').length) + ' na curva A</div></div></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Itens</div>'
+    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum((_plnDados || []).length) + '</b>'
+    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum((_plnDados || []).filter(x => x.curva === 'A').length) + ' na curva A</div></div></div>'
     + '<div id="plnGraf" style="margin-bottom:10px"></div>'
     + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px">Peso de cada mês do ano</div>'
     + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'
     + idx.sort((a, b) => b.i - a.i).map(x => '<span title="' + x.n + ' ano(s) medido(s)" style="font-size:11px;font-weight:800;border-radius:999px;padding:3px 9px;'
       + (x.i >= 1.05 ? 'background:#EAF6EE;color:#1F7A46' : x.i <= 0.95 ? 'background:#FDEDED;color:#9B2C2C' : 'background:var(--leve-2);color:var(--navy)')
       + '">' + x.nome + ' ' + Math.round(x.i * 100) + '%</span>').join('')
-    + '</div><p class="desc" style="font-size:11px">100% = mês médio. Com 21 meses há 1 ou 2 anos por mês: é <b>indício de sazonalidade</b>, não previsão.</p>';
-  /* o que puxa o volume */
-  const top = (_plnVend || []).slice(0, 15);
-  h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 4px">Os 15 itens que puxam o volume</div>'
-    + '<div class="res-lista">' + tabSimples(['Item', '% do volume', 'Média/mês · t · cx · mil'], top.map(x =>
-      '<tr style="cursor:pointer" onclick="detItem(\'' + escapeHtml(String(x.item_cod)) + '\')">'
-      + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(x.item_cod)) + '</span> ' + escapeHtml(String(x.item_desc || '').slice(0, 30))
-      + '<div style="font-size:10.5px;color:var(--fraco-2)">curva ' + x.curva + ' · ' + x.meses_ativos + ' mês(es) com produção'
-      + (x.unid_cx ? ' · ' + fmtNum(+x.unid_cx) + ' un/cx' : '') + '</div></td>'
-      + '<td style="text-align:center;font-weight:800;font-size:12px">' + (x.pct_do_volume != null ? (+x.pct_do_volume).toFixed(1) + '%' : '—') + '</td>'
-      + '<td style="text-align:right">' + _pln3(x.kg_mes_media, x.cx_mes_media, x.mil_mes_media) + '</td></tr>').join('')) + '</div>';
+    + '</div><p class="desc" style="font-size:11px">100% = mês médio. Com 21 meses há 1 ou 2 anos por mês: é <b>indício de sazonalidade</b>, não previsão.</p>'
+    + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 4px">Por setor · média por mês</div>'
+    + sk.map(k => '<div onclick="plnFiltra(\'setor\',\'' + escapeHtml(k) + '\');plnVer(\'itens\')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid var(--leve-2s)">'
+      + '<span style="font-size:12.5px;font-weight:700;color:var(--navy)">' + escapeHtml(k) + ' <span class="desc" style="font-size:10.5px">' + fmtNum(S[k].n) + ' itens</span></span>'
+      + '<span style="white-space:nowrap"><b style="font-size:12.5px">' + fmtKg(S[k].kg) + '</b> <span class="desc" style="font-size:11px">' + (S[k].kg / totS * 100).toFixed(1) + '%</span></span></div>').join('')
+    + '<p class="desc" style="font-size:11px;margin-top:6px">Toque num setor para abrir a lista dele já filtrada.</p>';
   return h;
 }
 function _plnGraf() {
@@ -47415,143 +47396,36 @@ function _plnGraf() {
     + '</div><p class="desc" style="font-size:10.5px;margin:2px 0 0">Produção por mês em kg · escuro = 2026, claro = 2025.</p>';
 }
 
-/* ---------- todos os itens de acabado ---------- */
-/* 15/09/2026 (João: "onde vejo o restante dos itens da curva?"). O Plano de
-   vendas mostrava só os 15 maiores — o resto não tinha porta. Esta lista é a
-   mesma base, inteira, com busca, curva e canal. */
-function plnFiltraIt(qual, v) {
-  if (qual === 'curva') _plnCurvaIt = (_plnCurvaIt === v ? '' : v);
-  if (qual === 'canal') _plnCanalSel = (_plnCanalSel === v ? '' : v);
-  plnRender();
-}
-function plnBuscaIt(v) { const g = _rotFocoGuarda('plnBuscaIt'); _plnBuscaIt = String(v || '').toLowerCase(); plnRender(); _rotFocoVolta('plnBuscaIt', g); }
-function _plnCanalDe(cod) { const c = _plnCanal && _plnCanal[String(cod)]; return c ? c.canal : null; }
-function _plnTodosItens() {
-  const T = (_plnVend || []).filter(x => {
-    if (_plnCurvaIt && x.curva !== _plnCurvaIt) return false;
-    if (_plnCanalSel && _plnCanalDe(x.item_cod) !== _plnCanalSel) return false;
-    if (_plnBuscaIt) { const t = (String(x.item_cod) + ' ' + String(x.item_desc || '')).toLowerCase(); if (t.indexOf(_plnBuscaIt) < 0) return false; }
-    return true;
-  });
-  const nC = c => (_plnVend || []).filter(x => x.curva === c).length;
-  const nCa = c => (_plnVend || []).filter(x => _plnCanalDe(x.item_cod) === c).length;
-  const pil = (txt, n, at, on, cor) => '<span onclick="' + on + '" style="cursor:pointer;display:inline-block;font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;margin:0 5px 5px 0;'
-    + (at ? 'background:' + cor + ';color:#fff' : 'background:#fff;color:' + cor + ';border:1px solid var(--linha-2s)') + '">' + txt + ' ' + fmtNum(n) + '</span>';
-  const somaKg = T.reduce((a, x) => a + (+x.kg_mes_media || 0), 0);
-  const somaCx = T.reduce((a, x) => a + (+x.cx_mes_media || 0), 0);
-  const somaMil = T.reduce((a, x) => a + (+x.mil_mes_media || 0), 0);
-  let h = '<p class="desc" style="margin:0 0 8px">Todos os <b>' + fmtNum((_plnVend || []).length) + '</b> itens de acabado, com a curva ABC calculada sobre o volume dos últimos meses. Toque no item para ver o histórico dele.</p>'
-    + '<div style="margin-bottom:5px">' + ['A', 'B', 'C'].map(c => pil('curva ' + c, nC(c), _plnCurvaIt === c, "plnFiltraIt('curva','" + c + "')", '#1A5276')).join('') + '</div>'
-    + '<div style="margin-bottom:6px">'
-    + pil('🏭 industrial', nCa('industrial'), _plnCanalSel === 'industrial', "plnFiltraIt('canal','industrial')", '#7D3C98')
-    + pil('📦 linha própria', nCa('linha propria'), _plnCanalSel === 'linha propria', "plnFiltraIt('canal','linha propria')", '#1F7A46')
-    + '</div>'
-    + '<input id="plnBuscaIt" value="' + escapeHtml(_plnBuscaIt) + '" oninput="plnBuscaIt(this.value)" placeholder="buscar item ou descrição" '
-    + 'style="width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--linha-2s);font-size:14px;margin-bottom:8px">'
-    + '<p class="desc" style="font-size:11.5px;margin:0 0 6px"><b>' + fmtNum(T.length) + '</b> item(ns) · somam ' + fmtKg(somaKg) + ' · '
-    + fmtNum(Math.round(somaCx)) + ' cx · ' + fmtNum(Math.round(somaMil)) + ' mil por mês.</p>';
-  h += '<div class="res-lista">' + tabSimples(['Item', '% e curva', 'Média/mês · t · cx · mil'], T.slice(0, 300).map(x => {
-    const ca = _plnCanalDe(x.item_cod);
-    return '<tr style="cursor:pointer" onclick="detItem(\'' + escapeHtml(String(x.item_cod)) + '\')">'
-      + '<td class="nome" style="font-size:12px"><span class="cod">' + escapeHtml(String(x.item_cod)) + '</span> ' + escapeHtml(String(x.item_desc || '').slice(0, 30))
-      + '<div style="font-size:10.5px;color:var(--fraco-2)">' + (ca === 'industrial' ? '🏭 industrial' : '📦 linha própria')
-      + ' · ' + x.meses_ativos + ' mês(es)' + (x.unid_cx ? ' · ' + fmtNum(+x.unid_cx) + ' un/cx' : '') + '</div></td>'
-      + '<td style="text-align:center;font-size:12px"><b>' + (x.pct_do_volume != null ? (+x.pct_do_volume).toFixed(2) + '%' : '—') + '</b>'
-      + '<div style="font-size:10px;color:var(--fraco)">curva ' + x.curva + '</div></td>'
-      + '<td style="text-align:right">' + _pln3(x.kg_mes_media, x.cx_mes_media, x.mil_mes_media) + '</td></tr>';
-  }).join('')) + '</div>'
-    + (T.length > 300 ? '<p class="desc">mostrando 300 de ' + fmtNum(T.length) + ' — use a busca para chegar no item</p>' : '');
-  return h;
-}
-
-/* ---------- por canal ---------- */
-/* 15/09/2026 (João: "faça uma análise por canal de venda; tudo que tem nome de
-   cliente é considerado industrial"). Regra aplicada literal: descrição que
-   carrega o nome de um cliente = INDUSTRIAL; o resto = LINHA PRÓPRIA.
-   Os nomes saem dos clientes que existem na carteira e nos pedidos, não de uma
-   lista digitada — cliente novo entra sozinho. Palavras de ramo (LATICINIO,
-   SUPERMERCADO…) ficam de fora, senão marcariam produto de catálogo. */
-function _plnPorCanal() {
-  const C = _plnCanalMes || [];
-  if (!C.length) return '<p class="desc">Sem dado de canal ainda.</p>';
-  const porCanal = {}, meses = {};
-  C.forEach(r => {
-    const k = String(r.canal), m = String(r.mes).slice(0, 7);
-    const o = porCanal[k] || (porCanal[k] = { kg: 0, cx: 0, mil: 0, itens: 0, meses: {} });
-    o.kg += +r.kg || 0; o.cx += +r.cx || 0; o.mil += +r.mil || 0;
-    o.itens = Math.max(o.itens, +r.itens || 0); o.meses[m] = (o.meses[m] || 0) + (+r.kg || 0);
-    meses[m] = true;
-  });
-  const ms = Object.keys(meses).sort(), ult3 = ms.slice(-3), ant3 = ms.slice(-6, -3);
-  const ks = Object.keys(porCanal).sort((a, b) => porCanal[b].kg - porCanal[a].kg);
-  const tot = ks.reduce((a, k) => a + porCanal[k].kg, 0) || 1;
-  const somaM = (o, arr) => arr.reduce((a, m) => a + (o.meses[m] || 0), 0);
-  let h = '<p class="desc" style="margin:0 0 9px">Regra: item cuja <b>descrição carrega o nome de um cliente</b> é <b>industrial</b>; o resto é <b>linha própria</b>. Os nomes vêm dos clientes que existem na carteira e nos pedidos, então cliente novo entra sozinho.</p>';
-  ks.forEach(k => {
-    const o = porCanal[k], u = somaM(o, ult3), a = somaM(o, ant3);
-    const v3 = a > 0 ? ((u - a) / a * 100) : null;
-    const ind = k === 'industrial';
-    h += '<div style="border:1px solid var(--linha-2s);border-left:5px solid ' + (ind ? '#7D3C98' : '#1F7A46') + ';border-radius:11px;padding:10px 12px;margin-bottom:8px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">'
-      + '<b style="font-size:14px;color:var(--navy)">' + (ind ? '🏭 Industrial' : '📦 Linha própria') + '</b>'
-      + '<b style="font-size:16px;color:' + (ind ? '#7D3C98' : '#1F7A46') + '">' + (o.kg / tot * 100).toFixed(1) + '%</b></div>'
-      + '<div style="font-size:12px;color:var(--fraco);margin-top:2px">' + fmtKg(o.kg) + ' · ' + fmtNum(Math.round(o.cx)) + ' cx · ' + fmtNum(Math.round(o.mil)) + ' mil no período</div>'
-      + '<div style="font-size:11.5px;margin-top:4px">últimos 3 meses: <b>' + fmtKg(u) + '</b>'
-      + (v3 != null ? ' <span style="font-weight:800;color:' + (v3 > 3 ? '#1F7A46' : v3 < -3 ? '#9B2C2C' : 'var(--fraco)') + '">'
-        + (v3 > 0 ? '▲ +' : '▼ ') + Math.round(v3) + '% vs 3 meses antes</span>' : '') + '</div></div>';
-  });
-  h += '<div style="border:1px solid #F0D9B0;background:#FFF6E9;border-radius:10px;padding:9px 12px;font-size:12px;color:#7A5A1E">'
-    + '<b>Onde essa régua pode errar</b><ul style="margin:6px 0 0 18px;padding:0">'
-    + '<li>Item feito para um cliente cuja descrição <b>não traz o nome dele</b> conta como linha própria.</li>'
-    + '<li>Descrição com palavra que por acaso é nome de cliente marca industrial sem ser.</li>'
-    + '<li>Vale conferir na lista <b>Todos os itens</b>, filtrando por canal: erro aparece rápido lendo as descrições.</li></ul></div>';
-  return h;
-}
-
 /* ---------- por boca ---------- */
-/* 15/09/2026 (João: "permita a análise por boca também"). Boca é o diâmetro da
-   peça e é o que amarra produto a molde e a máquina: duas famílias diferentes
-   com a mesma boca disputam o mesmo recurso. Por isso vender mais de uma boca
-   não é igual a vender mais — pode ser fila no mesmo molde.
-   Só acabado (160…) entra, igual ao plano de vendas. */
 function _plnPorBoca() {
   const B = _plnBoca || [];
   if (!B.length) return '<p class="desc">Sem dado de boca no período.</p>';
   const porBoca = {}, porMes = {};
   B.forEach(r => {
     const b = String(r.boca || 'sem boca'), m = String(r.mes).slice(0, 7);
-    (porBoca[b] || (porBoca[b] = { kg: 0, cx: 0, itens: 0, meses: {} }));
-    porBoca[b].kg += +r.kg || 0; porBoca[b].cx += +r.cx || 0; porBoca[b].mil = (porBoca[b].mil || 0) + (+r.mil || 0);
-    (porBoca[b].mesesC || (porBoca[b].mesesC = {}))[m] = (porBoca[b].mesesC[m] || 0) + (+r.cx || 0);
-    (porBoca[b].mesesM || (porBoca[b].mesesM = {}))[m] = (porBoca[b].mesesM[m] || 0) + (+r.mil || 0);
-    porBoca[b].itens = Math.max(porBoca[b].itens, +r.itens || 0);
-    porBoca[b].meses[m] = (porBoca[b].meses[m] || 0) + (+r.kg || 0);
-    porMes[m] = (porMes[m] || 0) + (+r.kg || 0);
+    const o = porBoca[b] || (porBoca[b] = { kg: 0, cx: 0, mil: 0, itens: 0, meses: {} });
+    o.kg += +r.kg || 0; o.cx += +r.cx || 0; o.mil += +r.mil || 0;
+    o.itens = Math.max(o.itens, +r.itens || 0); o.meses[m] = (o.meses[m] || 0) + (+r.kg || 0);
+    porMes[m] = true;
   });
   const ks = Object.keys(porBoca).sort((a, b2) => porBoca[b2].kg - porBoca[a].kg);
   const tot = ks.reduce((a, k) => a + porBoca[k].kg, 0) || 1;
-  const meses = Object.keys(porMes).sort();
-  const ult3 = meses.slice(-3), ant3 = meses.slice(-6, -3);
+  const ms = Object.keys(porMes).sort(), ult3 = ms.slice(-3), ant3 = ms.slice(-6, -3);
   const somaM = (o, arr) => arr.reduce((a, m) => a + (o.meses[m] || 0), 0);
-  const somaC = (o, arr) => arr.reduce((a, m) => a + ((o.mesesC || {})[m] || 0), 0);
-  const somaMil = (o, arr) => arr.reduce((a, m) => a + ((o.mesesM || {})[m] || 0), 0);
-  let h = '<p class="desc" style="margin:0 0 9px">Volume de <b>acabado</b> por boca, desde jan/2025. A boca amarra o produto ao molde e à máquina: duas famílias com a mesma boca disputam o mesmo recurso. A dedução da boca é a mesma que a aba Demanda usa.</p>'
-    + '<div class="res-lista">' + tabSimples(['Boca', '% do volume', 'Últimos 3 meses · t · cx · mil'], ks.map(k => {
+  return '<p class="desc" style="margin:0 0 9px">Volume por boca desde jan/2025. A boca amarra o produto ao molde e à máquina: duas famílias com a mesma boca disputam o mesmo recurso. Toque para abrir a lista daquela boca.</p>'
+    + '<div class="res-lista">' + tabSimples(['Boca', '% do volume', 'Últimos 3 meses'], ks.map(k => {
       const o = porBoca[k], u = somaM(o, ult3), a = somaM(o, ant3);
-      const var3 = a > 0 ? ((u - a) / a * 100) : null;
-      const sobe = var3 != null && var3 > 3, desce = var3 != null && var3 < -3;
-      return '<tr><td class="nome" style="font-size:12px"><b style="font-size:13.5px">' + escapeHtml(k) + '</b>'
-        + '<div style="font-size:10.5px;color:var(--fraco-2)">' + fmtNum(o.itens) + ' item(ns) · ' + fmtKg(o.kg) + ' · ' + fmtNum(Math.round(o.cx)) + ' cx · ' + fmtNum(Math.round(o.mil || 0)) + ' mil</div></td>'
+      const v3 = a > 0 ? ((u - a) / a * 100) : null;
+      return '<tr style="cursor:pointer" onclick="plnFiltra(\'boca\',\'' + escapeHtml(k === 'sem boca' ? '' : k) + '\');plnVer(\'itens\')">'
+        + '<td class="nome" style="font-size:12px"><b style="font-size:13.5px">' + escapeHtml(k) + '</b>'
+        + '<div style="font-size:10.5px;color:var(--fraco-2)">' + fmtNum(o.itens) + ' item(ns)</div>'
+        + _pln3(o.kg, o.cx, o.mil) + '</td>'
         + '<td style="text-align:center"><b style="font-size:13px">' + (o.kg / tot * 100).toFixed(1) + '%</b>'
         + '<div style="height:4px;border-radius:2px;background:var(--leve-2);margin-top:3px"><div style="height:4px;border-radius:2px;background:var(--navy);width:' + Math.round(o.kg / tot * 100) + '%"></div></div></td>'
-        + '<td style="text-align:right">' + _pln3(u, somaC(o, ult3), somaMil(o, ult3))
-        + (var3 != null ? '<div style="font-size:10px;font-weight:800;color:' + (sobe ? '#1F7A46' : desce ? '#9B2C2C' : 'var(--fraco)') + '">'
-          + (var3 > 0 ? '▲ +' : '▼ ') + Math.round(var3) + '% vs 3 meses antes</div>' : '') + '</td></tr>';
+        + '<td><span class="cel ' + (v3 > 3 ? 'ok' : v3 < -3 ? 'baixo' : 'neutra') + '">' + fmtKg(u)
+        + (v3 != null ? '<div style="font-size:10px;font-weight:700">' + (v3 > 0 ? '▲ +' : '▼ ') + Math.round(v3) + '%</div>' : '') + '</span></td></tr>';
     }).join('')) + '</div>'
-    + '<p class="desc" style="font-size:11px;margin-top:8px">A comparação é dos <b>3 últimos meses contra os 3 anteriores</b>, não contra o ano passado: mudança de mix aparece rápido e sazonalidade de um mês só não vira tendência.</p>'
-    + '<div style="border:1px solid #F0D9B0;background:#FFF6E9;border-radius:10px;padding:9px 12px;font-size:12px;color:#7A5A1E;margin-top:8px">'
-    + '<b>“sem boca”</b> são itens em que a descrição não permite deduzir o diâmetro — bandeja, kit e afins. Não é erro: é produto que não se mede por boca.</div>';
-  return h;
+    + '<p class="desc" style="font-size:11px;margin-top:8px">Comparação dos <b>3 últimos meses contra os 3 anteriores</b>: mudança de mix aparece rápido e um mês fora da curva não vira tendência. <b>“sem boca”</b> são itens cuja descrição não permite deduzir o diâmetro — bandeja, kit e bobina.</p>';
 }
 
 /* ---------- régua ---------- */
@@ -47560,12 +47434,12 @@ function _plnRegua() {
   const campo = (k, rot, ajuda) => '<label style="display:block;margin-bottom:9px"><span style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase">' + rot + '</span>'
     + '<input id="pln_' + k + '" type="number" min="1" value="' + (p[k] != null ? p[k] : '') + '" style="width:100%;padding:8px 10px;border-radius:9px;border:1px solid var(--linha-2s);font-size:14px">'
     + '<span class="desc" style="font-size:10.5px">' + ajuda + '</span></label>';
-  return '<p class="desc" style="margin:0 0 9px">Estes três números mandam no mínimo, no máximo e na média. Ficam no banco, então mudam para todo mundo de uma vez.</p>'
-    + campo('cobertura_min_dias', 'Estoque mínimo · dias de venda', 'Abaixo disto o item aparece em vermelho.')
-    + campo('cobertura_max_dias', 'Estoque máximo · dias de venda', 'Acima disto é material parado ocupando palete.')
+  return '<p class="desc" style="margin:0 0 9px">Estes três números mandam no mínimo, no máximo e na média. Ficam no banco, então valem para todo mundo.</p>'
+    + campo('cobertura_min_dias', 'Estoque mínimo · dias de cobertura', 'Abaixo disto o item aparece em vermelho.')
+    + campo('cobertura_max_dias', 'Estoque máximo · dias de cobertura', 'Acima disto é material parado ocupando palete.')
     + campo('meses_base', 'Meses de produção na média', 'Mais meses suavizam; menos meses respondem mais rápido a mudança de mix.')
     + '<button class="btn btn-navy" style="width:100%" onclick="plnSalvaRegua()">salvar régua</button>'
-    + '<p class="desc" style="font-size:11px;margin-top:8px">Não sugeri números vindos de fora: 15 e 45 dias são um ponto de partida para você calibrar com a operação, não uma recomendação técnica.</p>';
+    + '<p class="desc" style="font-size:11px;margin-top:8px">15 e 45 dias são ponto de partida para calibrar com a operação, não recomendação técnica.</p>';
 }
 async function plnSalvaRegua() {
   const v = k => { const e = $('pln_' + k); return e ? Math.round(+e.value || 0) : 0; };
@@ -47575,13 +47449,10 @@ async function plnSalvaRegua() {
   try {
     for (const it of its) { const { error } = await sb.from('plano_param').update({ valor: it.valor }).eq('chave', it.chave); if (error) throw error; }
     toast('⚙️ Régua salva — recalculando…');
-    /* a foto precisa ser refeita, senão a régua nova não muda número nenhum e
-       parece que o salvar não funcionou */
     try { await sb.rpc('refaz_plano'); } catch (e) { toast('Salvou, mas não consegui recalcular agora: ' + ((e && e.message) || e)); }
     _plnDados = null; await plnAbrir(true);
   } catch (e) { toast('❌ ' + ((e && e.message) || e)); }
 }
-
 
 function rotFluxoSVG() {
   const cx = {
