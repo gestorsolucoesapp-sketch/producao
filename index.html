@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.612.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.613.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3983,7 +3983,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.612.0';
+const APP_VER = '4.613.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -38249,14 +38249,23 @@ function detPedido(num, voltar) {
     + '<div id="entHist"></div>'
     + '<div id="pedReserva"></div>'
     + '<div id="fluxoPed"></div>'
-    + '<div id="pedHist"></div>'
     + '<div id="opsPed"></div>');
   _fluxoCarrega(num);
   try { _entHistCarrega(num); } catch (_) { }
   /* reserva e histórico entram DEPOIS do desenho, cada um no seu container:
      a ficha abre na hora e os dois preenchem quando chegam */
-  try { _pedReserva([...new Set(L.map(l => String(l.item_cod)).filter(Boolean))]); } catch (_) { }
-  try { _pedHistCliente(num, L[0] && L[0].cliente); } catch (_) { }
+  try {
+    const _prec = {};
+    L.forEach(l => { const k = String(l.item_cod); if (!k) return;
+      const o = _prec[k] || (_prec[k] = { cx: 0, kg: 0, un: l.un });
+      o.cx += _ehCx(l.un) ? (+l.qtd_pendente || 0) : 0; o.kg += +l.peso_pendente || 0; });
+    _pedReserva(Object.keys(_prec), _prec);
+  } catch (_) { }
+  /* 14/09/2026 (João: "quando abrir um pedido traga somente informações desse
+     pedido, não misture informações"). O bloco "outros pedidos deste cliente"
+     saiu da ficha: ele respondia sobre a CARTEIRA do cliente, não sobre este
+     pedido, e ficava logo abaixo dos itens — dava para ler como se fosse parte
+     do mesmo pedido. Quem quer o cliente inteiro tem o Comercial / Logística. */
 }
 
 /* ===== HISTÓRICO DA DATA DE ENTREGA — 14/09/2026 =====
@@ -48510,14 +48519,21 @@ async function uvImagem() {
    com a etapa em que cada um parou. Serve para ver se o cliente sempre trava
    no mesmo lugar — este pedido parado no Comercial há 9 dias diz pouco; três
    pedidos seguidos parados no Comercial dizem muito. */
-async function _pedReserva(itens) {
+async function _pedReserva(itens, precisa) {
   const el = $('pedReserva'); if (!el) return;
   const cods = [...new Set((itens || []).map(i => String(i)).filter(Boolean))];
   if (!cods.length) { el.innerHTML = ''; return; }
   try {
-    const { data } = await sb.from('estoque_deposito')
+    /* a consulta não filtrava a FOTO: se um dia o banco guardar mais de um dia
+       do 241, o mesmo item apareceria uma vez por foto e o total dobraria.
+       Hoje só existe a última, mas a trava fica. */
+    const { data: fot } = await sb.from('estoque_deposito').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const _dia = (fot && fot[0] && fot[0].dia_foto) || null;
+    let q = sb.from('estoque_deposito')
       .select('item_cod,item_desc,quantidade,unidade,peso,deposito_cod,deposito_nome,dia_foto')
       .eq('deposito_cod', '6').in('item_cod', cods.slice(0, 200));
+    if (_dia) q = q.eq('dia_foto', _dia);
+    const { data } = await q;
     const L = data || [];
     if (!L.length) {
       el.innerHTML = '<div style="margin-top:10px;padding:8px 10px;background:var(--leve-4);border-radius:9px;font-size:11.5px;color:var(--fraco)">'
@@ -48529,11 +48545,21 @@ async function _pedReserva(itens) {
       + '<table style="width:100%;border-collapse:collapse;font-size:11.5px">'
       + L.map(r => '<tr style="border-top:1px solid var(--linha-2s)">'
         + '<td style="padding:4px 5px"><b>' + escapeHtml(String(r.item_cod)) + '</b> <span style="color:var(--fraco-2)">' + escapeHtml(String(r.item_desc || '').slice(0, 40)) + '</span></td>'
-        + '<td style="padding:4px 5px;text-align:right;font-weight:800">' + fmtNum(Math.round(+r.quantidade || 0)) + ' ' + escapeHtml(String(r.unidade || '')) + '</td>'
-        + '<td style="padding:4px 5px;text-align:right;color:var(--fraco)">' + fmtKg(+r.peso || 0) + '</td></tr>').join('')
+        + '<td style="padding:4px 5px;text-align:right;font-weight:800;white-space:nowrap">' + fmtNum(Math.round(+r.quantidade || 0)) + ' ' + escapeHtml(String(r.unidade || '')) + '</td>'
+        + (() => { /* 14/09/2026: sem esta coluna a tela mostrava 560 CX ao lado de um
+             pedido que precisa de 1 — número do DEPÓSITO lido como número do pedido. */
+          const p = precisa && precisa[String(r.item_cod)];
+          if (!p) return '<td></td>';
+          const n = Math.round(p.cx || 0);
+          return '<td style="padding:4px 5px;text-align:right;white-space:nowrap;color:var(--navy);font-weight:800">'
+            + (n ? fmtNum(n) + ' cx' : fmtKg(p.kg || 0))
+            + '<div style="font-size:9.5px;font-weight:600;color:var(--fraco)">deste pedido</div></td>';
+        })()
+        + '<td style="padding:4px 5px;text-align:right;color:var(--fraco);white-space:nowrap">' + fmtKg(+r.peso || 0) + '</td></tr>').join('')
       + '</table>'
-      + '<p class="desc" style="font-size:10.5px;margin:4px 0 0">' + L.length + ' item(ns) separados, ' + fmtNum(Math.round(somaQ)) + ' no total. '
-      + 'O depósito 6 é do ERP e <b>não amarra a pedido</b>: o material está separado, mas quem leva é quem tiver a entrega mais próxima.</p></div>';
+      + '<p class="desc" style="font-size:10.5px;margin:4px 0 0">A coluna maior é <b>tudo o que existe do item no depósito 6</b>, não o que é deste pedido — '
+      + 'o depósito 6 é do ERP e <b>não amarra a pedido</b>: quem leva é quem tiver a entrega mais próxima. '
+      + 'Total no depósito destes ' + L.length + ' item(ns): ' + fmtNum(Math.round(somaQ)) + '.</p></div>';
   } catch (e) { el.innerHTML = '<p class="desc" style="font-size:11px;margin-top:8px">Não consegui ler o reservado.</p>'; }
 }
 async function _pedHistCliente(num, cliente) {
