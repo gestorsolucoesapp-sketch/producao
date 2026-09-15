@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.609.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.610.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3983,7 +3983,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.609.0';
+const APP_VER = '4.610.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -38217,15 +38217,66 @@ function detPedido(num, voltar) {
     + _avisoDep
     + notaPref
     + tabSimples(['Item', 'Pendente', 'Estoque'], linhas)
+    + '<div id="entHist"></div>'
     + '<div id="pedReserva"></div>'
     + '<div id="fluxoPed"></div>'
     + '<div id="pedHist"></div>'
     + '<div id="opsPed"></div>');
   _fluxoCarrega(num);
+  try { _entHistCarrega(num); } catch (_) { }
   /* reserva e histórico entram DEPOIS do desenho, cada um no seu container:
      a ficha abre na hora e os dois preenchem quando chegam */
   try { _pedReserva([...new Set(L.map(l => String(l.item_cod)).filter(Boolean))]); } catch (_) { }
   try { _pedHistCliente(num, L[0] && L[0].cliente); } catch (_) { }
+}
+
+/* ===== HISTÓRICO DA DATA DE ENTREGA — 14/09/2026 =====
+   João, desde o começo desta conversa: a entrega entra com uma data e MUDA até o
+   pedido fechar; ele queria ver isso na ficha do pedido, não só um selo na lista.
+   De onde sai: o REST196 é foto diária e cada foto guarda a entrega que valia
+   naquele dia. A view `v_entrega_mudanca` compara foto com foto. O RVEN002 não
+   serve — ele não tem coluna de entrega.
+   Caso que provou o valor: os quatro pedidos da KI KAKAU foram ANTECIPADOS em
+   bloco no dia 27/08 — o 230224 saiu de 01/12 para 23/09, 69 dias a menos. Sem
+   este histórico, a fábrica parecia ter produzido adiantado; na verdade o prazo
+   foi encurtado depois que o pedido já estava em Artes.
+   Carrega DEPOIS de abrir a ficha, como o fluxo: não trava a tela mais tocada
+   do app por um dado que nem todo pedido tem. */
+async function _entHistCarrega(num) {
+  const box = document.getElementById('entHist'); if (!box) return;
+  try {
+    const { data } = await sb.from('v_entrega_mudanca')
+      .select('pedido,mudou_em,entrega_antes,entrega_depois,dias_movidos')
+      .like('pedido', String(num) + '%').order('mudou_em', { ascending: false }).limit(40);
+    const H = data || [];
+    if (!H.length) { box.innerHTML = ''; return; }
+    /* as linhas do mesmo pedido mudam juntas (230135/1, /2 e /3). Agrupo pela
+       mudança em si — data + de + para — senão a mesma repactuação apareceria
+       três vezes e pareceria três decisões. */
+    const G = {};
+    H.forEach(x => {
+      const k = String(x.mudou_em) + '|' + x.entrega_antes + '|' + x.entrega_depois;
+      if (!G[k]) G[k] = { ...x, linhas: 0 };
+      G[k].linhas++;
+    });
+    const L = Object.values(G).sort((a, b) => String(b.mudou_em).localeCompare(String(a.mudou_em)));
+    const antecipadas = L.filter(x => +x.dias_movidos < 0).length;
+    const prim = L[L.length - 1], ult = L[0];
+    box.innerHTML = '<div style="border:1px solid #D7E2EF;background:#F3F7FB;border-radius:11px;padding:10px 12px;margin:8px 0">'
+      + '<div style="font-size:12.5px;font-weight:800;color:#33506E">📅 A entrega mudou ' + L.length + (L.length > 1 ? ' vezes' : ' vez') + '</div>'
+      + '<div style="font-size:11.5px;color:var(--fraco);margin:1px 0 7px">de <b>' + fmtDataSem(prim.entrega_antes) + '</b> para <b>' + fmtDataSem(ult.entrega_depois) + '</b>'
+      + (antecipadas ? ' · ' + antecipadas + ' antecipação(ões)' : '') + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px">' + L.map(x => {
+        const d = +x.dias_movidos, ant = d < 0;
+        return '<tr style="border-top:1px solid #E3EBF3">'
+          + '<td style="padding:4px 3px;white-space:nowrap;color:var(--fraco)">' + fmtDataSem(x.mudou_em) + '</td>'
+          + '<td style="padding:4px 3px">' + fmtDataSem(x.entrega_antes) + ' <span style="color:var(--fraco-2)">→</span> <b>' + fmtDataSem(x.entrega_depois) + '</b></td>'
+          + '<td style="padding:4px 3px;text-align:right;white-space:nowrap;font-weight:800;color:' + (ant ? '#9B2C2C' : '#33506E') + '">'
+          + (ant ? '↩ ' + Math.abs(d) + 'd antes' : '→ ' + d + 'd depois') + '</td></tr>';
+      }).join('') + '</table>'
+      + '<p class="desc" style="font-size:10.5px;margin:6px 0 0">O atraso do app é medido contra a <b>data de hoje</b>. Antecipação encurta o prazo depois que o pedido já está andando; adiamento faz o contrário. O histórico começa em 22/08, que é a foto mais antiga guardada.</p>'
+      + '</div>';
+  } catch (e) { box.innerHTML = ''; console.warn('entHist:', e && e.message); }
 }
 
 /* ===== FLUXO DO PEDIDO DENTRO DO MODAL — 25/08/2026 (João: "quero ver o
