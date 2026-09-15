@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.611.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.612.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3983,7 +3983,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.611.0';
+const APP_VER = '4.612.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -25913,7 +25913,13 @@ async function atrDetalhe(tipo, _mudo) {
     _atrLista = L;   /* o mapa flutuante pinta exatamente o que esta listado */
     const rot = { entrega: 'Entrega vencida', vence: 'Vence em 7 dias', producao: 'Produção atrasada', parcial: 'Atrasados com reserva parcial' }[tipo];
     const cor = { entrega: '#C0392B', vence: '#8A5A12', producao: '#6A1B9A', parcial: '#1F7A46' }[tipo];
-    cx.innerHTML = '<div style="margin-top:10px;border-top:2px solid ' + cor + ';padding-top:9px">'
+    /* ===== 14/09/2026 (João: "na produção atrasada não quero que abra abaixo do
+       card, quero que abra flutuante ao clicar") =====
+       O detalhe nascia num div embaixo do card: no celular ele abria fora da
+       vista e era preciso rolar para achar. Agora vai para a MESMA janela
+       flutuante que o resto do app usa (abreDet), que já traz X, botão voltar e
+       impressão. O conteúdo é o mesmo; só o lugar mudou. */
+    const _corpo = '<div style="border-top:2px solid ' + cor + ';padding-top:9px">'
       + '<div style="display:flex;justify-content:space-between;align-items:center">'
       + '<b style="font-size:13px;color:' + cor + '">' + rot + ' · ' + L.length + ' pedido(s)</b>'
       + '<span>'
@@ -26085,6 +26091,8 @@ async function atrDetalhe(tipo, _mudo) {
       }).join('')
       + (L.length > 60 ? '<p class="desc">mostrando 60 de ' + L.length + '</p>' : '')
       + '</div>';
+    if (cx) cx.innerHTML = '';
+    abreDet(rot + ' · ' + L.length + ' pedido(s)', _corpo);
   } catch (e) {
     if (cx) cx.innerHTML = '<p class="desc">Não consegui carregar: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
   }
@@ -31621,9 +31629,15 @@ async function _atrResUmo() {
               '<span onclick="destravaReserva(\'' + qual + '\',\'' + f.k + '\')" title="' + f.rot + ' \u00b7 ' + fmtKg(A[f.k].kg) + '" style="cursor:pointer;font-size:10px;font-weight:800;border-radius:999px;padding:2px 8px;background:#FFF6E9;border:1px solid #F0D9B0;color:' + f.cor + '">' + f.curto + ' ' + A[f.k].n + '</span>').join('')
             + '</div></div>';
         return bl(R.adi, 'ok', 'Adiantados', 'prontos antes da hora')
-          + bl(R.adiPa, 'parcial', 'Adiantados · parcial', 'parte separada, resto a produzir');
+          + bl(R.adiPa, 'parcial', 'Adiantados · parcial', 'parte separada, resto a produzir')
+          /* 14/09/2026 (João: "mostre também nesse card quantos pedidos mudaram
+             a data"). Fica ao lado dos adiantados de propósito: boa parte do
+             "adiantado" não é produção antecipada, é entrega remarcada — os dois
+             números precisam ser lidos juntos. Carrega depois, pelo container. */
+          + '<div id="cardEntMud" style="min-width:150px"></div>';
       })()
       + '</div>';
+    try { _cardEntMudPinta(); } catch (_) { }
   } catch (e) { el.innerHTML = ''; console.warn('resUmo:', e && e.message); }
 }
 /* ===== O QUE SAIU POR DIA — 31/08/2026 =====
@@ -32925,7 +32939,14 @@ async function cardAtrasoDia(forcar) {
             + '<b style="font-size:14px;color:' + cor + '">' + n + '</b>'
             + '<span style="font-size:10.5px;font-weight:700;color:' + cor + '">' + rot + '</span></span>';
           return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">'
-            + q('prontos', tot, '#1F7A46', "atrAbrir('entrega','(pronto \u00b7 aguardando sa\u00edda)')", 'tem todo o material — é só expedir')
+            /* 14/09/2026 (João: "clico nos 80 prontos e não abre em lugar
+               nenhum"). O clique filtrava a lista por um RÓTULO de texto
+               ("(pronto · aguardando saída)") que `_semOp` precisa gerar igual;
+               qualquer mudança nesse texto e o filtro casa com nada — a janela
+               abria vazia e parecia que o toque não funcionava. Troquei por
+               `destravaReserva('ok')`, que é a mesma lista dos prontos montada a
+               partir do DADO (cobertura por item), não de texto. */
+            + q('prontos', tot, '#1F7A46', 'destravaReserva(\'ok\')', 'tem todo o material — é só expedir')
             + q('parcial', par, '#8A5A12', "atrAbrir('parcial')", 'tem parte do material, falta produzir o resto')
             + q('sem material', sem, '#C0392B', "atrAbrir('entrega')", 'não tem nada em estoque — produção inteira pela frente')
             + '</div>';
@@ -39317,10 +39338,27 @@ const RES_ADI = [
    Isto importa direto no número de adiantados: pedido que aparece "60 dias
    antes" pode não ter sido produzido cedo — a entrega é que foi empurrada. */
 let _entMud = null;
+/* preenche o número de datas remarcadas no card de atrasados */
+async function _cardEntMudPinta() {
+  const box = document.getElementById('cardEntMud'); if (!box) return;
+  try {
+    const M = await _carregarEntMud();
+    const P = Object.values(M || {});
+    if (!P.length) { box.innerHTML = ''; return; }
+    const ant = P.filter(x => +x.dias_total < 0).length, adi = P.length - ant;
+    box.innerHTML = '<div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Data remarcada</div>'
+      + '<b style="font-size:22px;color:#33506E">' + P.length + '</b>'
+      + '<div style="font-size:11px;color:var(--fraco)">pedidos com a entrega mudada</div>'
+      + '<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap">'
+      + (adi ? '<span title="entrega empurrada para frente" style="font-size:10px;font-weight:800;border-radius:999px;padding:2px 8px;background:#EEF3FA;border:1px solid #D7E2EF;color:#33506E">→ adiada ' + adi + '</span>' : '')
+      + (ant ? '<span title="entrega puxada para trás: o prazo encurtou depois que o pedido já estava andando" style="font-size:10px;font-weight:800;border-radius:999px;padding:2px 8px;background:#FBE9E9;border:1px solid #E7C9C9;color:#9B2C2C">↩ antecipada ' + ant + '</span>' : '')
+      + '</div>';
+  } catch (e) { box.innerHTML = ''; console.warn('cardEntMud:', e && e.message); }
+}
 async function _carregarEntMud() {
   if (_entMud) return _entMud;
   try {
-    const { data } = await sb.from('v_entrega_resumo').select('pedido,vezes,primeira_entrega,entrega_atual,dias_total,ultima_mudanca');
+    const { data } = await sb.from('v_entrega_resumo').select('pedido,vezes,primeira_entrega,entrega_atual,dias_total,ultima_mudanca').limit(5000);
     _entMud = {};
     (data || []).forEach(x => { _entMud[String(x.pedido)] = x; });
   } catch (e) { _entMud = {}; console.warn('entMud:', e && e.message); }
