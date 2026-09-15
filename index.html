@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.618.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.619.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3994,7 +3994,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.618.0';
+const APP_VER = '4.619.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -47200,14 +47200,18 @@ async function mpZap() {
    defensáveis para item com giro, e não são para item que roda sob pedido.
    As contas vivem no banco (v_item_plano, v_estoque_min_max, plano_param) para
    a tela não ter régua própria — se mudar, muda num lugar só. */
-let _plnDados = null, _plnMes = null, _plnVista = 'estoque', _plnBusca = '', _plnCurva = '', _plnSit = '', _plnPar = null, _plnFora = null, _plnBoca = null;
+/* 15/09/2026: DUAS bases, de propósito. `_plnDados` é BOBINA (estoque) e
+   `_plnVend` é ACABADO (vendas). Quando o estoque virou bobina eu deixei a tela
+   de vendas lendo a mesma lista, e bobina apareceu como item que "puxa a venda"
+   — que é justamente o que o João mandou tirar. Cada tela com a sua base. */
+let _plnDados = null, _plnMes = null, _plnVista = 'estoque', _plnBusca = '', _plnCurva = '', _plnSit = '', _plnPar = null, _plnFora = null, _plnBoca = null, _plnVend = null;
 
 async function plnAbrir(forcar) {
   const box = $('planoBox'); if (!box) return;
   if (!_plnDados || forcar) {
     box.innerHTML = '<p class="desc"><span class="spin"></span> Carregando o plano…</p>';
     try {
-      const [a, b, c, d, bo] = await Promise.all([
+      const [a, b, c, d, bo, vd] = await Promise.all([
         /* 15/09/2026 — a view calculava 276 mil linhas de produção a cada
            abertura e estourava o tempo limite ("statement timeout"). Virou FOTO
            no banco (mv_): calcula uma vez e a tela só lê. Refaz quando a régua
@@ -47223,13 +47227,15 @@ async function plnAbrir(forcar) {
         /* 15/09/2026 (João: "permita a análise por boca também"). Reuso a
            dedução de boca que o app já faz na Demanda (v_boca_item_dia): uma
            régua só para a fábrica inteira. */
-        sb.from('mv_boca_mes').select('*').limit(3000)
+        sb.from('mv_boca_mes').select('*').limit(3000),
+        _leTudoFlx(() => sb.from('mv_plano_vendas').select('*').order('kg_total', { ascending: false }))
       ]);
       _plnDados = a || [];
       _plnMes = (b.data || []);
       _plnPar = {}; (c.data || []).forEach(p => { _plnPar[p.chave] = +p.valor; });
       _plnFora = (d && d.data) || [];
       _plnBoca = (bo && bo.data) || [];
+      _plnVend = vd || [];
     } catch (e) {
       box.innerHTML = '<p class="desc" style="color:var(--critico-s)">Não consegui carregar: ' + escapeHtml(String((e && e.message) || e)) + '</p>';
       try { saudeRegistra({ alvo: 'plano', msg: (e && e.message) || e }); } catch (_) { }
@@ -47342,16 +47348,16 @@ function _plnVendas() {
     const v = porMes[m].reduce((a, x) => a + x, 0) / porMes[m].length;
     return { m, nome: MESES[+m - 1], v, i: media ? v / media : 1, n: porMes[m].length };
   });
-  let h = '<p class="desc" style="margin:0 0 8px">Base: <b>produção real por item</b> desde jan/2025. Serve para dimensionar o mês; não é previsão de venda — a carteira só tem 24 dias guardados.</p>'
+  let h = '<p class="desc" style="margin:0 0 8px">Base: <b>produção real de acabado</b> (código 160…) desde jan/2025. Bobina não entra: é semi-acabado e vive na aba <b>Estoque de bobina</b>. Serve para dimensionar o mês; não é previsão de venda — a carteira só tem 24 dias guardados.</p>'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Média dos últimos ' + ult12.length + ' meses</div>'
     + '<b style="font-size:22px;color:var(--navy)">' + fmtKg(media) + '</b><div style="font-size:11px;color:var(--fraco)">por mês</div></div>'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Melhor mês</div>'
     + '<b style="font-size:22px;color:#1F7A46">' + fmtKg(Math.max.apply(null, ks.map(k => M[k].kg))) + '</b>'
     + '<div style="font-size:11px;color:var(--fraco)">' + (ks.reduce((a, k) => M[k].kg > M[a].kg ? k : a, ks[0])) + '</div></div>'
-    + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Itens com giro</div>'
-    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum((_plnDados || []).filter(x => +x.cx_mes_media > 0).length) + '</b>'
-    + '<div style="font-size:11px;color:var(--fraco)">de ' + fmtNum((_plnDados || []).length) + '</div></div></div>'
+    + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Itens de acabado</div>'
+    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum((_plnVend || []).length) + '</b>'
+    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum((_plnVend || []).filter(x => x.curva === 'A').length) + ' na curva A</div></div></div>'
     + '<div id="plnGraf" style="margin-bottom:10px"></div>'
     + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px">Peso de cada mês do ano</div>'
     + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'
@@ -47360,7 +47366,7 @@ function _plnVendas() {
       + '">' + x.nome + ' ' + Math.round(x.i * 100) + '%</span>').join('')
     + '</div><p class="desc" style="font-size:11px">100% = mês médio. Com 21 meses há 1 ou 2 anos por mês: é <b>indício de sazonalidade</b>, não previsão.</p>';
   /* o que puxa o volume */
-  const top = (_plnDados || []).slice(0, 15);
+  const top = (_plnVend || []).slice(0, 15);
   h += '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 4px">Os 15 itens que puxam o volume</div>'
     + '<div class="res-lista">' + tabSimples(['Item', '% do volume', 'Média/mês'], top.map(x =>
       '<tr style="cursor:pointer" onclick="detItem(\'' + escapeHtml(String(x.item_cod)) + '\')">'
