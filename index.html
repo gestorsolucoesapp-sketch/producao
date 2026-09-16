@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.623.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.625.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3994,7 +3994,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.623.0';
+const APP_VER = '4.625.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -32799,7 +32799,10 @@ async function cardSaidaDia(forcar) {
         .then(r => r.error ? sb.from('v_saida_carteira_dia').select('dia,foto_anterior,saiu_kg,linhas').gte('dia', _desde).order('dia') : r),
       /* o strip de pedidos é acessório: se ele falhar, o gráfico de toneladas
          ainda vale. Por isso o erro dele NÃO derruba o card. */
-      sb.from('v_expedidos_dia').select('dia,pedidos').gte('dia', _desde).order('dia')
+      /* 15/09/2026: era VIEW e recalculava todo o fluxo do pedido a cada
+         abertura — o recorte de 60 dias não ajudava, porque a view agrega antes
+         de filtrar. Virou foto (mv_), refeita na importação. */
+      sb.from('mv_expedidos_dia').select('dia,pedidos').gte('dia', _desde).order('dia')
         .then(r => r, () => ({ data: [], error: null }))
     ]);
     if (sd.error) throw sd.error;
@@ -39421,7 +39424,7 @@ async function _cardEntMudPinta() {
 async function _carregarEntMud() {
   if (_entMud) return _entMud;
   try {
-    const { data } = await sb.from('v_entrega_resumo').select('pedido,cliente,vezes,primeira_entrega,entrega_atual,dias_total,ultima_mudanca').limit(5000);
+    const { data } = await sb.from('mv_entrega_resumo').select('pedido,cliente,vezes,primeira_entrega,entrega_atual,dias_total,ultima_mudanca').limit(5000);
     _entMud = {};
     (data || []).forEach(x => { _entMud[String(x.pedido)] = x; });
   } catch (e) { _entMud = {}; console.warn('entMud:', e && e.message); }
@@ -47213,7 +47216,12 @@ async function plnAbrir(forcar) {
     try {
       const [a, b, c, bo] = await Promise.all([
         _leTudoFlx(() => sb.from('mv_plano_item').select('*').order('kg_total', { ascending: false })),
-        sb.from('mv_item_mes').select('mes,kg,cx').gte('mes', '2025-01-01').limit(20000),
+        /* 15/09/2026 (João: "tire as bobinas do plano de vendas e separe no
+           plano de produção"). Duas séries do mesmo mv, recortes diferentes:
+           VENDAS é o que sai para o cliente (acabado); PRODUÇÃO é o que a fábrica
+           faz, bobina incluída — a Extrusão produz 1.452 t/mês que nunca viram
+           venda, e somar as duas conta o mesmo material duas vezes. */
+        sb.from('mv_item_mes').select('mes,kg,cx,item_cod').gte('mes', '2025-01-01').limit(30000),
         sb.from('plano_param').select('*'),
         sb.from('mv_boca_mes').select('*').limit(3000)
       ]);
@@ -47265,12 +47273,13 @@ function _plnFiltrado() {
 
 function plnRender() {
   const box = $('planoBox'); if (!box) return;
-  const pil = [['itens', '📋 Itens · curva e min/máx'], ['vendas', '📈 Plano de vendas'], ['boca', '🔵 Por boca'], ['regua', '⚙️ Régua']]
+  const pil = [['itens', '📋 Itens · curva e min/máx'], ['vendas', '📈 Plano de vendas'], ['producao', '🏭 Plano de produção'], ['boca', '🔵 Por boca'], ['regua', '⚙️ Régua']]
     .map(([k, r]) => '<span onclick="plnVer(\'' + k + '\')" style="cursor:pointer;display:inline-block;font-size:12.5px;font-weight:800;border-radius:999px;padding:7px 12px;margin:0 6px 6px 0;'
       + (k === _plnVista ? 'background:var(--navy);color:#fff' : 'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)') + '">' + r + '</span>').join('');
   box.innerHTML = '<div style="margin-bottom:6px">' + pil + '</div>'
-    + (_plnVista === 'vendas' ? _plnVendas() : _plnVista === 'regua' ? _plnRegua() : _plnVista === 'boca' ? _plnPorBoca() : _plnItens());
-  if (_plnVista === 'vendas') { try { _plnGraf(); } catch (_) { } }
+    + (_plnVista === 'vendas' ? _plnVendas('vendas') : _plnVista === 'producao' ? _plnVendas('producao')
+      : _plnVista === 'regua' ? _plnRegua() : _plnVista === 'boca' ? _plnPorBoca() : _plnItens());
+  if (_plnVista === 'vendas' || _plnVista === 'producao') { try { _plnGraf(_plnVista); } catch (_) { } }
 }
 
 /* ---------- lista única: curva ABC e min/máx ---------- */
@@ -47339,9 +47348,12 @@ function _plnItens() {
 }
 
 /* ---------- plano de vendas ---------- */
-function _plnVendas() {
+function _plnEhBobina(cod) { return String(cod || '').slice(0, 3) === '300'; }
+function _plnVendas(modo) {
+  const prod = modo === 'producao';
   const M = {};
-  (_plnMes || []).forEach(r => { const k = String(r.mes).slice(0, 7); const o = M[k] || (M[k] = { kg: 0, cx: 0 }); o.kg += +r.kg || 0; o.cx += +r.cx || 0; });
+  (_plnMes || []).filter(r => prod || !_plnEhBobina(r.item_cod))
+    .forEach(r => { const k = String(r.mes).slice(0, 7); const o = M[k] || (M[k] = { kg: 0, cx: 0 }); o.kg += +r.kg || 0; o.cx += +r.cx || 0; });
   const ks = Object.keys(M).sort();
   if (!ks.length) return '<p class="desc">Sem produção no período.</p>';
   const ult12 = ks.slice(-12);
@@ -47355,10 +47367,15 @@ function _plnVendas() {
   });
   /* por setor, com a mesma base da lista */
   const S = {};
-  (_plnDados || []).forEach(x => { const k = String(x.setor); const o = S[k] || (S[k] = { kg: 0, n: 0 }); o.kg += +x.kg_mes_media || 0; o.n++; });
+  (_plnDados || []).filter(x => prod || !_plnEhBobina(x.item_cod))
+    .forEach(x => { const k = String(x.setor); const o = S[k] || (S[k] = { kg: 0, n: 0 }); o.kg += +x.kg_mes_media || 0; o.n++; });
+  const DI = (_plnDados || []).filter(x => prod || !_plnEhBobina(x.item_cod));
   const sk = Object.keys(S).sort((a, b) => S[b].kg - S[a].kg);
   const totS = sk.reduce((a, k) => a + S[k].kg, 0) || 1;
-  let h = '<p class="desc" style="margin:0 0 8px">Base: <b>produção real</b> desde jan/2025, fábrica inteira. Serve para dimensionar o mês; não é previsão de venda — a carteira só tem 24 dias guardados.</p>'
+  let h = '<p class="desc" style="margin:0 0 8px">' + (prod
+    ? 'Base: <b>tudo que a fábrica produz</b> desde jan/2025, <b>bobina incluída</b>. É a carga de máquina, não o que sai para o cliente.'
+    : 'Base: <b>o que sai para o cliente</b> desde jan/2025. <b>Bobina não entra</b>: é semi-acabado, consumido dentro de casa — está no <b>Plano de produção</b>.')
+    + ' Serve para dimensionar o mês; não é previsão — a carteira só tem 24 dias guardados.</p>'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Média dos últimos ' + ult12.length + ' meses</div>'
     + '<b style="font-size:22px;color:var(--navy)">' + fmtKg(media) + '</b><div style="font-size:11px;color:var(--fraco)">por mês</div></div>'
@@ -47366,8 +47383,8 @@ function _plnVendas() {
     + '<b style="font-size:22px;color:#1F7A46">' + fmtKg(Math.max.apply(null, ks.map(k => M[k].kg))) + '</b>'
     + '<div style="font-size:11px;color:var(--fraco)">' + (ks.reduce((a, k) => M[k].kg > M[a].kg ? k : a, ks[0])) + '</div></div>'
     + '<div><div style="font-size:9.5px;font-weight:800;color:var(--fraco);text-transform:uppercase">Itens</div>'
-    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum((_plnDados || []).length) + '</b>'
-    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum((_plnDados || []).filter(x => x.curva === 'A').length) + ' na curva A</div></div></div>'
+    + '<b style="font-size:22px;color:var(--navy)">' + fmtNum(DI.length) + '</b>'
+    + '<div style="font-size:11px;color:var(--fraco)">' + fmtNum(DI.filter(x => x.curva === 'A').length) + ' na curva A</div></div></div>'
     + '<div id="plnGraf" style="margin-bottom:10px"></div>'
     + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px">Peso de cada mês do ano</div>'
     + '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">'
@@ -47382,10 +47399,12 @@ function _plnVendas() {
     + '<p class="desc" style="font-size:11px;margin-top:6px">Toque num setor para abrir a lista dele já filtrada.</p>';
   return h;
 }
-function _plnGraf() {
+function _plnGraf(modo) {
   const el = document.getElementById('plnGraf'); if (!el) return;
+  const prod = modo === 'producao';
   const M = {};
-  (_plnMes || []).forEach(r => { const k = String(r.mes).slice(0, 7); M[k] = (M[k] || 0) + (+r.kg || 0); });
+  (_plnMes || []).filter(r => prod || !_plnEhBobina(r.item_cod))
+    .forEach(r => { const k = String(r.mes).slice(0, 7); M[k] = (M[k] || 0) + (+r.kg || 0); });
   const ks = Object.keys(M).sort(); if (!ks.length) return;
   const mx = Math.max.apply(null, ks.map(k => M[k])) || 1;
   el.innerHTML = '<div style="display:flex;align-items:flex-end;gap:3px;height:120px;overflow-x:auto;padding-top:4px">'
@@ -49176,9 +49195,84 @@ function saudeRegistra(o) {
     if (igual) { igual.quando = f.quando; igual.n = (igual.n || 1) + 1; }
     else { _SAUDE.falhas.unshift(f); _SAUDE.falhas = _SAUDE.falhas.slice(0, 40); }
     saudePinta();
+    try { _autoRecarrega(f); } catch (_) { }
   } catch (_) { }
 }
 function saudeLimpa() { _SAUDE.falhas = []; saudePinta(); }
+
+/* ===== 15/09/2026 (João: "quando apresentar o erro, reiniciar automaticamente 2
+   vezes e na terceira pedir suporte") =====
+   Vale para falha de REDE/BANCO (tempo esgotado, 500, sem conexão), que costuma
+   passar sozinha na segunda tentativa. NÃO recarrego por erro de programa: ali
+   recarregar só repete o defeito e esconde o rastro.
+   A contagem vive no `sessionStorage` e é por ABA do navegador — se morasse em
+   memória, a própria recarga zeraria o contador e o app ficaria num laço. Some
+   quando a pessoa fecha a aba, que é o comportamento certo: problema de ontem
+   não conta para hoje.
+   O limite é 2 recargas. Na terceira o app PARA de tentar e mostra o pedido de
+   suporte, com o que falhou — insistir sozinho só gasta a paciência de quem
+   está esperando o número. */
+const AUTO_REC_MAX = 2;
+function _autoRecN() { try { return +(sessionStorage.getItem('autoRecN') || 0) || 0; } catch (_) { return 0; } }
+function _autoRecSet(n) { try { sessionStorage.setItem('autoRecN', String(n)); } catch (_) { } }
+function autoRecZera() { _autoRecSet(0); try { sessionStorage.removeItem('autoRecQuando'); } catch (_) { } }
+function _ehFalhaDeRede(f) {
+  const m = String((f && f.msg) || '').toLowerCase();
+  const st = +(f && f.status) || 0;
+  /* status 0 sozinho NÃO basta: erro de programa também chega com 0 e, nesse
+     caso, recarregar só repete o defeito. Exijo a marca de rede na mensagem. */
+  const deRede = m.indexOf('timeout') >= 0 || m.indexOf('canceling statement') >= 0
+    || m.indexOf('failed to fetch') >= 0 || m.indexOf('networkerror') >= 0
+    || m.indexOf('load failed') >= 0 || m.indexOf('network request failed') >= 0;
+  return st >= 500 || deRede;
+}
+function _autoRecarrega(f) {
+  if (!_ehFalhaDeRede(f)) return;
+  const n = _autoRecN();
+  if (n >= AUTO_REC_MAX) { _autoRecSuporte(f); return; }
+  _autoRecSet(n + 1);
+  const el = document.createElement('div');
+  el.id = 'autoRecAviso';
+  el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:100003;background:var(--navy);color:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 6px 22px rgba(0,0,0,.28)';
+  el.innerHTML = '<b style="font-size:13.5px">Faltou dado — recarregando sozinho</b>'
+    + '<div style="font-size:11.5px;opacity:.9;margin-top:2px">' + escapeHtml(String((f && f.alvo) || '')) + ' · tentativa ' + (n + 1) + ' de ' + AUTO_REC_MAX + '</div>'
+    + '<div style="margin-top:8px;display:flex;gap:8px">'
+    + '<button onclick="autoRecCancela()" style="border:0;border-radius:999px;padding:7px 14px;font-weight:800;background:#fff;color:var(--navy);cursor:pointer">agora não</button></div>';
+  try { const v = document.getElementById('autoRecAviso'); if (v) v.remove(); document.body.appendChild(el); } catch (_) { }
+  /* 4 segundos: tempo de a pessoa ver o que falhou e cancelar se estiver no meio
+     de alguma coisa. Recarregar na hora assusta e parece travamento. */
+  window._autoRecT = setTimeout(() => { try { location.reload(); } catch (_) { } }, 4000);
+}
+function autoRecCancela() {
+  try { clearTimeout(window._autoRecT); } catch (_) { }
+  const v = document.getElementById('autoRecAviso'); if (v) v.remove();
+  _autoRecSet(AUTO_REC_MAX);  /* cancelou: não fico insistindo nesta aba */
+  toast('Parei de recarregar sozinho. Use "Recarregar o app" quando quiser.');
+}
+function _autoRecSuporte(f) {
+  if (document.getElementById('autoRecSup')) return;
+  const el = document.createElement('div');
+  el.id = 'autoRecSup';
+  el.style.cssText = 'position:fixed;inset:0;z-index:100004;background:rgba(11,42,74,.94);display:flex;align-items:center;justify-content:center;padding:16px';
+  el.innerHTML = '<div style="background:#fff;border-radius:14px;padding:16px;max-width:460px;width:100%">'
+    + '<b style="font-size:16px;color:var(--critico-s)">⚠️ O app tentou ' + AUTO_REC_MAX + ' vezes e o dado não veio</b>'
+    + '<p class="desc" style="margin:6px 0 0">Recarregar de novo não vai resolver. Chame o suporte técnico e mostre esta tela.</p>'
+    + '<div style="background:var(--leve-2);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:12px">'
+    + '<div><b>O que falhou:</b> ' + escapeHtml(String((f && f.alvo) || '?')) + '</div>'
+    + '<div><b>Erro:</b> ' + escapeHtml(String((f && f.msg) || '').slice(0, 160)) + '</div>'
+    + '<div><b>Versão:</b> ' + escapeHtml(String(typeof APP_VER !== 'undefined' ? APP_VER : '?')) + ' · ' + new Date().toLocaleString('pt-BR') + '</div></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn btn-navy" style="flex:1 1 150px" onclick="_autoRecCopia()">copiar para o suporte</button>'
+    + '<button class="btn" style="flex:1 1 120px" onclick="autoRecZera();document.getElementById(\'autoRecSup\').remove();location.reload()">tentar mesmo assim</button>'
+    + '<button class="btn" style="flex:1 1 100px" onclick="document.getElementById(\'autoRecSup\').remove()">fechar</button></div></div>';
+  try { document.body.appendChild(el); } catch (_) { }
+}
+function _autoRecCopia() {
+  const t = (_SAUDE.falhas || []).slice(0, 6).map(x => '• ' + x.alvo + ' · ' + (x.status || '') + ' · ' + x.msg).join('\n');
+  const txt = 'Rioplastic · app ' + (typeof APP_VER !== 'undefined' ? APP_VER : '?') + '\n'
+    + new Date().toLocaleString('pt-BR') + '\nO app recarregou ' + AUTO_REC_MAX + ' vezes e o dado não veio.\n\n' + t;
+  try { enviarTexto(txt); } catch (_) { try { navigator.clipboard.writeText(txt); toast('Copiado.'); } catch (__) { toast('Não consegui copiar.'); } }
+}
 function saudePinta() {
   try {
     const n = _SAUDE.falhas.length;
