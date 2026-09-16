@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.629.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.630.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3998,7 +3998,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.629.0';
+const APP_VER = '4.630.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -32002,9 +32002,17 @@ async function chaoAbrir(forcar) {
       if (!_setoresLista.length) return null;
       const acc = {}, noMes = d => d >= mes0 && d <= ult;
       const get = sec => acc[sec] || (acc[sec] = { prod: 0, perda: 0, par: 0 });
-      PX.forEach(x => { if (!noEscopo(x.recurso_cod)) return; if (!noMes(String(x.dia).slice(0, 10))) return;
+      /* 15/09/2026 — o mesmo erro do bloco dos 7 dias estava AQUI: eu lia de
+         `PX`, que não existe neste escopo, e os campos `prod`/`perda`, que
+         também não são os desta fonte. A produção vem de `P` (campo `peso`) e a
+         perda de `X` (campo `peso`). Ou seja, o bloco "Por setor" do envio por
+         WhatsApp nunca chegou a sair — falhava calado. */
+      (P || []).forEach(x => { if (!noEscopo(x.recurso_cod)) return; if (!noMes(String(x.dia).slice(0, 10))) return;
         const sec = setorDe(x.recurso_cod); if (!sec || _setoresLista.indexOf(sec) < 0) return;
-        const o = get(sec); o.prod += +x.prod || 0; o.perda += +x.perda || 0; });
+        get(sec).prod += +x.peso || 0; });
+      (X || []).forEach(x => { if (!noEscopo(x.recurso_cod)) return; if (!noMes(String(x.dia).slice(0, 10))) return;
+        const sec = setorDe(x.recurso_cod); if (!sec || _setoresLista.indexOf(sec) < 0) return;
+        get(sec).perda += +x.peso || 0; });
       R.forEach(x => { if (!noEscopo(x.recurso_cod) || x.revisar) return; if (!noMes(String(x.dia).slice(0, 10))) return;
         const sec = setorDe(x.recurso_cod); if (!sec || _setoresLista.indexOf(sec) < 0) return;
         get(sec).par += +x.tempo_horas || 0; });
@@ -32132,32 +32140,65 @@ async function chaoAbrir(forcar) {
          esconde o que importa: um setor pode ter caído pela metade e a barra
          total nem se mexer, porque outro compensou. Então, só nesse caso, entra
          embaixo uma linha por setor com os mesmos 7 dias. */
+      /* ===== 15/09/2026 (João: "com o filtro em Todos, coloque os últimos 7 dias
+         de todos os setores em vez da soma" e, depois, "deixe os gráficos iguais
+         com linha e cor do primeiro; no celular nem aparece") =====
+         A primeira versão não aparecia porque eu li de uma variável que não
+         existe neste trecho (`PX`): a produção por máquina/dia mora em `P`.
+         Agora cada setor ganha o MESMO gráfico do card de cima — valor em cima,
+         tracejado da meta do setor no dia, e a mesma cor por desempenho. Sem isso
+         eram dois desenhos diferentes para a mesma pergunta.
+         A meta do setor sai das metas das máquinas DELE, com o peso do dia — a
+         mesma régua do total, um nível abaixo. */
       const _7setor = (() => {
         if (S) return '';
-        const secs = setoresEscopo.slice();
+        const secs = (setoresEscopo || []).filter(x => x && x !== 'Outros');
         if (secs.length < 2) return '';
         const porSec = {};
         secs.forEach(sec => { porSec[sec] = {}; dias.forEach(d => { porSec[sec][d] = 0; }); });
-        PX.forEach(x => { if (!noEscopo(x.recurso_cod)) return;
-          const d = String(x.dia).slice(0, 10); if (!(d in (porSec[setorDe(x.recurso_cod)] || {}))) return;
-          porSec[setorDe(x.recurso_cod)][d] += +x.prod || 0; });
+        (P || []).forEach(x => {
+          if (!noEscopo(x.recurso_cod)) return;
+          const d = String(x.dia).slice(0, 10);
+          const sec = setorDe(x.recurso_cod);
+          if (!sec || !porSec[sec] || !(d in porSec[sec])) return;
+          porSec[sec][d] += +x.peso || 0;
+        });
+        /* meta cheia do setor = soma das metas das máquinas dele nos 3 blocos */
+        const metaCheiaSec = sec => {
+          const cs = (SETOR_MAQ[sec] || []).map(c => String(parseInt(c, 10)));
+          let t = 0, ok = false;
+          BL.forEach(b => cs.forEach(c => { const m = metasData && metasData[c]; if (m && m[b]) { t += m[b]; ok = true; } }));
+          return ok ? t : null;
+        };
         const ord = secs.filter(sec => dias.some(d => porSec[sec][d] > 0))
           .sort((a, b) => dias.reduce((z, d) => z + porSec[b][d], 0) - dias.reduce((z, d) => z + porSec[a][d], 0));
         if (!ord.length) return '';
-        return '<div style="margin-top:12px;border-top:1px solid var(--linha-2s);padding-top:9px">'
-          + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Cada setor nos mesmos 7 dias</div>'
+        return '<div style="margin-top:14px;border-top:1px solid var(--linha-2s);padding-top:10px">'
+          + '<div style="font-size:10px;font-weight:800;color:var(--fraco);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Cada setor nos mesmos 7 dias</div>'
           + ord.map(sec => {
-            const vals = dias.map(d => porSec[sec][d]);
-            const mxS = Math.max.apply(null, vals.concat([1]));
-            const tot = vals.reduce((a, b2) => a + b2, 0);
-            return '<div style="display:grid;grid-template-columns:96px 1fr 62px;gap:6px;align-items:center;padding:4px 0">'
-              + '<span style="font-size:11.5px;font-weight:700;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(sec) + '</span>'
-              + '<span style="display:flex;gap:3px;align-items:flex-end;height:26px">'
-              + vals.map((v, i) => '<span title="' + dLabel(dias[i]) + ' · ' + fmtV(v) + '" style="flex:1;height:' + Math.max(2, Math.round(24 * v / mxS)) + 'px;background:' + (v > 0 ? 'var(--navy)' : 'var(--linha-2s)') + ';border-radius:3px 3px 1px 1px;opacity:' + (v > 0 ? '.85' : '.5') + '"></span>').join('')
-              + '</span>'
-              + '<span style="font-size:11px;font-weight:800;text-align:right;white-space:nowrap">' + fmtV(tot) + '</span></div>';
+            const mc = metaCheiaSec(sec);
+            const vals = dias.map(d => ({ d: d, v: porSec[sec][d], m: mc == null ? null : (fatorDia(d) ? mc * fatorDia(d) : null) }));
+            const mx = Math.max.apply(null, vals.map(o => o.v).concat(vals.map(o => o.m || 0)).concat([1]));
+            const tot = vals.reduce((a, o) => a + o.v, 0);
+            return '<div style="margin-bottom:12px">'
+              + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
+              + '<b style="font-size:12.5px;color:var(--navy)">' + escapeHtml(sec) + '</b>'
+              + '<span class="desc" style="font-size:11px">' + fmtV(tot) + ' nos 7 dias</span></div>'
+              + '<div style="display:flex;gap:4px;margin-top:5px">'
+              + vals.map(o => {
+                const r = o.m ? o.v / o.m : null;
+                const hP = Math.round(46 * o.v / mx), hM = o.m ? Math.round(46 * o.m / mx) : 0;
+                return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="' + dLabel(o.d) + ' · ' + fmtV(o.v) + (o.m ? ' de ' + fmtV(o.m) : '') + '">'
+                  + '<div style="font-size:9px;font-weight:900;color:' + corR(r) + ';white-space:nowrap">'
+                  + (emCx ? Math.round(o.v).toLocaleString('pt-BR') : (o.v >= 1000 ? (o.v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 't' : Math.round(o.v) + 'kg')) + '</div>'
+                  + '<div style="height:48px;width:100%;display:flex;align-items:flex-end;justify-content:center;position:relative">'
+                  + (o.m ? '<div style="position:absolute;left:8%;right:8%;bottom:' + hM + 'px;border-top:2px dashed #223;opacity:.45"></div>' : '')
+                  + '<div style="width:62%;height:' + hP + 'px;background:' + corR(r) + ';border-radius:5px 5px 2px 2px"></div></div>'
+                  + '<div style="font-size:9px;color:var(--fraco-2);font-weight:800">' + DS[dow(o.d)] + '</div></div>';
+              }).join('')
+              + '</div></div>';
           }).join('')
-          + '<p class="desc" style="font-size:10.5px;margin:6px 0 0">Cada linha tem escala própria: serve para ver o <b>formato</b> do setor nos 7 dias, não para comparar setores entre si. O número à direita é o total do setor no período.</p></div>';
+          + '<p class="desc" style="font-size:10.5px;margin:2px 0 0">Mesma leitura do gráfico de cima: cor pelo desempenho contra a meta e tracejado na meta do dia daquele setor. Cada setor tem escala própria — serve para ver o formato dele na semana, não para comparar setores entre si.</p></div>';
       })();
       html += '<div class="card" style="padding:14px 15px">' + tit('últimos 7 dias com produção') + '<div style="display:flex;gap:4px;margin-top:8px">' + barras + '</div>'
         + '<div style="margin-top:8px;font-size:12.5px"><span style="background:var(--leve-2);border-radius:999px;padding:3px 10px">' + frase + '</span></div>'
