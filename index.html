@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.626.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.627.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3994,7 +3994,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.626.0';
+const APP_VER = '4.627.0';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -35013,6 +35013,66 @@ async function substituirTodos() {
   atualizarBarraLote();
   toast(falhou ? `Substituídos ${ok}, com erro ${falhou}.` : `✅ ${ok} substituído(s).`);
 }
+/* ===== 15/09/2026 (João: "como posso confiar se tem coisa que volta em
+   silêncio?") =====
+   O selo de falha só acusa consulta que FALHA. Não acusa consulta que RESPONDE
+   ERRADO — foi assim que o dia 15 apareceu com 0 kg e perda de 100% com a mesma
+   confiança de qualquer outro número.
+   Esta conferência compara cada FOTO com a TABELA DE ORIGEM (função
+   `confere_fotos` no banco) e mostra o que não bate. Roda depois de toda
+   importação e também no fim do carregamento do app.
+   Ela NÃO conserta nada de propósito: conserto automático esconde a causa, que é
+   exatamente como o problema de hoje passou despercebido.
+   GRAVE = a foto está atrás da tabela, e a tela está mentindo agora.
+   AVISO = o dado em si é estranho (refugo em dia sem produção, por exemplo) —
+   assunto de apontamento, não de foto. */
+let _confAchados = null;
+async function _confereFotos(avisar) {
+  try {
+    const { data, error } = await sb.rpc('confere_fotos');
+    if (error) throw error;
+    _confAchados = data || [];
+    const graves = _confAchados.filter(x => x.gravidade === 'grave');
+    if (graves.length) {
+      graves.forEach(g => { try { saudeRegistra({ alvo: 'foto desatualizada · ' + g.alvo, msg: g.detalhe }); } catch (_) { } });
+      _confPainel(graves);
+    } else if (avisar) {
+      const av = _confAchados.length;
+      toast(av ? '✅ Fotos conferidas — nenhuma divergência grave (' + av + ' aviso(s))' : '✅ Fotos conferidas — tudo batendo');
+    }
+    return _confAchados;
+  } catch (e) { console.warn('confere_fotos:', e && e.message); return null; }
+}
+function _confPainel(graves) {
+  if (document.getElementById('confBox')) return;
+  const d = document.createElement('div');
+  d.id = 'confBox';
+  d.style.cssText = 'position:fixed;inset:0;z-index:100005;background:rgba(11,42,74,.94);display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = '<div style="background:#fff;border-radius:14px;padding:16px;max-width:520px;width:100%;max-height:86vh;overflow:auto">'
+    + '<b style="font-size:16px;color:var(--critico-s)">⚠️ A tela está mostrando número desatualizado</b>'
+    + '<p class="desc" style="margin:6px 0 10px">A conferência comparou as fotos do banco com as tabelas e achou diferença. <b>Não decida por estes números agora.</b></p>'
+    + graves.map(g => '<div style="border-left:4px solid var(--critico);background:var(--crit-bg3);border-radius:8px;padding:8px 11px;margin-bottom:7px;font-size:12.5px">'
+      + '<b>' + escapeHtml(String(g.alvo)) + '</b><div style="color:#7A2E2E">' + escapeHtml(String(g.detalhe)) + '</div></div>').join('')
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">'
+    + '<button class="btn btn-navy" style="flex:1 1 160px" onclick="_confRefaz()">refazer as fotos agora</button>'
+    + '<button class="btn" style="flex:1 1 110px" onclick="document.getElementById(\'confBox\').remove()">fechar</button></div></div>';
+  try { document.body.appendChild(d); } catch (_) { }
+}
+async function _confRefaz() {
+  const b = document.getElementById('confBox'); if (b) b.remove();
+  toast('🔄 Refazendo as fotos…');
+  try {
+    await sb.rpc('refaz_fotos');
+    const r = await _confereFotos(false);
+    const g = (r || []).filter(x => x.gravidade === 'grave');
+    if (g.length) { toast('Ainda há diferença — me chame.'); _confPainel(g); }
+    else { toast('✅ Resolvido. Recarregando para pegar os números novos.'); setTimeout(() => location.reload(), 1200); }
+  } catch (e) { toast('Não consegui refazer: ' + ((e && e.message) || e)); }
+}
+/* conferência de abertura: 8 s depois de o app subir, para não competir com o
+   carregamento das telas. Só incomoda se houver GRAVE. */
+try { setTimeout(() => { try { _confereFotos(false); } catch (_) { } }, 8000); } catch (_) { }
+
 async function gravarTodos() {
   const ids = previewsGravaveis();
   if (!ids.length) return;
@@ -35050,6 +35110,7 @@ async function _refazFotosDepoisDaImportacao() {
     if (error) throw error;
     if (data && String(data) !== 'ok') toast('⚠️ Algumas fotos não atualizaram: ' + String(data));
     else toast('✅ Fotos atualizadas — os números já são os novos');
+    await _confereFotos(true);
     /* zera o que o app tinha em memória, senão a tela continua com o de antes */
     try { _plnDados = null; } catch (_) { }
     try { _entMud = null; } catch (_) { }
