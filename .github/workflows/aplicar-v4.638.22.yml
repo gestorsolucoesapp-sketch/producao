@@ -1,0 +1,66 @@
+name: Aplicar v4.638.22
+
+on:
+  push:
+    paths:
+      - '.github/workflows/aplicar-v4.638.22.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar importador
+        run: |
+          node --check tinta-nfe-v4.638.22.js
+
+      - name: Aplicar v4.638.22
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(text, old, new, label):
+              n=text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: esperado 1, encontrado {n}')
+              return text.replace(old,new,1)
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          s=rep(s, '>v4.638.21<small id="verData"', '>v4.638.22<small id="verData"', 'badge')
+          s=rep(s, "const APP_VER = '4.638.21';", "const APP_VER = '4.638.22';", 'APP_VER')
+          tag='<script src="./tinta-nfe-v4.638.22.js?v=4.638.22"></script>'
+          if tag not in s:
+              pos=s.rfind('</body>')
+              if pos < 0:
+                  raise SystemExit('index.html sem </body>')
+              s=s[:pos]+tag+'\n'+s[pos:]
+          p.write_text(s,encoding='utf-8')
+
+          sw=Path('sw.js')
+          w=sw.read_text(encoding='utf-8')
+          w=rep(w, '// Produção Rioplastic — v4.638.21', '// Produção Rioplastic — v4.638.22', 'sw versao')
+          w=rep(w, "const CACHE = 'producao-rioplastic-v4.638.21';", "const CACHE = 'producao-rioplastic-v4.638.22';", 'sw cache')
+          sw.write_text(w,encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -q "const APP_VER = '4.638.22'" index.html
+          grep -q 'tinta-nfe-v4.638.22.js?v=4.638.22' index.html
+          grep -q "producao-rioplastic-v4.638.22" sw.js
+
+      - name: Publicar
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Rioplastic Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html sw.js
+          git commit -m "v4.638.22 - ativa importador de NF-e na Casa de Tintas"
+          git push origin HEAD:main
