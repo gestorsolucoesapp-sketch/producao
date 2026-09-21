@@ -56,8 +56,8 @@
 
     const host = document.querySelector('#topoFixo .h-acoes');
     if(host){
-      const obs = new MutationObserver(()=>expôrSeguro());
-      function expôrSeguro(){ try{ exporAtalhos(); }catch(_){} }
+      const obs = new MutationObserver(()=>exporSeguro());
+      function exporSeguro(){ try{ exporAtalhos(); }catch(_){} }
       obs.observe(host,{childList:true,subtree:true});
     }
   }
