@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.25 — preço R$/kg + estoque simultâneo em kg e latas */
+/* Rioplastic v4.638.26 — vínculo automático por ERP ou nome + marca */
 (function(){
   'use strict';
 
@@ -49,12 +49,50 @@
     return '';
   };
 
+  function codigosProduto(p){
+    const a=Array.isArray(p&&p.codigos_erp)?p.codigos_erp.map(String):[];
+    const c=String((p&&p.cod_erp)||'').trim();
+    if(c && !a.includes(c)) a.push(c);
+    return a;
+  }
   function produtoPorCod(cod){
     const c=String(cod||'').trim();
-    return (_tintaSaldo||[]).find(p=>String(p.cod_erp||'').trim()===c) || null;
+    if(!c) return null;
+    return (_tintaSaldo||[]).find(p=>codigosProduto(p).some(x=>String(x).trim()===c)) || null;
   }
   function produtoPorId(id){
     return (_tintaSaldo||[]).find(p=>String(p.id)===String(id)) || null;
+  }
+  function nomeBaseTinta(v){
+    return normPdf(v)
+      .replace(/\b(SPECIAL COLOR|SULFLEX)\b/g,' ')
+      .replace(/\b(RIG|TINTA|BASE)\b/g,' ')
+      .replace(/\bUV[0-9A-Z]*\b/g,' ')
+      .replace(/\b\d{8}\s+\d{3}\s+\d{4}\b/g,' ')
+      .replace(/\((\d{5,10})\)/g,' ')
+      .replace(/(\d)\s+([A-Z])\b/g,'$1$2')
+      .replace(/\s+/g,' ').trim();
+  }
+  function marcaDaNota(fornecedor){
+    const nf=normPdf(fornecedor);
+    if(!nf) return '';
+    const marcas=[...new Set((_tintaSaldo||[]).map(x=>String(x.fornecedor||'').trim()).filter(Boolean))]
+      .sort((a,b)=>b.length-a.length);
+    return marcas.find(m=>nf.includes(normPdf(m)) || normPdf(m).includes(nf)) || '';
+  }
+  function produtoPorNomeMarca(desc,fornecedor){
+    const marca=marcaDaNota(fornecedor);
+    if(!marca) return null;
+    const base=nomeBaseTinta(desc);
+    if(!base) return null;
+    const L=(_tintaSaldo||[]).filter(p=>p.ativo && normPdf(p.fornecedor)===normPdf(marca));
+    const ex=L.filter(p=>nomeBaseTinta(p.nome)===base);
+    if(ex.length===1) return ex[0];
+    const pref=L.filter(p=>{
+      const pn=nomeBaseTinta(p.nome);
+      return pn && (base.startsWith(pn+' ') || pn.startsWith(base+' '));
+    });
+    return pref.length===1 ? pref[0] : null;
   }
   function qtdKgItem(it){
     const uf=String((it&&it.unidade_fiscal)||'').trim().toUpperCase();
@@ -105,7 +143,8 @@
       const vprod=n(txt(prod,'vProd'));
       const vdesc=n(txt(prod,'vDesc'));
       const vl=Math.max(0,vprod-vdesc);
-      const p=produtoPorCod(cod);
+      const pCod=produtoPorCod(cod);
+      const p=pCod || produtoPorNomeMarca(desc,fornecedor);
       return {
         idx:i+1,
         cod_erp:cod,
@@ -117,8 +156,9 @@
         produto_id:p?p.id:'',
         entra_estoque:!!p,
         quantidade_estoque:p ? qtdLatas(qtd,un) : '',
-        vincular_cod_erp:false,
-        auto:!!p
+        vincular_cod_erp:!!(p && cod && !pCod),
+        auto:!!p,
+        match_tipo:pCod?'erp':(p?'nome':'')
       };
     });
 
@@ -219,8 +259,11 @@
       vincular_cod_erp:false, auto:!!p
     };
   }
-  function pdfItens(lines){
-    const mapa=new Map((_tintaSaldo||[]).filter(x=>x.cod_erp).map(x=>[String(x.cod_erp).trim(),x]));
+  function pdfItens(lines,fornecedor){
+    const mapa=new Map();
+    (_tintaSaldo||[]).forEach(p=>codigosProduto(p).forEach(c=>{
+      c=String(c||'').trim(); if(c) mapa.set(c,p);
+    }));
     const out=[];
     const linhasUsadas=new Set();
     lines.forEach((line,li)=>{
@@ -256,10 +299,13 @@
          da linha é do fornecedor e NÃO deve ocupar cod_erp. */
       const par=raw.match(/\((\d{5,10})\)/);
       const codErp=par?par[1]:'';
-      const p=codErp?(mapa.get(codErp)||null):null;
+      const pCod=codErp?(mapa.get(codErp)||null):null;
       const qFiscal=pdfNum(m[4]);
-      let desc=m[2].trim();
-      if(codErp) desc=desc.replace(new RegExp('\\('+codErp+'\\)','g'),'').trim();
+      let desc=m[2].trim()
+        .replace(/\((\d{5,10})\)/g,' ')
+        .replace(/\b\d{8}\s+\d{3}\s+\d{4}\b/g,' ')
+        .replace(/\s+/g,' ').trim();
+      const p=pCod || produtoPorNomeMarca(desc,fornecedor);
 
       out.push({
         idx:out.length+1,
@@ -271,7 +317,8 @@
         produto_id:p?p.id:'',
         entra_estoque:!!p,
         quantidade_estoque:p?qtdLatas(qFiscal,m[3]):'',
-        vincular_cod_erp:false,auto:!!p
+        vincular_cod_erp:!!(p && codErp && !pCod),auto:!!p,
+        match_tipo:pCod?'erp':(p?'nome':'')
       });
     });
     return out;
@@ -332,7 +379,7 @@
     }
     const emissao=pdfDataDepois(lines,/DATA (?:DA )?EMISS[AÃ]O|EMISS[AÃ]O/i);
     const fornecedor=pdfFornecedor(lines);
-    const itens=pdfItens(lines);
+    const itens=pdfItens(lines,fornecedor);
     if(!itens.length) throw new Error('Li o PDF, mas não consegui reconhecer a tabela de produtos. Tente o XML da NF-e.');
 
     const total=pdfValorDepois(lines,/VALOR TOTAL DA NOTA|VALOR TOTAL DA NF|V\.?\s*TOTAL\s*NF/i);
@@ -380,7 +427,8 @@
     const it=_nfeAtual.itens[i], p=produtoPorId(id);
     it.produto_id=id||'';
     it.entra_estoque=!!p;
-    it.vincular_cod_erp=!!(p && it.cod_erp && !String(p.cod_erp||'').trim());
+    it.vincular_cod_erp=!!(p && it.cod_erp && !codigosProduto(p).includes(String(it.cod_erp)));
+    it.match_tipo=p?'manual':'';
     if(p && !it.quantidade_estoque) it.quantidade_estoque=qtdLatas(it.quantidade_fiscal,it.unidade_fiscal);
     renderPreview();
   }
@@ -443,16 +491,16 @@
       +N.itens.map((it,i)=>{
         const p=produtoPorId(it.produto_id);
         const nv=novoPreco(it), mud=mudouPreco(it);
-        const conflito=p && p.cod_erp && it.cod_erp && String(p.cod_erp)!==String(it.cod_erp);
-        const vinc=p && it.cod_erp && !String(p.cod_erp||'').trim();
+        const vinc=!!(p && it.cod_erp && !codigosProduto(p).includes(String(it.cod_erp)));
+        const conflito=false;
         return '<tr style="border-top:1px solid var(--linha);'+(!it.produto_id?'background:#FFF9EC':'')+'">'
           +'<td style="text-align:center"><input type="checkbox" '+(it.entra_estoque?'checked':'')+' onchange="tintaNfeToggle('+i+',this.checked)"></td>'
           +'<td style="text-align:left"><b>'+escapeHtml(it.cod_erp||'—')+'</b> · '+escapeHtml(it.descricao||'')
-          +(it.auto?'<div style="color:var(--verde);font-size:10px;font-weight:800">✓ código ERP reconhecido</div>':'')
+          +(it.auto?'<div style="color:var(--verde);font-size:10px;font-weight:800">✓ '+(it.match_tipo==='nome'?'nome + marca reconhecidos':'código ERP reconhecido')+'</div>':'')
           +'</td>'
           +'<td style="text-align:left"><select onchange="tintaNfeMapear('+i+',this.value)" style="max-width:330px;width:100%;padding:6px;border:1px solid var(--borda);border-radius:8px;font-size:12px">'
           +optsProduto(it.produto_id)+'</select>'
-          +(vinc?'<div style="font-size:10px;color:var(--verde);font-weight:700">o código ERP será salvo para as próximas notas</div>':'')
+          +(vinc?'<div style="font-size:10px;color:var(--verde);font-weight:700">novo código ERP será salvo como código alternativo desta tinta</div>':'')
           +(conflito?'<div style="font-size:10px;color:var(--laranja);font-weight:700">vínculo só nesta nota · esta tinta já possui outro código ERP</div>':'')
           +'</td>'
           +'<td style="text-align:center;white-space:nowrap">'+Number(it.quantidade_fiscal||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(it.unidade_fiscal||'')+'</td>'
@@ -499,7 +547,7 @@
         valor_total:n(it.valor_total)||null,
         quantidade_estoque:it.entra_estoque?n(it.quantidade_estoque):null,
         entra_estoque:!!it.entra_estoque,
-        vincular_cod_erp:!!(it.entra_estoque && p && it.cod_erp && !String(p.cod_erp||'').trim())
+        vincular_cod_erp:!!(it.entra_estoque && p && it.cod_erp && it.vincular_cod_erp)
       };
     });
     const nota={
