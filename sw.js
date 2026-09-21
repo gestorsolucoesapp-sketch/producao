@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v4.638.9';
+const CACHE = 'producao-rioplastic-v4.638.10';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -158,7 +158,10 @@ self.addEventListener('fetch', e => {
     try {
       const txt = await resp.text();
       const tag = '<script src="./ui-header-v4.638.8.js?v=4.638.8"></script><script src="./hotfix-mq-replicar-v4.638.9.js?v=4.638.9"></script>';
-      const out = txt.includes('ui-header-v4.638.8.js') ? txt : txt.replace('</body>', tag + '</body>');
+      const faltam = [];
+      if (!txt.includes('ui-header-v4.638.8.js')) faltam.push('<script src="./ui-header-v4.638.8.js?v=4.638.8"></script>');
+      if (!txt.includes('hotfix-mq-replicar-v4.638.9.js')) faltam.push('<script src="./hotfix-mq-replicar-v4.638.9.js?v=4.638.9"></script>');
+      const out = faltam.length ? txt.replace('</body>', faltam.join('') + '</body>') : txt;
       return new Response(out, { status: resp.status, statusText: resp.statusText, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     } catch (_) { return resp; }
   };
