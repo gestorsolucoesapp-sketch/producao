@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.24 — DANFE: ERP entre parênteses + 1 lata = 2 kg */
+/* Rioplastic v4.638.25 — preço R$/kg + estoque simultâneo em kg e latas */
 (function(){
   'use strict';
 
@@ -56,9 +56,16 @@
   function produtoPorId(id){
     return (_tintaSaldo||[]).find(p=>String(p.id)===String(id)) || null;
   }
+  function qtdKgItem(it){
+    const uf=String((it&&it.unidade_fiscal)||'').trim().toUpperCase();
+    const qf=n(it&&it.quantidade_fiscal);
+    if((uf==='KG'||uf==='KGS') && qf>0) return qf;
+    const lat=n(it&&it.quantidade_estoque);
+    return lat>0 ? lat*2 : 0;
+  }
   function novoPreco(it){
-    const q=n(it.quantidade_estoque), v=n(it.valor_total);
-    return q>0 && v>0 ? v/q : 0;
+    const kg=qtdKgItem(it), v=n(it.valor_total);
+    return kg>0 && v>0 ? v/kg : 0;
   }
   function mudouPreco(it){
     const p=produtoPorId(it.produto_id), nv=novoPreco(it);
@@ -431,7 +438,7 @@
       +'<p class="desc" style="margin:7px 0"><b>Regra do estoque: 1 lata = 2 kg.</b> Quando a NF vier em KG, a quantidade de latas é calculada automaticamente como peso ÷ 2. Confira antes de confirmar.</p>'
       +'<div style="overflow-x:auto"><table style="width:100%;min-width:850px;font-size:12px"><thead><tr>'
       +'<th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Peso/Qtd. NF</th><th>Latas (÷ 2 kg)</th>'
-      +(ve$?'<th style="text-align:right">Valor item</th><th style="text-align:right">Preço atual</th><th style="text-align:right">Novo preço</th>':'')
+      +(ve$?'<th style="text-align:right">Valor item</th><th style="text-align:right">Preço atual R$/kg</th><th style="text-align:right">Novo R$/kg</th>':'')
       +'</tr></thead><tbody>'
       +N.itens.map((it,i)=>{
         const p=produtoPorId(it.produto_id);
@@ -557,8 +564,8 @@
         +L.map(x=>'<tr style="border-top:1px solid var(--linha)"><td style="text-align:left"><b>'+escapeHtml(x.cod_erp||'—')+'</b> · '+escapeHtml(x.descricao||'')
           +(x.produto?'<div class="desc">'+escapeHtml(x.produto.nome||'')+'</div>':'<div style="color:var(--fraco);font-size:10px">ignorado no estoque</div>')+'</td>'
           +'<td style="text-align:center">'+Number(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(x.unidade||'')+'</td>'
-          +'<td style="text-align:center">'+(x.entra_estoque?Number(x.quantidade_estoque||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' lata(s)':'—')+'</td>'
-          +(ve$?'<td style="text-align:right">'+(x.preco_aplicado?_tBRL(x.preco_aplicado):'—')+'</td>':'')+'</tr>').join('')
+          +'<td style="text-align:center">'+(x.entra_estoque?Number(x.quantidade_estoque||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' lata(s) · '+Number((x.quantidade_estoque||0)*2).toLocaleString('pt-BR',{maximumFractionDigits:3})+' kg':'—')+'</td>'
+          +(ve$?'<td style="text-align:right">'+(x.preco_aplicado?_tBRL(x.preco_aplicado)+'/kg':'—')+'</td>':'')+'</tr>').join('')
         +'</tbody></table></div>';
       abreDet('NF '+escapeHtml((nota&&nota.numero)||''),h);
     }catch(e){toast('Não consegui abrir a nota: '+((e&&e.message)||e));}
@@ -601,6 +608,49 @@
       +renderNotas();
     renderPreview();
   }
+
+  /* Estoque: preço é por KG; saldo operacional continua em latas.
+     Como 1 lata = 2 kg, mostramos as duas unidades e valorizamos pelos kg. */
+  window.tintaTelaEstoque=function(box){
+    const L=_tintaSaldo||[];
+    const tot=L.reduce((a,x)=>a+(+x.valor||0),0);
+    const latas=L.reduce((a,x)=>a+(+x.saldo||0),0);
+    const kg=L.reduce((a,x)=>a+(+x.saldo_kg||0),0);
+    const baixo=L.filter(x=>x.abaixo_minimo&&x.ativo);
+    const semPreco=L.filter(x=>x.saldo>0&&x.preco_atencao);
+    const f=String(_tintaBusca||'').trim().toLowerCase();
+    const vis=_tintaFiltra(f?L.filter(x=>(String(x.nome||'')+' '+String(x.cod_erp||'')+' '+String(x.fornecedor||'')).toLowerCase().includes(f)):L)
+      .filter(x=>x.saldo>0||f);
+
+    box.innerHTML='<div class="idet-grid">'
+      +'<div><b>'+_tNum(latas)+'</b><span>latas em estoque</span></div>'
+      +'<div><b>'+Number(kg||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg</b><span>peso em estoque</span></div>'
+      +(_tintaVeDinheiro()?'<div><b>'+_tBRL(tot)+'</b><span>valor do estoque</span></div>':'')
+      +'<div><b style="color:'+(baixo.length?'var(--critico)':'var(--verde)')+'">'+baixo.length+'</b><span>abaixo do mínimo</span></div>'
+      +'</div>'
+      +(semPreco.length?'<p class="desc" style="margin-top:8px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:6px">⚠️ <b>'+semPreco.length+' item(ns) com preço não atualizado</b>.</p>':'')
+      +_tintaBarraMarcas()
+      +'<input id="tintaBusca" type="search" placeholder="🔎 buscar cor, código ou fornecedor…" value="'+escapeHtml(_tintaBusca||'')+'" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
+      +'<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
+      +'<th style="text-align:left">Cor</th><th>Latas</th><th>Kg</th><th>Mín.</th>'
+      +(_tintaVeDinheiro()?'<th style="text-align:right">Preço/kg</th><th style="text-align:right">Valor</th>':'')
+      +'</tr></thead><tbody>'
+      +vis.map(x=>{
+        const bx=x.abaixo_minimo&&x.ativo;
+        return '<tr style="border-top:1px solid var(--linha)">'
+          +'<td style="text-align:left"><b>'+_bolinha(x.nome)+escapeHtml(x.nome)+'</b>'
+          +'<div class="desc" style="font-size:10.5px">'+escapeHtml(x.fornecedor||'')+(x.cod_barras?' · <b>'+escapeHtml(x.cod_barras)+'</b>':'')
+          +(x.preco_aviso?'<br><span style="color:var(--laranja-4,#9E5514);font-weight:700">⚠️ '+escapeHtml(x.preco_aviso)+'</span>':'')+'</div></td>'
+          +'<td style="text-align:center;font-weight:800;color:'+(bx?'var(--critico)':'inherit')+'">'+_tNum(x.saldo)+'</td>'
+          +'<td style="text-align:center;font-weight:700">'+Number(x.saldo_kg||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+          +'<td style="text-align:center;color:var(--fraco-2)">'+_tNum(x.estoque_min)+'</td>'
+          +(_tintaVeDinheiro()?'<td style="text-align:right">'+(x.preco?_tBRL(x.preco)+'/kg':'—')+'</td>'
+            +'<td style="text-align:right;font-weight:700">'+(x.valor?_tBRL(x.valor):'—')+'</td>':'')
+          +'</tr>';
+      }).join('')
+      +'</tbody></table></div>'
+      +(!vis.length?'<p class="vazio-painel">Nada encontrado.</p>':'');
+  };
 
   window.tintaNfeLer=ler;
   window.tintaNfeMapear=mapear;
