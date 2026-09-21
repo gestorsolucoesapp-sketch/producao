@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.23 — importador XML/PDF NF-e da Casa de Tintas */
+/* Rioplastic v4.638.24 — DANFE: ERP entre parênteses + 1 lata = 2 kg */
 (function(){
   'use strict';
 
@@ -39,6 +39,15 @@
     return Array.from(root.getElementsByTagName ? root.getElementsByTagName(nome) : []);
   };
   const unidadeEhPeca = u => /^(UN|UND|UNID|PC|PÇ|PCA|LATA|LTN|BD|BALDE|GL|GALAO|GALÃO)$/i.test(String(u||'').trim());
+  /* Regra da Casa de Tintas: cada lata representa 2 kg.
+     Nas NFs que vêm em KG, o estoque em latas é sempre peso / 2. */
+  const qtdLatas = (q,u) => {
+    const v=Number(q||0), un=String(u||'').trim().toUpperCase();
+    if(!(v>0)) return '';
+    if(un==='KG' || un==='KGS') return v/2;
+    if(unidadeEhPeca(un)) return v;
+    return '';
+  };
 
   function produtoPorCod(cod){
     const c=String(cod||'').trim();
@@ -100,7 +109,7 @@
         valor_total:vl || vprod,
         produto_id:p?p.id:'',
         entra_estoque:!!p,
-        quantidade_estoque:p && unidadeEhPeca(un) ? qtd : '',
+        quantidade_estoque:p ? qtdLatas(qtd,un) : '',
         vincular_cod_erp:false,
         auto:!!p
       };
@@ -199,34 +208,63 @@
     return {
       cod_erp:cod, descricao:desc, quantidade_fiscal:qtd, unidade_fiscal:un,
       valor_unit:vu, valor_total:vt, produto_id:p?p.id:'',
-      entra_estoque:!!p, quantidade_estoque:p&&unidadeEhPeca(un)&&qtd?qtd:'',
+      entra_estoque:!!p, quantidade_estoque:p?qtdLatas(qtd,un):'',
       vincular_cod_erp:false, auto:!!p
     };
   }
   function pdfItens(lines){
     const mapa=new Map((_tintaSaldo||[]).filter(x=>x.cod_erp).map(x=>[String(x.cod_erp).trim(),x]));
     const out=[];
-    const usados=new Set();
+    const linhasUsadas=new Set();
     lines.forEach((line,li)=>{
       for(const [cod,p] of mapa){
         if(!String(line).includes(cod)) continue;
         const it=pdfLinhaItem(line,cod,p);
-        if(it){it.idx=out.length+1;out.push(it);usados.add(li+'|'+cod);}
+        if(it){
+          /* Se o ERP conhecido está na linha — inclusive entre parênteses,
+             ex. 4UV0202Y · AMARELO 012 UV (2211201) — a linha já está vinculada.
+             Marca a LINHA inteira para não nascer uma segunda linha pelo código
+             do fornecedor (4UV0202Y). */
+          it.idx=out.length+1;
+          const antes=String(line).slice(0,String(line).indexOf(cod)).replace(/\($/,'').trim();
+          const desc=antes.replace(/^\s*[A-Z0-9][A-Z0-9._/-]{2,19}\s*[·\-:]?\s*/i,'').trim();
+          if(desc) it.descricao=desc;
+          out.push(it);
+          linhasUsadas.add(li);
+          break;
+        }
       }
     });
     const unit='UN|UND|UNID|PC|PÇ|PCA|LATA|LTN|BD|BALDE|GL|GALAO|GALÃO|KG|LT|L';
     const re=new RegExp('^\\s*([A-Z0-9][A-Z0-9._/-]{2,19})\\s+(.+?)\\s+('+unit+')\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)','i');
     lines.forEach((line,li)=>{
-      const m=String(line).match(re); if(!m) return;
-      const cod=m[1];
-      if(mapa.has(cod) || cod.replace(/\D/g,'').length===44) return;
+      if(linhasUsadas.has(li)) return;
+      const raw=String(line);
+      const m=raw.match(re); if(!m) return;
+      const codFornecedor=m[1];
+      if(codFornecedor.replace(/\D/g,'').length===44) return;
       if(!/[A-Za-zÀ-ÿ]/.test(m[2])) return;
+
+      /* O número entre parênteses é o código ERP Rioplastic. O primeiro código
+         da linha é do fornecedor e NÃO deve ocupar cod_erp. */
+      const par=raw.match(/\((\d{5,10})\)/);
+      const codErp=par?par[1]:'';
+      const p=codErp?(mapa.get(codErp)||null):null;
+      const qFiscal=pdfNum(m[4]);
+      let desc=m[2].trim();
+      if(codErp) desc=desc.replace(new RegExp('\\('+codErp+'\\)','g'),'').trim();
+
       out.push({
-        idx:out.length+1,cod_erp:cod,descricao:m[2].trim(),
-        quantidade_fiscal:pdfNum(m[4]),unidade_fiscal:m[3],
+        idx:out.length+1,
+        cod_erp:codErp,
+        cod_fornecedor:codFornecedor,
+        descricao:codFornecedor+' · '+desc,
+        quantidade_fiscal:qFiscal,unidade_fiscal:m[3],
         valor_unit:pdfNum(m[5]),valor_total:pdfNum(m[6]),
-        produto_id:'',entra_estoque:false,quantidade_estoque:'',
-        vincular_cod_erp:false,auto:false
+        produto_id:p?p.id:'',
+        entra_estoque:!!p,
+        quantidade_estoque:p?qtdLatas(qFiscal,m[3]):'',
+        vincular_cod_erp:false,auto:!!p
       });
     });
     return out;
@@ -336,7 +374,7 @@
     it.produto_id=id||'';
     it.entra_estoque=!!p;
     it.vincular_cod_erp=!!(p && it.cod_erp && !String(p.cod_erp||'').trim());
-    if(p && !it.quantidade_estoque && unidadeEhPeca(it.unidade_fiscal)) it.quantidade_estoque=it.quantidade_fiscal;
+    if(p && !it.quantidade_estoque) it.quantidade_estoque=qtdLatas(it.quantidade_fiscal,it.unidade_fiscal);
     renderPreview();
   }
   function toggle(i,on){
@@ -390,9 +428,9 @@
       +(N.origem&&N.origem.indexOf('pdf')===0?'<button class="btn btn-borda" style="width:auto;padding:5px 9px;font-size:11px;margin-top:7px" onclick="tintaNfeEditarCab()">✏️ Conferir dados da nota</button>':'')
       +'</div>'
       +resumoPreview()
-      +'<p class="desc" style="margin:7px 0">Marque somente o que deve entrar na Casa de Tintas. Quando a unidade da NF não representa uma lata/peça, informe manualmente quantas latas chegaram.</p>'
+      +'<p class="desc" style="margin:7px 0"><b>Regra do estoque: 1 lata = 2 kg.</b> Quando a NF vier em KG, a quantidade de latas é calculada automaticamente como peso ÷ 2. Confira antes de confirmar.</p>'
       +'<div style="overflow-x:auto"><table style="width:100%;min-width:850px;font-size:12px"><thead><tr>'
-      +'<th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Qtd. fiscal</th><th>Qtd. estoque</th>'
+      +'<th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Peso/Qtd. NF</th><th>Latas (÷ 2 kg)</th>'
       +(ve$?'<th style="text-align:right">Valor item</th><th style="text-align:right">Preço atual</th><th style="text-align:right">Novo preço</th>':'')
       +'</tr></thead><tbody>'
       +N.itens.map((it,i)=>{
