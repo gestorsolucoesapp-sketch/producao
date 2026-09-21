@@ -75,7 +75,7 @@ p.write_text(s, encoding="utf-8")
 nav = Path("nav-config-v4.638.17.js")
 n = nav.read_text(encoding="utf-8")
 n = rep(n, "#topoFixo nav{position:relative;background:#fff;border-bottom:1px solid var(--linha);z-index:25}", "#topoFixo nav{position:relative;background:#EEF3F1;border-bottom:1px solid #D8E2DD;z-index:25}", "fundo nav")
-n = rep(n, "#rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:7px 10px;background:#fff}", "#rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:7px 10px;background:#EEF3F1}", "fundo faixa")
+n = rep(n, "#rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;padding:7px 10px;background:#fff}", "#rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:7px 10px;background:#EEF3F1}", "fundo faixa")
 n = rep(n, "#topoFixo nav{order:1}", "#topoFixo nav{order:1}\n      #topoFixo nav .rp-nav-bar{background:#EEF3F1!important;border-bottom:0!important;padding:0!important}", "fundo barra")
 nav.write_text(n, encoding="utf-8")
 
