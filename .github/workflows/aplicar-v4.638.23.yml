@@ -1,0 +1,73 @@
+name: Aplicar v4.638.23
+
+on:
+  push:
+    paths:
+      - '.github/workflows/aplicar-v4.638.23.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Baixar PDF.js local
+        run: |
+          curl -fsSL "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.min.mjs" -o pdf.min.mjs
+          curl -fsSL "https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/build/pdf.worker.min.mjs" -o pdf.worker.min.mjs
+          test -s pdf.min.mjs
+          test -s pdf.worker.min.mjs
+
+      - name: Validar importador PDF
+        run: |
+          node --check tinta-nfe-v4.638.22.js
+          grep -q 'application/pdf' tinta-nfe-v4.638.22.js
+          grep -q "import('./pdf.min.mjs')" tinta-nfe-v4.638.22.js
+
+      - name: Aplicar v4.638.23
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(text, old, new, label):
+              n=text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: esperado 1, encontrado {n}')
+              return text.replace(old,new,1)
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          s=rep(s, '>v4.638.22<small id="verData"', '>v4.638.23<small id="verData"', 'badge')
+          s=rep(s, "const APP_VER = '4.638.22';", "const APP_VER = '4.638.23';", 'APP_VER')
+          s=rep(s,
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.22"></script>',
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.23"></script>',
+              'script NF-e')
+          p.write_text(s,encoding='utf-8')
+
+          sw=Path('sw.js')
+          w=sw.read_text(encoding='utf-8')
+          w=rep(w, '// Produção Rioplastic — v4.638.22', '// Produção Rioplastic — v4.638.23', 'sw versao')
+          w=rep(w, "const CACHE = 'producao-rioplastic-v4.638.22';", "const CACHE = 'producao-rioplastic-v4.638.23';", 'sw cache')
+          sw.write_text(w,encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -q "const APP_VER = '4.638.23'" index.html
+          grep -q 'tinta-nfe-v4.638.22.js?v=4.638.23' index.html
+          grep -q "producao-rioplastic-v4.638.23" sw.js
+
+      - name: Publicar
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Rioplastic Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html sw.js pdf.min.mjs pdf.worker.min.mjs
+          git commit -m "v4.638.23 - aceita PDF DANFE na Casa de Tintas"
+          git push origin HEAD:main
