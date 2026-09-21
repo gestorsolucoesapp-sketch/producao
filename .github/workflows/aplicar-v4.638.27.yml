@@ -1,0 +1,68 @@
+name: Aplicar v4.638.27
+
+on:
+  push:
+    paths:
+      - '.github/workflows/aplicar-v4.638.27.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar Casa de Tintas
+        run: |
+          node --check tinta-nfe-v4.638.22.js
+          grep -q "Total calculado pela soma dos" tinta-nfe-v4.638.22.js
+          grep -q "Alteração de preço · maiores variações" tinta-nfe-v4.638.22.js
+          grep -q "consumo médio / mês" tinta-nfe-v4.638.22.js
+          grep -q "maior consumo" tinta-nfe-v4.638.22.js
+
+      - name: Aplicar v4.638.27
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(text, old, new, label):
+              n=text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: esperado 1, encontrado {n}')
+              return text.replace(old,new,1)
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          s=rep(s, '>v4.638.26<small id="verData"', '>v4.638.27<small id="verData"', 'badge')
+          s=rep(s, "const APP_VER = '4.638.26';", "const APP_VER = '4.638.27';", 'APP_VER')
+          s=rep(s,
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.26"></script>',
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.27"></script>',
+              'script NF-e')
+          p.write_text(s,encoding='utf-8')
+
+          sw=Path('sw.js')
+          w=sw.read_text(encoding='utf-8')
+          w=rep(w, '// Produção Rioplastic — v4.638.26', '// Produção Rioplastic — v4.638.27', 'sw versao')
+          w=rep(w, "const CACHE = 'producao-rioplastic-v4.638.26';", "const CACHE = 'producao-rioplastic-v4.638.27';", 'sw cache')
+          sw.write_text(w,encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -q "const APP_VER = '4.638.27'" index.html
+          grep -q 'tinta-nfe-v4.638.22.js?v=4.638.27' index.html
+          grep -q "producao-rioplastic-v4.638.27" sw.js
+
+      - name: Publicar
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Rioplastic Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html sw.js
+          git commit -m "v4.638.27 - total da NF e resumos de preco e consumo"
+          git push origin HEAD:main
