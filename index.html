@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.637.0<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.637.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -4015,7 +4015,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.637.0';
+const APP_VER = '4.637.1';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -25713,12 +25713,16 @@ async function atrDetalhe(tipo, _mudo) {
       const _falta = [...new Set((rp || []).map(x => String(x.item_cod || '')).filter(c => c && !setorDoItem[c] && !_atrMemo.setVisto[c]))];
       for (let i = 0; i < _falta.length; i += 250) {
         const _fat = _falta.slice(i, i + 250);
-        const { data: _vs } = await sb.from('v_item_setor').select('item_cod,setor').in('item_cod', _fat);
+        const { data: _vs, error: _vsErro } = await sb.from('v_item_setor').select('item_cod,setor').in('item_cod', _fat);
+        if (_vsErro) throw _vsErro;
         _fat.forEach(c => { _atrMemo.setVisto[c] = 1; });
         (_vs || []).forEach(v => { if (v.item_cod && v.setor && v.setor !== 'Outros') _atrMemo.set[String(v.item_cod)] = v.setor; });
       }
-      Object.keys(_atrMemo.set).forEach(c => { if (!setorDoItem[c]) setorDoItem[c] = _atrMemo.set[c]; });
-    } catch (e) { try { console.warn('v_item_setor:', e && e.message); } catch (_) { } }
+    } catch (e) {
+      try { console.warn('v_item_setor:', e && e.message); } catch (_) { }
+      if (!_mudo) toast('⚠️ Não foi possível conferir todos os setores. Feche e abra o detalhe para tentar novamente.');
+    }
+    Object.keys(_atrMemo.set).forEach(c => { if (!setorDoItem[c]) setorDoItem[c] = _atrMemo.set[c]; });
     const est = {}; (re || []).forEach(e => { est[e.item_cod] = (est[e.item_cod] || 0) + (+e.peso || 0); });
     _atrJust = {}; (rj || []).forEach(j => { _atrJust[j.pedido] = j; });
     const lim7 = new Date(d + 'T12:00:00'); lim7.setDate(lim7.getDate() + 7);
@@ -36784,6 +36788,7 @@ function _progCargaSemanal(rows) {
 async function _progCarregarHist() {
   if (_progHist) return _progHist;
   const det = await carregarItemMaquina();       // { item: [{cod,kg,vezes,ult}] }
+  if (!_itemMaqCache) return {}; // Falha transitória: não congelar o cache derivado.
   const mapa = {};
   Object.keys(det).forEach(i => { mapa[i] = {}; det[i].forEach(m => { mapa[i][m.cod] = m.vezes; }); });
   _progHist = mapa;
@@ -37266,20 +37271,27 @@ async function carregarItemMaquina() {
     for (let g = 0; g < 40; g++) {
       const { data, error } = await sb.from('v_item_maquina')
         .select('item_cod,recurso_cod,vezes,ultimo_dia,kg_total')
-        .order('item_cod', { ascending: true }).range(ini, ini + 999);
+        .order('item_cod', { ascending: true }).order('recurso_cod', { ascending: true }).range(ini, ini + 999);
       if (error) throw error;
       const d = data || [];
       d.forEach(x => {
         const k = String(x.item_cod);
         (out[k] = out[k] || []).push({ cod: String(x.recurso_cod), kg: +x.kg_total || 0, vezes: x.vezes, ult: x.ultimo_dia });
       });
-      if (d.length < 1000) break;
+      if (d.length < 1000) {
+        Object.keys(out).forEach(k => out[k].sort((a, b) => b.kg - a.kg));
+        _itemMaqCache = out;
+        return out;
+      }
       ini += 1000;
     }
-    Object.keys(out).forEach(k => out[k].sort((a, b) => b.kg - a.kg));
-  } catch (e) { console.warn('v_item_maquina:', e.message || e); }
-  _itemMaqCache = out;
-  return out;
+    throw new Error('Histórico de máquinas excedeu o limite de carregamento.');
+  } catch (e) {
+    console.warn('v_item_maquina:', e.message || e);
+    toast('⚠️ Histórico de máquinas indisponível. Abra a aba novamente para tentar carregar.');
+    // Uma consulta incompleta não pode virar cache válido nem evidência de produção.
+    return {};
+  }
 }
 
 /* CAPACIDADE DEMONSTRADA POR MAQUINA — kg/semana que a maquina realmente
