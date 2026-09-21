@@ -1,5 +1,5 @@
 // Produção Rioplastic — service worker (abre do cache, revalida atrás; auto-update)
-const CACHE = 'producao-rioplastic-v4.638.7';
+const CACHE = 'producao-rioplastic-v4.638.8';
 /* 20/08/2026 (João: "sumiu o logo, muito lento") - DUAS CAUSAS, uma só linha.
    1) o logo do cabeçalho é logo_rioplastic.png e NUNCA esteve nesta lista, então
       nunca era pré-guardado;
@@ -153,6 +153,16 @@ self.addEventListener('fetch', e => {
   const ehIndex = url.pathname.endsWith('/') || url.pathname.endsWith('/index.html');
   const ehNavegacao = ehIndex && (e.request.mode === 'navigate' || e.request.destination === 'document' || e.request.mode === 'no-cors');
 
+  // v4.638.8: injeta apenas o hotfix visual do cabeçalho sem duplicar o app.
+  const comAcoesVisiveis = async resp => {
+    try {
+      const txt = await resp.text();
+      const tag = '<script src="./ui-header-v4.638.8.js?v=4.638.8"></script>';
+      const out = txt.includes('ui-header-v4.638.8.js') ? txt : txt.replace('</body>', tag + '</body>');
+      return new Response(out, { status: resp.status, statusText: resp.statusText, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    } catch (_) { return resp; }
+  };
+
   if (ehNavegacao) {
     e.respondWith((async () => {
       const c = await caches.open(CACHE);
@@ -160,7 +170,7 @@ self.addEventListener('fetch', e => {
       if (guardado) {
         // pinta AGORA com a cópia local e confere a versão atrás, sem segurar a tela
         e.waitUntil(revalidarIndex(c, true));
-        return guardado;
+        return await comAcoesVisiveis(guardado);
       }
       // primeira abertura (ou cache limpo): não tem jeito, precisa da rede
       try {
