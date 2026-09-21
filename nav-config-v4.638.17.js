@@ -20,8 +20,8 @@
     const st=document.createElement('style'); st.id='rpNav15Css';
     st.textContent=`
       #rpAreaBlocos,#rpAreaItens,#rpCompactAreaBtn,#rpCompactMenu,#rpMenuBtn,#rpAreaAtual,#rpQuickNav{display:none!important}
-      #topoFixo nav{position:relative;background:#fff;border-bottom:1px solid var(--linha);z-index:25}
-      #rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;padding:7px 10px;background:#fff}
+      #topoFixo nav{position:relative;background:#EEF3F1;border-bottom:1px solid #D8E2DD;z-index:25}
+      #rpNav15{display:flex;gap:6px;align-items:center;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:7px 10px;background:#EEF3F1}
       #rpNav15::-webkit-scrollbar{display:none}
       #rpNav15>button{flex:0 0 auto;border:1px solid var(--linha);background:#fff;color:var(--navy);border-radius:10px;padding:7px 11px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap}
       #rpNav15>button.ativa,#rpNav15>button[aria-expanded="true"]{background:var(--navy);border-color:var(--navy);color:#fff}
@@ -31,6 +31,7 @@
       #rpNav15Drop button.ativa{background:#e6f4ec;border-color:#b4dcc5;color:#066c38}
       #letreiroNav{order:0;margin:0!important}
       #topoFixo nav{order:1}
+      #topoFixo nav .rp-nav-bar{background:#EEF3F1!important;border-bottom:0!important;padding:0!important}
       #rpAreaCfgCard .rp-area-row{display:grid;grid-template-columns:minmax(160px,1fr) auto auto auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid var(--linha)}
       #rpAreaCfgCard .rp-area-row input{width:100%;padding:8px 9px;border:1px solid var(--borda);border-radius:9px;font-size:13px;box-sizing:border-box}
       #rpAreaCfgCard .rp-area-row button{width:auto;padding:7px 9px}
