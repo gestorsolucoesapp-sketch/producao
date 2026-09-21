@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.18
+// Produção Rioplastic — v4.638.19
 // Cache limpo, sem reescrever/injetar código dentro do index.html.
-const CACHE = 'producao-rioplastic-v4.638.18';
+const CACHE = 'producao-rioplastic-v4.638.19';
 const CACHE_ASSET = 'producao-rioplastic-assets-v1';
 const INDEX = './index.html';
 const ASSETS = [
