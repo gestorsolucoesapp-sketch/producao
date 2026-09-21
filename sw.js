@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.19
-// Cache limpo, sem reescrever/injetar código dentro do index.html.
-const CACHE = 'producao-rioplastic-v4.638.19';
+// Produção Rioplastic — v4.638.20
+// Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
+const CACHE = 'producao-rioplastic-v4.638.20';
 const CACHE_ASSET = 'producao-rioplastic-assets-v1';
 const INDEX = './index.html';
 const ASSETS = [
@@ -13,17 +13,6 @@ const ASSETS = [
   './supabase.js?v=2.112.3'
 ];
 
-async function atualizarIndex(cache) {
-  try {
-    const resposta = await fetch(INDEX, { cache: 'reload' });
-    if (resposta && resposta.ok) {
-      await cache.put(INDEX, resposta.clone());
-      return resposta;
-    }
-  } catch (_) {}
-  return null;
-}
-
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil((async () => {
@@ -33,8 +22,6 @@ self.addEventListener('install', event => {
         if (!(await assets.match(url))) await assets.add(url);
       } catch (_) {}
     }));
-    const app = await caches.open(CACHE);
-    await atualizarIndex(app);
   })());
 });
 
@@ -73,19 +60,38 @@ self.addEventListener('fetch', event => {
   const ehIndex = url.pathname.endsWith('/') || url.pathname.endsWith('/index.html');
   const ehNavegacao = ehIndex && event.request.mode === 'navigate';
 
+  // Recuperação: sempre tenta a versão mais nova do HTML primeiro.
   if (ehNavegacao) {
     event.respondWith((async () => {
       const app = await caches.open(CACHE);
+      try {
+        const resposta = await fetch(INDEX, { cache: 'no-store' });
+        if (resposta && resposta.ok) {
+          await app.put(INDEX, resposta.clone());
+          return resposta;
+        }
+      } catch (_) {}
       const guardado = await app.match(INDEX);
-      const rede = atualizarIndex(app);
-      if (guardado) {
-        event.waitUntil(rede);
-        return guardado;
-      }
-      return (await rede) || new Response(
-        'Sem conexão e sem cópia local.',
-        { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
-      );
+      return guardado || new Response('Sem conexão e sem cópia local.', {
+        status: 503,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    })());
+    return;
+  }
+
+  // JavaScript também prioriza a rede para impedir execução das versões 4.638.18/19 em cache.
+  if (/\.js$/i.test(url.pathname)) {
+    event.respondWith((async () => {
+      const app = await caches.open(CACHE);
+      try {
+        const resposta = await fetch(event.request, { cache: 'no-store' });
+        if (resposta && resposta.ok) {
+          await app.put(event.request, resposta.clone());
+          return resposta;
+        }
+      } catch (_) {}
+      return (await app.match(event.request)) || new Response('', { status: 504 });
     })());
     return;
   }
@@ -95,14 +101,13 @@ self.addEventListener('fetch', event => {
       || /supabase\.js$/i.test(url.pathname);
     const cache = await caches.open(ehAsset ? CACHE_ASSET : CACHE);
     const guardado = await cache.match(event.request);
-    const rede = fetch(event.request).then(resposta => {
-      if (resposta && resposta.ok) cache.put(event.request, resposta.clone());
+    if (guardado) return guardado;
+    try {
+      const resposta = await fetch(event.request);
+      if (resposta && resposta.ok) await cache.put(event.request, resposta.clone());
       return resposta;
-    }).catch(() => null);
-    if (guardado) {
-      event.waitUntil(rede);
-      return guardado;
+    } catch (_) {
+      return new Response('', { status: 504 });
     }
-    return (await rede) || new Response('', { status: 504 });
   })());
 });
