@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.26 — vínculo automático por ERP ou nome + marca */
+/* Rioplastic v4.638.27 — conferência do total da NF + Resumos gerenciais da Casa de Tintas */
 (function(){
   'use strict';
 
@@ -170,7 +170,9 @@
       cnpj,
       emissao,
       entrada: new Date().toISOString().slice(0,10),
-      valor_total:n(txt(total,'vNF')),
+      valor_total:n(txt(total,'vNF')) || itens.reduce((a,x)=>a+n(x.valor_total),0),
+      valor_total_danfe:n(txt(total,'vNF')),
+      valor_total_itens:itens.reduce((a,x)=>a+n(x.valor_total),0),
       chave_nfe:chave,
       itens
     };
@@ -383,9 +385,11 @@
     if(!itens.length) throw new Error('Li o PDF, mas não consegui reconhecer a tabela de produtos. Tente o XML da NF-e.');
 
     const total=pdfValorDepois(lines,/VALOR TOTAL DA NOTA|VALOR TOTAL DA NF|V\.?\s*TOTAL\s*NF/i);
+    const somaItens=itens.reduce((a,x)=>a+n(x.valor_total),0);
     return {
       arquivo:file.name,numero,serie,fornecedor,cnpj:'',emissao,
-      entrada:new Date().toISOString().slice(0,10),valor_total:total,chave_nfe:chave,
+      entrada:new Date().toISOString().slice(0,10),valor_total:total||somaItens,
+      valor_total_danfe:total,valor_total_itens:somaItens,chave_nfe:chave,
       itens,origem:'pdf',
       pdf_aviso:'Dados extraídos do DANFE PDF. Confira número da nota, quantidades e valores antes de confirmar.'
     };
@@ -459,12 +463,24 @@
     if(!_nfeAtual) return '';
     const entra=_nfeAtual.itens.filter(x=>x.entra_estoque);
     const pend=entra.filter(x=>!x.produto_id || !(n(x.quantidade_estoque)>0));
+    const somaItens=_nfeAtual.itens.reduce((a,x)=>a+n(x.valor_total),0);
+    const totalDanfe=n(_nfeAtual.valor_total_danfe);
+    const totalExibido=totalDanfe || somaItens || n(_nfeAtual.valor_total);
+    _nfeAtual.valor_total_itens=somaItens;
+    _nfeAtual.valor_total=totalExibido;
+    const dif=totalDanfe ? Math.abs(totalDanfe-somaItens) : 0;
+    const conf=totalDanfe
+      ? (dif<0.01
+          ? '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#EAF7EF;color:#1F6D42;font-size:11px;font-weight:700">✓ Conferência: total da NF e soma dos itens batem em '+_tBRL(totalDanfe)+'</div>'
+          : '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#FFF6E6;color:#8A5A12;font-size:11px">⚠️ Total da NF '+_tBRL(totalDanfe)+' · soma dos itens '+_tBRL(somaItens)+' · diferença '+_tBRL(dif)+'. Confira frete, impostos, desconto ou a leitura do PDF.</div>')
+      : '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#EEF4FA;color:var(--navy);font-size:11px">ℹ️ O DANFE não entregou o campo total de forma legível. Total calculado pela soma dos '+_nfeAtual.itens.length+' itens: <b>'+_tBRL(somaItens)+'</b>.</div>';
     return '<div class="idet-grid" style="margin:10px 0">'
       +'<div><b>'+_nfeAtual.itens.length+'</b><span>itens na NF</span></div>'
       +'<div><b>'+entra.length+'</b><span>itens para estoque</span></div>'
       +'<div><b style="color:'+(pend.length?'var(--critico)':'var(--verde)')+'">'+pend.length+'</b><span>pendências</span></div>'
-      +(_tintaVeDinheiro()?'<div><b>'+_tBRL(_nfeAtual.valor_total)+'</b><span>total da NF</span></div>':'')
-      +'</div>';
+      +(_tintaVeDinheiro()?'<div><b>'+_tBRL(totalExibido)+'</b><span>total da NF</span></div>':'')
+      +'</div>'
+      +(_tintaVeDinheiro()?conf:'');
   }
 
   function renderPreview(){
@@ -550,10 +566,13 @@
         vincular_cod_erp:!!(it.entra_estoque && p && it.cod_erp && it.vincular_cod_erp)
       };
     });
+    const somaNota=N.itens.reduce((a,x)=>a+n(x.valor_total),0);
+    const totalNota=n(N.valor_total_danfe) || n(N.valor_total) || somaNota;
+    N.valor_total=totalNota;
     const nota={
       numero:N.numero, serie:N.serie||null, fornecedor:N.fornecedor||null,
       emissao:N.emissao||null, entrada:N.entrada||new Date().toISOString().slice(0,10),
-      valor_total:N.valor_total||null, arquivo:N.arquivo||null, chave_nfe:N.chave_nfe||null
+      valor_total:totalNota||null, arquivo:N.arquivo||null, chave_nfe:N.chave_nfe||null
     };
     _nfeSalvando=true; renderPreview();
     try{
@@ -699,6 +718,193 @@
       +'</tbody></table></div>'
       +(!vis.length?'<p class="vazio-painel">Nada encontrado.</p>':'');
   };
+
+
+  /* ===== RESUMOS GERENCIAIS DA CASA DE TINTAS — v4.638.27 =====
+     Consumo sai dos movimentos em latas; o valor usa kg x preço/kg.
+     Histórico de preço usa as NFs importadas e, como referência inicial,
+     os preços históricos já existentes no cadastro ERP. */
+  let _tResumoMetrica='kg';
+  let _tResumoPreco={carregado:false,carregando:false,erp:[],notas:[],itens:[]};
+
+  function _trMes(k){
+    const p=String(k||'').split('-');
+    return p.length===2 ? p[1]+'/'+p[0].slice(2) : k;
+  }
+  function _trPesoLata(p){
+    const x=n(p&&p.peso_lata_kg);
+    return x>0?x:2;
+  }
+  function _trConsumo(){
+    const meses={}, prod={};
+    (_tintaMov||[]).forEach(m=>{
+      if(String(m.tipo)!=='saida') return;
+      const dia=String(m.quando||'').slice(0,10); if(!dia) return;
+      const k=dia.slice(0,7), q=n(m.quantidade);
+      const p=produtoPorId(m.produto_id);
+      const kg=q*_trPesoLata(p), pr=n(p&&p.preco), val=kg*pr;
+      if(!meses[k]) meses[k]={latas:0,kg:0,valor:0};
+      meses[k].latas+=q; meses[k].kg+=kg; meses[k].valor+=val;
+      const id=String(m.produto_id||'');
+      if(!prod[id]) prod[id]={nome:(p&&p.nome)||'Sem cadastro',kg:0,latas:0,valor:0};
+      prod[id].kg+=kg; prod[id].latas+=q; prod[id].valor+=val;
+    });
+    const ks=Object.keys(meses).sort().slice(-12);
+    const ativos=ks.filter(k=>meses[k].kg>0);
+    const atual=new Date().toISOString().slice(0,7);
+    const mesAtual=meses[atual]||{latas:0,kg:0,valor:0};
+    const media=ativos.length?ativos.reduce((a,k)=>a+meses[k].kg,0)/ativos.length:0;
+    let maiorK='',maior={kg:0,latas:0,valor:0};
+    ks.forEach(k=>{if(meses[k].kg>maior.kg){maiorK=k;maior=meses[k];}});
+    const top=Object.values(prod).sort((a,b)=>b.kg-a.kg).slice(0,8);
+    return {meses,ks,ativos,mesAtual,media,maiorK,maior,top};
+  }
+  function _trFmtMetrica(v,met){
+    if(met==='valor') return _tBRL(v);
+    if(met==='latas') return Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+' lata(s)';
+    return Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg';
+  }
+  function _trGrafConsumo(R){
+    if(!R.ks.length) return '<p class="desc">Ainda não há saídas suficientes para montar o gráfico mensal.</p>';
+    const met=_tResumoMetrica;
+    const vals=R.ks.map(k=>n(R.meses[k][met]));
+    const mx=Math.max(1,...vals);
+    const botoes=[['kg','kg'],['latas','latas']];
+    if(_tintaVeDinheiro()) botoes.push(['valor','R$']);
+    return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px">'
+      +botoes.map(x=>'<span onclick="tintaResumoMetrica(\''+x[0]+'\')" style="cursor:pointer;font-size:11.5px;font-weight:800;border-radius:999px;padding:5px 11px;'
+        +(_tResumoMetrica===x[0]?'background:var(--navy);color:#fff':'background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s)')+'">'+x[1]+'</span>').join('')
+      +'</div>'
+      +'<div style="display:flex;align-items:flex-end;gap:4px;height:165px;padding:8px 2px 0">'
+      +R.ks.map(k=>{
+        const M=R.meses[k],v=n(M[met]),h=Math.max(v?3:0,Math.round(v/mx*132));
+        return '<div style="flex:1;min-width:24px;text-align:center" title="'+_trMes(k)+' · '+_trFmtMetrica(v,met)+' · '+_trFmtMetrica(M.kg,'kg')+'">'
+          +'<div style="font-size:9px;color:var(--fraco-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(v?_trFmtMetrica(v,met).replace('R$ ',''):'')+'</div>'
+          +'<div style="height:'+h+'px;background:var(--azul-2);border-radius:5px 5px 0 0;margin:2px auto 0;max-width:42px"></div>'
+          +'<span style="font-size:9px;color:var(--fraco-2);display:block;margin-top:4px">'+_trMes(k)+'</span></div>';
+      }).join('')
+      +'</div>';
+  }
+  function _trTopConsumo(R){
+    if(!R.top.length) return '<p class="desc">Sem consumo por cor no período.</p>';
+    const mx=Math.max(1,...R.top.map(x=>x.kg));
+    return '<div style="display:grid;gap:7px">'
+      +R.top.map((x,i)=>'<div>'
+        +'<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px"><span><b>'+(i+1)+'º</b> '+escapeHtml(x.nome)+'</span><b>'+Number(x.kg).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg</b></div>'
+        +'<div style="height:7px;background:var(--leve-2);border-radius:999px;overflow:hidden;margin-top:3px"><div style="height:100%;width:'+Math.max(2,Math.round(x.kg/mx*100))+'%;background:var(--navy);border-radius:999px"></div></div>'
+        +'</div>').join('')
+      +'</div>';
+  }
+
+  async function _trCarregaPreco(){
+    if(_tResumoPreco.carregado||_tResumoPreco.carregando) return;
+    _tResumoPreco.carregando=true;
+    try{
+      const [a,b,c]=await Promise.all([
+        sb.from('tinta_erp_item').select('cod_erp,desc_erp,preco24,preco_ultimo,preco_ultimo_data').limit(500),
+        sb.from('tinta_nota').select('id,numero,emissao,entrada,importado_em').order('importado_em',{ascending:false}).limit(120),
+        sb.from('tinta_nota_item').select('nota_id,produto_id,cod_erp,descricao,preco_anterior,preco_aplicado').not('preco_aplicado','is',null).limit(1000)
+      ]);
+      _tResumoPreco.erp=(a&&!a.error&&a.data)||[];
+      _tResumoPreco.notas=(b&&!b.error&&b.data)||[];
+      _tResumoPreco.itens=(c&&!c.error&&c.data)||[];
+    }catch(_){
+      _tResumoPreco.erp=[];_tResumoPreco.notas=[];_tResumoPreco.itens=[];
+    }finally{
+      _tResumoPreco.carregando=false;_tResumoPreco.carregado=true;
+      if(_tintaVista==='resumo') tintaRender();
+    }
+  }
+  function _trGrafPreco(){
+    if(!_tintaVeDinheiro()) return '';
+    if(!_tResumoPreco.carregado) return '<p class="desc">Carregando histórico de preços…</p>';
+    const rows=(_tResumoPreco.erp||[]).map(x=>{
+      const a=n(x.preco24),b=n(x.preco_ultimo);
+      return {nome:x.desc_erp||x.cod_erp||'Item',base:a,atual:b,data:x.preco_ultimo_data||'',pct:(a>0&&b>0)?((b-a)/a*100):0};
+    }).filter(x=>x.base>0&&x.atual>0&&Math.abs(x.pct)>=0.01)
+      .sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,10);
+    const notasPorId={};(_tResumoPreco.notas||[]).forEach(x=>notasPorId[x.id]=x);
+    const mud=(_tResumoPreco.itens||[]).map(x=>{
+      const a=n(x.preco_anterior),b=n(x.preco_aplicado),N=notasPorId[x.nota_id]||{},p=produtoPorId(x.produto_id);
+      return {nome:(p&&p.nome)||x.descricao||x.cod_erp||'Item',antes:a,depois:b,pct:(a>0&&b>0)?((b-a)/a*100):0,
+        data:N.emissao||N.entrada||String(N.importado_em||'').slice(0,10),numero:N.numero||''};
+    }).filter(x=>x.antes>0&&x.depois>0&&Math.abs(x.depois-x.antes)>=0.01)
+      .sort((a,b)=>String(b.data).localeCompare(String(a.data))).slice(0,8);
+    let h='';
+    if(rows.length){
+      const mx=Math.max(1,...rows.map(x=>Math.abs(x.pct)));
+      h+='<div class="titulo-sec" style="margin-top:14px">Alteração de preço · maiores variações</div>'
+        +'<p class="desc" style="margin:3px 0 9px">Comparação entre a referência histórica do ERP e o último preço conhecido por kg.</p>'
+        +'<div style="display:grid;gap:8px">'+rows.map(x=>{
+          const w=Math.max(2,Math.round(Math.abs(x.pct)/mx*48));
+          const pos=x.pct>=0;
+          return '<div><div style="display:flex;justify-content:space-between;gap:8px;font-size:11px"><span style="max-width:72%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(x.nome)+'</span><b>'+(x.pct>=0?'+':'')+x.pct.toLocaleString('pt-BR',{maximumFractionDigits:1})+'%</b></div>'
+            +'<div style="position:relative;height:10px;background:var(--leve-2);border-radius:999px;overflow:hidden;margin-top:3px">'
+            +'<div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--linha-2s)"></div>'
+            +'<div style="position:absolute;top:1px;bottom:1px;'+(pos?'left:50%':'right:50%')+';width:'+w+'%;background:'+(pos?'var(--laranja-4,#9E5514)':'var(--azul-2)')+';border-radius:999px"></div></div>'
+            +'<div class="desc" style="font-size:9.5px">'+_tBRL(x.base)+'/kg → '+_tBRL(x.atual)+'/kg'+(x.data?' · '+fmtD(x.data):'')+'</div></div>';
+        }).join('')+'</div>';
+    }else{
+      h+='<div class="titulo-sec" style="margin-top:14px">Alteração de preço</div><p class="desc">Ainda não há duas referências de preço suficientes para montar o gráfico.</p>';
+    }
+    if(mud.length){
+      h+='<div class="titulo-sec" style="margin-top:14px">Últimas alterações confirmadas por NF</div>'
+        +'<div style="overflow-x:auto"><table style="width:100%;font-size:11.5px"><thead><tr><th style="text-align:left">Tinta</th><th>NF</th><th>Data</th><th style="text-align:right">Antes</th><th style="text-align:right">Novo</th><th style="text-align:right">Variação</th></tr></thead><tbody>'
+        +mud.map(x=>'<tr style="border-top:1px solid var(--linha)"><td style="text-align:left">'+escapeHtml(x.nome)+'</td><td style="text-align:center">'+escapeHtml(x.numero||'—')+'</td><td style="text-align:center">'+fmtD(x.data)+'</td><td style="text-align:right">'+_tBRL(x.antes)+'</td><td style="text-align:right;font-weight:700">'+_tBRL(x.depois)+'</td><td style="text-align:right;font-weight:800">'+(x.pct>=0?'+':'')+x.pct.toLocaleString('pt-BR',{maximumFractionDigits:1})+'%</td></tr>').join('')
+        +'</tbody></table></div>';
+    }
+    return h;
+  }
+
+  function renderResumoGerencial(box){
+    if(!box) return;
+    if(!_tResumoPreco.carregado&&!_tResumoPreco.carregando) setTimeout(_trCarregaPreco,0);
+    try{
+      if(typeof _tBalHist!=='undefined' && _tBalHist===null && typeof tintaBalHistCarregar==='function'){
+        tintaBalHistCarregar().then(()=>{if(_tintaVista==='resumo')tintaRender();});
+      }
+    }catch(_){}
+    const R=_trConsumo(),ve$=_tintaVeDinheiro();
+    const baixo=(_tintaSaldo||[]).filter(x=>x.abaixo_minimo&&x.ativo&&n(x.saldo)>=0);
+    const neg=(_tintaSaldo||[]).filter(x=>n(x.saldo)<0);
+    const maiorTxt=R.maiorK ? Number(R.maior.kg).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg' : '0 kg';
+    const top1=R.top[0];
+    let inv='';
+    try{
+      if(typeof _tintaGrafInventario==='function') inv='<div class="titulo-sec" style="margin-top:16px">Diferença do inventário</div>'+_tintaGrafInventario();
+    }catch(_){}
+    box.innerHTML=
+      (neg.length?'<p class="desc" style="background:#FBE9E9;border-left:3px solid var(--critico);padding:7px 10px;border-radius:6px"><b>'+neg.length+' cor(es) com saldo negativo</b> — acertar no balanço.</p>':'')
+      +'<div class="idet-grid">'
+      +'<div><b>'+Number(R.mesAtual.kg).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg</b><span>consumo mês atual</span></div>'
+      +'<div><b>'+Number(R.media).toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg</b><span>consumo médio / mês</span></div>'
+      +'<div><b>'+maiorTxt+'</b><span>maior consumo'+(R.maiorK?' · '+_trMes(R.maiorK):'')+'</span></div>'
+      +'<div><b>'+(top1?escapeHtml(top1.nome):'—')+'</b><span>tinta mais consumida</span></div>'
+      +(ve$?'<div><b>'+_tBRL(R.mesAtual.valor)+'</b><span>valor estimado no mês</span></div>':'')
+      +'<div><b style="color:'+(baixo.length?'var(--critico)':'var(--verde)')+'">'+baixo.length+'</b><span>abaixo do mínimo</span></div>'
+      +'</div>'
+      +'<div class="titulo-sec" style="margin-top:14px">Consumo mensal</div>'
+      +'<p class="desc" style="margin:3px 0 6px">Últimos 12 meses com saídas registradas. Valor em R$ é estimado usando o preço atual por kg.</p>'
+      +_trGrafConsumo(R)
+      +'<div class="titulo-sec" style="margin-top:16px">Maior consumo por tinta</div>'
+      +_trTopConsumo(R)
+      +_trGrafPreco()
+      +inv
+      +'<div class="titulo-sec" style="margin-top:16px">Resumo mensal</div>'
+      +'<div style="overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr><th style="text-align:left">Mês</th><th>Latas</th><th>kg</th>'+(ve$?'<th style="text-align:right">Valor estimado</th>':'')+'</tr></thead><tbody>'
+      +R.ks.slice().reverse().map(k=>{const M=R.meses[k];return '<tr style="border-top:1px solid var(--linha)"><td style="text-align:left">'+_trMes(k)+'</td><td style="text-align:center">'+Number(M.latas).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td><td style="text-align:center;font-weight:700">'+Number(M.kg).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'+(ve$?'<td style="text-align:right">'+_tBRL(M.valor)+'</td>':'')+'</tr>';}).join('')
+      +'</tbody></table></div>'
+      +(baixo.length?'<div style="margin-top:16px"><div class="titulo-sec">Abaixo do mínimo · comprar</div>'+baixo.sort((a,b)=>n(a.saldo)-n(b.saldo)).slice(0,20).map(x=>'<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--linha);font-size:12.5px"><span>'+_bolinha(x.nome)+'<b>'+escapeHtml(x.nome)+'</b></span><span><b style="color:var(--critico)">'+_tNum(x.saldo)+'</b> <span class="desc">de mín. '+_tNum(x.estoque_min)+'</span></span></div>').join('')+'</div>':'');
+  }
+  function ajustarResumoBotao(){
+    const b=document.querySelector('#tintaSubAbas [data-tv="resumo"]');
+    if(b) b.innerHTML='📊 Resumos';
+  }
+  window.tintaResumoMetrica=function(v){
+    if(v==='kg'||v==='latas'||(v==='valor'&&_tintaVeDinheiro())){_tResumoMetrica=v;tintaRender();}
+  };
+  try { tintaTelaResumo=renderResumoGerencial; } catch(_) { window.tintaTelaResumo=renderResumoGerencial; }
+  setTimeout(ajustarResumoBotao,0);
 
   window.tintaNfeLer=ler;
   window.tintaNfeMapear=mapear;
