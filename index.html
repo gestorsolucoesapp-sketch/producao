@@ -1257,7 +1257,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     </div>
 
     <!-- lembrar (só no login) -->
-    <label class="lembrar" id="campoLembrar"><input type="checkbox" id="inLembrar" checked> Lembrar e-mail e senha</label>
+    <label class="lembrar" id="campoLembrar"><input type="checkbox" id="inLembrar" checked> Lembrar e-mail</label>
 
     <!-- botão principal (muda conforme o modo) -->
     <button class="btn btn-verde" id="btnEntrar" onclick="acaoLogin()">Entrar</button>
@@ -1317,7 +1317,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.637.1<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.637.2<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -4015,7 +4015,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.637.1';
+const APP_VER = '4.637.2';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -4756,26 +4756,20 @@ async function entrar() {
 // lembrar e-mail/senha no aparelho
 function salvarCredenciais() {
   try {
-    if ($('inLembrar') && $('inLembrar').checked) {
-      localStorage.setItem('rp_lembrar', '1');
-      localStorage.setItem('rp_email', $('inEmail').value.trim());
-      localStorage.setItem('rp_senha', $('inSenha').value);
-    } else {
-      localStorage.setItem('rp_lembrar', '0');
-      localStorage.removeItem('rp_senha');
-    }
+    localStorage.removeItem('rp_senha');
+    const lembrar = !!($('inLembrar') && $('inLembrar').checked);
+    localStorage.setItem('rp_lembrar', lembrar ? '1' : '0');
+    if (lembrar) localStorage.setItem('rp_email', $('inEmail').value.trim());
+    else localStorage.removeItem('rp_email');
   } catch (_) {}
 }
 function preencherCredenciais() {
   try {
+    localStorage.removeItem('rp_senha');
     const lembrar = localStorage.getItem('rp_lembrar') !== '0';
     if ($('inLembrar')) $('inLembrar').checked = lembrar;
-    const e = localStorage.getItem('rp_email');
-    if (e && $('inEmail')) $('inEmail').value = e;
-    if (lembrar) {
-      const s = localStorage.getItem('rp_senha');
-      if (s && $('inSenha')) $('inSenha').value = s;
-    }
+    const email = localStorage.getItem('rp_email');
+    if (lembrar && email && $('inEmail')) $('inEmail').value = email;
   } catch (_) {}
 }
 preencherCredenciais();
@@ -6927,15 +6921,19 @@ function previewProg(id, v) {
 }
 let _progTimer = {};
 async function salvarProg(id, v) {
-  v = parseInt(v, 10) || 0;
-  const t = (tarefasData || []).find(x => x.id === id); if (t) t.progresso = v;
+  v = Math.max(0, Math.min(100, parseInt(v, 10) || 0));
+  const t = (tarefasData || []).find(x => x.id === id);
   if (v >= 100 && t && t.recorrente) { await registrarConclusaoRecorrente(t); return; }
+  const upd = { progresso: v };
+  if (v >= 100 && t && !t.concluida) Object.assign(upd, { concluida: true, concluida_em: new Date().toISOString(), concluida_por_nome: (perfil && perfil.nome) || null });
   try {
-    const upd = { progresso: v };
-    if (v >= 100 && t && !t.concluida) { upd.concluida = true; upd.concluida_em = new Date().toISOString(); upd.concluida_por_nome = (perfil && perfil.nome) || null; if (t) Object.assign(t, upd); }
-    await sb.from('tarefas').update(upd).eq('id', id);
-    if (v >= 100) { renderTarefas(); atualizarSino(); toast('✓ 100% — tarefa concluída'); }
-  } catch (e) { toast('❌ ' + (e.message || e)); }
+    const { data, error } = await sb.from('tarefas').update(upd).eq('id', id).select('id');
+    if (error) throw error;
+    if (!data || data.length !== 1) throw new Error('A tarefa não foi salva. Atualize a lista e confira seu acesso.');
+    if (t) Object.assign(t, upd);
+    renderTarefas(); atualizarSino();
+    if (v >= 100) toast('✓ 100% — tarefa concluída');
+  } catch (e) { renderTarefas(); toast('❌ Não foi salvo: ' + (e.message || e)); }
 }
 // marca/desmarca uma etapa → progresso = concluídas ÷ total × 100 (barra segue os passos)
 function _progDosPassos(t) { const n = (t.subtarefas && t.subtarefas.length) || 0; return n ? Math.round(t.subtarefas.filter(s => s.feito).length / n * 100) : (t.progresso || 0); }
@@ -6946,8 +6944,9 @@ async function toggleSub(id, idx, feito) {
   t.progresso = _progDosPassos(t);
   renderTarefas();
   try {
-    const { error } = await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id);
+    const { data, error } = await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id).select('id');
     if (error) throw error;
+    if (!data || data.length !== 1) throw new Error('Nenhuma tarefa foi atualizada.');
   } catch (e) { toast('❌ ' + (e.message || e)); t.subtarefas[idx].feito = !feito; t.progresso = _progDosPassos(t); renderTarefas(); }
 }
 // adiciona uma etapa direto no card (rápido, só texto — data/obs no editar). Recalcula o %.
@@ -6955,22 +6954,25 @@ async function addSubCard(id, texto, inputEl) {
   texto = (texto || '').trim(); if (!texto) return;
   const t = (tarefasData || []).find(x => x.id === id); if (!t) return;
   if (!Array.isArray(t.subtarefas)) t.subtarefas = [];
+  const anteriores = t.subtarefas.slice();
   t.subtarefas.push({ texto, data: null, obs: null, feito: false });
   t.progresso = _progDosPassos(t);
   if (inputEl) inputEl.value = '';
   renderTarefas();
   try {
-    const { error } = await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id);
+    const { data, error } = await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id).select('id');
     if (error) throw error;
-  } catch (e) { toast('❌ ' + (e.message || e)); }
+    if (!data || data.length !== 1) throw new Error('Nenhuma tarefa foi atualizada.');
+  } catch (e) { t.subtarefas = anteriores; t.progresso = _progDosPassos(t); if (inputEl) inputEl.value = texto; renderTarefas(); toast('❌ Não foi salvo: ' + (e.message || e)); }
 }
 async function rmSubCard(id, idx) {
   const t = (tarefasData || []).find(x => x.id === id); if (!t || !Array.isArray(t.subtarefas)) return;
+  const anteriores = t.subtarefas.slice();
   t.subtarefas.splice(idx, 1);
   t.progresso = _progDosPassos(t);
   renderTarefas();
-  try { await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id); }
-  catch (e) { toast('❌ ' + (e.message || e)); }
+  try { const { data, error } = await sb.from('tarefas').update({ subtarefas: t.subtarefas, progresso: t.progresso }).eq('id', id).select('id'); if (error) throw error; if (!data || data.length !== 1) throw new Error('Nenhuma tarefa foi atualizada.'); }
+  catch (e) { t.subtarefas = anteriores; t.progresso = _progDosPassos(t); renderTarefas(); toast('❌ Não foi salvo: ' + (e.message || e)); }
 }
 
 // registra a conclusão de uma tarefa recorrente no histórico e reabre a tarefa
@@ -6978,21 +6980,26 @@ async function registrarConclusaoRecorrente(t) {
   const agora = new Date().toISOString();
   const nome = (perfil && perfil.nome) || null;
   try {
-    await sb.from('tarefas_conclusoes').insert({
+    const { error } = await sb.from('tarefas_conclusoes').insert({
       tarefa_id: t.id,
       concluida_por_id: (perfil && perfil.id) || null,
       concluida_por_nome: nome,
       concluida_em: agora,
       progresso_final: 100
     });
-  } catch (e) { toast('❌ histórico: ' + (e.message || e)); }
+    if (error) throw error;
+  } catch (e) { toast('❌ Histórico não salvo: ' + (e.message || e)); renderTarefas(); return; }
   /* 12/08/2026 (João): tarefa FIXA não pode sumir ao ser concluída. A conclusão
      vai para o histórico e a tarefa volta a ficar aberta na hora, pronta para o
      próximo ciclo. Recorrente não-fixa continua fechando como antes. */
   const upd = t.fixa
     ? { concluida: false, concluida_em: null, concluida_por_nome: null, progresso: 0, ultima_conclusao: agora }
     : { concluida: true, concluida_em: agora, concluida_por_nome: nome, progresso: 100, ultima_conclusao: agora };
-  try { await sb.from('tarefas').update(upd).eq('id', t.id); } catch (e) { toast('❌ ' + (e.message || e)); return; }
+  try {
+    const { data, error } = await sb.from('tarefas').update(upd).eq('id', t.id).select('id');
+    if (error) throw error;
+    if (!data || data.length !== 1) throw new Error('Nenhuma tarefa foi atualizada.');
+  } catch (e) { toast('⚠️ Histórico registrado, mas a tarefa não foi atualizada. Confira o histórico antes de repetir: ' + (e.message || e)); renderTarefas(); return; }
   Object.assign(t, upd);
   renderTarefas(); atualizarSino();
   toast(t.fixa ? '✓ Registrada · a tarefa continua na lista' : '✓ Concluída · registrada no histórico');
@@ -11618,6 +11625,7 @@ async function estSalvaIgnorar() {
   try { await cfgGravar('estoque_desvio_ignorar', [...(_estIgnorar || [])]); } catch (_) {}
 }
 async function estIgnorarDesvio(dep, fam) {
+  if (!confirm('Ocultar todos os itens da família ' + (EST_FAM[fam] || fam) + ' no depósito ' + dep + '? A regra vale para todos os usuários e pode ser desfeita em mostrar tudo.')) return;
   await estCarregaIgnorar();
   _estIgnorar.add(dep + '|' + fam);
   await estSalvaIgnorar();
@@ -11670,13 +11678,13 @@ function cardDesviosEstoque(rows) {
       <div style="font-size:10px;color:var(--fraco-2);font-weight:700">depósito ${escapeHtml(String(r.deposito_cod))} · ${escapeHtml(String(r.deposito_nome || '').slice(0, 30))}</div></td>
     <td style="font-size:10.5px;text-align:left;white-space:nowrap"><span style="color:var(--fraco-2)">esperado</span> <b>${EST_FAM[r._esperado] || r._esperado}</b><br><span style="color:var(--critico)">achado</span> <b style="color:var(--critico)">${EST_FAM[r._achado] || r._achado}</b></td>
     <td><span class="cel baixo">${_estKg(r) > 0 ? _estT(_estKg(r)) : (_estCx(r) > 0 ? _estNum(_estCx(r)) + ' cxs' : '—')}${_estVerValor ? '<div style="font-size:9px;font-weight:400">' + _estRS(r.valor) + '</div>' : ''}</span>
-      <div onclick="event.stopPropagation();estIgnorarDesvio('${escapeHtml(String(r.deposito_cod))}','${escapeHtml(String(r._achado))}')" title="Esconder ${escapeHtml(EST_FAM[r._achado] || r._achado)} neste depósito" style="cursor:pointer;font-size:10px;color:var(--fraco-2);font-weight:700;text-align:center;margin-top:2px">✕ esconder</div></td></tr>`).join('');
+      <div onclick="event.stopPropagation();estIgnorarDesvio('${escapeHtml(String(r.deposito_cod))}','${escapeHtml(String(r._achado))}')" title="Esconder ${escapeHtml(EST_FAM[r._achado] || r._achado)} neste depósito" style="cursor:pointer;font-size:10px;color:var(--fraco-2);font-weight:700;text-align:center;margin-top:2px">Ocultar família</div></td></tr>`).join('');
   return `<div class="card" style="border-left:4px solid var(--critico)">
-    <div class="titulo-sec">⚠️ Item fora do lugar<button class="i-info" onclick="abreInfo('estdesvio')" title="Como este número é feito" aria-label="Como este número é feito">i</button></div>
-    <p class="desc"><b>${d.length}</b> item(ns) num depósito que não é o deles · <b>${_estT(kgD)}</b>${cxD > 0 ? ' · <b>' + _estNum(cxD) + ' cxs</b>' : ''}${_estVerValor ? ' · <b>' + _estRS(rs) + '</b>' : ''} no lugar errado</p>
+    <div class="titulo-sec">⚠️ Classificação de estoque a conferir<button class="i-info" onclick="abreInfo('estdesvio')" title="Como este número é feito" aria-label="Como este número é feito">i</button></div>
+    <p class="desc"><b>${d.length}</b> item(ns) com classificação divergente da referência do depósito · <b>${_estT(kgD)}</b>${cxD > 0 ? ' · <b>' + _estNum(cxD) + ' cxs</b>' : ''}${_estVerValor ? ' · <b>' + _estRS(rs) + '</b>' : ''} para conferir. A descrição pode não identificar a família; isto não confirma erro de localização.</p>
     ${tabSimples(['Item · depósito', 'Família', 'Saldo'], linhas)}
     ${d.length > 60 ? `<p class="desc">mostrando os 60 maiores de ${d.length}</p>` : ''}
-    <p class="desc" style="margin-top:6px">O <b>✕ esconder</b> some com essa família <b>inteira</b> nesse depósito — e continua valendo quando entrar item novo do mesmo tipo.${(_estIgnorar && _estIgnorar.size) ? ` <b>${_estIgnorar.size}</b> regra(s) escondida(s) · <span onclick="estMostrarTudoDesvio()" style="color:var(--azul-2);font-weight:800;cursor:pointer;text-decoration:underline dotted">mostrar tudo</span>` : ''}</p>
+    <p class="desc" style="margin-top:6px">O comando <b>Ocultar família</b> some com essa família <b>inteira</b> nesse depósito — e continua valendo quando entrar item novo do mesmo tipo.${(_estIgnorar && _estIgnorar.size) ? ` <b>${_estIgnorar.size}</b> regra(s) escondida(s) · <span onclick="estMostrarTudoDesvio()" style="color:var(--azul-2);font-weight:800;cursor:pointer;text-decoration:underline dotted">mostrar tudo</span>` : ''}</p>
   </div>`;
 }
 
@@ -11729,7 +11737,8 @@ async function carregarDemanda(force) {
   if (_demCache && !force) { renderDemanda(); return; }
   box.innerHTML = '<p class="desc"><span class="spin"></span> montando o mapa…</p>';
   try {
-    const { data: fo } = await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    const { data: fo, error: erroFoto } = await sb.from('rest196_pendente').select('dia_foto').order('dia_foto', { ascending: false }).limit(1);
+    if (erroFoto) throw erroFoto;
     const dia = fo && fo[0] ? fo[0].dia_foto : null;
     if (!dia) { box.innerHTML = '<p class="vazio-painel">Nenhuma carteira importada. Mande o <b>REST196</b> na aba Importar.</p>'; return; }
 
@@ -11742,6 +11751,7 @@ async function carregarDemanda(force) {
         if (error) throw error;
         out.push(...(data || []));
         if (!data || data.length < 1000) break;
+        if (i === 19000) throw new Error('Demanda incompleta: limite de leitura atingido.');
       }
       return out;
     };
@@ -12170,6 +12180,7 @@ async function carregarEstoque(force) {
       if (error) throw error;
       rows.push(...(data || []));
       if (!data || data.length < 1000) break;
+      if (ini === 59000) throw new Error('Estoque incompleto: limite de leitura atingido.');
     }
     await estCarregaIgnorar();
     _estCache = { dia, rows, hora: (rows[0] && rows[0].hora_foto) || null };
@@ -13110,16 +13121,16 @@ function letUnidadeBate(setor, emCx2) {
 let metasData = null; // { recurso_cod: { 'Manhã':n, 'Tarde':n, 'Noite':n } }
 async function getMetas() {
   if (metasData) return metasData;
-  metasData = {};
-  try {
-    const { data } = await sb.from('metas').select('recurso_cod,bloco,meta,so_com_producao');
-    (data || []).forEach(m => {
-      const c = String(m.recurso_cod);
-      if (!metasData[c]) metasData[c] = {};
-      metasData[c][m.bloco] = Number(m.meta) || 0;
-      if (m.so_com_producao) metasData[c].__soComProd = true;
-    });
-  } catch (_) {}
+  const { data, error } = await sb.from('metas').select('recurso_cod,bloco,meta,so_com_producao');
+  if (error) throw error;
+  const novas = {};
+  (data || []).forEach(m => {
+    const c = String(m.recurso_cod);
+    if (!novas[c]) novas[c] = {};
+    novas[c][m.bloco] = Number(m.meta) || 0;
+    if (m.so_com_producao) novas[c].__soComProd = true;
+  });
+  metasData = novas;
   return metasData;
 }
 /* Sabado reduzido: 10,98 h contra 23,92 h do dia cheio. O grafico "Producao por
@@ -14587,24 +14598,23 @@ const OS_COLS = 'situacao,data_encerramento,id,os_num,data_abertura,data_parada,
    banco, uma esperando a outra, com ~2 MB no total antes de qualquer coisa
    aparecer na tela. Agora as páginas vão de QUATRO em quatro, ao mesmo tempo —
    a mesma quantidade de dado, um quarto do tempo de espera. */
-async function buscarTodasOS(cols, desde) {
-  const passo = 1000, lote = 4; let ini = 0, tudo = [], fim = false;
-  while (!fim && ini < 20000) {
-    const faixas = [];
-    for (let k = 0; k < lote; k++) faixas.push(ini + k * passo);
-    const res = await Promise.all(faixas.map(de => {
+async function buscarTodasOS(cols, desde, somenteAbertas) {
+  const passo = 1000, lote = 4, tudo = [];
+  for (let ini = 0; ini < 100000; ini += passo * lote) {
+    const respostas = await Promise.all(Array.from({ length: lote }, (_, k) => {
       let q = sb.from('manutencao_os').select(cols || OS_COLS);
       if (desde) q = q.gte('data_abertura', String(desde).slice(0, 10));
-      return q.order('data_abertura', { ascending: false }).range(de, de + passo - 1);
+      if (somenteAbertas) q = q.eq('situacao', 'Aberta');
+      const de = ini + k * passo;
+      return q.order('data_abertura', { ascending: false }).order('id', { ascending: false }).range(de, de + passo - 1);
     }));
-    for (const { data, error } of res) {
-      if (error) { fim = true; break; }
-      tudo = tudo.concat(data || []);
-      if (!data || data.length < passo) fim = true;
+    for (const resposta of respostas) if (resposta.error) throw resposta.error;
+    for (const { data } of respostas) {
+      tudo.push(...(data || []));
+      if (!data || data.length < passo) return tudo;
     }
-    ini += passo * lote;
   }
-  return tudo;
+  throw new Error('A lista de ordens excedeu o limite de leitura. Nenhum total parcial foi confirmado.');
 }
 // piso de data para as cargas leves: 90 dias atras
 function _osPiso90() {
@@ -14630,11 +14640,16 @@ async function carregarManut() {
   try {
     const [recentes, abertas] = await Promise.all([
       buscarTodasOS(null, _osPiso90()),
-      sb.from('manutencao_os').select(OS_COLS).eq('situacao', 'Aberta').order('data_abertura', { ascending: false }).limit(1000)
+      buscarTodasOS(null, null, true)
     ]);
     const vistos = new Set((recentes || []).map(o => o.id));
-    osLista = (recentes || []).concat(((abertas && abertas.data) || []).filter(o => !vistos.has(o.id)));
-  } catch (_) { osLista = osLista || []; }
+    osLista = (recentes || []).concat((abertas || []).filter(o => !vistos.has(o.id)));
+   } catch (e) {
+    toast('❌ Manutenção incompleta: ' + (e.message || e));
+    const alvo = $('manutConteudo');
+    if (alvo) { alvo.classList.remove('oculto'); alvo.innerHTML = '<p class="desc">Não foi possível carregar todas as ordens. ' + escapeHtml(e.message || String(e)) + ' <button class="btn" onclick="carregarManut()">Tentar novamente</button></p>'; }
+    return;
+  }
   renderManut();
   try { carregarManuais(); } catch (_) {}
 }
@@ -36483,10 +36498,11 @@ async function carregarProgramacao(forcar) {
     const _lin = [];
     for (let ini = 0; ini < 40000; ini += 1000) {
       const { data, error } = await sb.from('v_fila_op').select(COLS)
-        .order('recurso_cod').order('ordem').range(ini, ini + 999);
+        .order('recurso_cod').order('ordem').order('op').range(ini, ini + 999);
       if (error) throw error;
       (data || []).forEach(x => _lin.push(x));
       if (!data || data.length < 1000) break;
+      if (ini === 39000) throw new Error('Fila incompleta: limite de leitura atingido.');
     }
     _progDados = _lin;
     try { await carregarCarteira196(); } catch (_) { _cart196 = null; }
@@ -37342,7 +37358,7 @@ async function carregarCapMaquina() {
     let ini = 0;
     for (let g = 0; g < 20; g++) {
       const { data, error } = await sb.from('producao_resumo')
-        .select('recurso_cod,peso,dia').gte('dia', de).range(ini, ini + 999);
+        .select('recurso_cod,peso,dia').gte('dia', de).order('dia').order('id').range(ini, ini + 999);
       if (error) throw error;
       const arr = data || [];
       arr.forEach(r => {
@@ -37354,13 +37370,14 @@ async function carregarCapMaquina() {
         if (!o.ultimo || d > o.ultimo) o.ultimo = d;
       });
       if (arr.length < 1000) break;
+      if (g === 19) throw new Error('Histórico de capacidade incompleto: limite de leitura.');
       ini += 1000;
     }
     // 28 dias -> semana. Guarda tambem em quantos dias a maquina rodou: com
     // poucos dias a capacidade "demonstrada" fica fraca e as semanas de fila
     // explodem — o modal avisa em vez de deixar o numero parecer fila enorme.
     Object.keys(m).forEach(c => { m[c] = { sem: m[c].kg / 4, kg28: m[c].kg, dias: m[c].dias.size, ultimo: m[c].ultimo }; });
-  } catch (e) { console.warn('capacidade por maquina:', e.message || e); }
+  } catch (e) { console.warn('capacidade por maquina:', e.message || e); toast('⚠️ Capacidade indisponível: ' + (e.message || e)); return null; }
   _capMaq = m;
   return m;
 }
@@ -42418,7 +42435,7 @@ function fsRender() {
         if (!ate) return '';
         const estoura = ate > _fsMesFim;
         return '<div><div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;color:var(--fraco);text-transform:uppercase">Fila vai até</div>'
-          + '<b style="font-size:17px;color:' + (estoura ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + fmtDataSem(ate).slice(0, 10) + '</b>'
+          + '<b style="font-size:17px;color:' + (estoura ? 'var(--critico-s)' : 'var(--verde-4,#2e7d32)') + '">' + fmtData(ate) + '</b>'
           + '<span style="font-size:11px;color:var(--fraco)"> · ' + (estoura ? 'passa de ' + _fsMesRot : 'dentro de ' + _fsMesRot) + '</span></div>';
       })()
     + (() => {
@@ -42517,7 +42534,7 @@ function fsSequencia(m) {
       + '<div style="font-size:10.5px;color:var(--fraco)">' + escapeHtml(String(r.item_desc || r.item_cod || ''))
       + (iniTxt ? ' · início ' + iniTxt : '') + '</div></div>'
       + '<span style="white-space:nowrap;font-size:10.5px;color:' + (venc ? 'var(--critico-s)' : 'var(--fraco)') + ';font-weight:' + (venc ? '800' : '600') + '">'
-      + (r.entrega ? fmtDataSem(String(r.entrega).slice(0, 10)).slice(0, 10) : '—') + '</span>'
+      + (r.entrega ? fmtData(String(r.entrega).slice(0, 10)) : '—') + '</span>'
       + '<b style="white-space:nowrap;color:var(--azul-marca)">' + fmtKg(_fsKg(r)) + '</b></div>';
   });
   h += '</div>';
@@ -43534,29 +43551,31 @@ function renderProgramacao() {
 }
 
 /* ================= HISTÓRICO ================= */
-async function carregarHistorico() {
+let historicoLimite = 40, historicoDados = [];
+function nomeRotinaHistorico(rotina) {
+  const r = String(rotina || '');
+  if (/^(RPCP|REST|RGER|RVEN|RSMI)/.test(r)) return r;
+  if (r === '196' || r === '241') return 'REST' + r;
+  if (r === '339') return 'RGER' + r;
+  return r ? 'RPCP' + r : 'Relatório';
+}
+function apagarHistoricoItem(idx) {
+  const i = historicoDados[idx]; if (!i) return;
+  return apagarImportacao(i.id, nomeRotinaHistorico(i.rotina) + ' de ' + fmtData(i.periodo_de));
+}
+function verHistoricoDetalhe(idx) {
+  const i = historicoDados[idx]; if (!i) return;
+  if (_ROTINA_TAB[String(i.rotina)]) return verImportacao(i.rotina, i.periodo_de, i.periodo_ate || i.periodo_de, i.arquivo || '', i.registros);
+  abreDet('Importação · ' + nomeRotinaHistorico(i.rotina), '<p class="idet-desc"><b>Arquivo:</b> ' + escapeHtml(i.arquivo || '—') + '<br><b>Período informado:</b> ' + fmtData(i.periodo_de) + ' → ' + fmtData(i.periodo_ate || i.periodo_de) + '<br><b>Registros informados na importação:</b> ' + fmt(i.registros, 0) + '<br><b>Importado em:</b> ' + (i.criado_em ? escapeHtml(new Date(i.criado_em).toLocaleString('pt-BR')) : 'não informado') + '</p><p class="idet-desc">Este detalhe mostra o registro da importação. A conferência linha a linha ainda não está disponível para este relatório; consulte sua aba operacional para os dados atuais.</p>');
+}
+async function carregarHistorico(mais) {
+  if (!mais) historicoLimite = 40; else historicoLimite += 40;
   const alvo = $('listaImportacoes');
-  let { data, error } = await sb.from('importacoes')
-    .select('id, rotina, arquivo, periodo_de, periodo_ate, registros, criado_em')
-    .order('criado_em', { ascending: false }).limit(40);
-  if (error) { // fallback: sem a coluna criado_em
-    const r2 = await sb.from('importacoes')
-      .select('id, rotina, arquivo, periodo_de, periodo_ate, registros').limit(40);
-    data = r2.data; error = r2.error;
-  }
-  if (error) { alvo.innerHTML = `<p class="desc">Erro ao carregar: ${error.message}</p>`; return; }
-  if (!data.length) { alvo.innerHTML = '<p class="desc">Nenhuma importação ainda. Comece pela aba Importar.</p>'; return; }
-  alvo.innerHTML = data.map(i => `
-    <div class="imp-item">
-      <div>
-        <div class="t">RPCP${i.rotina || '—'} · ${fmtData(i.periodo_de)}</div>
-        <div class="s">${i.arquivo || ''} · ${fmt(i.registros, 0)} registros${i.criado_em ? ' · ' + new Date(i.criado_em).toLocaleString('pt-BR') : ''}</div>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center">
-        <button onclick="verImportacao('${i.rotina}','${i.periodo_de}','${i.periodo_ate || i.periodo_de}','${(i.arquivo || '').replace(/'/g, '')}',${i.registros || 0})" style="background:none;border:1px solid var(--borda);border-radius:10px;padding:6px 12px;color:var(--navy);font-weight:700;cursor:pointer">🔎 Ver</button>
-        <button class="apagar" onclick="apagarImportacao('${i.id}', 'RPCP${i.rotina} de ${fmtData(i.periodo_de)}')">Apagar</button>
-      </div>
-    </div>`).join('');
+  const { data, error } = await sb.from('importacoes').select('id, rotina, arquivo, periodo_de, periodo_ate, registros, criado_em').order('criado_em', { ascending: false }).order('id', { ascending: false }).limit(historicoLimite + 1);
+  if (error) { alvo.innerHTML = '<p class="desc">Não foi possível carregar o histórico: ' + escapeHtml(error.message) + ' <button onclick="carregarHistorico()">Tentar novamente</button></p>'; return; }
+  historicoDados = (data || []).slice(0, historicoLimite);
+  if (!historicoDados.length) { alvo.innerHTML = '<p class="desc">Nenhuma importação encontrada.</p>'; return; }
+  alvo.innerHTML = '<p class="desc">Mostrando ' + historicoDados.length + ' importações mais recentes.</p>' + historicoDados.map((i, idx) => '<div class="imp-item"><div style="min-width:0;overflow-wrap:anywhere"><div class="t">' + escapeHtml(nomeRotinaHistorico(i.rotina)) + ' · ' + fmtData(i.periodo_de) + '</div><div class="s">' + escapeHtml(i.arquivo || '') + ' · ' + fmt(i.registros, 0) + ' registros' + (i.criado_em ? ' · ' + new Date(i.criado_em).toLocaleString('pt-BR') : '') + '</div></div><div style="display:flex;gap:10px;align-items:center;flex-shrink:0"><button class="btn" onclick="verHistoricoDetalhe(' + idx + ')">Detalhes</button><button class="apagar" onclick="apagarHistoricoItem(' + idx + ')">Apagar</button></div></div>').join('') + ((data || []).length > historicoLimite ? '<button class="btn" onclick="carregarHistorico(true)">Carregar mais importações</button>' : '<p class="desc">Fim do histórico.</p>');
 }
 
 // ===== auditoria de importação: o que entrou (por dia + totais + tipos p/ 624) =====
