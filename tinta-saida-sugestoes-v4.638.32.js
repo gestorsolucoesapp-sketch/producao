@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.32 — sugestões enquanto digita na Saída da Casa de Tintas */
+/* Rioplastic v4.638.33 — autocomplete sem inverter letras ao digitar na Saída */
 (function(){
   'use strict';
 
@@ -31,29 +31,15 @@
     inp.setAttribute('aria-autocomplete','list');
     inp.setAttribute('aria-controls','tintaSugestoes');
 
-    const velho=document.getElementById('tintaSugestoes');
-    if(velho) velho.remove();
-
-    const q=String(inp.value||_tintaBusca||'').trim();
-    if(!q) return;
-    const L=candidatos(q);
-    if(!L.length) return;
-
-    const box=document.createElement('div');
-    box.id='tintaSugestoes';
-    box.setAttribute('role','listbox');
-    box.style.cssText='margin:-3px 0 9px;border:1px solid var(--linha-2s);border-radius:10px;background:#fff;overflow:hidden';
-    box.innerHTML=L.map((p,i)=>
-      '<button type="button" role="option" onclick="tintaSaidaEscolherSugestao(\''+String(p.id).replace(/'/g,'')+'\')" '
-      +'style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;padding:9px 11px;border:0;border-top:'+(i?'1px solid var(--linha)':'0')+';background:#fff;cursor:pointer">'
-      +'<span style="min-width:0"><b style="display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_bolinha(p.nome)+escapeHtml(p.nome||'')+'</b>'
-      +'<span class="desc" style="font-size:10.5px">'+escapeHtml(p.fornecedor||'')
-      +(p.cod_erp?' · ERP '+escapeHtml(p.cod_erp):'')
-      +(p.cod_barras?' · '+escapeHtml(p.cod_barras):'')+'</span></span>'
-      +'<span style="white-space:nowrap;text-align:right"><b>'+_tNum(p.saldo)+'</b><span class="desc" style="display:block;font-size:9.5px">latas</span></span>'
-      +'</button>'
-    ).join('');
-    inp.insertAdjacentElement('afterend',box);
+    /* O campo original redesenhava a tela inteira a cada tecla.
+       Isso recriava o input e o cursor voltava para o começo:
+       digitava A, depois Z, e aparecia ZA. Aqui a busca passa a
+       atualizar SOMENTE as sugestões, mantendo o mesmo input e o cursor. */
+    inp.removeAttribute('oninput');
+    inp.oninput=function(){
+      _tintaBusca=this.value;
+      renderSugestoes();
+    };
 
     /* Enter só dá baixa quando o texto identifica exatamente um item.
        Em busca parcial, força escolher uma sugestão para evitar baixar a cor errada. */
@@ -78,6 +64,31 @@
       }
       try{toast(C.length?'Escolha uma das sugestões abaixo.':'Nenhuma tinta encontrada.');}catch(_){}
     };
+
+    const velho=document.getElementById('tintaSugestoes');
+    if(velho) velho.remove();
+
+    const q=String(inp.value||_tintaBusca||'').trim();
+    if(!q) return;
+    const L=candidatos(q);
+    if(!L.length) return;
+
+    const box=document.createElement('div');
+    box.id='tintaSugestoes';
+    box.setAttribute('role','listbox');
+    box.style.cssText='margin:-3px 0 9px;border:1px solid var(--linha-2s);border-radius:10px;background:#fff;overflow:hidden';
+    box.innerHTML=L.map((p,i)=>
+      '<button type="button" role="option" onclick="tintaSaidaEscolherSugestao(\''+String(p.id).replace(/'/g,'')+'\')" '
+      +'style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;padding:9px 11px;border:0;border-top:'+(i?'1px solid var(--linha)':'0')+';background:#fff;cursor:pointer">'
+      +'<span style="min-width:0"><b style="display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_bolinha(p.nome)+escapeHtml(p.nome||'')+'</b>'
+      +'<span class="desc" style="font-size:10.5px">'+escapeHtml(p.fornecedor||'')
+      +(p.cod_erp?' · ERP '+escapeHtml(p.cod_erp):'')
+      +(p.cod_barras?' · '+escapeHtml(p.cod_barras):'')+'</span></span>'
+      +'<span style="white-space:nowrap;text-align:right"><b>'+_tNum(p.saldo)+'</b><span class="desc" style="display:block;font-size:9.5px">latas</span></span>'
+      +'</button>'
+    ).join('');
+    inp.insertAdjacentElement('afterend',box);
+
   }
 
   window.tintaSaidaEscolherSugestao=function(id){
