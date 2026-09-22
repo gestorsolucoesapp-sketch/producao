@@ -195,3 +195,35 @@
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',iniciar);else iniciar();
 })();
+
+/* ===== INIFLEX OWNER-ONLY HOTFIX — 22/09/2026 =====
+   A integração direta com o ERP é uma ferramenta privada do João.
+   A Edge Function também valida o mesmo usuário; este trecho cuida apenas
+   da interface e impede chamadas pelo navegador em outras contas. */
+(function () {
+  const OWNER_ID = '1d3ee6e7-62bc-440c-a705-50106ff44e3e';
+  const pode = () => {
+    try { return typeof perfil !== 'undefined' && perfil && String(perfil.id || '') === OWNER_ID; }
+    catch (_) { return false; }
+  };
+
+  try {
+    const chamarOriginal = iniflexApiCall;
+    iniflexApiCall = async function (payload) {
+      if (!pode()) throw new Error('Acesso restrito à integração Iniflex.');
+      return chamarOriginal(payload);
+    };
+  } catch (_) {}
+
+  try {
+    const renderOriginal = iniflexApiRender;
+    iniflexApiRender = async function (forcar) {
+      const card = document.getElementById('iniflexApiCard');
+      if (!pode()) {
+        if (card) card.style.display = 'none';
+        return;
+      }
+      return renderOriginal(forcar);
+    };
+  } catch (_) {}
+})();
