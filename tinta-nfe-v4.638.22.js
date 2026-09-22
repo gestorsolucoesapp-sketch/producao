@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.34 — impressão individual do estoque + recursos da NF */
+/* Rioplastic v4.638.35 — impressão individual e lista completa do estoque */
 (function(){
   'use strict';
 
@@ -749,6 +749,9 @@
       +(semPreco.length?'<p class="desc" style="margin-top:8px;background:#FFF6E6;border-left:3px solid var(--laranja);padding:7px 10px;border-radius:6px">⚠️ <b>'+semPreco.length+' item(ns) com preço não atualizado</b>.</p>':'')
       +_tintaBarraMarcas()
       +'<input id="tintaBusca" type="search" placeholder="🔎 buscar cor, código ou fornecedor…" value="'+escapeHtml(_tintaBusca||'')+'" oninput="_tintaBusca=this.value;tintaRender()" style="width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--borda);border-radius:10px;font-size:14px">'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px">'
+      +'<button type="button" onclick="tintaImprimirListaEstoque()" style="cursor:pointer;border:0;background:var(--navy);color:#fff;font-weight:800;border-radius:9px;padding:9px 13px;font-size:12px">🖨️ Imprimir toda a lista</button>'
+      +'</div>'
       +'<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
       +'<th style="text-align:left">Cor</th><th>Latas</th><th>Kg</th><th>Mín.</th>'
       +(_tintaVeDinheiro()?'<th style="text-align:right">Preço/kg</th><th style="text-align:right">Valor</th>':'')
@@ -771,6 +774,51 @@
       +(!vis.length?'<p class="vazio-painel">Nada encontrado.</p>':'');
   };
 
+
+  window.tintaImprimirListaEstoque=function(){
+    let L=(_tintaSaldo||[]).filter(x=>x&&x.ativo).slice();
+    try{if(typeof _tintaFiltra==='function') L=_tintaFiltra(L);}catch(_){}
+    L.sort((a,b)=>{
+      const fa=String(a.fornecedor||''),fb=String(b.fornecedor||'');
+      const d=fa.localeCompare(fb,'pt-BR');
+      return d||String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR');
+    });
+    if(!L.length){try{toast('Nenhum item de estoque para imprimir.');}catch(_){} return;}
+    const ve$=_tintaVeDinheiro();
+    const totLatas=L.reduce((a,x)=>a+n(x.saldo),0);
+    const totKg=L.reduce((a,x)=>a+n(x.saldo_kg),0);
+    const totValor=L.reduce((a,x)=>a+n(x.valor),0);
+    const w=window.open('','_blank');
+    if(!w){try{toast('O navegador bloqueou a janela de impressão.');}catch(_){} return;}
+    const hoje=new Date().toLocaleDateString('pt-BR');
+    const rows=L.map((x,i)=>'<tr>'
+      +'<td class="n">'+(i+1)+'</td>'
+      +'<td><b>'+escapeHtml(x.nome||'')+'</b><span>'+escapeHtml(x.fornecedor||'')+(x.cod_erp?' · ERP '+escapeHtml(x.cod_erp):'')+'</span></td>'
+      +'<td class="num">'+n(x.saldo).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+      +'<td class="num">'+n(x.saldo_kg).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+      +'<td class="num">'+n(x.estoque_min).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+      +(ve$?'<td class="num">'+(x.preco?_tBRL(x.preco):'—')+'</td><td class="num">'+(x.valor?_tBRL(x.valor):'—')+'</td>':'')
+      +'</tr>').join('');
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>Estoque completo · Casa de Tintas</title><style>'
+      +'@page{size:A4 portrait;margin:9mm}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:8.5pt}'
+      +'h1{font-size:15pt;margin:0 0 2mm}.sub{font-size:8pt;color:#555;margin-bottom:4mm}'
+      +'table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{page-break-inside:avoid}'
+      +'th,td{border:1px solid #aaa;padding:1.8mm 1.4mm;vertical-align:middle}th{background:#eee;font-size:7.5pt;text-transform:uppercase}'
+      +'td span{display:block;font-size:6.7pt;color:#555;margin-top:1px}.n{width:7mm;text-align:center}.num{text-align:right;white-space:nowrap}'
+      +'tfoot td{font-weight:700;background:#f3f3f3}.rod{margin-top:4mm;font-size:7pt;color:#555;text-align:right}'
+      +'</style></head><body>'
+      +'<h1>Casa de Tintas · Estoque completo</h1><div class="sub">Emitido em '+hoje+' · '+L.length+' item(ns)</div>'
+      +'<table><thead><tr><th>#</th><th>Tinta</th><th>Latas</th><th>Kg</th><th>Mín.</th>'
+      +(ve$?'<th>Preço/kg</th><th>Valor</th>':'')+'</tr></thead><tbody>'+rows+'</tbody>'
+      +'<tfoot><tr><td></td><td>TOTAL</td><td class="num">'+totLatas.toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+      +'<td class="num">'+totKg.toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td><td></td>'
+      +(ve$?'<td></td><td class="num">'+_tBRL(totValor)+'</td>':'')+'</tr></tfoot></table>'
+      +'<div class="rod">Lista completa do estoque da Casa de Tintas</div>'
+      +'</body></html>';
+    w.document.write(html);
+    w.document.close();
+    setTimeout(()=>{try{w.focus();w.print();}catch(_){}},250);
+  };
 
   window.tintaImprimirItemEstoque=function(id){
     const x=(_tintaSaldo||[]).find(p=>String(p.id)===String(id));
