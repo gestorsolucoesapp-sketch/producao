@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.31
+// Produção Rioplastic — v4.638.32
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
-const CACHE = 'producao-rioplastic-v4.638.31';
+const CACHE = 'producao-rioplastic-v4.638.32';
 const CACHE_ASSET = 'producao-rioplastic-assets-v1';
 const INDEX = './index.html';
 const ASSETS = [
