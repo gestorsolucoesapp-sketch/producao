@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.35 — impressão individual e lista completa do estoque */
+/* Rioplastic v4.638.38 — lote e fabricação na NF + impressão de estoque */
 (function(){
   'use strict';
 
@@ -157,6 +157,8 @@
         unidade_fiscal:un,
         valor_unit:vu,
         valor_total:vl || vprod,
+        lote:txt(prod,'nLote')||'',
+        data_fabricacao:iso(txt(prod,'dFab')),
         produto_id:p?p.id:'',
         entra_estoque:!!p,
         quantidade_estoque:p ? qtdLatas(qtd,un) : '',
@@ -261,7 +263,7 @@
     if(!desc || desc.length<2) desc=p ? p.nome : '';
     return {
       cod_erp:cod, descricao:desc, quantidade_fiscal:qtd, unidade_fiscal:un,
-      valor_unit:vu, valor_total:vt, produto_id:p?p.id:'',
+      valor_unit:vu, valor_total:vt, lote:'', data_fabricacao:'', produto_id:p?p.id:'',
       entra_estoque:!!p, quantidade_estoque:p?qtdLatas(qtd,un):'',
       vincular_cod_erp:false, auto:!!p
     };
@@ -325,6 +327,7 @@
         descricao:codFornecedor+' · '+desc,
         quantidade_fiscal:qFiscal,unidade_fiscal:m[3],
         valor_unit:pdfNum(m[5]),valor_total:pdfNum(m[6]),
+        lote:'',data_fabricacao:'',
         produto_id:p?p.id:'',
         entra_estoque:!!p,
         quantidade_estoque:p?qtdLatas(qFiscal,m[3]):'',
@@ -492,6 +495,15 @@
     }
   }
 
+  function loteItem(i,v){
+    if(!_nfeAtual || !_nfeAtual.itens[i]) return;
+    _nfeAtual.itens[i].lote=String(v||'').trim();
+  }
+  function fabItem(i,v){
+    if(!_nfeAtual || !_nfeAtual.itens[i]) return;
+    _nfeAtual.itens[i].data_fabricacao=iso(v)||'';
+  }
+
   function optsProduto(sel){
     const L=(_tintaSaldo||[]).filter(x=>x.ativo).slice().sort((a,b)=>String(a.nome).localeCompare(String(b.nome),'pt-BR'));
     return '<option value="">— não vinculado / ignorar —</option>'+L.map(p=>
@@ -550,8 +562,8 @@
         +'<div style="padding:9px 11px;border-radius:9px;background:'+(totalNota?(dif<0.01?'#EAF7EF':'#FFF6E6'):'#EEF4FA')+'"><span class="desc">Diferença</span><br><b style="font-size:16px">'+(totalNota?_tBRL(dif):'—')+'</b></div>'
         +'</div>':'')
       +'<p class="desc" style="margin:7px 0"><b>Regra do estoque: 1 lata = 2 kg.</b> Os itens abaixo estão na ordem da nota. Confira a lista e o total antes de lançar.</p>'
-      +'<div style="overflow-x:auto"><table style="width:100%;min-width:930px;font-size:12px"><thead><tr>'
-      +'<th>#</th><th>Pág.</th><th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Peso/Qtd. NF</th><th>Latas (÷ 2 kg)</th>'
+      +'<div style="overflow-x:auto"><table style="width:100%;min-width:1180px;font-size:12px"><thead><tr>'
+      +'<th>#</th><th>Pág.</th><th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Peso/Qtd. NF</th><th>Latas (÷ 2 kg)</th><th>Lote <small>(opcional)</small></th><th>Fabricação <small>(opcional)</small></th>'
       +(ve$?'<th style="text-align:right">Valor item</th><th style="text-align:right">Preço atual R$/kg</th><th style="text-align:right">Novo R$/kg</th>':'')
       +'</tr></thead><tbody>'
       +N.itens.map((it,i)=>{
@@ -571,6 +583,8 @@
           +'</td>'
           +'<td style="text-align:center;white-space:nowrap">'+Number(it.quantidade_fiscal||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(it.unidade_fiscal||'')+'</td>'
           +'<td style="text-align:center"><input id="nfeQtd'+i+'" type="number" min="0" step="0.001" value="'+escapeHtml(it.quantidade_estoque)+'" oninput="tintaNfeQtd('+i+',this.value)" style="width:88px;padding:6px;border:1px solid '+(it.entra_estoque && !(n(it.quantidade_estoque)>0)?'var(--critico)':'var(--borda)')+';border-radius:8px;text-align:center"></td>'
+          +'<td style="text-align:center"><input type="text" value="'+escapeHtml(it.lote||'')+'" placeholder="lote" oninput="tintaNfeLote('+i+',this.value)" style="width:105px;padding:6px;border:1px solid var(--borda);border-radius:8px"></td>'
+          +'<td style="text-align:center"><input type="date" value="'+escapeHtml(it.data_fabricacao||'')+'" onchange="tintaNfeFab('+i+',this.value)" style="width:132px;padding:5px;border:1px solid var(--borda);border-radius:8px"></td>'
           +(ve$?'<td style="text-align:right"><input type="text" inputmode="decimal" value="'+escapeHtml(it.valor_total||'')+'" onchange="tintaNfeValor('+i+',this.value)" style="width:92px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:right"></td>'
             +'<td style="text-align:right;white-space:nowrap">'+(p&&p.preco?_tBRL(p.preco):'—')+'</td>'
             +'<td id="nfePrecoNovo'+i+'" style="text-align:right;white-space:nowrap;font-weight:'+(mud?'800':'600')+';color:'+(mud?'var(--laranja-4)':'inherit')+'">'+(nv?_tBRL(nv):'—')+'</td>':'')
@@ -612,6 +626,8 @@
         unidade_fiscal:it.unidade_fiscal||null,
         valor_unit:n(it.valor_unit)||null,
         valor_total:n(it.valor_total)||null,
+        lote:String(it.lote||'').trim()||null,
+        data_fabricacao:iso(it.data_fabricacao)||null,
         quantidade_estoque:it.entra_estoque?n(it.quantidade_estoque):null,
         entra_estoque:!!it.entra_estoque,
         vincular_cod_erp:!!(it.entra_estoque && p && it.cod_erp && it.vincular_cod_erp)
@@ -677,12 +693,13 @@
       const L=data||[];
       const ve$=_tintaVeDinheiro();
       const h='<div class="desc" style="margin-bottom:8px">'+escapeHtml((nota&&nota.fornecedor)||'')+' · emissão '+fmtD(nota&&nota.emissao)+'</div>'
-        +'<div style="overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr><th style="text-align:left">Item</th><th>Fiscal</th><th>Entrada</th>'
+        +'<div style="overflow-x:auto"><table style="width:100%;font-size:12px"><thead><tr><th style="text-align:left">Item</th><th>Fiscal</th><th>Entrada</th><th>Lote / fabricação</th>'
         +(ve$?'<th style="text-align:right">Preço aplicado</th>':'')+'</tr></thead><tbody>'
         +L.map(x=>'<tr style="border-top:1px solid var(--linha)"><td style="text-align:left"><b>'+escapeHtml(x.cod_erp||'—')+'</b> · '+escapeHtml(x.descricao||'')
           +(x.produto?'<div class="desc">'+escapeHtml(x.produto.nome||'')+'</div>':'<div style="color:var(--fraco);font-size:10px">ignorado no estoque</div>')+'</td>'
           +'<td style="text-align:center">'+Number(x.quantidade||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(x.unidade||'')+'</td>'
           +'<td style="text-align:center">'+(x.entra_estoque?Number(x.quantidade_estoque||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' lata(s) · '+Number((x.quantidade_estoque||0)*2).toLocaleString('pt-BR',{maximumFractionDigits:3})+' kg':'—')+'</td>'
+          +'<td style="text-align:center">'+escapeHtml(x.lote||'—')+(x.data_fabricacao?'<div class="desc">'+fmtD(x.data_fabricacao)+'</div>':'')+'</td>'
           +(ve$?'<td style="text-align:right">'+(x.preco_aplicado?_tBRL(x.preco_aplicado)+'/kg':'—')+'</td>':'')+'</tr>').join('')
         +'</tbody></table></div>';
       abreDet('NF '+escapeHtml((nota&&nota.numero)||''),h);
@@ -1046,6 +1063,8 @@
   window.tintaNfeMapear=mapear;
   window.tintaNfeToggle=toggle;
   window.tintaNfeQtd=qtd;
+  window.tintaNfeLote=loteItem;
+  window.tintaNfeFab=fabItem;
   window.tintaNfeValor=valorItem;
   window.tintaNfeEditarCab=editarCab;
   window.tintaNfeImportar=importar;
