@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.28 — conferência item a item, ordem da NF e páginas do DANFE */
+/* Rioplastic v4.638.29 — lista completa da NF + soma dos itens x total da nota */
 (function(){
   'use strict';
 
@@ -434,6 +434,8 @@
     v=prompt('Série:',_nfeAtual.serie||''); if(v!==null)_nfeAtual.serie=String(v).trim();
     v=prompt('Fornecedor:',_nfeAtual.fornecedor||''); if(v!==null)_nfeAtual.fornecedor=String(v).trim();
     v=prompt('Data de emissão (DD/MM/AAAA):',_nfeAtual.emissao?fmtD(_nfeAtual.emissao):''); if(v!==null){const d=brDataIso(v)||iso(v);if(d)_nfeAtual.emissao=d;}
+    v=prompt('Valor total da NF:',n(_nfeAtual.valor_total_danfe||_nfeAtual.valor_total)?String(n(_nfeAtual.valor_total_danfe||_nfeAtual.valor_total)).replace('.',','):'');
+    if(v!==null){const t=pdfNum(v);if(t>0){_nfeAtual.valor_total_danfe=t;_nfeAtual.valor_total=t;}}
     renderPreview();
   }
   function valorItem(i,v){
@@ -504,15 +506,15 @@
     const pend=entra.filter(x=>!x.produto_id || !(n(x.quantidade_estoque)>0));
     const somaItens=_nfeAtual.itens.reduce((a,x)=>a+n(x.valor_total),0);
     const totalDanfe=n(_nfeAtual.valor_total_danfe);
-    const totalExibido=totalDanfe || somaItens || n(_nfeAtual.valor_total);
+    const totalExibido=totalDanfe || n(_nfeAtual.valor_total) || somaItens;
     _nfeAtual.valor_total_itens=somaItens;
-    _nfeAtual.valor_total=totalExibido;
+    if(totalDanfe) _nfeAtual.valor_total=totalDanfe;
     const dif=totalDanfe ? Math.abs(totalDanfe-somaItens) : 0;
     const conf=totalDanfe
       ? (dif<0.01
           ? '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#EAF7EF;color:#1F6D42;font-size:11px;font-weight:700">✓ Conferência: total da NF e soma dos itens batem em '+_tBRL(totalDanfe)+'</div>'
           : '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#FFF6E6;color:#8A5A12;font-size:11px">⚠️ Total da NF '+_tBRL(totalDanfe)+' · soma dos itens '+_tBRL(somaItens)+' · diferença '+_tBRL(dif)+'. Confira frete, impostos, desconto ou a leitura do PDF.</div>')
-      : '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#EEF4FA;color:var(--navy);font-size:11px">ℹ️ O DANFE não entregou o campo total de forma legível. Total calculado pela soma dos '+_nfeAtual.itens.length+' itens: <b>'+_tBRL(somaItens)+'</b>.</div>';
+      : '<div style="margin:-2px 0 10px;padding:7px 9px;border-radius:8px;background:#EEF4FA;color:var(--navy);font-size:11px">ℹ️ Soma dos '+_nfeAtual.itens.length+' itens: <b>'+_tBRL(somaItens)+'</b>. Se o total da NF não for reconhecido no PDF, use “Conferir dados da nota” para informar o valor e comparar.</div>';
     return '<div class="idet-grid" style="margin:10px 0">'
       +'<div><b>'+_nfeAtual.itens.length+'</b><span>itens na NF</span></div>'
       +'<div><b>'+entra.length+'</b><span>itens para estoque</span></div>'
@@ -522,114 +524,15 @@
       +(_tintaVeDinheiro()?conf:'');
   }
 
-  function _nfeItemValido(it){
-    return !!it && (!it.entra_estoque || (!!it.produto_id && n(it.quantidade_estoque)>0));
-  }
-  function _nfeIr(passo){
-    if(!_nfeAtual) return;
-    _nfePasso=Math.max(0,Math.min(_nfeAtual.itens.length,Number(passo)||0));
-    _nfeConfFinal=false;
-    renderPreview();
-  }
-  function _nfeConfirmarItem(){
-    if(!_nfeAtual || _nfePasso>=_nfeAtual.itens.length) return;
-    const it=_nfeAtual.itens[_nfePasso];
-    if(!_nfeItemValido(it)){
-      toast('Antes de continuar, vincule a tinta e confira a quantidade deste item.');
-      return;
-    }
-    it.conferido=true;
-    _nfePasso=Math.min(_nfeAtual.itens.length,_nfePasso+1);
-    _nfeConfFinal=false;
-    renderPreview();
-  }
-  function _nfeConfFinalSet(on){
-    _nfeConfFinal=!!on;
-    renderPreview();
-  }
-  function _nfePaginasResumo(N){
-    const por={};
-    (N.itens||[]).forEach(it=>{
-      const p=n(it.pagina);
-      if(p>0) por[p]=(por[p]||0)+1;
-    });
-    const ps=Object.keys(por).map(Number).sort((a,b)=>a-b);
-    if(!ps.length) return n(N.total_paginas)>1 ? n(N.total_paginas)+' páginas no DANFE' : '1 página';
-    return ps.map(p=>'pág. '+p+': '+por[p]+' item(ns)').join(' · ');
-  }
-  function _nfeLinhaPassos(N){
-    return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 12px">'
-      +N.itens.map((it,i)=>{
-        const ativo=i===_nfePasso;
-        const bg=it.conferido?'#EAF7EF':(ativo?'var(--navy)':'var(--leve-2)');
-        const cor=it.conferido?'#1F6D42':(ativo?'#fff':'var(--navy)');
-        return '<span onclick="tintaNfeIr('+i+')" title="Item '+(i+1)+(it.pagina?' · página '+it.pagina:'')+'" '
-          +'style="cursor:pointer;min-width:28px;text-align:center;padding:4px 6px;border-radius:999px;font-size:10.5px;font-weight:800;background:'+bg+';color:'+cor+';border:1px solid var(--linha-2s)">'
-          +(it.conferido?'✓ ':'')+(i+1)+'</span>';
-      }).join('')
-      +'<span onclick="tintaNfeIr('+N.itens.length+')" style="cursor:pointer;padding:4px 9px;border-radius:999px;font-size:10.5px;font-weight:800;background:'+(_nfePasso===N.itens.length?'var(--navy)':'var(--leve-2)')+';color:'+(_nfePasso===N.itens.length?'#fff':'var(--navy)')+';border:1px solid var(--linha-2s)">✓ conferência final</span>'
-      +'</div>';
-  }
-  function _nfeTelaItem(N,i,ve$){
-    const it=N.itens[i],p=produtoPorId(it.produto_id);
-    const nv=novoPreco(it),mud=mudouPreco(it);
-    const vinc=!!(p && it.cod_erp && !codigosProduto(p).includes(String(it.cod_erp)));
-    const pag=it.pagina ? ' · página '+it.pagina+(N.total_paginas>1?' de '+N.total_paginas:'') : '';
-    return '<div style="border:1px solid var(--linha);border-radius:12px;padding:12px;background:#fff">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">'
-      +'<div><div class="desc" style="font-size:11px;font-weight:800;color:var(--azul-2)">ITEM '+(i+1)+' DE '+N.itens.length+pag+'</div>'
-      +'<b style="font-size:14px">'+escapeHtml(it.cod_erp||it.cod_fornecedor||'—')+' · '+escapeHtml(it.descricao||'')+'</b>'
-      +(it.auto?'<div style="color:var(--verde);font-size:10px;font-weight:800;margin-top:2px">✓ '+(it.match_tipo==='nome'?'nome + marca reconhecidos':'código ERP reconhecido')+'</div>':'')
-      +'</div><div style="font-size:11px;font-weight:800;color:'+(it.conferido?'var(--verde)':'var(--fraco-2)')+'">'+(it.conferido?'✓ CONFERIDO':'aguardando conferência')+'</div></div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;margin-top:12px">'
-      +'<label style="font-size:11px;font-weight:700">Entrar no estoque<br><input type="checkbox" '+(it.entra_estoque?'checked':'')+' onchange="tintaNfeToggle('+i+',this.checked)" style="margin-top:7px;transform:scale(1.15)"></label>'
-      +'<label style="font-size:11px;font-weight:700">Vincular à tinta<br><select onchange="tintaNfeMapear('+i+',this.value)" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--borda);border-radius:8px;font-size:12px">'+optsProduto(it.produto_id)+'</select>'
-      +(vinc?'<span style="display:block;font-size:9.5px;color:var(--verde);margin-top:3px">novo código ERP será salvo como alternativo</span>':'')+'</label>'
-      +'<div><span class="desc">Peso / qtd. da NF</span><br><b>'+Number(it.quantidade_fiscal||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(it.unidade_fiscal||'')+'</b></div>'
-      +'<label style="font-size:11px;font-weight:700">Latas no estoque (÷ 2 kg)<br><input id="nfeQtd'+i+'" type="number" min="0" step="0.001" value="'+escapeHtml(it.quantidade_estoque)+'" oninput="tintaNfeQtd('+i+',this.value)" style="width:110px;margin-top:4px;padding:8px;border:1px solid '+(it.entra_estoque && !(n(it.quantidade_estoque)>0)?'var(--critico)':'var(--borda)')+';border-radius:8px"></label>'
-      +(ve$?'<label style="font-size:11px;font-weight:700">Valor do item<br><input type="text" inputmode="decimal" value="'+escapeHtml(it.valor_total||'')+'" onchange="tintaNfeValor('+i+',this.value)" style="width:120px;margin-top:4px;padding:8px;border:1px solid var(--borda);border-radius:8px;text-align:right"></label>'
-        +'<div><span class="desc">Preço atual</span><br><b>'+(p&&p.preco?_tBRL(p.preco)+'/kg':'—')+'</b></div>'
-        +'<div><span class="desc">Novo preço</span><br><b style="color:'+(mud?'var(--laranja-4)':'inherit')+'">'+(nv?_tBRL(nv)+'/kg':'—')+'</b></div>':'')
-      +'</div>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
-      +(i>0?'<button class="btn btn-borda" style="width:auto;padding:8px 13px" onclick="tintaNfeIr('+(i-1)+')">← Item anterior</button>':'')
-      +'<button class="btn btn-verde" style="width:auto;padding:8px 13px" onclick="tintaNfeConfirmarItem()">✓ Conferir item'+(i===N.itens.length-1?' e ir para o check final':' e próximo →')+'</button>'
-      +'<button class="btn btn-borda" style="width:auto;padding:8px 13px;margin-left:auto" onclick="tintaNfeLimpar()">Cancelar</button>'
-      +'</div></div>';
-  }
-  function _nfeTelaFinal(N,ve$){
-    const rev=N.itens.filter(x=>x.conferido).length;
-    const entra=N.itens.filter(x=>x.entra_estoque);
-    const pend=entra.filter(x=>!_nfeItemValido(x));
-    const soma=N.itens.reduce((a,x)=>a+n(x.valor_total),0);
-    const danfe=n(N.valor_total_danfe);
-    const dif=danfe?Math.abs(danfe-soma):0;
-    const tudo=rev===N.itens.length && !pend.length;
-    return '<div style="border:1px solid var(--linha);border-radius:12px;padding:13px;background:#fff">'
-      +'<div class="titulo-sec">✅ Check final de conferência</div>'
-      +'<p class="desc" style="margin:3px 0 10px">Antes do lançamento, confira todas as páginas e o total. O sistema gravará os itens <b>na mesma ordem da nota</b>.</p>'
-      +'<div style="display:grid;gap:7px">'
-      +'<div style="padding:8px 10px;border-radius:8px;background:'+(rev===N.itens.length?'#EAF7EF':'#FFF6E6')+'"><b>'+(rev===N.itens.length?'✓':'⚠️')+' Itens revisados:</b> '+rev+' de '+N.itens.length+'</div>'
-      +'<div style="padding:8px 10px;border-radius:8px;background:#EEF4FA"><b>📄 Páginas:</b> '+escapeHtml(_nfePaginasResumo(N))+'</div>'
-      +'<div style="padding:8px 10px;border-radius:8px;background:'+(!pend.length?'#EAF7EF':'#FFF6E6')+'"><b>'+(!pend.length?'✓':'⚠️')+' Vínculos e quantidades:</b> '+(!pend.length?'sem pendências':pend.length+' pendência(s)')+'</div>'
-      +(ve$?'<div style="padding:8px 10px;border-radius:8px;background:'+(danfe&&dif<0.01?'#EAF7EF':(danfe?'#FFF6E6':'#EEF4FA'))+'"><b>'+(danfe&&dif<0.01?'✓':(danfe?'⚠️':'ℹ️'))+' Total:</b> DANFE '+(danfe?_tBRL(danfe):'não identificado')+' · soma dos itens '+_tBRL(soma)+(danfe?' · diferença '+_tBRL(dif):'')+'</div>':'')
-      +'</div>'
-      +'<label style="display:flex;gap:9px;align-items:flex-start;margin-top:13px;padding:10px;border:1px solid var(--linha-2s);border-radius:9px;font-size:12px;font-weight:700;background:var(--leve-s)">'
-      +'<input type="checkbox" '+(_nfeConfFinal?'checked':'')+' onchange="tintaNfeConfFinal(this.checked)" style="margin-top:2px;transform:scale(1.15)">'
-      +'<span>Conferi os itens, as páginas do DANFE e o valor total da nota.</span></label>'
-      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:13px">'
-      +'<button class="btn btn-borda" style="width:auto;padding:8px 13px" onclick="tintaNfeIr('+(N.itens.length-1)+')">← Voltar ao último item</button>'
-      +'<button class="btn btn-verde" style="width:auto;padding:9px 16px" onclick="tintaNfeImportar()" '+(!tudo||!_nfeConfFinal||_nfeSalvando?'disabled':'')+'>'+(_nfeSalvando?'Lançando…':'✓ Conferência concluída · lançar NF')+'</button>'
-      +'</div>'
-      +(!tudo?'<p class="desc" style="margin-top:8px;color:var(--laranja-4)">Finalize os itens pendentes antes do lançamento.</p>':'')
-      +'</div>';
-  }
-
   function renderPreview(){
     const box=$id('tintaNfePreview'); if(!box) return;
     if(!_nfeAtual){ box.innerHTML=''; return; }
-    const N=_nfeAtual,ve$=_tintaVeDinheiro();
-    _nfePasso=Math.max(0,Math.min(N.itens.length,_nfePasso));
+    const N=_nfeAtual;
+    const ve$=_tintaVeDinheiro();
+    const somaItens=N.itens.reduce((a,x)=>a+n(x.valor_total),0);
+    const totalNota=n(N.valor_total_danfe);
+    const dif=totalNota?Math.abs(totalNota-somaItens):0;
+
     box.innerHTML=
       '<div style="border:1px solid var(--linha);border-radius:12px;padding:11px;margin:10px 0;background:var(--leve-s)">'
       +'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">'
@@ -641,18 +544,49 @@
       +(N.origem&&N.origem.indexOf('pdf')===0?'<button class="btn btn-borda" style="width:auto;padding:5px 9px;font-size:11px;margin-top:7px" onclick="tintaNfeEditarCab()">✏️ Conferir dados da nota</button>':'')
       +'</div>'
       +resumoPreview()
-      +'<p class="desc" style="margin:7px 0"><b>Conferência sequencial:</b> revise item por item na ordem do DANFE. Regra do estoque: <b>1 lata = 2 kg</b>.</p>'
-      +_nfeLinhaPassos(N)
-      +(_nfePasso<N.itens.length?_nfeTelaItem(N,_nfePasso,ve$):_nfeTelaFinal(N,ve$));
+      +(ve$?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin:8px 0 11px">'
+        +'<div style="padding:9px 11px;border-radius:9px;background:#EEF4FA"><span class="desc">Soma dos itens</span><br><b style="font-size:16px">'+_tBRL(somaItens)+'</b></div>'
+        +'<div style="padding:9px 11px;border-radius:9px;background:'+(totalNota?(dif<0.01?'#EAF7EF':'#FFF6E6'):'#EEF4FA')+'"><span class="desc">Valor total da NF</span><br><b style="font-size:16px">'+(totalNota?_tBRL(totalNota):'não identificado')+'</b></div>'
+        +'<div style="padding:9px 11px;border-radius:9px;background:'+(totalNota?(dif<0.01?'#EAF7EF':'#FFF6E6'):'#EEF4FA')+'"><span class="desc">Diferença</span><br><b style="font-size:16px">'+(totalNota?_tBRL(dif):'—')+'</b></div>'
+        +'</div>':'')
+      +'<p class="desc" style="margin:7px 0"><b>Regra do estoque: 1 lata = 2 kg.</b> Os itens abaixo estão na ordem da nota. Confira a lista e o total antes de lançar.</p>'
+      +'<div style="overflow-x:auto"><table style="width:100%;min-width:930px;font-size:12px"><thead><tr>'
+      +'<th>#</th><th>Pág.</th><th>Entrar</th><th style="text-align:left">Item da NF</th><th style="text-align:left">Vincular à tinta</th><th>Peso/Qtd. NF</th><th>Latas (÷ 2 kg)</th>'
+      +(ve$?'<th style="text-align:right">Valor item</th><th style="text-align:right">Preço atual R$/kg</th><th style="text-align:right">Novo R$/kg</th>':'')
+      +'</tr></thead><tbody>'
+      +N.itens.map((it,i)=>{
+        const p=produtoPorId(it.produto_id);
+        const nv=novoPreco(it), mud=mudouPreco(it);
+        const vinc=!!(p && it.cod_erp && !codigosProduto(p).includes(String(it.cod_erp)));
+        return '<tr style="border-top:1px solid var(--linha);'+(!it.produto_id?'background:#FFF9EC':'')+'">'
+          +'<td style="text-align:center;font-weight:800">'+(i+1)+'</td>'
+          +'<td style="text-align:center">'+(it.pagina||'—')+'</td>'
+          +'<td style="text-align:center"><input type="checkbox" '+(it.entra_estoque?'checked':'')+' onchange="tintaNfeToggle('+i+',this.checked)"></td>'
+          +'<td style="text-align:left"><b>'+escapeHtml(it.cod_erp||it.cod_fornecedor||'—')+'</b> · '+escapeHtml(it.descricao||'')
+          +(it.auto?'<div style="color:var(--verde);font-size:10px;font-weight:800">✓ '+(it.match_tipo==='nome'?'nome + marca reconhecidos':'código ERP reconhecido')+'</div>':'')
+          +'</td>'
+          +'<td style="text-align:left"><select onchange="tintaNfeMapear('+i+',this.value)" style="max-width:330px;width:100%;padding:6px;border:1px solid var(--borda);border-radius:8px;font-size:12px">'
+          +optsProduto(it.produto_id)+'</select>'
+          +(vinc?'<div style="font-size:10px;color:var(--verde);font-weight:700">novo código ERP será salvo como código alternativo desta tinta</div>':'')
+          +'</td>'
+          +'<td style="text-align:center;white-space:nowrap">'+Number(it.quantidade_fiscal||0).toLocaleString('pt-BR',{maximumFractionDigits:3})+' '+escapeHtml(it.unidade_fiscal||'')+'</td>'
+          +'<td style="text-align:center"><input id="nfeQtd'+i+'" type="number" min="0" step="0.001" value="'+escapeHtml(it.quantidade_estoque)+'" oninput="tintaNfeQtd('+i+',this.value)" style="width:88px;padding:6px;border:1px solid '+(it.entra_estoque && !(n(it.quantidade_estoque)>0)?'var(--critico)':'var(--borda)')+';border-radius:8px;text-align:center"></td>'
+          +(ve$?'<td style="text-align:right"><input type="text" inputmode="decimal" value="'+escapeHtml(it.valor_total||'')+'" onchange="tintaNfeValor('+i+',this.value)" style="width:92px;padding:5px;border:1px solid var(--borda);border-radius:7px;text-align:right"></td>'
+            +'<td style="text-align:right;white-space:nowrap">'+(p&&p.preco?_tBRL(p.preco):'—')+'</td>'
+            +'<td id="nfePrecoNovo'+i+'" style="text-align:right;white-space:nowrap;font-weight:'+(mud?'800':'600')+';color:'+(mud?'var(--laranja-4)':'inherit')+'">'+(nv?_tBRL(nv):'—')+'</td>':'')
+          +'</tr>';
+      }).join('')
+      +'</tbody></table></div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+      +'<button class="btn btn-verde" style="width:auto;padding:9px 16px" onclick="tintaNfeImportar()" '+(_nfeSalvando?'disabled':'')+'>'
+      +(_nfeSalvando?'Importando…':'✓ Confirmar e lançar NF')+'</button>'
+      +'<button class="btn btn-borda" style="width:auto;padding:9px 16px" onclick="tintaNfeLimpar()">Cancelar</button></div>';
   }
 
   async function importar(){
     if(!_nfeAtual || _nfeSalvando) return;
     const N=_nfeAtual;
     const entradas=N.itens.filter(x=>x.entra_estoque);
-    const naoRev=N.itens.filter(x=>!x.conferido);
-    if(naoRev.length){ toast('Ainda faltam '+naoRev.length+' item(ns) para conferir na ordem da NF.'); return; }
-    if(!_nfeConfFinal){ toast('Marque o check final de conferência antes de lançar a NF.'); return; }
     const pend=entradas.filter(x=>!x.produto_id || !(n(x.quantidade_estoque)>0));
     if(pend.length){
       toast('Há '+pend.length+' item(ns) marcado(s) para entrar sem tinta vinculada ou sem quantidade.');
@@ -1032,9 +966,6 @@
   window.tintaNfeImportar=importar;
   window.tintaNfeLimpar=limpar;
   window.tintaNfeDetalhe=detalhe;
-  window.tintaNfeIr=_nfeIr;
-  window.tintaNfeConfirmarItem=_nfeConfirmarItem;
-  window.tintaNfeConfFinal=_nfeConfFinalSet;
 
   try { tintaTelaEntrada=renderEntrada; } catch(_){ window.tintaTelaEntrada=renderEntrada; }
 })();
