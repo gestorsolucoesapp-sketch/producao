@@ -1,0 +1,74 @@
+name: Aplicar v4.638.33
+
+on:
+  push:
+    paths:
+      - '.github/workflows/aplicar-v4.638.33.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar autocomplete
+        run: |
+          node --check tinta-saida-sugestoes-v4.638.32.js
+          grep -q "autocomplete sem inverter letras" tinta-saida-sugestoes-v4.638.32.js
+          grep -q "atualizar SOMENTE as sugestões" tinta-saida-sugestoes-v4.638.32.js
+
+      - name: Aplicar v4.638.33
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(text, old, new, label):
+              n=text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: esperado 1, encontrado {n}')
+              return text.replace(old,new,1)
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          s=rep(s, '>v4.638.32<small id="verData"', '>v4.638.33<small id="verData"', 'badge')
+          s=rep(s, "const APP_VER = '4.638.32';", "const APP_VER = '4.638.33';", 'APP_VER')
+          s=rep(s,
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.32"></script>',
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.33"></script>',
+              'script NF-e')
+          s=rep(s,
+              '<script src="./tinta-balanco-historico-v4.638.30.js?v=4.638.32"></script>',
+              '<script src="./tinta-balanco-historico-v4.638.30.js?v=4.638.33"></script>',
+              'script balanço')
+          s=rep(s,
+              '<script src="./tinta-saida-sugestoes-v4.638.32.js?v=4.638.32"></script>',
+              '<script src="./tinta-saida-sugestoes-v4.638.32.js?v=4.638.33"></script>',
+              'script saída sugestões')
+          p.write_text(s,encoding='utf-8')
+
+          sw=Path('sw.js')
+          w=sw.read_text(encoding='utf-8')
+          w=rep(w, '// Produção Rioplastic — v4.638.32', '// Produção Rioplastic — v4.638.33', 'sw versão')
+          w=rep(w, "const CACHE = 'producao-rioplastic-v4.638.32';", "const CACHE = 'producao-rioplastic-v4.638.33';", 'sw cache')
+          sw.write_text(w,encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -q "const APP_VER = '4.638.33'" index.html
+          grep -q 'tinta-saida-sugestoes-v4.638.32.js?v=4.638.33' index.html
+          grep -q "producao-rioplastic-v4.638.33" sw.js
+
+      - name: Publicar
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Rioplastic Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html sw.js
+          git commit -m "v4.638.33 - corrige ordem das letras na busca de saida"
+          git push origin HEAD:main
