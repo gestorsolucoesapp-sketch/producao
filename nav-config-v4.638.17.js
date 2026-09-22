@@ -227,3 +227,92 @@
     };
   } catch (_) {}
 })();
+
+
+/* ===== AUTO-DESCOBERTA DE MAQUINAS — 22/09/2026 =====
+   Máquina nova não pode sumir só porque o código ainda não foi digitado no
+   SETOR_MAQ. O cadastro conhecido continua sendo a fonte principal; quando um
+   código NOVO aparece de verdade nos dados, a família do código (e, como
+   fallback, o nome do recurso) determina o setor e ele entra no mapa em memória.
+   Não cria "máquina fantasma": fora a 1806 já confirmada no ERP, uma máquina só
+   é acrescentada quando algum dado com aquele recurso passa pelo app. */
+(function () {
+  function _maqAutoInferir(cod, nome) {
+    const n = parseInt(cod, 10);
+    if (Number.isFinite(n)) {
+      if (n >= 500  && n <= 599)  return 'Extrusão';
+      if (n >= 600  && n <= 699)  return 'Termoformagem';
+      if (n >= 700  && n <= 799)  return 'Impressão';
+      if (n >= 1200 && n <= 1299) return 'Injeção';
+      if (n >= 1300 && n <= 1399) return 'Rotulagem';
+      if (n >= 1500 && n <= 1599) return 'Termoformagem';
+      if (n >= 1700 && n <= 1799) return 'Termoformagem';
+      if (n >= 1800 && n <= 1899) return 'Embaladeiras';
+      if (n >= 1900 && n <= 1999) return 'Sleeve';
+      if (n >= 2000 && n <= 2099) return 'Termoformagem';
+      if (n >= 2300 && n <= 2399) return 'Compressão';
+      if (n >= 2500 && n <= 2599) return 'Compressão';
+    }
+    const s = String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    if (/EMBALADEIR/.test(s)) return 'Embaladeiras';
+    if (/SLEEVE/.test(s)) return 'Sleeve';
+    if (/ROTUL/.test(s)) return 'Rotulagem';
+    if (/EXTRUS/.test(s)) return 'Extrusão';
+    if (/INJET/.test(s)) return 'Injeção';
+    if (/COMPRESS|AGILLE/.test(s)) return 'Compressão';
+    if (/TERMOFORM|FORMADORA/.test(s)) return 'Termoformagem';
+    if (/IMPRESS/.test(s)) return 'Impressão';
+    return null;
+  }
+
+  function _maqAutoRegistrar(cod, nome) {
+    try {
+      const n = parseInt(cod, 10);
+      if (!Number.isFinite(n)) return null;
+      if (MAQ_SETOR[n]) return MAQ_SETOR[n];
+      const setor = _maqAutoInferir(n, nome);
+      if (!setor || !SETOR_MAQ[setor]) return null;
+      MAQ_SETOR[n] = setor;
+      if (!SETOR_MAQ[setor].some(x => parseInt(x, 10) === n)) {
+        SETOR_MAQ[setor].push(n);
+        SETOR_MAQ[setor].sort((a, b) => (+a || 0) - (+b || 0));
+        try { console.info('[máquina automática]', n, '→', setor, nome || ''); } catch (_) {}
+      }
+      return setor;
+    } catch (_) { return null; }
+  }
+
+  /* 1806 já existe no ERP: EMBALADEIRA AMD-25TP. */
+  try { _maqAutoRegistrar(1806, 'EMBALADEIRA AMD-25TP'); } catch (_) {}
+
+  /* Qualquer lugar que classifique um recurso passa a aprender famílias novas. */
+  try {
+    const _setorDeOriginal = setorDe;
+    setorDe = function (cod, nome) {
+      try {
+        const n = parseInt(cod, 10);
+        if (Number.isFinite(n) && MAQ_SETOR[n]) return MAQ_SETOR[n];
+        const s = _maqAutoRegistrar(cod, nome);
+        return s || _setorDeOriginal(cod);
+      } catch (_) { return _setorDeOriginal(cod); }
+    };
+  } catch (_) {}
+
+  /* E toda carga que traz recurso_cod/recurso_nome registra antes do desenho.
+     O nome é fallback para uma futura família de códigos ainda desconhecida. */
+  try {
+    const _fetchTudoOriginal = fetchTudo;
+    fetchTudo = async function () {
+      const rows = await _fetchTudoOriginal.apply(this, arguments);
+      try {
+        (rows || []).forEach(r => {
+          if (r && r.recurso_cod != null) _maqAutoRegistrar(r.recurso_cod, r.recurso_nome);
+        });
+      } catch (_) {}
+      return rows;
+    };
+  } catch (_) {}
+
+  /* expõe só para diagnóstico no console, sem virar controle de usuário */
+  try { window.__maqAutoSetor = (cod, nome) => _maqAutoRegistrar(cod, nome); } catch (_) {}
+})();
