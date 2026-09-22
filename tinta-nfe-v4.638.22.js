@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.29 — lista completa da NF + soma dos itens x total da nota */
+/* Rioplastic v4.638.34 — impressão individual do estoque + recursos da NF */
 (function(){
   'use strict';
 
@@ -752,7 +752,7 @@
       +'<div style="overflow-x:auto"><table style="width:100%;font-size:13px"><thead><tr>'
       +'<th style="text-align:left">Cor</th><th>Latas</th><th>Kg</th><th>Mín.</th>'
       +(_tintaVeDinheiro()?'<th style="text-align:right">Preço/kg</th><th style="text-align:right">Valor</th>':'')
-      +'</tr></thead><tbody>'
+      +'<th style="width:54px"></th></tr></thead><tbody>'
       +vis.map(x=>{
         const bx=x.abaixo_minimo&&x.ativo;
         return '<tr style="border-top:1px solid var(--linha)">'
@@ -764,12 +764,49 @@
           +'<td style="text-align:center;color:var(--fraco-2)">'+_tNum(x.estoque_min)+'</td>'
           +(_tintaVeDinheiro()?'<td style="text-align:right">'+(x.preco?_tBRL(x.preco)+'/kg':'—')+'</td>'
             +'<td style="text-align:right;font-weight:700">'+(x.valor?_tBRL(x.valor):'—')+'</td>':'')
+          +'<td style="text-align:center"><button type="button" onclick="tintaImprimirItemEstoque(\''+x.id+'\')" title="Imprimir este item" aria-label="Imprimir '+escapeHtml(x.nome)+'" style="cursor:pointer;border:1px solid var(--linha-2s);background:var(--leve-2);border-radius:8px;padding:5px 8px;font-size:14px">🖨️</button></td>'
           +'</tr>';
       }).join('')
       +'</tbody></table></div>'
       +(!vis.length?'<p class="vazio-painel">Nada encontrado.</p>':'');
   };
 
+
+  window.tintaImprimirItemEstoque=function(id){
+    const x=(_tintaSaldo||[]).find(p=>String(p.id)===String(id));
+    if(!x){try{toast('Item de tinta não encontrado.');}catch(_){} return;}
+    const ve$=_tintaVeDinheiro();
+    const w=window.open('','_blank');
+    if(!w){try{toast('O navegador bloqueou a janela de impressão.');}catch(_){} return;}
+    const hoje=new Date().toLocaleDateString('pt-BR');
+    const lat=Number(x.saldo||0);
+    const kg=Number(x.saldo_kg||0);
+    const min=Number(x.estoque_min||0);
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>Estoque · '+escapeHtml(x.nome||'')+'</title><style>'
+      +'@page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#111;margin:0}.top{border-bottom:2px solid #222;padding-bottom:8px;margin-bottom:16px}'
+      +'h1{font-size:20px;margin:0 0 4px}.sub{font-size:11px;color:#555}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}'
+      +'.box{border:1px solid #aaa;border-radius:8px;padding:12px;text-align:center}.box b{display:block;font-size:24px;margin-bottom:3px}.box span{font-size:10px;color:#555;text-transform:uppercase}'
+      +'table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #bbb;padding:9px;text-align:left;font-size:12px}th{width:34%;background:#f2f2f2}'
+      +'.assin{margin-top:34px;display:grid;grid-template-columns:1fr 1fr;gap:35px}.linha{border-top:1px solid #555;padding-top:5px;text-align:center;font-size:10px;color:#555}'
+      +'</style></head><body>'
+      +'<div class="top"><h1>Casa de Tintas · Posição individual de estoque</h1><div class="sub">Emitido em '+hoje+'</div></div>'
+      +'<h1 style="font-size:18px">'+escapeHtml(x.nome||'')+'</h1>'
+      +'<div class="sub">'+escapeHtml(x.fornecedor||'')+(x.cod_erp?' · ERP '+escapeHtml(x.cod_erp):'')+(x.cod_barras?' · Código '+escapeHtml(x.cod_barras):'')+'</div>'
+      +'<div class="grid"><div class="box"><b>'+lat.toLocaleString('pt-BR',{maximumFractionDigits:1})+'</b><span>Latas em estoque</span></div>'
+      +'<div class="box"><b>'+kg.toLocaleString('pt-BR',{maximumFractionDigits:1})+'</b><span>Kg em estoque</span></div>'
+      +'<div class="box"><b>'+min.toLocaleString('pt-BR',{maximumFractionDigits:1})+'</b><span>Estoque mínimo</span></div></div>'
+      +'<table><tr><th>Cor / item</th><td>'+escapeHtml(x.nome||'')+'</td></tr>'
+      +'<tr><th>Fornecedor</th><td>'+escapeHtml(x.fornecedor||'—')+'</td></tr>'
+      +'<tr><th>Código ERP</th><td>'+escapeHtml(x.cod_erp||'—')+'</td></tr>'
+      +'<tr><th>Código de barras</th><td>'+escapeHtml(x.cod_barras||'—')+'</td></tr>'
+      +(ve$?'<tr><th>Preço por kg</th><td>'+(x.preco?_tBRL(x.preco):'—')+'</td></tr><tr><th>Valor do estoque</th><td>'+(x.valor?_tBRL(x.valor):'—')+'</td></tr>':'')
+      +'</table>'
+      +'<div class="assin"><div class="linha">Responsável pela conferência</div><div class="linha">Data</div></div>'
+      +'</body></html>';
+    w.document.write(html);
+    w.document.close();
+    setTimeout(()=>{try{w.focus();w.print();}catch(_){}},250);
+  };
 
   /* ===== RESUMOS GERENCIAIS DA CASA DE TINTAS — v4.638.27 =====
      Consumo sai dos movimentos em latas; o valor usa kg x preço/kg.
