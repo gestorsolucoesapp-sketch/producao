@@ -1,0 +1,68 @@
+name: Aplicar v4.638.29
+
+on:
+  push:
+    paths:
+      - '.github/workflows/aplicar-v4.638.29.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  aplicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar Casa de Tintas
+        run: |
+          node --check tinta-nfe-v4.638.22.js
+          grep -q "lista completa da NF" tinta-nfe-v4.638.22.js
+          grep -q "Soma dos itens" tinta-nfe-v4.638.22.js
+          grep -q "Valor total da NF" tinta-nfe-v4.638.22.js
+          grep -q "Confirmar e lançar NF" tinta-nfe-v4.638.22.js
+
+      - name: Aplicar v4.638.29
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def rep(text, old, new, label):
+              n=text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: esperado 1, encontrado {n}')
+              return text.replace(old,new,1)
+
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          s=rep(s, '>v4.638.28<small id="verData"', '>v4.638.29<small id="verData"', 'badge')
+          s=rep(s, "const APP_VER = '4.638.28';", "const APP_VER = '4.638.29';", 'APP_VER')
+          s=rep(s,
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.28"></script>',
+              '<script src="./tinta-nfe-v4.638.22.js?v=4.638.29"></script>',
+              'script NF-e')
+          p.write_text(s,encoding='utf-8')
+
+          sw=Path('sw.js')
+          w=sw.read_text(encoding='utf-8')
+          w=rep(w, '// Produção Rioplastic — v4.638.28', '// Produção Rioplastic — v4.638.29', 'sw versao')
+          w=rep(w, "const CACHE = 'producao-rioplastic-v4.638.28';", "const CACHE = 'producao-rioplastic-v4.638.29';", 'sw cache')
+          sw.write_text(w,encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -q "const APP_VER = '4.638.29'" index.html
+          grep -q 'tinta-nfe-v4.638.22.js?v=4.638.29' index.html
+          grep -q "producao-rioplastic-v4.638.29" sw.js
+
+      - name: Publicar
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Rioplastic Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html sw.js
+          git commit -m "v4.638.29 - lista completa da NF e conferencia de total"
+          git push origin HEAD:main
