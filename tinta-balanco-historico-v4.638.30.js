@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.31 — clicar em Balanço mostra o último balanço fechado completo */
+/* Rioplastic v4.638.34 — impressão da folha física de balanço + histórico */
 (function(){
   'use strict';
 
@@ -78,6 +78,68 @@
     return _balHistUI.find(x=>String(x.id)===String(_balSelecionado)) || _balHistUI[0];
   }
 
+  function produtosParaFolha(){
+    let L=(_tintaSaldo||[]).filter(x=>x&&x.ativo).slice();
+    try{if(typeof _tintaFiltra==='function') L=_tintaFiltra(L);}catch(_){}
+    return L.sort((a,b)=>{
+      const fa=String(a.fornecedor||''),fb=String(b.fornecedor||'');
+      const d=fa.localeCompare(fb,'pt-BR');
+      return d||String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR');
+    });
+  }
+
+  function imprimirFolhaBalanco(){
+    const L=produtosParaFolha();
+    if(!L.length){try{toast('Nenhuma tinta ativa para imprimir.');}catch(_){} return;}
+    const totalVirtual=L.reduce((a,x)=>a+num(x.saldo),0);
+    const hoje=new Date().toLocaleDateString('pt-BR');
+    const w=window.open('','_blank');
+    if(!w){try{toast('O navegador bloqueou a janela de impressão.');}catch(_){} return;}
+    const linhas=L.map((x,i)=>'<tr>'
+      +'<td class="n">'+(i+1)+'</td>'
+      +'<td class="nome"><b>'+escapeHtml(x.nome||'')+'</b><span>'+escapeHtml(x.fornecedor||'')+(x.cod_erp?' · ERP '+escapeHtml(x.cod_erp):'')+'</span></td>'
+      +'<td class="num">'+num(x.saldo).toLocaleString('pt-BR',{maximumFractionDigits:1})+'</td>'
+      +'<td class="anot"></td>'
+      +'<td class="anot"></td>'
+      +'</tr>').join('');
+    const html='<!doctype html><html><head><meta charset="utf-8"><title>Folha de Balanço · Casa de Tintas</title><style>'
+      +'@page{size:A4 portrait;margin:9mm 8mm 11mm}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:9pt}'
+      +'h1{font-size:15pt;margin:0 0 2mm}.sub{font-size:8pt;color:#555;margin-bottom:4mm}.top{display:flex;justify-content:space-between;gap:10mm;border-bottom:1.5px solid #222;padding-bottom:3mm;margin-bottom:4mm}'
+      +'.campos{font-size:8.5pt;line-height:1.8;white-space:nowrap}.linha{display:inline-block;min-width:42mm;border-bottom:1px solid #444;height:4mm;vertical-align:bottom}'
+      +'table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{page-break-inside:avoid}'
+      +'th,td{border:1px solid #888;padding:2.1mm 1.5mm;vertical-align:middle}th{background:#eee;font-size:8pt;text-transform:uppercase}'
+      +'th:nth-child(1),td.n{width:7mm;text-align:center}.nome{width:auto}.nome span{display:block;font-size:7pt;color:#555;margin-top:1px}'
+      +'th:nth-child(3),td.num{width:18mm;text-align:center;font-weight:700}th:nth-child(4),th:nth-child(5),td.anot{width:22mm}'
+      +'td.anot{height:7mm}.totais{margin-top:5mm;border:1.5px solid #333;padding:3mm;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4mm}'
+      +'.totais div{font-size:8.5pt}.totais b{font-size:12pt}.blank{display:block;border-bottom:1px solid #333;height:7mm;margin-top:2mm}'
+      +'.obs{margin-top:4mm;border:1px solid #888;min-height:18mm;padding:2mm;font-size:8pt}.rod{margin-top:3mm;font-size:7.5pt;color:#555;text-align:right}'
+      +'</style></head><body>'
+      +'<div class="top"><div><h1>Casa de Tintas · Folha de Balanço</h1><div class="sub">Contagem física para conferência com o estoque virtual · emitido em '+hoje+'</div></div>'
+      +'<div class="campos">Data da contagem: <span class="linha"></span><br>Responsável: <span class="linha"></span></div></div>'
+      +'<table><thead><tr><th>#</th><th>Tinta</th><th>Virtual</th><th>Contado</th><th>Dif.</th></tr></thead><tbody>'+linhas+'</tbody></table>'
+      +'<div class="totais"><div>TOTAL VIRTUAL<br><b>'+totalVirtual.toLocaleString('pt-BR',{maximumFractionDigits:1})+' latas</b></div>'
+      +'<div>TOTAL CONTADO<span class="blank"></span></div><div>DIFERENÇA TOTAL<span class="blank"></span></div></div>'
+      +'<div class="obs"><b>Observações:</b></div>'
+      +'<div class="rod">'+L.length+' item(ns) na folha de balanço</div>'
+      +'</body></html>';
+    w.document.write(html);
+    w.document.close();
+    setTimeout(()=>{try{w.focus();w.print();}catch(_){}},250);
+  }
+
+  function adicionarBotaoFolha(){
+    try{
+      if(_tintaVista!=='balanco') return;
+      const box=document.getElementById('tintaConteudo');
+      if(!box||document.getElementById('balFolhaPrintBar')) return;
+      const bar=document.createElement('div');
+      bar.id='balFolhaPrintBar';
+      bar.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px';
+      bar.innerHTML='<button type="button" onclick="tintaImprimirFolhaBalanco()" style="cursor:pointer;border:0;background:var(--navy);color:#fff;font-weight:800;border-radius:9px;padding:9px 13px;font-size:12px">🖨️ Imprimir folha para contagem</button>';
+      box.insertAdjacentElement('afterbegin',bar);
+    }catch(_){}
+  }
+
   function renderBalancoFechadoInline(){
     const box=document.getElementById('tintaConteudo');
     if(!box) return;
@@ -89,7 +151,8 @@
     const b=balancoSelecionado();
     if(!b){
       box.innerHTML='<p class="desc">Nenhum balanço fechado encontrado.</p>'
-        +'<span onclick="tintaBalancoAbrir()" style="cursor:pointer;display:inline-block;margin-top:8px;background:var(--navy);color:#fff;font-weight:800;border-radius:10px;padding:11px 18px">⚖️ Abrir balanço de hoje</span>';
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span onclick="tintaBalancoAbrir()" style="cursor:pointer;display:inline-block;background:var(--navy);color:#fff;font-weight:800;border-radius:10px;padding:11px 18px">⚖️ Abrir balanço de hoje</span>'
+        +'<span onclick="tintaImprimirFolhaBalanco()" style="cursor:pointer;display:inline-block;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);font-weight:800;border-radius:10px;padding:11px 18px">🖨️ Imprimir folha de contagem</span></div>';
       return;
     }
     _balSelecionado=b.id;
@@ -104,6 +167,7 @@
       +(_balHistUI.length>1?'<select onchange="tintaBalancoSelecionar(this.value)" style="padding:8px 10px;border:1px solid var(--borda);border-radius:9px;font-size:12px">'
         +_balHistUI.map(x=>'<option value="'+escapeHtml(x.id)+'"'+(String(x.id)===String(b.id)?' selected':'')+'>'+escapeHtml(fmtData(String(x.data)))+' · '+escapeHtml(x.fechado_nome||x.criado_nome||'')+'</option>').join('')
         +'</select>':'')
+      +'<span onclick="tintaImprimirFolhaBalanco()" style="cursor:pointer;background:var(--leve-2);color:var(--navy);border:1px solid var(--linha-2s);font-weight:800;border-radius:9px;padding:8px 12px;font-size:12px">🖨️ Folha de contagem</span>'
       +'<span onclick="tintaBalancoAbrir()" style="cursor:pointer;background:var(--navy);color:#fff;font-weight:800;border-radius:9px;padding:8px 12px;font-size:12px">＋ Novo balanço</span>'
       +'</div></div>'
       +'<div class="idet-grid" style="margin-top:10px">'
@@ -168,10 +232,15 @@
       const r=verOriginal.apply(this,arguments);
       if(v==='balanco'){
         _balFiltro='';
-        Promise.resolve(carregarHistoricoBalanco()).then(()=>{
-          if(_balHistUI.length && !_balSelecionado) _balSelecionado=_balHistUI[0].id;
-          renderBalancoFechadoInline();
-        });
+        const aberto=(typeof _balAtual!=='undefined' && _balAtual);
+        if(aberto){
+          setTimeout(adicionarBotaoFolha,0);
+        }else{
+          Promise.resolve(carregarHistoricoBalanco()).then(()=>{
+            if(_balHistUI.length && !_balSelecionado) _balSelecionado=_balHistUI[0].id;
+            renderBalancoFechadoInline();
+          });
+        }
       }
       return r;
     };
@@ -186,6 +255,24 @@
     };
   }
 
+  const abrirBalOriginal=window.tintaBalancoAbrir;
+  if(typeof abrirBalOriginal==='function'){
+    window.tintaBalancoAbrir=async function(){
+      const r=await abrirBalOriginal.apply(this,arguments);
+      setTimeout(adicionarBotaoFolha,0);
+      return r;
+    };
+  }
+
+  try{
+    const alvo=document.getElementById('tintaConteudo');
+    if(alvo && typeof MutationObserver!=='undefined'){
+      const obs=new MutationObserver(()=>{if(typeof _balAtual!=='undefined' && _balAtual) adicionarBotaoFolha();});
+      obs.observe(alvo,{childList:true});
+    }
+  }catch(_){}
+
+  window.tintaImprimirFolhaBalanco=imprimirFolhaBalanco;
   window.tintaBalancoHistoricoDetalhe=detalhe;
   window.tintaBalancoSelecionar=function(id){ _balSelecionado=String(id||''); _balFiltro=''; renderBalancoFechadoInline(); };
   window.tintaBalancoFiltrar=function(v){ _balFiltro=String(v||''); renderBalancoFechadoInline(); };
