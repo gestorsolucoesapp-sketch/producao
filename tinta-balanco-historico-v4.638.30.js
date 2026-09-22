@@ -1,4 +1,4 @@
-/* Rioplastic v4.638.34 — impressão da folha física de balanço + histórico */
+/* Rioplastic v4.638.36 — coluna Contado ampliada na folha física de balanço */
 (function(){
   'use strict';
 
@@ -109,8 +109,8 @@
       +'table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}tr{page-break-inside:avoid}'
       +'th,td{border:1px solid #888;padding:2.1mm 1.5mm;vertical-align:middle}th{background:#eee;font-size:8pt;text-transform:uppercase}'
       +'th:nth-child(1),td.n{width:7mm;text-align:center}.nome{width:auto}.nome span{display:block;font-size:7pt;color:#555;margin-top:1px}'
-      +'th:nth-child(3),td.num{width:18mm;text-align:center;font-weight:700}th:nth-child(4),th:nth-child(5),td.anot{width:22mm}'
-      +'td.anot{height:7mm}.totais{margin-top:5mm;border:1.5px solid #333;padding:3mm;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4mm}'
+      +'th:nth-child(3),td.num{width:18mm;text-align:center;font-weight:700}th:nth-child(4){width:38mm}th:nth-child(5){width:17mm}'
+      +'td:nth-child(4).anot{width:38mm;height:9mm}td:nth-child(5).anot{width:17mm;height:9mm}.totais{margin-top:5mm;border:1.5px solid #333;padding:3mm;display:grid;grid-template-columns:1fr 1fr 1fr;gap:4mm}'
       +'.totais div{font-size:8.5pt}.totais b{font-size:12pt}.blank{display:block;border-bottom:1px solid #333;height:7mm;margin-top:2mm}'
       +'.obs{margin-top:4mm;border:1px solid #888;min-height:18mm;padding:2mm;font-size:8pt}.rod{margin-top:3mm;font-size:7.5pt;color:#555;text-align:right}'
       +'</style></head><body>'
