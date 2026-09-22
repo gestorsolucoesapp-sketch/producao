@@ -1,8 +1,10 @@
-/* Rioplastic v4.638.33 — autocomplete sem inverter letras ao digitar na Saída */
+/* Rioplastic v4.638.38 — autocomplete + lote e fabricação opcionais na Saída */
 (function(){
   'use strict';
 
   const norm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  let _tSaidaLote='';
+  let _tSaidaFab='';
   function candidatos(q){
     const s=norm(q);
     if(!s) return [];
@@ -91,6 +93,36 @@
 
   }
 
+  function renderMetaSaida(){
+    const inp=document.getElementById('tintaBip');
+    if(!inp) return;
+    const velho=document.getElementById('tintaSaidaMeta');
+    if(velho) velho.remove();
+
+    const box=document.createElement('div');
+    box.id='tintaSaidaMeta';
+    box.style.cssText='display:grid;grid-template-columns:minmax(150px,1fr) minmax(170px,1fr) auto;gap:8px;align-items:end;margin:0 0 10px;padding:9px;border:1px solid var(--linha-2s);border-radius:10px;background:var(--leve-s)';
+    box.innerHTML=
+      '<label style="font-size:11px;font-weight:800;color:var(--navy)">Lote <span class="desc" style="font-weight:600">(opcional)</span><br>'
+      +'<input id="tintaSaidaLote" type="text" value="'+escapeHtml(_tSaidaLote)+'" placeholder="ex.: L240901" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--borda);border-radius:8px;font-size:14px"></label>'
+      +'<label style="font-size:11px;font-weight:800;color:var(--navy)">Data de fabricação <span class="desc" style="font-weight:600">(opcional)</span><br>'
+      +'<input id="tintaSaidaFab" type="date" value="'+escapeHtml(_tSaidaFab)+'" style="width:100%;margin-top:4px;padding:7px;border:1px solid var(--borda);border-radius:8px;font-size:14px"></label>'
+      +'<button type="button" id="tintaSaidaMetaLimpar" style="cursor:pointer;border:1px solid var(--linha-2s);background:#fff;color:var(--navy);font-weight:800;border-radius:8px;padding:8px 10px;font-size:11px">Limpar</button>'
+      +'<div class="desc" style="grid-column:1/-1;font-size:10.5px">Se preenchido, lote e fabricação serão gravados junto com a próxima baixa e permanecerão para as próximas leituras até você limpar ou alterar.</div>';
+    const sug=document.getElementById('tintaSugestoes');
+    (sug||inp).insertAdjacentElement('afterend',box);
+    const l=document.getElementById('tintaSaidaLote');
+    const d=document.getElementById('tintaSaidaFab');
+    const bt=document.getElementById('tintaSaidaMetaLimpar');
+    if(l) l.addEventListener('input',()=>{_tSaidaLote=l.value;});
+    if(d) d.addEventListener('change',()=>{_tSaidaFab=d.value;});
+    if(bt) bt.addEventListener('click',()=>{
+      _tSaidaLote='';_tSaidaFab='';
+      if(l) l.value=''; if(d) d.value='';
+      try{toast('Lote e fabricação limpos.');}catch(_){}
+    });
+  }
+
   window.tintaSaidaEscolherSugestao=function(id){
     const p=(_tintaSaldo||[]).find(x=>String(x.id)===String(id));
     if(!p) return;
@@ -106,8 +138,33 @@
   if(typeof original==='function'){
     window.tintaTelaSaida=function(box){
       const r=original.apply(this,arguments);
-      try{renderSugestoes();}catch(_){}
+      try{renderSugestoes();renderMetaSaida();}catch(_){}
       return r;
     };
   }
+  const saidaOriginal=window.tintaSaidaUma;
+  if(typeof saidaOriginal==='function'){
+    window.tintaSaidaUma=async function(id){
+      const before=((_tintaMov||[])[0]||{}).id||'';
+      const lote=String(_tSaidaLote||'').trim();
+      const fab=String(_tSaidaFab||'').trim();
+      const r=await saidaOriginal.apply(this,arguments);
+      if(!lote&&!fab) return r;
+      const mov=(_tintaMov||[])[0];
+      if(!mov||!mov.id||String(mov.id)===String(before)) return r;
+      try{
+        const {error}=await sb.from('tinta_movimento')
+          .update({lote:lote||null,data_fabricacao:fab||null})
+          .eq('id',mov.id);
+        if(error) throw error;
+        mov.lote=lote||null;
+        mov.data_fabricacao=fab||null;
+        try{toast('Baixa registrada'+(lote?' · lote '+lote:'')+(fab?' · fabricação '+fab.split('-').reverse().join('/'):'')+'.');}catch(_){}
+      }catch(e){
+        try{toast('Baixa feita, mas não consegui gravar lote/fabricação: '+((e&&e.message)||e));}catch(_){}
+      }
+      return r;
+    };
+  }
+
 })();
