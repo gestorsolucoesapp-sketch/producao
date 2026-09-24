@@ -1,7 +1,7 @@
-// Produção Rioplastic — v4.638.47
+// Produção Rioplastic — v4.638.48
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
-const CACHE = 'producao-rioplastic-v4.638.47';
-const CACHE_ASSET = 'producao-rioplastic-assets-v1';
+const CACHE = 'producao-rioplastic-v4.638.48';
+const CACHE_ASSET = 'producao-rioplastic-assets-v2';
 const INDEX = './index.html';
 const ASSETS = [
   './logo_rioplastic.png',
@@ -34,6 +34,15 @@ self.addEventListener('activate', event => {
         .map(nome => caches.delete(nome))
     );
     await self.clients.claim();
+
+    // Força qualquer app/PWA já aberto a recarregar usando a versão recém-ativada.
+    const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    await Promise.all(clientes.map(async cliente => {
+      try {
+        const u = new URL(cliente.url);
+        if (u.origin === self.location.origin) await cliente.navigate(cliente.url);
+      } catch (_) {}
+    }));
   })());
 });
 
