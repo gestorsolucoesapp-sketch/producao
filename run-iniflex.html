@@ -3,58 +3,92 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-<title>Executor controlado Iniflex</title>
+<title>Executor final Iniflex</title>
 <style>
 :root{--navy:#0b3154;--light:#eef3f7}*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--light);font-family:Arial,sans-serif;color:var(--navy)}.wrap{max-width:1050px;margin:auto}.box{background:#fff;border-radius:14px;padding:18px;box-shadow:0 3px 16px #0002}#remoteStatus{padding:12px 14px;border-radius:10px;background:#fff4d6;font-weight:800;margin-bottom:14px;white-space:pre-line}#iniflexApiCard{background:#fff;border-left:4px solid #08a357;border-radius:14px;padding:18px;box-shadow:0 2px 12px #0001}.titulo-sec{font-size:18px;font-weight:800}.desc{font-size:13px;color:#607080;margin-top:4px}.btn{padding:10px 13px;border:0;border-radius:8px;font-weight:800}.btn-borda{background:#e9eef3;color:var(--navy)}.btn-verde{background:#08783e;color:#fff}
 </style>
 </head>
 <body><main class="wrap"><div class="box">
-<div style="font-size:20px;font-weight:900">Executor controlado dos relatórios Iniflex</div>
-<div class="desc">Prepara, valida, processa, envia e importa um relatório por vez. Só avança depois da conclusão do anterior.</div>
-<div id="remoteStatus">Aguardando a extensão v0.8.3…</div>
+<div style="font-size:20px;font-weight:900">Executor final dos relatórios Iniflex</div>
+<div class="desc">Executa um relatório por vez, valida a tela, processa, envia e só avança depois da importação.</div>
+<div id="remoteStatus">Aguardando o conector v0.8.4…</div>
 <section id="iniflexApiCard"><div class="titulo-sec">🔌 INIFLEX · CONECTOR LOCAL</div><div class="desc">Aguardando a extensão carregar…</div><div id="iniflexApiBody"></div></section>
 </div></main>
 <script>
 (()=>{
- const p=new URLSearchParams(location.search),map={RPCP621:'621',RPCP622:'622',RPCP624:'624',RPCP054:'054',RPCP643:'643',RPCP646:'646',RSMI005:'005',RSMI010:'010',REST196:'196',REST241:'241',RGER339:'339',RVEN002:'002','RVEN304-PED':'304-PED','RVEN304-PROP':'304-PROP'};
+ const EXECUTOR_VERSION='repair-v084-final-2';
+ const p=new URLSearchParams(location.search);
+ const map={RPCP621:'621',RPCP622:'622',RPCP624:'624',RPCP054:'054',RPCP643:'643',RPCP646:'646',RSMI005:'005',RSMI010:'010',REST196:'196',REST241:'241',RGER339:'339',RVEN002:'002','RVEN304-PED':'304-PED','RVEN304-PROP':'304-PROP'};
  const nonce=p.get('nonce')||'';
  let requested=p.get('ids')||p.get('code')||'';
- // Recuperação dirigida: 005/010 já foram importados e certificados no servidor.
- // Este executor antigo fica dedicado ao próximo relatório ainda ausente.
- if(nonce==='repair-all-20260924-1110')requested='002';
- const raw=requested.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean),ids=raw.map(x=>map[x]||x).filter(x=>/^(621|622|624|054|643|646|005|010|196|241|339|002|304-PED|304-PROP)$/.test(x));
- const runId='runner:'+(nonce||ids.join('-')||String(Date.now())),key='rio-controlled-sequence:'+(nonce||ids.join('-')||String(Date.now())),status=document.getElementById('remoteStatus');
+ // A aba que já está aberta é a recuperação final. Reinicia do zero somente os
+ // relatórios que ainda precisam de PDF real no período correto.
+ if(nonce==='repair-all-20260924-1110')requested='005,010,002,304-PED,304-PROP';
+ const raw=requested.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
+ const ids=raw.map(x=>map[x]||x).filter(x=>/^(621|622|624|054|643|646|005|010|196|241|339|002|304-PED|304-PROP)$/.test(x));
+ const runId='runner:'+EXECUTOR_VERSION+':'+(nonce||ids.join('-')||String(Date.now()));
+ const key='rio-controlled-sequence:'+EXECUTOR_VERSION+':'+(nonce||ids.join('-')||String(Date.now()));
+ const status=document.getElementById('remoteStatus');
  let state;try{state=JSON.parse(sessionStorage.getItem(key)||'null')}catch(_){state=null}
  if(!state||!Array.isArray(state.ids)||state.ids.join(',')!==ids.join(','))state={ids,index:0,phase:'prepare',clickedAt:0,done:[],errors:[],attempts:{},reloads:0};
- const save=()=>sessionStorage.setItem(key,JSON.stringify(state)),current=()=>state.ids[state.index]||null;
+ const save=()=>sessionStorage.setItem(key,JSON.stringify(state));
+ const current=()=>state.ids[state.index]||null;
  const output=()=>String(document.getElementById('rioOut')?.textContent||'').trim();
- const preparedText=()=>[...document.querySelectorAll('#iniflexApiBody *')].map(e=>e.textContent||'').find(t=>/preparado no Iniflex/i.test(t))||'';
+ const bodyText=()=>String(document.getElementById('iniflexApiBody')?.textContent||'').replace(/\s+/g,' ').trim();
+ const preparedText=()=>[...document.querySelectorAll('#iniflexApiBody *')].map(e=>String(e.textContent||'')).find(t=>/preparado no Iniflex/i.test(t))||'';
  const reportButton=id=>document.querySelector('.rioOne[data-id="'+CSS.escape(id)+'"]');
  let lastStatus='',lastBeacon=0;
- async function beacon(force=false){const now=Date.now();if(!force&&now-lastBeacon<1500)return;lastBeacon=now;try{await fetch('https://bweblwmgwutzdvqtpbww.supabase.co/functions/v1/iniflex-runner-beacon',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({run_id:runId,report_id:current(),phase:state.phase,status_text:lastStatus,output_text:output(),page_url:location.href,details:{index:state.index,total:ids.length,done:state.done,errors:state.errors,attempts:state.attempts,reloads:state.reloads,prepared:preparedText()}})});}catch(_){}}
+ async function beacon(force=false){
+   const now=Date.now();if(!force&&now-lastBeacon<1800)return;lastBeacon=now;
+   try{await fetch('https://bweblwmgwutzdvqtpbww.supabase.co/functions/v1/iniflex-runner-beacon',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({run_id:runId,report_id:current(),phase:state.phase,status_text:lastStatus,output_text:output(),page_url:location.href,details:{version:EXECUTOR_VERSION,index:state.index,total:ids.length,done:state.done,errors:state.errors.slice(-10),attempts:state.attempts,reloads:state.reloads,prepared:preparedText(),body:bodyText().slice(0,800)}})});}catch(_){}
+ }
  const setStatus=t=>{lastStatus=t;status.textContent=t;beacon(true)};
- const reloadSoon=(ms=700)=>{beacon(true);setTimeout(()=>location.reload(),ms)};
- const next=()=>{state.index++;state.phase='prepare';state.clickedAt=0;state.reloads=0;save();reloadSoon(450)};
- function failAndRetry(id,msg){state.errors.push({id,message:msg,at:new Date().toISOString()});state.attempts[id]=Number(state.attempts[id]||0)+1;state.phase='prepare';state.clickedAt=0;save();setStatus('⚠️ '+id+' falhou; tentativa '+state.attempts[id]+' será iniciada automaticamente.\n'+msg);reloadSoon(1100)}
+ const reloadSoon=(ms=900)=>{beacon(true);setTimeout(()=>location.reload(),ms)};
+ const advance=()=>{state.index++;state.phase='prepare';state.clickedAt=0;state.reloads=0;save();reloadSoon(700)};
+ function retry(id,msg){
+   state.errors.push({id,message:String(msg||'falha').slice(0,1200),at:new Date().toISOString()});
+   state.attempts[id]=Number(state.attempts[id]||0)+1;
+   state.phase='prepare';state.clickedAt=0;state.reloads=0;save();
+   setStatus('⚠️ '+id+' não concluiu. Nova tentativa automática '+state.attempts[id]+'.\n'+String(msg||''));
+   reloadSoon(Math.min(15000,2500+state.attempts[id]*1000));
+ }
+ function matchesPrepared(id,txt){
+   const t=String(txt||'').toUpperCase();
+   if(t.includes(id))return true;
+   if(id==='304-PED')return t.includes('304')&&t.includes('PEDIDO');
+   if(id==='304-PROP')return t.includes('304')&&t.includes('PROPOSTA');
+   return false;
+ }
  function tick(){
    if(!ids.length){setStatus('Nenhum relatório válido informado.');return}
-   const id=current();if(!id){setStatus('✅ Sequência concluída: '+state.done.join(' → '));save();beacon(true);return}
+   const id=current();
+   if(!id){setStatus('✅ 100% DA SEQUÊNCIA FINAL CONCLUÍDA: '+state.done.join(' → '));save();beacon(true);return}
    const out=output(),processBtn=document.getElementById('rioProcessPrepared'),cancelBtn=document.getElementById('rioCancelPrepared'),prep=preparedText(),elapsed=Date.now()-Number(state.clickedAt||0);
-   if(/Extension context invalidated|Conector reiniciou/i.test(out)){setStatus('Reconectando a extensão após reinício do worker…');reloadSoon(500);return}
+   if(/Extension context invalidated|Conector reiniciou/i.test(out)){setStatus('Reconectando o conector após reinício…');reloadSoon(800);return}
    if(state.phase==='prepare'){
-     if(processBtn){if(prep.includes(id)||prep.includes(id.replace('-PED','').replace('-PROP',''))){state.phase='process';state.clickedAt=Date.now();save();setStatus('✅ '+id+' preparado. Clicando em Processar…');processBtn.click();return}if(cancelBtn){setStatus('Limpando preparação anterior antes de '+id+'…');cancelBtn.click();reloadSoon(900);return}}
-     const btn=reportButton(id);if(btn&&!btn.disabled){state.phase='waiting';state.clickedAt=Date.now();state.attempts[id]=Number(state.attempts[id]||0);save();setStatus('⏳ Preparando '+id+' ('+(state.index+1)+'/'+ids.length+')…');setTimeout(()=>btn.click(),80);reloadSoon(1800);return}
-     setStatus('Aguardando o conector disponibilizar '+id+'…');if(elapsed>12000)reloadSoon(400);return;
+     if(processBtn){
+       if(matchesPrepared(id,prep)){state.phase='process';state.clickedAt=Date.now();save();setStatus('✅ '+id+' validado na tela. Acionando Processar…');processBtn.click();return}
+       if(cancelBtn){setStatus('Limpando a preparação anterior antes de '+id+'…');cancelBtn.click();reloadSoon(1400);return}
+     }
+     const btn=reportButton(id);
+     if(btn&&!btn.disabled){state.phase='waiting';state.clickedAt=Date.now();state.attempts[id]=Number(state.attempts[id]||0);save();setStatus('⏳ Preparando '+id+' ('+(state.index+1)+'/'+ids.length+') na tela do Iniflex…');setTimeout(()=>btn.click(),120);reloadSoon(2500);return}
+     setStatus('Aguardando o conector v0.8.4 disponibilizar '+id+'…');
+     if(elapsed>15000)reloadSoon(900);return;
    }
    if(state.phase==='waiting'){
-     if(processBtn&&(prep.includes(id)||prep.includes(id.replace('-PED','').replace('-PROP',''))){state.phase='process';state.clickedAt=Date.now();save();setStatus('✅ '+id+' preparado. Clicando em Processar…');processBtn.click();return}
-     setStatus('⏳ A extensão está preparando '+id+' na tela do Iniflex…');if(elapsed>12000){state.reloads=(state.reloads||0)+1;state.phase='prepare';state.clickedAt=0;save();reloadSoon(350)}return;
+     if(processBtn&&matchesPrepared(id,prep)){state.phase='process';state.clickedAt=Date.now();save();setStatus('✅ '+id+' preparado e conferido. Acionando Processar…');processBtn.click();return}
+     const bad=/não consegui|não foi possível|falha|erro|bloqueou|rejeitou|campos protegidos/i.test(out);
+     if(bad&&elapsed>4000){retry(id,out);return}
+     setStatus('⏳ O conector está preparando '+id+' na tela do Iniflex…\n'+out);
+     if(elapsed>30000){state.reloads=(state.reloads||0)+1;state.phase='prepare';state.clickedAt=0;save();reloadSoon(900)}return;
    }
    if(state.phase==='process'){
-     setStatus('⏳ '+id+' está gerando/importando. Não feche o Iniflex.\n'+out);
-     if(/❌|não foi possível|falha|erro/i.test(out)&&elapsed>3500){failAndRetry(id,out);return}
-     if(!processBtn&&elapsed>4000&&(/Última execução:\s*1\/1 concluídos/i.test(out)||/✅ Comando concluído/i.test(out))){state.done.push(id);save();setStatus('✅ '+id+' concluído. Avançando…');next();return}
-     if(elapsed>35*60*1000){failAndRetry(id,'tempo limite');return}
+     setStatus('⏳ '+id+' está gerando, enviando e importando. Não feche o Iniflex.\n'+out);
+     const success=/✅\s*Comando concluído|Última execução:\s*1\/1 concluíd|1\/1\s+concluíd/i.test(out);
+     const fail=/^(⚠️|❌)|não foi possível|falha|erro|bloqueou|rejeitou|divergente/i.test(out);
+     if(success&&elapsed>2500){if(!state.done.includes(id))state.done.push(id);save();setStatus('✅ '+id+' importado. Avançando para o próximo…');advance();return}
+     if(fail&&elapsed>5000){retry(id,out);return}
+     if(elapsed>45*60*1000){retry(id,'tempo limite de 45 minutos');return}
    }
    beacon();
  }
