@@ -1,78 +1,92 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Executor Iniflex Rioplastic</title>
-  <style>
-    :root{--leve-2:#eef3f8;--fraco:#607080}
-    *{box-sizing:border-box}
-    body{margin:0;padding:28px;background:#e8eef4;color:#0b3154;font-family:Arial,sans-serif}
-    .wrap{max-width:1050px;margin:auto}
-    #remoteStatus{margin:0 0 14px;padding:12px 15px;border-radius:10px;background:#fff;font-weight:700;box-shadow:0 2px 10px #0001}
-    #iniflexApiCard{background:#fff;border-left:4px solid #08a357;border-radius:14px;padding:18px;box-shadow:0 2px 12px #0001}
-    .head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
-    .titulo-sec{font-size:18px;font-weight:800}.desc{font-size:13px;color:#607080;margin-top:4px}
-    #iniflexApiBadge{padding:7px 12px;border-radius:999px;font-size:12px;font-weight:800;background:#eef3f8}
-    .btn{border:0;border-radius:9px;padding:11px 14px;font-weight:800;cursor:pointer;font-size:14px}
-    .btn-verde{background:#00a651;color:#fff}.btn-borda{background:#fff;color:#0b3154;border:1px solid #ccd7e1}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<title>Executor controlado Iniflex</title>
+<style>
+:root{--navy:#0b3154;--line:#d7e1e9;--light:#eef3f7;--green:#08783e;--amber:#8a5a00}
+*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--light);font-family:Arial,sans-serif;color:var(--navy)}
+.wrap{max-width:1050px;margin:auto}.box{background:#fff;border-radius:14px;padding:18px;box-shadow:0 3px 16px #0002}
+#remoteStatus{padding:12px 14px;border-radius:10px;background:#fff4d6;font-weight:800;margin-bottom:14px;white-space:pre-line}
+#iniflexApiCard{background:#fff;border-left:4px solid #08a357;border-radius:14px;padding:18px;box-shadow:0 2px 12px #0001}
+.titulo-sec{font-size:18px;font-weight:800}.desc{font-size:13px;color:#607080;margin-top:4px}.btn{padding:10px 13px;border:0;border-radius:8px;font-weight:800}.btn-borda{background:#e9eef3;color:var(--navy)}.btn-verde{background:#08783e;color:#fff}
+</style>
 </head>
 <body>
-  <main class="wrap">
-    <div id="remoteStatus">Preparando comando do Iniflex…</div>
-    <section id="iniflexApiCard">
-      <div class="head">
-        <div>
-          <div class="titulo-sec">🔌 INIFLEX · CONECTOR LOCAL</div>
-          <div class="desc">Aguardando a extensão carregar…</div>
-        </div>
-        <div id="iniflexApiBadge">verificando…</div>
-      </div>
-      <div id="iniflexApiBody"></div>
-    </section>
-  </main>
-  <script>
-  (()=>{
-    const p=new URLSearchParams(location.search);
-    const code=String(p.get('code')||'').toUpperCase();
-    const nonce=String(p.get('nonce')||code||Date.now());
-    const delayMs=Math.max(0,Math.min(60000,Number(p.get('delay')||0)));
-    const readyAt=Date.now()+delayMs;
-    const allowed=/^RPCP(?:621|622|624|054|643|646)$/.test(code)||code==='ALL';
-    const status=document.getElementById('remoteStatus');
-    if(!allowed){status.textContent='Comando inválido: '+code;return}
-    const key='rio-iniflex-run:'+nonce;
-    if(sessionStorage.getItem(key)==='done'){
-      status.textContent='Comando '+code+' já foi enviado nesta aba.';
+<main class="wrap">
+  <div class="box">
+    <div style="font-size:20px;font-weight:900">Executor controlado dos relatórios Iniflex</div>
+    <div class="desc">Prepara, valida, processa, envia e importa um relatório por vez. Só avança depois da conclusão do anterior.</div>
+    <div id="remoteStatus">Aguardando a extensão v0.8.3…</div>
+    <section id="iniflexApiCard"><div class="titulo-sec">🔌 INIFLEX · CONECTOR LOCAL</div><div class="desc">Aguardando a extensão carregar…</div><div id="iniflexApiBody"></div></section>
+  </div>
+</main>
+<script>
+(()=>{
+  const p=new URLSearchParams(location.search);
+  const map={RPCP621:'621',RPCP622:'622',RPCP624:'624',RPCP054:'054',RPCP643:'643',RPCP646:'646',RSMI005:'005',RSMI010:'010',REST196:'196',REST241:'241',RGER339:'339',RVEN002:'002','RVEN304-PED':'304-PED','RVEN304-PROP':'304-PROP'};
+  const raw=(p.get('ids')||p.get('code')||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const ids=raw.map(x=>map[x]||x).filter(x=>/^(621|622|624|054|643|646|005|010|196|241|339|002|304-PED|304-PROP)$/.test(x));
+  const nonce=p.get('nonce')||ids.join('-')||String(Date.now());
+  const key='rio-controlled-sequence:'+nonce;
+  const status=document.getElementById('remoteStatus');
+  let state;
+  try{state=JSON.parse(sessionStorage.getItem(key)||'null')}catch(_){state=null}
+  if(!state||!Array.isArray(state.ids)||state.ids.join(',')!==ids.join(','))state={ids,index:0,phase:'prepare',clickedAt:0,lastMessage:'',done:[],errors:[]};
+  const save=()=>sessionStorage.setItem(key,JSON.stringify(state));
+  const current=()=>state.ids[state.index]||null;
+  const setStatus=t=>{status.textContent=t;};
+  function output(){return String(document.getElementById('rioOut')?.textContent||'').trim()}
+  function preparedText(){return [...document.querySelectorAll('#iniflexApiBody *')].map(e=>e.textContent||'').find(t=>/preparado no Iniflex/i.test(t))||''}
+  function reportButton(id){return document.querySelector('.rioOne[data-id="'+CSS.escape(id)+'"]')}
+  function resetForNext(){state.index++;state.phase='prepare';state.clickedAt=0;state.lastMessage='';save();}
+  function tick(){
+    if(!ids.length){setStatus('Nenhum relatório válido informado na URL.');return}
+    const id=current();
+    if(!id){setStatus('✅ Sequência concluída: '+state.done.join(' → '));sessionStorage.setItem(key,JSON.stringify({...state,finished:true}));return}
+    const out=output();
+    const processBtn=document.getElementById('rioProcessPrepared');
+    const cancelBtn=document.getElementById('rioCancelPrepared');
+    const prep=preparedText();
+    const elapsed=Date.now()-Number(state.clickedAt||0);
+
+    if(state.phase==='prepare'){
+      if(processBtn){
+        if(prep.includes(id)||prep.includes(id.replace('-PED','').replace('-PROP',''))){
+          setStatus('✅ '+id+' preparado. Validando e clicando em Processar…');
+          state.phase='process';state.clickedAt=Date.now();save();processBtn.click();return;
+        }
+        setStatus('Limpando preparação anterior antes de '+id+'…');
+        if(cancelBtn)cancelBtn.click();return;
+      }
+      const btn=reportButton(id);
+      if(btn&&!btn.disabled){
+        setStatus('⏳ Preparando '+id+' ('+(state.index+1)+'/'+ids.length+')…');
+        state.clickedAt=Date.now();state.lastMessage='';save();btn.click();return;
+      }
+      setStatus('Aguardando o conector v0.8.3 disponibilizar '+id+'…');
       return;
     }
-    let attempts=0;
-    const timer=setInterval(()=>{
-      if(Date.now()<readyAt){
-        const segundos=Math.max(1,Math.ceil((readyAt-Date.now())/1000));
-        status.textContent='Comando '+code+' aguardando '+segundos+' s para usar a aba ativa do Iniflex…';
-        return;
+
+    if(state.phase==='process'){
+      setStatus('⏳ '+id+' está gerando/importando. Não feche o Iniflex.\n'+(out||''));
+      if(/❌|não foi possível|falha|erro/i.test(out)&&elapsed>3000){
+        state.errors.push({id,message:out,at:new Date().toISOString()});state.phase='prepare';state.clickedAt=0;save();
+        setStatus('⚠️ '+id+' falhou e será preparado novamente.\n'+out);return;
       }
-      const btn=code==='ALL'
-        ?document.getElementById('rioAll')
-        :document.querySelector('.rioOne[data-code="'+code+'"]');
-      if(btn&&!btn.disabled){
-        sessionStorage.setItem(key,'done');
-        status.textContent='Comando '+code+' enviado. Aguardando geração, upload e importação…';
-        btn.click();
-        clearInterval(timer);
-        return;
+      if(!processBtn&&elapsed>4000&&(/Última execução:\s*1\/1 concluídos/i.test(out)||/✅ Comando concluído/i.test(out))){
+        state.done.push(id);resetForNext();setStatus('✅ '+id+' concluído. Avançando para '+(current()||'fim')+'…');return;
       }
-      attempts++;
-      status.textContent='Aguardando o conector ficar pronto para '+code+'…';
-      if(attempts>180){
-        clearInterval(timer);
-        status.textContent='O conector não ficou pronto em 90 segundos.';
+      if(elapsed>35*60*1000){
+        state.errors.push({id,message:'tempo limite',at:new Date().toISOString()});state.phase='prepare';state.clickedAt=0;save();
       }
-    },500);
-  })();
-  </script>
+    }
+  }
+  save();
+  setInterval(tick,1200);tick();
+})();
+</script>
 </body>
 </html>
