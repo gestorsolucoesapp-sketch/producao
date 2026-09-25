@@ -118,6 +118,67 @@
     window.open('https://supabase.com/dashboard/project/bweblwmgwutzdvqtpbww/settings/functions', '_blank', 'noopener');
   };
 
+
+  /* Status global dos 14 relatórios — lê o Supabase, portanto funciona em qualquer dispositivo. */
+  let cicloTimer=null,cicloBusy=false;
+  function cicloCor(state){
+    return state==='ok'?'#149447':state==='processing'?'#2F6FED':state==='error'?'#C62828':state==='uncertified'?'#B7791F':state==='partial'?'#805AD5':'#A0AEC0';
+  }
+  function cicloRot(state){
+    return state==='ok'?'OK':state==='processing'?'processando':state==='error'?'erro':state==='uncertified'?'sem certificar':state==='partial'?'parcial':'aguardando';
+  }
+  function cicloBox(){
+    const card=cab(); if(!card)return null;
+    let box=document.getElementById('iniflexCycleGlobal');
+    if(!box){
+      box=document.createElement('div');
+      box.id='iniflexCycleGlobal';
+      box.style.cssText='margin-top:12px;padding-top:12px;border-top:1px solid var(--borda)';
+      card.appendChild(box);
+    }
+    return box;
+  }
+  async function cicloCall(){
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session?.access_token)throw new Error('Sessão do app expirada.');
+    const r=await fetch(SB_URL+'/functions/v1/iniflex-manual-cycle-status-v1',{
+      method:'GET',
+      headers:{Authorization:'Bearer '+session.access_token},
+      cache:'no-store'
+    });
+    const d=await r.json().catch(()=>null);
+    if(!r.ok||!d?.ok)throw new Error(d?.error||('HTTP '+r.status));
+    return d;
+  }
+  async function cicloRender(){
+    if(!dono()||cicloBusy)return;
+    const box=cicloBox(); if(!box)return;
+    cicloBusy=true;
+    try{
+      const d=await cicloCall(),rep=Array.isArray(d.reports)?d.reports:[];
+      const atual=d.current;
+      const cards=rep.map(x=>{
+        const cor=cicloCor(x.state);
+        const msg=esc(x.message||cicloRot(x.state));
+        return '<div title="'+msg+'" style="min-width:64px;padding:7px 6px;border-radius:9px;background:'+cor+';color:#fff;text-align:center;font-weight:800;font-size:11px;box-shadow:inset 0 -1px 0 rgba(0,0,0,.15)">'
+          +esc(x.report_id)+'<div style="font-size:8.5px;opacity:.9;margin-top:2px">'+esc(cicloRot(x.state))+'</div></div>';
+      }).join('');
+      box.innerHTML=
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">'
+        +'<div><b style="font-size:13px;color:var(--navy)">📡 Ciclo Iniflex · todos os dispositivos</b>'
+        +'<div class="desc" style="font-size:10.5px;margin-top:2px">Atualização direta do Supabase</div></div>'
+        +'<div style="font-size:17px;font-weight:900;color:'+(d.count_ok===14?'#149447':'var(--navy)')+'">'+Number(d.count_ok||0)+'/14</div></div>'
+        +(atual?'<div style="font-size:11.5px;padding:7px 9px;border-radius:8px;background:var(--leve-2);margin-bottom:8px"><b>Atual:</b> '+esc(atual.report_id)+' · '+esc(cicloRot(atual.state))+(atual.message?' — '+esc(atual.message):'')+'</div>':'')
+        +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:6px">'+cards+'</div>';
+    }catch(e){
+      box.innerHTML='<div style="font-size:11.5px;color:var(--perigo)">Status global indisponível: '+esc((e&&e.message)||e)+'</div>';
+    }finally{cicloBusy=false}
+  }
+  window.iniflexCicloAtualizar=cicloRender;
+  setTimeout(cicloRender,700);
+  try{if(cicloTimer)clearInterval(cicloTimer);}catch(_){}
+  cicloTimer=setInterval(cicloRender,5000);
+
   try { iniflexApiRender = render; } catch (_) {}
   window.iniflexPortalRender = render;
 })();
