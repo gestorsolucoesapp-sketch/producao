@@ -25,6 +25,31 @@
   const setRetry=(run,id,n)=>sessionStorage.setItem(retryKey(run,id),String(n));
   const clearRetry=(run,id)=>sessionStorage.removeItem(retryKey(run,id));
 
+  /* Ponte app -> extensão para o botão "Executar tudo". */
+  window.addEventListener('message', async ev=>{
+    try{
+      const m=ev && ev.data;
+      if(ev.source!==window || !m || m.source!=='rioplastic-app' || m.type!=='INIFLEX_RUN_ALL')return;
+      const r=await send({action:'v1-start',slot:'manual'});
+      window.postMessage({
+        source:'rioplastic-supervisor',
+        request_id:m.request_id,
+        ok:!!r?.ok,
+        error:r?.error||null,
+        state:r?.state||null
+      }, location.origin);
+    }catch(e){
+      try{
+        window.postMessage({
+          source:'rioplastic-supervisor',
+          request_id:ev?.data?.request_id,
+          ok:false,
+          error:String(e?.message||e)
+        }, location.origin);
+      }catch(_){}
+    }
+  });
+
   async function phase(run,phase,error=null){
     return send({action:'v1-api',payload:{action:'phase',run_id:run,phase,error}});
   }
