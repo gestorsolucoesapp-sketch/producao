@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.54 · padronização visual
+// Produção Rioplastic — v4.638.55 · padronização entre dispositivos
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
-const CACHE = 'producao-rioplastic-v4.638.54';
+const CACHE = 'producao-rioplastic-v4.638.55';
 const CACHE_ASSET = 'producao-rioplastic-assets-v2';
 const INDEX = './index.html';
 const ASSETS = [
@@ -10,7 +10,8 @@ const ASSETS = [
   './icon-192.png',
   './ia-logo.png',
   './manifest.webmanifest',
-  './supabase.js?v=2.112.3'
+  './supabase.js?v=2.112.3',
+  './ui-standard-v4.638.55.js?v=4.638.55'
 ];
 
 self.addEventListener('install', event => {
@@ -84,10 +85,18 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       const app = await caches.open(CACHE);
       try {
-        const resposta = await fetch(INDEX, { cache: 'no-store' });
+        const resposta = await fetch(INDEX + '?v=4.638.55', { cache: 'no-store' });
         if (resposta && resposta.ok) {
-          await app.put(INDEX, resposta.clone());
-          return resposta;
+          const original = await resposta.text();
+          const tag = '<script src="./ui-standard-v4.638.55.js?v=4.638.55"></script>';
+          const html = original.includes('ui-standard-v4.638.55.js')
+            ? original
+            : original.replace(/<\/head>/i, tag + '</head>');
+          const headers = new Headers(resposta.headers);
+          headers.set('Cache-Control','no-store, no-cache, must-revalidate');
+          const normalizada = new Response(html, {status: resposta.status, statusText: resposta.statusText, headers});
+          await app.put(INDEX, normalizada.clone());
+          return normalizada;
         }
       } catch (_) {}
       const guardado = await app.match(INDEX);
