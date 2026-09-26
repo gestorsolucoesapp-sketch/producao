@@ -1,4 +1,4 @@
-const VERSION='1.0.0';
+const VERSION='1.1.0';
 const APP='https://gestorsolucoesapp-sketch.github.io/producao/';
 const IFX='https://sistema.rioplastic.com.br/portal/#/';
 const SB='https://bweblwmgwutzdvqtpbww.supabase.co';
@@ -72,6 +72,12 @@ async function status(){
   try{return {...await api({action:'status',run_id:s.v1_active_run}),version:VERSION}}
   catch(e){return {ok:false,error:String(e?.message||e),version:VERSION}}
 }
+async function resume(){
+  const s=await chrome.storage.local.get(['v1_active_run']);
+  if(!s.v1_active_run)throw new Error('Nenhuma execução ativa para retomar');
+  await ensureIniflex();await ensureApp();
+  return {...await api({action:'resume',run_id:s.v1_active_run}),version:VERSION};
+}
 function nextSlotDate(hhmm){
   const now=new Date(),d=new Date(now);
   d.setHours(Number(hhmm.slice(0,2)),Number(hhmm.slice(2)),0,0);
@@ -96,6 +102,7 @@ chrome.runtime.onMessage.addListener((m,_s,send)=>{
     if(m?.action==='v1-status')return status();
     if(m?.action==='v1-register')return registration();
     if(m?.action==='v1-start')return start(m.slot||'manual');
+    if(m?.action==='v1-resume')return resume();
     if(m?.action==='v1-api')return api(m.payload||{});
     if(m?.action==='v1-open-iniflex'){const t=await ensureIniflex();await chrome.tabs.update(t.id,{active:true});return {ok:true}}
     if(m?.action==='v1-open-app'){const t=await ensureApp();await chrome.tabs.update(t.id,{active:true});return {ok:true}}
