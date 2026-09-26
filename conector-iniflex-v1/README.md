@@ -1,26 +1,23 @@
-# Supervisor Iniflex v1.0
+# Supervisor Iniflex v1.1
 
-Arquitetura nova para os 14 relatórios.
+Supervisor determinístico dos 14 relatórios.
 
-## Princípio
-O conector antigo v0.8 continua temporariamente como **motor de tela** (preparar/gerar/upload).
-O v1.0 passa a ser o **supervisor** e o Supabase é a fonte oficial de estado.
+## Sequência
+621 → 624 → 643 → 646 → 622 → 054 → 005 → 010 → 196 → 241 → 339 → 002 → 304-PED → 304-PROP.
 
-O v1.0 só avança quando:
-1. a fila do relatório foi criada depois do início daquela etapa;
-2. a fila está `processado`;
-3. existe importação correspondente;
-4. `conf_ok = true`.
+## Regras
+- Só avança quando a fila foi atualizada nesta etapa, ficou `processado` e existe importação certificada (`conf_ok=true`).
+- Aceita reaproveitamento idempotente/duplicata de uma importação já certificada quando a fila da execução atual foi atualizada.
+- Até 3 retentativas automáticas de preparação por relatório.
+- Erros antigos de outro relatório não derrubam o relatório atual.
+- Timeout de preparação usa o início real da etapa; heartbeat não reinicia o relógio.
+- Botão **Retomar** recupera uma execução marcada como erro.
 
-Se qualquer etapa falhar, o estado fica `error` no relatório atual. Não incrementa contador e não pula.
+## Horários
+06:20, 15:20 e 21:20, além da execução manual.
 
-## Agendas
-06:20, 15:20 e 21:20, além de execução manual pelo popup.
-
-## Supabase
-Estado: `public.iniflex_run_state`
-API: `iniflex-run-state-v1`
+## Dependência temporária
+O supervisor v1.1 usa os botões `.rioOne`, `rioProcessPrepared` e `rioCancelPrepared` expostos pelo motor local já instalado.
 
 ## Instalação
-Carregar esta pasta como extensão descompactada no Opera.
-Enquanto a migração do motor de tela não estiver concluída, manter a extensão v0.8 instalada porque o v1 usa os botões `.rioOne` e `rioProcessPrepared` expostos por ela.
+Carregue esta pasta como extensão descompactada no Opera e mantenha o motor local atual instalado.
