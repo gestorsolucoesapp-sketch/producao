@@ -81,6 +81,22 @@ async function hashesDoArquivo(q, rawHash) {
 }
 
 
+async function conferirContagemComercial(db, id, imp) {
+  if (!imp || imp.conf_ok === false || !["002","304-PED","304-PROP"].includes(id)) return imp;
+  const table=id==="002"?"pedidos_regiao":"fluxo_pedido";
+  let query=db.from(table).select("id",{count:"exact",head:true}).eq("importacao_id",imp.id);
+  if(id.startsWith("304-"))query=query.eq("origem",id==="304-PED"?"Pedido":"Proposta");
+  const {count,error}=await query;
+  if(error)throw new Error("Conferência de registros: "+error.message);
+  const expected=Number(imp.registros);
+  const ok=Number.isInteger(expected)&&expected>0&&count===expected;
+  return {...imp,conf_ok:ok,conf_msg:ok
+    ?"OK por registros — "+count+" gravados e conferidos; sem Total Geral comparável."
+    :"DIVERGENTE — esperados "+expected+", gravados "+count,
+    conf_esperado:{...imp.conf_esperado,Registros:expected},
+    conf_obtido:{...imp.conf_obtido,Registros:count}};
+}
+
 Deno.serve(async req=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:CORS});
   if(req.method!=="POST")return json({ok:false,erro:"Método não permitido."},405);
@@ -157,6 +173,8 @@ Deno.serve(async req=>{
       }
     }catch(_){}
   }
+
+  if(String(q.status)==="processado" && imp) imp=await conferirContagemComercial(db,id,imp);
 
   let state="processing";
   let message=String(q.erro||"");
