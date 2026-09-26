@@ -1,7 +1,7 @@
 // Produção Rioplastic — v4.638.53 · padronização entre dispositivos
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
 const CACHE = 'producao-rioplastic-v4.638.53';
-const CACHE_ASSET = 'producao-rioplastic-assets-v2';
+const CACHE_ASSET = 'producao-rioplastic-assets-v3';
 const INDEX = './index.html';
 const ASSETS = [
   './logo_rioplastic.png',
@@ -20,7 +20,8 @@ self.addEventListener('install', event => {
     const assets = await caches.open(CACHE_ASSET);
     await Promise.all(ASSETS.map(async url => {
       try {
-        if (!(await assets.match(url))) await assets.add(url);
+        const resposta = await fetch(url, { cache: 'no-store' });
+        if (resposta && resposta.ok) await assets.put(url, resposta.clone());
       } catch (_) {}
     }));
   })());
@@ -125,9 +126,19 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith((async () => {
+    const ehManifest = /\.webmanifest$/i.test(url.pathname);
     const ehAsset = /\.(png|jpg|jpeg|svg|webp|ico|mp4|webmanifest)$/i.test(url.pathname)
       || /supabase\.js$/i.test(url.pathname);
     const cache = await caches.open(ehAsset ? CACHE_ASSET : CACHE);
+    if (ehManifest) {
+      try {
+        const resposta = await fetch(event.request, { cache: 'no-store' });
+        if (resposta && resposta.ok) await cache.put(event.request, resposta.clone());
+        return resposta;
+      } catch (_) {
+        return (await cache.match(event.request)) || new Response('', { status: 504 });
+      }
+    }
     const guardado = await cache.match(event.request);
     if (guardado) return guardado;
     try {
