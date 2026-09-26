@@ -316,14 +316,8 @@ async function insertBatches(table, rows, upsertConflict = null) {
 
 async function atualizarResumo(code) {
   if (!["rpcp621", "rpcp624"].includes(code)) return;
-  const { data, error } = await sb.rpc("refresh_dirty_fotos");
-  if (error || typeof data !== "string" || (!data.startsWith("ok:") && data !== "sem pendencia")) {
-    throw new Error("Dados gravados; resumo ainda não atualizado: " + (error?.message || data || "sem confirmação"));
-  }
-  const check = await sb.rpc("confere_fotos");
-  if (check.error || !Array.isArray(check.data)) throw new Error("Dados gravados; não foi possível conferir o resumo.");
-  const stale = check.data.filter(x => x.gravidade === "grave" && x.alvo === "mv_chao_dia");
-  if (stale.length) throw new Error("Dados gravados; resumo divergente: " + stale.map(x => x.detalhe).join("; "));
+  const {data,error}=await sb.rpc("conferir_resumo_621",{p_atualizar:true});
+  if(error || data!==true) throw new Error("Dados gravados; resumo não confirmado: "+(error?.message||"totais divergentes"));
 }
 
 Deno.serve(async (req) => {
@@ -345,7 +339,13 @@ Deno.serve(async (req) => {
     const fileHash = await sha256(buf);
     const effectiveHash = await digestText(`${fileHash}|${code}|${q.periodo_inicio}|${q.periodo_fim}|small-v3-621fix`);
     const { data: duplicate } = await sb.from("importacoes").select("id,registros,conf_ok,conf_msg").eq("hash", effectiveHash).maybeSingle();
-    if (duplicate?.conf_ok === true) {
+    let duplicateComplete = duplicate?.conf_ok === true;
+    if (duplicateComplete && code === "rpcp621") {
+      const {count,error}=await sb.from("producao_resumo").select("id",{count:"exact",head:true}).eq("importacao_id",duplicate.id);
+      if(error) throw new Error("Não foi possível conferir a importação existente: "+error.message);
+      duplicateComplete = count === Number(duplicate.registros);
+    }
+    if (duplicateComplete) {
       await atualizarResumo(code);
       return reply({ ok: true, duplicate: true, importacao_id: duplicate.id, registros: duplicate.registros, conf_ok: duplicate.conf_ok, conf_msg: duplicate.conf_msg });
     }
@@ -402,7 +402,7 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    const { data: imp, error: ie } = await sb.from("importacoes").insert({
+    const { data: imp, error: ie } = code === "rpcp621" && duplicate ? {data:duplicate,error:null} : await sb.from("importacoes").insert({
       hash: effectiveHash, rotina: routine, arquivo: q.arquivo,
       periodo_de: q.periodo_inicio, periodo_ate: q.periodo_fim, registros: rows.length,
       conf_ok: confOk,
@@ -411,6 +411,22 @@ Deno.serve(async (req) => {
       conf_msg: confMsg,
     }).select("id").single();
     if (ie || !imp) throw new Error(`importacoes: ${ie?.message || "sem id"}`);
+
+    if (code === "rpcp621") {
+      const {data: written,error: writeError}=await sb.rpc("substituir_resumo_621_atomico",{p_importacao_id:imp.id,p_rows:rows});
+      if(writeError || written!==rows.length) {
+        // A lost response may follow a committed transaction; never delete by audit ID.
+        await sb.from("importacoes").update({conf_ok:false,conf_msg:"Gravação não confirmada; reprocessamento necessário."}).eq("id",imp.id);
+        throw new Error("621 não substituído; dados anteriores preservados: "+(writeError?.message||"contagem divergente"));
+      }
+      // The data transaction has committed. Never compensate by deleting rows here.
+      const {error:auditError}=await sb.from("importacoes").update({conf_ok:confOk,conf_msg:confMsg,conf_obtido:obtained}).eq("id",imp.id);
+      if(auditError) throw new Error("Dados gravados; conferência pendente: "+auditError.message);
+      await atualizarResumo(code);
+      const {error: stampError}=await sb.from("app_config").upsert({chave:"dados_carimbo",valor:JSON.stringify(new Date().toISOString())});
+      if(stampError) throw new Error("Dados gravados; atualização da tela pendente: "+stampError.message);
+      return reply({ok:true,rotina:routine,linhas:rows.length,importacao_id:imp.id,conf_ok:confOk,conf_msg:confMsg,obtido:obtained,esperado:expected,repaired:!!duplicate});
+    }
 
     try {
       const payload = rows.map((x) => ({ importacao_id: imp.id, ...x }));

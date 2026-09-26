@@ -184,14 +184,13 @@ Deno.serve(async req=>{
     else if(imp?.conf_ok===false){state="error";message=String(imp.conf_msg||"Importação divergente.");}
     else {state="uncertified";message=String(imp?.conf_msg||"Importado sem evidência de certificação.");}
   }else if(!["novo","processando","processing"].includes(String(q.status||"").toLowerCase()))state="missing";
-  // A confirmed PDF is not sufficient if the dashboard is still showing old totals.
+  // Recheck persisted rows as well as the dashboard before returning success.
   if (id === "621" && state === "ok") {
-    const check = await db.rpc("confere_fotos");
-    const stale = Array.isArray(check.data) ? check.data.filter(x => x.gravidade === "grave" && x.alvo === "mv_chao_dia") : [];
-    if (check.error || !Array.isArray(check.data) || stale.length) {
-      state = "error";
-      message = stale.length ? "Dados importados, mas o resumo da tela está desatualizado: " + stale.map(x => x.detalhe).join("; ")
-        : "Dados importados, mas não foi possível conferir o resumo da tela.";
+    const actual=await db.from("producao_resumo").select("id",{count:"exact",head:true}).eq("importacao_id",imp.id);
+    const check=await db.rpc("conferir_resumo_621",{p_atualizar:false});
+    if(actual.error || actual.count!==Number(imp.registros) || check.error || check.data!==true) {
+      state="error";
+      message="621 não confirmado: "+(actual.count!==Number(imp.registros)?"quantidade gravada diferente do PDF.":"resumo da tela pendente ou indisponível.");
     }
   }
   return json({
