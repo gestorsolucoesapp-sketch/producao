@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.53 · painel global Iniflex
+// Produção Rioplastic — v4.638.54 · padronização visual
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
-const CACHE = 'producao-rioplastic-v4.638.53';
+const CACHE = 'producao-rioplastic-v4.638.54';
 const CACHE_ASSET = 'producao-rioplastic-assets-v2';
 const INDEX = './index.html';
 const ASSETS = [
@@ -63,6 +63,16 @@ self.addEventListener('fetch', event => {
 
   if (url.pathname.endsWith('/sw.js') || url.pathname.endsWith('sw.js')) {
     event.respondWith(fetch(event.request, { cache: 'no-store' }));
+    return;
+  }
+
+  // O parâmetro ?monitor=1 ativava uma renderização visual alternativa dos gráficos
+  // (barras únicas por desempenho). O padrão oficial é a visão normal, com as barras
+  // proporcionais por turno. Removemos apenas esse parâmetro em navegações.
+  if (event.request.mode === 'navigate' && url.searchParams.has('monitor')) {
+    url.searchParams.delete('monitor');
+    const clean = url.pathname + (url.search ? url.search : '') + (url.hash || '');
+    event.respondWith(Response.redirect(clean, 302));
     return;
   }
 
