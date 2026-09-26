@@ -155,6 +155,24 @@
         return;
       }
 
+      /* Interface manual: seleciona "Todos os 14 relatórios" e usa o motor já carregado. */
+      const selTodos = [...document.querySelectorAll('select')].find(s =>
+        [...s.options].some(o => /todos\s+os\s+14\s+relat[oó]rios|14\s+relat[oó]rios/i.test(String(o.textContent || '')))
+      );
+      const executarSelecionado = [...document.querySelectorAll('button')].find(b =>
+        /executar\s+selecionado/i.test(String(b.textContent || '').trim())
+      );
+      if (selTodos && executarSelecionado && !executarSelecionado.disabled) {
+        const opt = [...selTodos.options].find(o => /todos\s+os\s+14\s+relat[oó]rios|14\s+relat[oó]rios/i.test(String(o.textContent || '')));
+        if (opt) {
+          selTodos.value = opt.value;
+          selTodos.dispatchEvent(new Event('change', {bubbles:true}));
+          setTimeout(()=>executarSelecionado.click(), 120);
+          try { toast('▶ Execução dos 14 relatórios iniciada'); } catch (_) {}
+          return;
+        }
+      }
+
       /* Supervisor Iniflex v1.1+ — ponte segura via postMessage para a extensão. */
       const req = 'rio-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       const resposta = new Promise((resolve, reject) => {
