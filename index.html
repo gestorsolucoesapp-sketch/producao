@@ -1449,7 +1449,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
         <h1>Gestão de Produção<small class="slogan">Embalar o sucesso dos nossos clientes</small><small id="hdrSetor" style="display:block;margin-top:2px;color:var(--fraco-3)"></small></h1>
       </div>
       <div class="h-acoes" style="display:flex;align-items:center;gap:10px">
-        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.638.52<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
+        <span class="ver-badge" id="verBadge" style="display:flex;flex-direction:column;align-items:center;line-height:1.05;gap:1px">v4.638.53<small id="verData" style="font-size:9px;font-weight:600;opacity:.7"></small></span>
         <span class="ver-badge online-badge oculto" id="onlineBadge" onclick="mostrarOnline()">🟢 1</span>
         <button id="iaBtn" class="ia-fab oculto" onclick="abrirIA()" aria-label="Assistente IA"><img src="ia-logo.png" alt="IA" loading="lazy"></button>
         <button id="sinoBtn" onclick="abrirNotificacoes()" style="position:relative;background:transparent;border:0;font-size:22px;cursor:pointer;padding:4px" aria-label="Notificações">🔔<span id="sinoBadge" class="oculto" style="position:absolute;top:0;right:0;background:var(--critico);color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;line-height:16px;border-radius:10px;padding:0 3px">0</span></button>
@@ -3289,6 +3289,10 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
     return (d ? +d[1] * 1440 : 0) + (h ? +h[1] * 60 : 0) + (m ? +m[1] : 0);
   }
   function parseRVEN304(linhas) {
+    const cab = linhas.map(l => String(l.texto || '')).join('\n');
+    const origens = [...new Set([...cab.matchAll(/Origem:\s*(Pedido|Proposta)\b/gi)].map(m => m[1].toLowerCase() === 'pedido' ? 'Pedido' : 'Proposta'))];
+    if (origens.length !== 1) throw new Error('RVEN304: origem Pedido/Proposta ausente ou ambígua. Importação bloqueada.');
+    const origem = origens[0];
     const RX_DOC = /^Documento:\s*(\d+)\s*(?:Pedido Vendedor:\s*(.*?))?\s*Cliente:\s*(\d+)\s*-\s*(.+?)\s*$/;
     const RX_TOT = /^Tempo Total do Pedido:\s*(.+?)\s*$/;
     const RX_ETP = /^(\d{1,3})\s+(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})\s+((?:\d+\s*d\s*)?(?:\d+\s*h\s*)?\d+\s*m)\s*(.*)$/;
@@ -3353,7 +3357,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
       const corte = etapa.lastIndexOf(' - ');
       const [dd, mm, aa] = me[3].split('/');
       out.push({
-        documento: doc.documento, pedido_vendedor: doc.pedido_vendedor,
+        origem, documento: doc.documento, pedido_vendedor: doc.pedido_vendedor,
         cliente_cod: doc.cliente_cod, cliente_nome: doc.cliente_nome,
         seq: +me[1], etapa: etapa,
         linha: corte > 0 ? etapa.slice(0, corte).trim() : null,
@@ -4144,7 +4148,7 @@ try { requestAnimationFrame(function () { window._B.m('pintou'); }); } catch (e)
        que estava certo. */
     const soma = (k) => registros.reduce((a, r) => a + (r[k] != null ? r[k] : (k === 'peso' ? (r.peso_pendente || 0) : k === 'quantidade' ? (r.qtd_pendente || r.qtde || 0) : 0)), 0);
     return {
-      rotina, nome: NOMES[rotina], periodo, registros,
+      rotina, nome: NOMES[rotina] + (rotina === 'RVEN304' && registros.length ? ' — ' + registros[0].origem : ''), periodo, registros,
       // lista propria do REST196 (estoque deduplicado). Vai no OBJETO e nao no
       // array: o corte do dia aberto recria r.registros com filter() e a
       // propriedade pendurada no array se perdia — foi o que deixou a tabela
@@ -4181,7 +4185,7 @@ async function atualizarAppTudo() {
   // recarrega sem cache
   setTimeout(() => { location.reload(true); }, 400);
 }
-const APP_VER = '4.638.52';
+const APP_VER = '4.638.53';
 
   /* 08/09/2026 — "no proximo quadro", com saida para quando nao ha quadro.
      requestAnimationFrame nao dispara em aba escondida; sem isto, tudo que
@@ -25997,7 +26001,7 @@ async function _fluxoAtualDe(nums) {
   if (falta.length) {
     try {
       const linhas = await _leTudoFlx(() => sb.from('fluxo_pedido')
-        .select('documento,seq,setor,data_inclusao')
+        .select('documento,seq,setor,data_inclusao').eq('origem', 'Pedido')
         .in('documento', falta).order('documento').order('seq'));
       const ult = {};
       (linhas || []).forEach(r => { ult[String(r.documento)] = r; });   // ordenado por seq: sobra o ultimo
@@ -35044,7 +35048,8 @@ const MAPA = {
      upsert do PostgREST so atualiza as colunas enviadas, omiti-las faz o dado do
      264 do mesmo dia SOBREVIVER a importacao do 339. */
   '339': { tabela: 'fila_producao', linha: r => ({ dia_foto: r.dia_foto, hora_foto: r.hora_foto, recurso_cod: r.recurso_cod, recurso_nome: r.recurso_nome, setor: setorDe(r.recurso_cod), op: r.op, item_cod: r.item_cod, item_desc: r.item_desc, versao: r.versao, pedido: r.pedido, cliente: r.cliente, entrega: r.entrega, quantidade: r.quantidade, peso: r.peso, inicio: r.inicio, termino: r.termino, ordem: r.ordem, fonte: '339' }) },
-  'RVEN304': { tabela: 'fluxo_pedido', conflito: 'documento,seq', linha: r => ({
+  'RVEN304': { tabela: 'fluxo_pedido', linha: r => ({
+    origem: r.origem,
     documento: r.documento, pedido_vendedor: r.pedido_vendedor, cliente_cod: r.cliente_cod,
     cliente_nome: r.cliente_nome, seq: r.seq, etapa: r.etapa, linha: r.linha, setor: r.setor,
     data_inclusao: r.data_inclusao, tempo_min: r.tempo_min, usuario_inclusao: r.usuario_inclusao,
@@ -36067,6 +36072,8 @@ async function gravar(id, substituir = false) {
        Mesma correção do 241: os documentos que entram são guardados aqui e as
        linhas ANTIGAS deles só saem depois da nova gravação (bloco `_docs304`). */
     if (r.rotina === 'RVEN304') {
+      r._origem304 = r.registros && r.registros[0] && r.registros[0].origem;
+      if (!['Pedido', 'Proposta'].includes(r._origem304) || r.registros.some(x => x.origem !== r._origem304)) throw new Error('Origem do RVEN304 inválida.');
       r._docs304 = [...new Set((r.registros || []).map(x => String(x.documento)).filter(Boolean))];
     }
     if (r.rotina === '241') {
@@ -36555,7 +36562,7 @@ async function gravar(id, substituir = false) {
       try {
         const docs = r._docs304;
         for (let i = 0; i < docs.length; i += 200) {
-          const { error } = await sb.from('fluxo_pedido').delete().in('documento', docs.slice(i, i + 200)).neq('importacao_id', imp.id);
+          const { error } = await sb.from('fluxo_pedido').delete().eq('origem', r._origem304).in('documento', docs.slice(i, i + 200)).neq('importacao_id', imp.id);
           if (error) throw error;
         }
         toast('♻️ ' + docs.length + ' pedido(s) substituídos pela versão nova');
@@ -39624,7 +39631,7 @@ async function _fluxoCarrega(num) {
   const n = String(num).split('/')[0];
   try {
     const { data, error } = await sb.from('fluxo_pedido')
-      .select('seq,linha,setor,data_inclusao,tempo_min,total_min,usuario_inclusao,visto_em')
+      .select('seq,linha,setor,data_inclusao,tempo_min,total_min,usuario_inclusao,visto_em').eq('origem', 'Pedido')
       .eq('documento', n).order('seq');
     if (error) throw error;
     /* ===== 26/08/2026 (João: "quero pôr Obs nos setores do fluxo — um balãozinho
@@ -39648,9 +39655,9 @@ async function _fluxoCarrega(num) {
          não trouxe esse pedido — foi o caso do 225935). */
       try {
         const { data: cob } = await sb.from('fluxo_pedido')
-          .select('data_inclusao').order('data_inclusao').limit(1);
+          .select('data_inclusao').eq('origem', 'Pedido').order('data_inclusao').limit(1);
         const { data: cob2 } = await sb.from('fluxo_pedido')
-          .select('data_inclusao').order('data_inclusao', { ascending: false }).limit(1);
+          .select('data_inclusao').eq('origem', 'Pedido').order('data_inclusao', { ascending: false }).limit(1);
         const de = cob && cob[0] ? String(cob[0].data_inclusao).slice(0, 10) : null;
         const ate = cob2 && cob2[0] ? String(cob2[0].data_inclusao).slice(0, 10) : null;
         box.innerHTML = de
@@ -63833,6 +63840,6 @@ function fcarPuxarIA() {
 <script src="./tinta-nfe-v4.638.22.js?v=4.638.47"></script>
 <script src="./tinta-balanco-historico-v4.638.30.js?v=4.638.47"></script>
 <script src="./tinta-saida-sugestoes-v4.638.32.js?v=4.638.47"></script>
-<script src="./iniflex-portal-v4.638.46.js?v=4.638.52"></script>
+<script src="./iniflex-portal-v4.638.46.js?v=4.638.53"></script>
 </body>
 </html>

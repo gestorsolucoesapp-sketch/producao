@@ -1,6 +1,6 @@
-// Produção Rioplastic — v4.638.52 · painel global Iniflex
+// Produção Rioplastic — v4.638.53 · painel global Iniflex
 // Hotfix de recuperação: navegação e JavaScript priorizam a rede para não executar código antigo em cache.
-const CACHE = 'producao-rioplastic-v4.638.52';
+const CACHE = 'producao-rioplastic-v4.638.53';
 const CACHE_ASSET = 'producao-rioplastic-assets-v2';
 const INDEX = './index.html';
 const ASSETS = [
