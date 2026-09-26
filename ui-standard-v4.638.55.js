@@ -4,8 +4,6 @@
   if(window.__RIO_STD_463855__) return;
   window.__RIO_STD_463855__ = true;
 
-  const VERSION='v4.638.55';
-
   function normalizarUrl(){
     try{
       const u=new URL(location.href);
@@ -23,16 +21,6 @@
 
   if(!normalizarUrl()) return;
 
-  function atualizarVersao(){
-    try{
-      document.querySelectorAll('span,div,b,strong,small').forEach(el=>{
-        if(el.children.length) return;
-        const t=String(el.textContent||'').trim();
-        if(/^v4\.638\.\d+$/i.test(t)) el.textContent=VERSION;
-      });
-    }catch(_){}
-  }
-
   function atualizarImportacao(){
     try{
       if(typeof window.iniflexPortalRender==='function') window.iniflexPortalRender(true);
@@ -43,7 +31,6 @@
   }
 
   function refresh(){
-    atualizarVersao();
     atualizarImportacao();
   }
 
@@ -54,11 +41,6 @@
   setTimeout(refresh,2500);
   setTimeout(refresh,6000);
 
-  try{
-    const mo=new MutationObserver(()=>atualizarVersao());
-    mo.observe(document.documentElement,{childList:true,subtree:true});
-    setTimeout(()=>mo.disconnect(),30000);
-  }catch(_){}
 
   try{
     if('serviceWorker' in navigator){
