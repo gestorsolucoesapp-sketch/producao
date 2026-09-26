@@ -4,6 +4,17 @@
   if(window.__RIO_STD_463855__) return;
   window.__RIO_STD_463855__ = true;
 
+  function limparEstadoMonitor(){
+    try{
+      for(const storage of [localStorage,sessionStorage]){
+        for(let i=storage.length-1;i>=0;i--){
+          const k=storage.key(i);
+          if(k && /monitor|modo[-_ ]?monitor/i.test(k)) storage.removeItem(k);
+        }
+      }
+    }catch(_){}
+  }
+
   function normalizarUrl(){
     try{
       const u=new URL(location.href);
@@ -19,6 +30,7 @@
     return true;
   }
 
+  limparEstadoMonitor();
   if(!normalizarUrl()) return;
 
   function atualizarImportacao(){
