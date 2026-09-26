@@ -1,4 +1,4 @@
-/* Rioplastic · Iniflex por sessão do portal · v4.638.46 */
+/* Rioplastic · Iniflex por sessão do portal · v4.638.47 */
 (function () {
   const OWNER_ID = '1d3ee6e7-62bc-440c-a705-50106ff44e3e';
   let st = null, busy = false;
@@ -41,6 +41,26 @@
     const tit = card.querySelector('.titulo-sec'), desc = card.querySelector('.desc');
     if (tit) tit.textContent = '🔐 Iniflex · sessão do portal';
     if (desc) desc.textContent = 'Conexão pelo login normal do Iniflex, sem usar a integração PINT002/API oficial.';
+
+    /* 26/09/2026 — botão único para iniciar a sequência completa dos 14 relatórios. */
+    const head = card.firstElementChild;
+    if (head && !document.getElementById('iniflexExecutarTudoBtn')) {
+      const acoes = document.createElement('div');
+      acoes.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto';
+      const btn = document.createElement('button');
+      btn.id = 'iniflexExecutarTudoBtn';
+      btn.className = 'btn btn-verde';
+      btn.style.cssText = 'width:auto;padding:9px 14px;font-size:12.5px;font-weight:800';
+      btn.textContent = '▶ Executar tudo';
+      btn.onclick = window.iniflexExecutarTudo;
+      acoes.appendChild(btn);
+      const badge = document.getElementById('iniflexApiBadge');
+      if (badge && badge.parentNode === head) {
+        head.insertBefore(acoes, badge);
+      } else {
+        head.appendChild(acoes);
+      }
+    }
     return card;
   }
   function desenha(s) {
@@ -116,6 +136,49 @@
   };
   window.iniflexAbrirSecrets = function () {
     window.open('https://supabase.com/dashboard/project/bweblwmgwutzdvqtpbww/settings/functions', '_blank', 'noopener');
+  };
+
+  window.iniflexExecutarTudo = async function () {
+    const btn = document.getElementById('iniflexExecutarTudoBtn');
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Iniciando 14…'; }
+
+    try {
+      /* Se o motor local antigo já expôs um botão "Executar todos", usa-o. */
+      const antigo = [...document.querySelectorAll('button')].find(b =>
+        b.id !== 'iniflexExecutarTudoBtn' &&
+        /executar\s+(todos|tudo|14\s+agora)/i.test(String(b.textContent || '').trim())
+      );
+      if (antigo && !antigo.disabled) {
+        antigo.click();
+        try { toast('▶ Execução completa iniciada'); } catch (_) {}
+        return;
+      }
+
+      /* Supervisor Iniflex v1.1+ — ponte segura via postMessage para a extensão. */
+      const req = 'rio-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      const resposta = new Promise((resolve, reject) => {
+        const tm = setTimeout(() => {
+          window.removeEventListener('message', onMsg);
+          reject(new Error('A extensão Supervisor Iniflex não respondeu.'));
+        }, 3500);
+        function onMsg(ev) {
+          if (ev.source !== window || !ev.data || ev.data.source !== 'rioplastic-supervisor' || ev.data.request_id !== req) return;
+          clearTimeout(tm);
+          window.removeEventListener('message', onMsg);
+          ev.data.ok ? resolve(ev.data) : reject(new Error(ev.data.error || 'Falha ao iniciar o ciclo.'));
+        }
+        window.addEventListener('message', onMsg);
+      });
+      window.postMessage({source:'rioplastic-app',type:'INIFLEX_RUN_ALL',request_id:req}, location.origin);
+      await resposta;
+      try { toast('✅ 14 relatórios iniciados'); } catch (_) {}
+      try { setTimeout(()=>window.iniflexCicloAtualizar && window.iniflexCicloAtualizar(), 1000); } catch (_) {}
+    } catch (e) {
+      try { toast('❌ ' + ((e && e.message) || e)); } catch (_) {}
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original || '▶ Executar tudo'; }
+    }
   };
 
 
